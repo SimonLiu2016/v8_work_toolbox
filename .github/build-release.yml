@@ -1,0 +1,243 @@
+name: Build and Release V8WorkToolbox
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows Package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: "stable"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Install Inno Setup
+        run: choco install innosetup
+
+      - name: Build Windows version
+        run: flutter build windows --release
+
+      - name: Create release packages
+        run: |
+          mkdir -p build/release
+          $version = (Select-String -Path pubspec.yaml -Pattern "^version:").Line.Split(":")[1].Trim()
+          $windowsBuildDir = "build\windows\x64\runner\Release"
+          if (Test-Path $windowsBuildDir) {
+            # Create ZIP package
+            $zipName = "V8WorkToolbox-windows-$version.zip"
+            Compress-Archive -Path "$windowsBuildDir\*" -DestinationPath "build\release\$zipName"
+            echo "Created Windows ZIP package: build/release/$zipName"
+            
+            # Create installer directory
+            mkdir -p build/installer
+          }
+
+      - name: Create Windows installer
+        run: |
+          # Run the installer creation script
+          bash ./scripts/install/create_installer.sh
+        shell: bash
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            build/release/
+            build/installer/
+
+  build-macos:
+    name: Build macOS Package
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: "stable"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Setup macOS signing (optional)
+        run: |
+          if [[ -n "$MACOS_DEVELOPMENT_TEAM" ]] && [[ -n "$MACOS_SIGNING_CERTIFICATE" ]] && [[ -n "$MACOS_SIGNING_CERTIFICATE_PWD" ]] && [[ -n "$MACOS_PROVISIONING_PROFILE" ]]; then
+            chmod +x scripts/build/setup-macos-signing.sh
+            scripts/build/setup-macos-signing.sh
+          else
+            echo "Skipping code signing setup - missing credentials"
+          fi
+        env:
+          MACOS_DEVELOPMENT_TEAM: ${{ secrets.MACOS_DEVELOPMENT_TEAM }}
+          MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_SIGNING_CERTIFICATE_PWD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PWD }}
+          MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
+        continue-on-error: true
+
+      - name: Build macOS version
+        run: |
+          chmod +x scripts/build/build-macos-app-enhanced.sh
+          scripts/build/build-macos-app-enhanced.sh
+        env:
+          MACOS_DEVELOPMENT_TEAM: ${{ secrets.MACOS_DEVELOPMENT_TEAM }}
+          MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_SIGNING_CERTIFICATE_PWD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PWD }}
+          MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          CI: true
+
+      - name: Create release packages
+        run: |
+          chmod +x scripts/build/build_release.sh
+          ./scripts/build/build_release.sh
+
+      - name: Create installers
+        run: |
+          chmod +x scripts/install/create_installer.sh
+          ./scripts/install/create_installer.sh
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            build/release/
+            build/installer/
+
+  build-linux:
+    name: Build Linux Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: "stable"
+
+      - name: Install basic dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libayatana-appindicator3-dev
+          flutter pub get
+
+      - name: Build Linux version
+        run: |
+          chmod +x scripts/build/build-linux-app.sh
+          scripts/build/build-linux-app.sh
+
+      - name: Create release packages
+        run: |
+          chmod +x scripts/build/build-linux-app.sh
+          # 创建Linux版本的发布包
+          PROJECT_DIR=$(pwd)
+          VERSION=$(grep "version:" pubspec.yaml | cut -d ':' -f 2 | tr -d ' ')
+          OUTPUT_DIR="$PROJECT_DIR/build/release"
+          mkdir -p "$OUTPUT_DIR"
+
+          # 查找Linux构建文件
+          LINUX_BUILD_DIR="$PROJECT_DIR/build/linux/x64/release/bundle"
+          if [ -d "$LINUX_BUILD_DIR" ]; then
+            # 创建Linux压缩包
+            LINUX_TAR_NAME="V8WorkToolbox-linux-$VERSION.tar.gz"
+            echo "创建Linux安装包: $LINUX_TAR_NAME"
+            
+            # 进入Linux构建目录并创建压缩包
+            cd "$LINUX_BUILD_DIR"
+            tar -czf "$OUTPUT_DIR/$LINUX_TAR_NAME" ./*
+            
+            if [ $? -eq 0 ]; then
+              echo "✓ Linux安装包创建成功: $OUTPUT_DIR/$LINUX_TAR_NAME"
+              LINUX_SIZE=$(du -h "$OUTPUT_DIR/$LINUX_TAR_NAME" | cut -f1)
+              echo "  文件大小: $LINUX_SIZE"
+            else
+              echo "⚠ 警告: Linux安装包创建失败"
+            fi
+          else
+            echo "⚠ 警告: 未找到Linux构建输出目录"
+          fi
+
+          cd "$PROJECT_DIR"
+
+      - name: Create installers
+        run: |
+          chmod +x scripts/install/create_installer.sh
+          ./scripts/install/create_installer.sh
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            build/release/
+            build/installer/
+
+  release:
+    name: Create Release
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts
+          path: windows-artifacts
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-artifacts
+          path: macos-artifacts
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-artifacts
+          path: linux-artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          # Copy files from all platforms
+          cp -r windows-artifacts/build/release/* release-files/ 2>/dev/null || true
+          cp -r windows-artifacts/build/installer/* release-files/ 2>/dev/null || true
+          cp -r macos-artifacts/build/release/* release-files/ 2>/dev/null || true
+          cp -r macos-artifacts/build/installer/* release-files/ 2>/dev/null || true
+          cp -r linux-artifacts/build/release/* release-files/ 2>/dev/null || true
+          cp -r linux-artifacts/build/installer/* release-files/ 2>/dev/null || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            release-files/*.zip
+            release-files/*.dmg
+            release-files/*.exe
+            release-files/*.sh
+            release-files/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
