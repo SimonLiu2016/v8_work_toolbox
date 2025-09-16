@@ -1,13 +1,27 @@
-# Beyond Compare 配置修改工具
+# V8 工作工具箱
 
-这个工具用于自动修改 Beyond Compare 的配置文件，以禁用更新检查并清理会话标志。
+V8 工作工具箱是一个实用的文件处理工具集合，包含以下工具：
 
-## 功能说明
+1. Beyond Compare 配置修改工具 - 用于自动修改 Beyond Compare 的配置文件，以禁用更新检查并清理会话标志。
+2. 批量重命名工具 - 按规则批量重命名文件。
+3. 文件夹对比工具 - 对比两个文件夹中同名文件的内容差异。
+
+## Beyond Compare 配置修改工具功能说明
 
 1. 自动导航到 Beyond Compare 配置目录
 2. 修改 BCState.xml 文件，删除更新检查相关的 CheckID 和 LastChecked 标签
 3. 修改 BCSessions.xml 文件，删除 Flags 属性
 4. 启动 Beyond Compare 应用程序
+
+## 批量重命名工具功能说明
+
+批量重命名工具允许用户使用正则表达式规则批量重命名文件。
+
+## 文件夹对比工具功能说明
+
+文件夹对比工具用于对比两个文件夹中同名文件的内容差异，支持多种文件格式（目前实现 YAML 格式），并可将差异结果导出为 CSV 文件。
+
+详细使用说明请参见 [文件夹对比工具使用说明](README_COMPARE_TOOL.md)。
 
 ## 使用方法
 
@@ -174,7 +188,7 @@ echo "所有操作已完成！"
 
 修改后：
 
-```xml
+```
 <TCheckForUpdatesState>
     <Build Value="24545"/>
 </TCheckForUpdatesState>
@@ -184,14 +198,15 @@ echo "所有操作已完成！"
 
 修改前：
 
-```xml
+``xml
 <BCSessions Flags="2516348444542" Version="1" MinVersion="1">
 </BCSessions>
+
 ```
 
 修改后：
 
-```xml
+```
+
 <BCSessions Version="1" MinVersion="1">
 </BCSessions>
-```

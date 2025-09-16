@@ -1,0 +1,50 @@
+Backend:
+  Enabled: false
+Cae:
+  ConfigName: cae-config-fs
+  ConfigProfile: prod
+  EuarkaURL: http://cae-eureka-master:8080/eureka,http://cae-eureka-slave:8080/eureka,http://cae-eureka-backup:8080/eureka
+Cluster: aliyun-prod
+Envs:
+- name: JAVA_MEM_OPTIONS
+  value: -Xmx4g -Xms4g -XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:/tmp/log/gc-%t.log
+    -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=100M -XX:HeapDumpPath=/tmp/log/ -XX:+HeapDumpOnOutOfMemoryError
+    -XX:NewRatio=2 -XX:SurvivorRatio=4
+
+Image:
+  Tag: qa-pet-1.5.12.0-32112d17
+Monitor:
+  InitialDelaySeconds: 20
+  LivenessProbe:
+    Enabled: true
+    failureThreshold: 10
+  PeriodSeconds: 30
+  ReadinessProbe:
+    Enabled: true
+    failureThreshold: 5
+Name: dc-jd-goods
+Namespace: ctf-prod
+Port: 8080
+ReplicaCount: 3
+Resources:
+  Requests:
+    CPU: 10m
+    Memory: 5.0Gi
+RollingUpdate: 100%
+Scheduler:
+  NodeSelector:
+    node_type01: fs
+  PodAntiAffinity:
+    Enabled: true
+  Tolerations:
+  - effect: NoSchedule
+    key: node_type01
+    operator: Equal
+    value: fs
+Skywalking:
+  Enabled: true
+  Host: 172.28.191.103:11800
+  Image: registry.cn-beijing.aliyuncs.com/co-mall-devops/skywalking-java-agent:8.6.0-alpine-v202305231021
+Vpa:
+  Enabled: true
+  UpdateMode: Initial

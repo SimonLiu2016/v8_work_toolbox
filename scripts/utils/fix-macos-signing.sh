@@ -42,8 +42,8 @@ cd macos || exit
 # 修改macOS项目的Runner.xcodeproj配置
 # 使用PlistBuddy修改Info.plist
 if [ -f "Runner/Info.plist" ]; then
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.v8en.passwordManager" Runner/Info.plist
-  echo "✅ 已设置Bundle Identifier为 com.v8en.passwordManager"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.v8en.V8WorkToolbox" Runner/Info.plist
+  echo "✅ 已设置Bundle Identifier为 com.v8en.V8WorkToolbox"
 else
   echo "❌ 错误: 未找到 Runner/Info.plist 文件"
   exit 1

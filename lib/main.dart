@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 // 导入新工具页面
 import 'bc_config_tool.dart';
 import 'batch_rename_tool.dart';
+import 'folder_compare_tool.dart';
 
 void main() {
   runApp(const FileToolsApp());
@@ -73,13 +74,16 @@ class MainToolsPage extends StatelessWidget {
             // 可以在这里添加更多工具卡片
             _buildToolCard(
               context,
-              title: '更多工具',
-              subtitle: '敬请期待',
-              icon: Icons.more_horiz,
+              title: '文件夹对比',
+              subtitle: '对比两个文件夹中的文件',
+              icon: Icons.compare,
               onTap: () {
-                ScaffoldMessenger.of(
+                Navigator.push(
                   context,
-                ).showSnackBar(const SnackBar(content: Text('更多工具正在开发中...')));
+                  MaterialPageRoute(
+                    builder: (context) => const FolderCompareHomePage(),
+                  ),
+                );
               },
             ),
           ],

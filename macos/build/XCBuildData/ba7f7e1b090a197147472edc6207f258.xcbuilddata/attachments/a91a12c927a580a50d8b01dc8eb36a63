@@ -1,0 +1,16 @@
+{
+  "" : {
+    "const-values" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary.swiftconstvalues",
+    "dependencies" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary.d",
+    "diagnostics" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary.dia",
+    "emit-module-dependencies" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary-emit-module.dia",
+    "pch" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests-primary.swiftdeps"
+  },
+  "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/RunnerTests/RunnerTests.swift" : {
+    "index-unit-output-path" : "/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests.o",
+    "llvm-bc" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests.bc",
+    "object" : "/Users/simon/Workspace/vsProject/v8_work_toolbox/macos/build/Runner.build/Release/RunnerTests.build/Objects-normal/arm64/RunnerTests.o"
+  }
+}
