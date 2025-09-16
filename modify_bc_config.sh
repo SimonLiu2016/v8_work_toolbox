@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 定义 Beyond Compare 配置文件路径
-BC_DIR="/Users/simon/Library/ApplicationSupport/Beyond Compare"
+BC_DIR="$HOME/Library/ApplicationSupport/Beyond Compare"
 
 echo "正在处理 Beyond Compare 配置文件..."
 

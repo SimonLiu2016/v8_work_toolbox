@@ -33,6 +33,18 @@ flutter build macos
 
 构建后的应用程序位于: `build/macos/Build/Products/Release/V8WorkToolbox.app`
 
+### macOS 权限问题
+
+在 macOS 上首次运行 Beyond Compare 配置工具时，可能会遇到文件访问权限问题。这是由于 macOS 的安全机制限制了应用程序对用户库目录的访问。
+
+**解决方案：**
+
+1. 打开 **系统偏好设置** > **安全性与隐私** > **隐私**
+2. 在左侧选择 **文件和文件夹** 或 **完全磁盘访问权限**
+3. 找到 V8WorkToolbox 应用程序并授予权限
+
+详细说明请参考 [BC_CONFIG_PERMISSIONS.md](BC_CONFIG_PERMISSIONS.md) 文件。
+
 ## 批量重命名工具使用说明
 
 ### 示例场景

@@ -510,25 +510,27 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Container(
-                        height: 200, // 固定高度
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: ListView.builder(
-                            itemCount: _logMessages.length,
-                            itemBuilder: (context, index) {
-                              return Text(
-                                _logMessages[index],
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
-                                ),
-                              );
-                            },
+                      SelectionArea(
+                        child: Container(
+                          height: 200, // 固定高度
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: ListView.builder(
+                              itemCount: _logMessages.length,
+                              itemBuilder: (context, index) {
+                                return Text(
+                                  _logMessages[index],
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ),
                       ),

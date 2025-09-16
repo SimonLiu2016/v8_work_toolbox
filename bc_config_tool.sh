@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 定义 Beyond Compare 配置文件路径
-BC_DIR="/Users/simon/Library/ApplicationSupport/Beyond Compare"
+BC_DIR="$HOME/Library/ApplicationSupport/Beyond Compare"
 
 echo -e "${GREEN}Beyond Compare 配置修改工具${NC}"
 echo "================================"

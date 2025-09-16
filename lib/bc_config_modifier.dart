@@ -1,9 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
 
+// 添加 Platform 导入
+import 'dart:io' show Platform;
+
 void main() async {
   // 定义 Beyond Compare 配置文件路径
-  String bcDir = '/Users/simon/Library/ApplicationSupport/Beyond Compare';
+  String bcDir =
+      '${Platform.environment['HOME']}/Library/ApplicationSupport/Beyond Compare';
 
   try {
     // 步骤1: 修改 BCState.xml 文件
