@@ -21,12 +21,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 应用信息表单控制器
   final TextEditingController _bundleIdController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _localizedNameController =
-      TextEditingController();
+  final TextEditingController _localizedNameController = TextEditingController();
   final TextEditingController _categoryController = TextEditingController();
   final TextEditingController _versionController = TextEditingController();
-  final TextEditingController _shortcutCountController =
-      TextEditingController();
   final TextEditingController _updatedAtController = TextEditingController();
   final TextEditingController _iconFormatController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
@@ -73,9 +70,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 语言包数据
   final Map<String, String> _localeJsons = {};
 
-  // 文件路径控制器
+  // 文件路径控制器（新增输出目录）
   final TextEditingController _iconPathController = TextEditingController();
   final TextEditingController _previewPathController = TextEditingController();
+  final TextEditingController _outputDirController = TextEditingController();
 
   // 密码固定值
   final String _encryptionPassword = '!QAZ2wsx#EDC\$#@!';
@@ -96,13 +94,13 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _localizedNameController.dispose();
     _categoryController.dispose();
     _versionController.dispose();
-    _shortcutCountController.dispose();
     _updatedAtController.dispose();
     _iconFormatController.dispose();
     _descriptionController.dispose();
     _shortcutsJsonController.dispose();
     _iconPathController.dispose();
     _previewPathController.dispose();
+    _outputDirController.dispose();
     
     // 处理快捷键相关的控制器
     for (var controller in _idControllers) controller.dispose();
@@ -167,7 +165,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _buildTextField(_localizedNameController, '应用中文名称', '应用名称'),
             _buildTextField(_categoryController, '应用类型', 'utility'),
             _buildTextField(_versionController, '版本号', '1.0.0'),
-            _buildTextField(_shortcutCountController, '快捷键个数', '0'),
             _buildTextField(_updatedAtController, '更新时间', 'YYYY-MM-DD'),
             _buildTextField(_iconFormatController, '图标格式', 'icns/png'),
             _buildTextField(_descriptionController, '描述', '应用描述'),
@@ -553,10 +550,31 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             ),
             const SizedBox(height: 10),
             _buildFilePathField(_iconPathController, '图标文件路径', '选择图标文件 (icns)'),
-            _buildFilePathField(
-              _previewPathController,
-              '预览图路径',
-              '选择预览图文件 (png)',
+            _buildFilePathField(_previewPathController, '预览图路径', '选择预览图文件 (png)'),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _outputDirController,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'KMA 包输出目录',
+                      hintText: '选择KMA包输出目录',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: () async {
+                    String? result = await _pickDirectory();
+                    if (result != null) {
+                      _outputDirController.text = result;
+                    }
+                  },
+                  child: const Text('选择'),
+                ),
+              ],
             ),
           ],
         ),
@@ -591,6 +609,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
+  Future<String?> _pickDirectory() async {
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+    return selectedDirectory;
+  }
+  
   Future<String?> _pickFile(String label) async {
     String? filePath;
     
@@ -767,7 +790,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     required String localizedName,
     required String category,
     required String version,
-    required int shortcutCount,
+    required int shortcutCount,  // 这个参数仍然保留，但实际值由调用方传入
     required String updatedAt,
     required String iconFormat,
     required String description,
@@ -865,15 +888,15 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       );
       await _encryptFile(zipPath, encryptedPath, _encryptionPassword);
 
-      // 8. 移动到用户选择的输出目录
-      String? outputDir = await _showFolderPickerDialog();
-      if (outputDir != null && outputDir.isNotEmpty) {
+      // 8. 移动到指定的输出目录（而不是弹出对话框让用户选择）
+      String outputDir = _outputDirController.text;
+      if (outputDir.isNotEmpty) {
         String finalPath = path.join(outputDir, path.basename(encryptedPath));
         await File(encryptedPath).copy(finalPath);
         await tempDir.delete(recursive: true);
         return finalPath;
       } else {
-        // 如果用户没有选择目录，则保存到临时目录
+        // 如果用户没有指定输出目录，则使用临时目录
         return encryptedPath;
       }
     } catch (e) {
@@ -938,39 +961,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     return password;
   }
 
-  Future<String?> _showFolderPickerDialog() async {
-    // 简化版本，实际使用中需要集成文件夹选择功能
-    String? result;
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        TextEditingController pathController = TextEditingController();
-        return AlertDialog(
-          title: const Text('选择输出目录'),
-          content: TextField(
-            controller: pathController,
-            decoration: const InputDecoration(hintText: '输入输出目录路径'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () {
-                result = pathController.text;
-                Navigator.pop(context);
-              },
-              child: const Text('选择'),
-            ),
-          ],
-        );
-      },
-    );
-
-    return result;
-  }
 
   void _showErrorDialog(String message) {
     showDialog(
@@ -1241,26 +1231,6 @@ class KmaPackageUtil {
     return password;
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
