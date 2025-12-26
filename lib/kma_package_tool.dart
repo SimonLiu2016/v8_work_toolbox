@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:archive/archive.dart';
 import 'package:aes256gcm/aes256gcm.dart';
 import 'package:crypto/crypto.dart';
@@ -701,8 +702,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                 const SizedBox(width: 10),
                 ElevatedButton(
                   onPressed: () {
-                    // 复制到剪贴板功能
-                    // 实现复制密码到剪贴板
+                    _copyPasswordToClipboard();
                   },
                   child: const Text('复制'),
                 ),
@@ -1254,6 +1254,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     } catch (e) {
       _showErrorDialog('解压 KMA 包时出错: $e');
     }
+  }
+
+  void _copyPasswordToClipboard() {
+    Clipboard.setData(ClipboardData(text: _encryptionPassword));
+    _showSuccessDialog('密码已复制到剪贴板');
   }
 }
 
