@@ -13,6 +13,10 @@ dependencies:
   yaml: ^3.1.0
   csv: ^6.0.0
   path: ^1.9.0
+  archive: ^4.0.7
+  aes256gcm: ^1.0.1
+  crypto: ^3.0.3
+  encrypt: ^5.0.3
 
 dev_dependencies:
   flutter_test:

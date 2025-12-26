@@ -5,6 +5,7 @@ import 'bc_config_tool.dart';
 import 'bc_config_shell.dart';
 import 'batch_rename_tool.dart';
 import 'folder_compare_tool.dart';
+import 'kma_package_tool.dart';
 
 void main() {
   runApp(const FileToolsApp());
@@ -97,6 +98,20 @@ class MainToolsPage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const BcConfigShellPage(),
+                  ),
+                );
+              },
+            ),
+            _buildToolCard(
+              context,
+              title: 'KMA 包生成',
+              subtitle: '生成加密的 KMA 包',
+              icon: Icons.archive,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const KmaPackageToolPage(),
                   ),
                 );
               },
