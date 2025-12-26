@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:archive/archive.dart';
-import 'package:aes256gcm/aes256gcm.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 import 'package:encrypt/encrypt.dart' as encrypt_package;
+import 'package:cryptography/cryptography.dart' as crypto_package;
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 
@@ -898,7 +898,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     required String localizedName,
     required String category,
     required String version,
-    required int shortcutCount, // 这个参数仍然保留，但实际值由调用方传入
+    required int shortcutCount,
     required String updatedAt,
     required String iconFormat,
     required String description,
@@ -912,6 +912,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     String packageDir = path.join(tempDir.path, 'package');
 
     try {
+      print('开始创建 KMA 包...');
+      print('临时目录: ${tempDir.path}');
+      print('包目录: $packageDir');
+
       // 创建包目录结构
       await Directory(packageDir).create(recursive: true);
 
@@ -929,38 +933,41 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         'supportsLanguages': supportedLanguages,
         'description': description,
       };
-      await File(
-        path.join(packageDir, 'info.json'),
-      ).writeAsString(jsonEncode(infoJson));
+      String infoJsonPath = path.join(packageDir, 'info.json');
+      await File(infoJsonPath).writeAsString(jsonEncode(infoJson));
+      print('已创建 info.json: $infoJsonPath');
 
       // 2. 复制图标文件
       if (iconPath.isNotEmpty && File(iconPath).existsSync()) {
-        await File(iconPath).copy(path.join(packageDir, 'icon.$iconFormat'));
+        String iconDestPath = path.join(packageDir, 'icon.$iconFormat');
+        await File(iconPath).copy(iconDestPath);
+        print('已复制图标文件: $iconDestPath');
       } else {
-        // 创建一个简单的占位符文件
-        await File(
-          path.join(packageDir, 'icon.$iconFormat'),
-        ).writeAsString('PLACEHOLDER');
+        String placeholderPath = path.join(packageDir, 'icon.$iconFormat');
+        await File(placeholderPath).writeAsString('PLACEHOLDER');
+        print('已创建图标占位文件: $placeholderPath');
       }
 
       // 3. 复制预览图
       if (previewPath.isNotEmpty && File(previewPath).existsSync()) {
-        await File(previewPath).copy(path.join(packageDir, 'preview.png'));
+        String previewDestPath = path.join(packageDir, 'preview.png');
+        await File(previewPath).copy(previewDestPath);
+        print('已复制预览图: $previewDestPath');
       } else {
-        // 创建一个简单的占位符文件
-        await File(
-          path.join(packageDir, 'preview.png'),
-        ).writeAsString('PLACEHOLDER');
+        String placeholderPath = path.join(packageDir, 'preview.png');
+        await File(placeholderPath).writeAsString('PLACEHOLDER');
+        print('已创建预览图占位文件: $placeholderPath');
       }
 
       // 4. 创建 shortcuts.en.json
-      await File(
-        path.join(packageDir, 'shortcuts.en.json'),
-      ).writeAsString(jsonEncode(shortcuts));
+      String shortcutsPath = path.join(packageDir, 'shortcuts.en.json');
+      await File(shortcutsPath).writeAsString(jsonEncode(shortcuts));
+      print('已创建 shortcuts.en.json: $shortcutsPath');
 
       // 5. 创建 locales 目录和语言包
       Directory localesDir = Directory(path.join(packageDir, 'locales'));
       await localesDir.create();
+      print('已创建 locales 目录: ${localesDir.path}');
 
       // 为每种支持的语言创建语言包，除了 'en'（因为它已经作为 shortcuts.en.json 存在）
       for (String lang in supportedLanguages) {
@@ -976,9 +983,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             ), // 生成对应语言的快捷键数据
           };
 
-          await File(
-            path.join(localesDir.path, '$lang.json'),
-          ).writeAsString(jsonEncode(localeJson));
+          String localePath = path.join(localesDir.path, '$lang.json');
+          await File(localePath).writeAsString(jsonEncode(localeJson));
+          print('已创建语言包: $localePath');
         }
       }
 
@@ -988,26 +995,54 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         '${bundleId}_${version}_$updatedAt.zip',
       );
       await _createZipFromDirectory(packageDir, zipPath);
+      print('已创建 ZIP 文件: $zipPath');
 
       // 7. 加密 ZIP 文件
       String encryptedPath = path.join(
         tempDir.path,
         '${bundleId}_${version}_$updatedAt.kma',
       );
-      await _encryptFile(zipPath, encryptedPath, _encryptionPassword);
+      await KmaPackageUtil.encryptFile(
+        zipPath,
+        encryptedPath,
+        _encryptionPassword,
+      );
+      print('已创建加密 KMA 文件: $encryptedPath');
 
-      // 8. 移动到指定的输出目录（而不是弹出对话框让用户选择）
+      // 8. 移动到指定的输出目录
       String outputDir = _outputDirController.text;
+      print('输出目录: $outputDir');
+
       if (outputDir.isNotEmpty) {
+        // 确保输出目录存在
+        Directory outputDirectory = Directory(outputDir);
+        if (!await outputDirectory.exists()) {
+          print('输出目录不存在，尝试创建: $outputDir');
+          await outputDirectory.create(recursive: true);
+        }
+
         String finalPath = path.join(outputDir, path.basename(encryptedPath));
-        await File(encryptedPath).copy(finalPath);
+        print('目标路径: $finalPath');
+
+        // 检查源文件是否存在
+        File sourceFile = File(encryptedPath);
+        if (!await sourceFile.exists()) {
+          print('错误：源文件不存在: $encryptedPath');
+          throw Exception('源加密文件不存在: $encryptedPath');
+        }
+
+        print('开始复制文件从 $encryptedPath 到 $finalPath');
+        await sourceFile.copy(finalPath);
         await tempDir.delete(recursive: true);
+        print('成功生成 KMA 包: $finalPath');
         return finalPath;
       } else {
+        print('未指定输出目录，返回临时文件路径: $encryptedPath');
         // 如果用户没有指定输出目录，则使用临时目录
         return encryptedPath;
       }
     } catch (e) {
+      print('创建 KMA 包时发生错误: $e');
       await tempDir.delete(recursive: true);
       rethrow;
     }
@@ -1040,6 +1075,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     String outputPath,
     String password,
   ) async {
+    print('开始加密文件: $inputPath -> $outputPath');
     List<int> fileBytes = await File(inputPath).readAsBytes();
 
     // 使用 encrypt 包进行 AES-256-GCM 加密
@@ -1058,6 +1094,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     final result = <int>[...iv.bytes, ...encrypted.bytes];
 
     await File(outputPath).writeAsBytes(result);
+    print('加密完成，输出文件: $outputPath');
   }
 
   String _padOrTruncatePassword(String password, int length) {
@@ -1287,63 +1324,127 @@ class KmaPackageUtil {
     await File(outputPath).writeAsBytes(zipBytes);
   }
 
-  /// 使用 AES-256-GCM 加密文件
+  /// 使用 AES-256-GCM 加密文件（使用 Scrypt 派生密钥）
   static Future<void> encryptFile(
     String inputPath,
     String outputPath,
-    String password,
+    String rawKey,
   ) async {
+    print('开始加密文件: $inputPath -> $outputPath');
     List<int> fileBytes = await File(inputPath).readAsBytes();
+    print('已读取文件，大小: ${fileBytes.length} 字节');
 
-    // 使用 encrypt 包进行 AES-256-GCM 加密
-    final key = encrypt_package.Key.fromUtf8(
-      padOrTruncatePassword(password, 32),
-    );
-    final iv = encrypt_package.IV.fromLength(16); // 16 bytes for AES
+    // 生成 16 字节随机盐值
+    final salt = _generateRandomBytes(16);
+    print('已生成随机盐值，长度: ${salt.length} 字节');
+
+    // 使用 Scrypt 对 rawKey + salt 进行派生，生成 32 字节 AES-256 密钥
+    final aesKeyList = await _deriveKeyWithScrypt(rawKey, salt);
+    final aesKey = Uint8List.fromList(aesKeyList);
+    print('已派生 AES 密钥，长度: ${aesKey.length} 字节');
+
+    // 使用派生的密钥进行 AES-256-GCM 加密
+    final key = encrypt_package.Key(aesKey);
+    final iv = encrypt_package.IV.fromSecureRandom(
+      12,
+    ); // GCM recommended IV size is 12 bytes
+    print('已生成随机 IV，长度: ${iv.bytes.length} 字节');
 
     final encrypter = encrypt_package.Encrypter(
       encrypt_package.AES(key, mode: encrypt_package.AESMode.gcm),
     );
+    print('已创建加密器');
 
     final encrypted = encrypter.encryptBytes(fileBytes, iv: iv);
+    print('已加密数据，加密后大小: ${encrypted.bytes.length} 字节');
 
-    // 将 IV 附加到加密数据前面，以便解密时使用
-    final result = <int>[...iv.bytes, ...encrypted.bytes];
+    // 构建输出格式：[盐值(16字节) + IV(12字节) + 加密数据]
+    final result = <int>[...salt, ...iv.bytes, ...encrypted.bytes];
+    print('构建最终数据，总长度: ${result.length} 字节');
 
     await File(outputPath).writeAsBytes(result);
+    print('已写入加密文件: $outputPath');
   }
 
-  /// 解密 AES-256-GCM 加密的文件
+  /// 解密 AES-256-GCM 加密的文件（使用 Scrypt 派生密钥）
   static Future<void> decryptFile(
     String inputPath,
     String outputPath,
-    String password,
+    String rawKey,
   ) async {
+    print('开始解密文件: $inputPath -> $outputPath');
     List<int> fileBytes = await File(inputPath).readAsBytes();
+    print('已读取加密文件，大小: ${fileBytes.length} 字节');
 
-    // 提取 IV（前16字节）和加密数据
-    if (fileBytes.length < 16) {
-      throw Exception('加密文件格式错误');
+    // 提取盐值（前16字节）、IV（接下来12字节）和加密数据
+    if (fileBytes.length < 28) {
+      // 16 + 12 = 28
+      print('错误：加密文件格式错误：长度不足，实际长度: ${fileBytes.length}');
+      throw Exception('加密文件格式错误：长度不足');
     }
 
-    List<int> ivBytes = fileBytes.sublist(0, 16);
-    List<int> encryptedData = fileBytes.sublist(16);
-
-    final key = encrypt_package.Key.fromUtf8(
-      padOrTruncatePassword(password, 32),
+    List<int> salt = fileBytes.sublist(0, 16);
+    List<int> ivBytes = fileBytes.sublist(16, 28);
+    List<int> encryptedData = fileBytes.sublist(28);
+    print(
+      '已提取盐值: ${salt.length} 字节, IV: ${ivBytes.length} 字节, 加密数据: ${encryptedData.length} 字节',
     );
+
+    // 使用 Scrypt 派生密钥
+    final aesKeyList = await _deriveKeyWithScrypt(rawKey, salt);
+    final aesKey = Uint8List.fromList(aesKeyList);
+    print('已派生 AES 解密密钥，长度: ${aesKey.length} 字节');
+
+    // 使用派生的密钥进行解密
+    final key = encrypt_package.Key(aesKey);
     final iv = encrypt_package.IV(Uint8List.fromList(ivBytes));
+    print('已创建解密 IV，长度: ${iv.bytes.length} 字节');
 
     final encrypter = encrypt_package.Encrypter(
       encrypt_package.AES(key, mode: encrypt_package.AESMode.gcm),
     );
+    print('已创建解密器');
 
     final decrypted = encrypter.decryptBytes(
       encrypt_package.Encrypted(Uint8List.fromList(encryptedData)),
       iv: iv,
     );
+    print('已解密数据，解密后大小: ${decrypted.length} 字节');
 
     await File(outputPath).writeAsBytes(decrypted);
+    print('已写入解密文件: $outputPath');
+  }
+
+  /// 使用 PBKDF2 派生密钥
+  static Future<List<int>> _deriveKeyWithScrypt(
+    String rawKey,
+    List<int> salt,
+  ) async {
+    // 使用 cryptography 包的 PBKDF2 进行密钥派生
+    final algorithm = crypto_package.Pbkdf2(
+      macAlgorithm: crypto_package.Hmac.sha256(),
+      iterations: 16384,
+      bits: 256, // 32 bytes
+    );
+
+    final key = await algorithm.deriveKey(
+      secretKey: crypto_package.SecretKey(
+        Uint8List.fromList(utf8.encode(rawKey)),
+      ),
+      nonce: Uint8List.fromList(salt),
+    );
+
+    return await key.extractBytes();
+  }
+
+  /// 生成随机字节数组
+  static Uint8List _generateRandomBytes(int length) {
+    final random = math.Random.secure();
+    final result = Uint8List(length);
+    for (int i = 0; i < length; i++) {
+      result[i] = random.nextInt(256);
+    }
+    return result;
   }
 
   /// 生成 KMA 包（压缩并加密）
@@ -1428,14 +1529,5 @@ class KmaPackageUtil {
         await Directory(filePath).create(recursive: true);
       }
     }
-  }
-
-  static String padOrTruncatePassword(String password, int length) {
-    if (password.length > length) {
-      return password.substring(0, length);
-    } else if (password.length < length) {
-      return password.padRight(length, '0');
-    }
-    return password;
   }
 }
