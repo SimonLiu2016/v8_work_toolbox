@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:async';
 import 'package:file_picker/file_picker.dart';
+import 'dart:io' show Platform, Process, ProcessResult;
 
 class BcConfigHomePage extends StatefulWidget {
   const BcConfigHomePage({super.key});
@@ -11,13 +12,15 @@ class BcConfigHomePage extends StatefulWidget {
 }
 
 class _BcConfigHomePageState extends State<BcConfigHomePage> {
-  String get defaultBcDir => '/Users/${getCurrentUsername()}/Library/ApplicationSupport/Beyond Compare';
-  String bcDir = '/Users/simon/Library/ApplicationSupport/Beyond Compare';
+  String get defaultBcDir =>
+      '/Users/${getCurrentUsername()}/Library/Application Support/Beyond Compare';
+  String bcDir = '/Users/simon/Library/Application Support/Beyond Compare';
   bool _isProcessing = false;
   List<String> _logMessages = [];
   bool _bcStateModified = false;
   bool _bcSessionsModified = false;
   bool _bcLaunched = false;
+  bool _useTerminalScript = false;
 
   String getCurrentUsername() {
     if (Platform.isMacOS || Platform.isLinux) {
@@ -63,12 +66,18 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
       }
 
       _addLogMessage('正在处理配置文件...');
+      _addLogMessage('配置目录: $bcDir');
 
-      // 步骤1: 修改 BCState.xml 文件
-      await _modifyBcStateFile();
+      // 首先尝试直接修改
+      bool directModificationSuccess = await _tryDirectModification();
 
-      // 步骤2: 修改 BCSessions.xml 文件
-      await _modifyBcSessionsFile();
+      if (!directModificationSuccess) {
+        // 如果直接修改失败，尝试使用终端脚本
+        _addLogMessage('直接修改失败，尝试使用终端脚本...');
+        await _modifyBcConfigWithTerminalScript();
+      } else {
+        _addLogMessage('✓ 直接修改成功');
+      }
 
       // 步骤3: 启动 Beyond Compare
       await _launchBeyondCompare();
@@ -83,43 +92,50 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
     }
   }
 
+  /// 尝试直接修改配置文件
+  Future<bool> _tryDirectModification() async {
+    try {
+      // 步骤1: 修改 BCState.xml 文件
+      await _modifyBcStateFile();
+
+      // 步骤2: 修改 BCSessions.xml 文件
+      await _modifyBcSessionsFile();
+
+      return true;
+    } catch (e) {
+      // 检查是否是权限错误
+      if (e.toString().contains('Operation not permitted') ||
+          e.toString().contains('errno = 1') ||
+          e is PathAccessException) {
+        _addLogMessage('❌ 权限错误，将尝试使用终端脚本');
+        return false;
+      } else {
+        _addLogMessage('❌ 修改配置文件时出现错误: $e');
+        return false;
+      }
+    }
+  }
+
   Future<void> _modifyBcStateFile() async {
     final bcStateFile = File('$bcDir/BCState.xml');
     if (await bcStateFile.exists()) {
-      try {
-        // 创建备份文件
-        await bcStateFile.copy('$bcDir/BCState.xml.bak');
-        _addLogMessage('已创建 BCState.xml 备份文件');
+      // 创建备份文件
+      await bcStateFile.copy('$bcDir/BCState.xml.bak');
+      _addLogMessage('已创建 BCState.xml 备份文件');
 
-        // 读取文件内容
-        String content = await bcStateFile.readAsString();
+      // 读取文件内容
+      String content = await bcStateFile.readAsString();
 
-        // 删除 CheckID 和 LastChecked 标签
-        content = content.replaceAll(RegExp(r'<CheckID[^>]*>\s*'), '');
-        content = content.replaceAll(RegExp(r'<LastChecked[^>]*>\s*'), '');
+      // 删除 CheckID 和 LastChecked 标签
+      content = content.replaceAll(RegExp(r'<CheckID[^>]*>\s*'), '');
+      content = content.replaceAll(RegExp(r'<LastChecked[^>]*>\s*'), '');
 
-        // 写入修改后的内容
-        await bcStateFile.writeAsString(content);
-        _addLogMessage('✓ BCState.xml 文件已更新');
-        setState(() {
-          _bcStateModified = true;
-        });
-      } catch (e) {
-        // 检查是否是权限错误
-        if (e.toString().contains('Operation not permitted') ||
-            e.toString().contains('errno = 1')) {
-          _addLogMessage('❌ 权限错误: 无法访问 BCState.xml 文件');
-          _addLogMessage('🔧 解决方案:');
-          _addLogMessage('   1. 系统将自动尝试打开"安全性与隐私"设置');
-          _addLogMessage('   2. 在"隐私"选项卡中选择"文件和文件夹"或"完全磁盘访问权限"');
-          _addLogMessage('   3. 找到 V8WorkToolbox 应用并勾选授权');
-          _addLogMessage('   4. 如未找到该应用，可点击下方"打开系统设置"按钮手动添加');
-          _addLogMessage('   5. 重新运行此工具');
-          _addLogMessage('💡 提示: 系统可能会自动弹出授权请求，此时需要输入密码或使用指纹验证');
-        } else {
-          _addLogMessage('修改 BCState.xml 时出现错误: $e');
-        }
-      }
+      // 写入修改后的内容
+      await bcStateFile.writeAsString(content);
+      _addLogMessage('✓ BCState.xml 文件已更新');
+      setState(() {
+        _bcStateModified = true;
+      });
     } else {
       _addLogMessage('警告: BCState.xml 文件不存在');
     }
@@ -135,82 +151,94 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
     }
 
     if (await bcSessionsFile.exists()) {
-      try {
-        // 创建备份文件
-        final backupPath = '$bcDir/BCSessions.xml.bak';
-        final backupFile = File(backupPath);
+      // 创建备份文件
+      final backupPath = '$bcDir/BCSessions.xml.bak';
+      final backupFile = File(backupPath);
 
-        // 如果备份文件已存在，先删除
-        if (await backupFile.exists()) {
-          await backupFile.delete();
-        }
-
-        await bcSessionsFile.copy(backupPath);
-        _addLogMessage('已创建 BCSessions.xml 备份文件');
-
-        // 读取文件内容
-        String content = await bcSessionsFile.readAsString();
-
-        // 删除 Flags 属性
-        content = content.replaceAll(RegExp(r'Flags="[^"]*"\s*'), '');
-
-        // 写入修改后的内容
-        await bcSessionsFile.writeAsString(content);
-        _addLogMessage('✓ BCSessions.xml 文件已更新');
-        setState(() {
-          _bcSessionsModified = true;
-        });
-      } on PathAccessException catch (e) {
-        // 专门捕获路径访问异常
-        _addLogMessage('❌ 路径访问错误: 无法访问 ${e.path}');
-        _addLogMessage('   错误原因: ${e.message}');
-        _showPermissionGuidance();
-      } on FileSystemException catch (e) {
-        if (e.osError?.errorCode == 1 ||
-            e.toString().contains('Operation not permitted')) {
-          _addLogMessage('❌ 权限错误: 无法访问 BCSessions.xml 文件');
-          _showPermissionGuidance();
-        } else {
-          _addLogMessage('❌ 文件系统错误: ${e.message}');
-        }
-      } catch (e) {
-        _addLogMessage('❌ 修改 BCSessions.xml 时出现错误: $e');
+      // 如果备份文件已存在，先删除
+      if (await backupFile.exists()) {
+        await backupFile.delete();
       }
+
+      await bcSessionsFile.copy(backupPath);
+      _addLogMessage('已创建 BCSessions.xml 备份文件');
+
+      // 读取文件内容
+      String content = await bcSessionsFile.readAsString();
+
+      // 删除 Flags 属性
+      content = content.replaceAll(RegExp(r'Flags="[^"]*"\s*'), '');
+
+      // 写入修改后的内容
+      await bcSessionsFile.writeAsString(content);
+      _addLogMessage('✓ BCSessions.xml 文件已更新');
+      setState(() {
+        _bcSessionsModified = true;
+      });
     } else {
       _addLogMessage('警告: BCSessions.xml 文件不存在');
     }
   }
 
-  // 提取权限引导为单独方法，避免代码重复
-  void _showPermissionGuidance() {
-    _addLogMessage('🔧 解决方案:');
-    if (Platform.isMacOS) {
-      _addLogMessage('   1. 系统将自动打开"安全性与隐私"设置');
-      _addLogMessage('   2. 在"隐私" > "文件和文件夹"中，勾选"V8WorkToolbox"');
-      _addLogMessage('   3. 若需验证，请输入系统密码或使用指纹');
-      // 自动打开设置页
-      try {
-        Process.run('open', [
-          'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
-        ]);
-      } catch (_) {
-        _addLogMessage('⚠️ 自动打开失败，请手动前往"系统设置 > 隐私与安全性 > 文件和文件夹"');
+  /// 使用终端脚本修改配置文件
+  Future<void> _modifyBcConfigWithTerminalScript() async {
+    _addLogMessage('🔧 使用终端脚本修改配置文件...');
+
+    try {
+      // 获取项目根目录
+      String projectRoot = Directory.current.path;
+      String scriptPath = '$projectRoot/fix_bc_config.sh';
+
+      _addLogMessage('脚本路径: $scriptPath');
+      _addLogMessage('配置目录: $bcDir');
+
+      // 检查脚本是否存在
+      File scriptFile = File(scriptPath);
+      if (!await scriptFile.exists()) {
+        _addLogMessage('❌ 错误: 终端脚本不存在: $scriptPath');
+        _addLogMessage('💡 请确保 fix_bc_config.sh 文件在项目根目录中');
+        return;
       }
-    } else if (Platform.isWindows) {
-      _addLogMessage('   1. 系统将自动打开"应用文件系统权限"设置');
-      _addLogMessage('   2. 找到"V8WorkToolbox"，开启"允许访问文件系统"');
-      _addLogMessage('   3. 若提示UAC验证，请输入管理员密码');
-      // 自动打开设置页
-      try {
-        Process.run('cmd', [
-          '/c',
-          'start ms-settings:apppermissions-filesystem',
-        ]);
-      } catch (_) {
-        _addLogMessage('⚠️ 自动打开失败，请手动前往"设置 > 隐私和安全性 > 应用权限 > 文件系统"');
+
+      // 确保脚本有执行权限
+      await Process.run('chmod', ['+x', scriptPath]);
+      _addLogMessage('✓ 脚本权限已设置');
+
+      // 执行脚本
+      _addLogMessage('正在执行终端脚本...');
+      ProcessResult result = await Process.run(scriptPath, [bcDir]);
+
+      // 输出脚本执行结果
+      if (result.stdout.isNotEmpty) {
+        List<String> lines = result.stdout.toString().split('\n');
+        for (String line in lines) {
+          if (line.trim().isNotEmpty) {
+            _addLogMessage('脚本输出: $line');
+          }
+        }
       }
+
+      if (result.stderr.isNotEmpty) {
+        _addLogMessage('脚本错误输出: ${result.stderr}');
+      }
+
+      if (result.exitCode == 0) {
+        _addLogMessage('✓ 终端脚本执行成功');
+        setState(() {
+          _bcStateModified = true;
+          _bcSessionsModified = true;
+        });
+      } else {
+        _addLogMessage('❌ 终端脚本执行失败，退出码: ${result.exitCode}');
+        _addLogMessage('💡 提示: 您也可以手动在终端中运行:');
+        _addLogMessage('   $scriptPath "$bcDir"');
+      }
+    } catch (e) {
+      _addLogMessage('❌ 执行终端脚本时出现错误: $e');
+      _addLogMessage('💡 您可以手动在终端中运行以下命令:');
+      _addLogMessage('   chmod +x fix_bc_config.sh');
+      _addLogMessage('   ./fix_bc_config.sh "$bcDir"');
     }
-    _addLogMessage('   4. 授权后请重新运行此工具');
   }
 
   Future<void> _launchBeyondCompare() async {
@@ -298,7 +326,7 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
                       style: TextStyle(fontSize: 12, color: Colors.orange),
                     ),
                     const Text(
-                      '• 遇权限错误请按指引操作',
+                      '• 遇权限错误将自动使用终端脚本',
                       style: TextStyle(fontSize: 12, color: Colors.orange),
                     ),
                     const SizedBox(height: 8),

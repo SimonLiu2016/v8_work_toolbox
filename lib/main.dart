@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 // 导入新工具页面
 import 'bc_config_tool.dart';
+import 'bc_config_shell.dart';
 import 'batch_rename_tool.dart';
 import 'folder_compare_tool.dart';
 
@@ -82,6 +83,20 @@ class MainToolsPage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const FolderCompareHomePage(),
+                  ),
+                );
+              },
+            ),
+            _buildToolCard(
+              context,
+              title: 'BC脚本管理',
+              subtitle: '管理BC配置脚本',
+              icon: Icons.code,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const BcConfigShellPage(),
                   ),
                 );
               },
