@@ -21,7 +21,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 应用信息表单控制器
   final TextEditingController _bundleIdController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _localizedNameController = TextEditingController();
+  final TextEditingController _localizedNameController =
+      TextEditingController();
   final TextEditingController _categoryController = TextEditingController();
   final TextEditingController _versionController = TextEditingController();
   final TextEditingController _updatedAtController = TextEditingController();
@@ -31,7 +32,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 语言包列表
   final List<String> _supportedLanguages = ['en'];
   final List<TextEditingController> _languageControllers = [];
-  
+
   // 可选语言列表
   final Map<String, String> _availableLanguages = {
     'ar': '阿拉伯语',
@@ -50,8 +51,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   // 快捷键数据
   final List<Map<String, dynamic>> _shortcuts = [];
-  final TextEditingController _shortcutsJsonController = TextEditingController();
-  
+  final TextEditingController _shortcutsJsonController =
+      TextEditingController();
+
   // 新增：交互式快捷键输入相关变量
   final List<TextEditingController> _idControllers = [];
   final List<TextEditingController> _nameControllers = [];
@@ -60,10 +62,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   final List<TextEditingController> _rawControllers = [];
   final List<TextEditingController> _categoryControllers = [];
   final List<TextEditingController> _whenControllers = [];
-  
+
   // 控制显示模式的变量
   bool _isJsonMode = false;
-  
+
   // 用于控制快捷键输入行的列表
   int _shortcutRowsCount = 0;
 
@@ -101,7 +103,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _iconPathController.dispose();
     _previewPathController.dispose();
     _outputDirController.dispose();
-    
+
     // 处理快捷键相关的控制器
     for (var controller in _idControllers) controller.dispose();
     for (var controller in _nameControllers) controller.dispose();
@@ -110,7 +112,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     for (var controller in _rawControllers) controller.dispose();
     for (var controller in _categoryControllers) controller.dispose();
     for (var controller in _whenControllers) controller.dispose();
-    
+
     super.dispose();
   }
 
@@ -129,7 +131,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
           children: [
             _buildAppInfoSection(),
             const SizedBox(height: 20),
-            _buildFileSection(),  // 移动到支持语言之前
+            _buildFileSection(), // 移动到支持语言之前
             const SizedBox(height: 20),
             _buildLanguageSection(),
             const SizedBox(height: 20),
@@ -269,7 +271,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             const SizedBox(height: 10),
             if (!_isJsonMode) ...[
               // 交互式模式
-              ...List.generate(_shortcutRowsCount, (index) => _buildShortcutRow(index)),
+              ...List.generate(
+                _shortcutRowsCount,
+                (index) => _buildShortcutRow(index),
+              ),
               const SizedBox(height: 10),
               ElevatedButton.icon(
                 onPressed: _addShortcutRow,
@@ -291,7 +296,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                   controller: _shortcutsJsonController,
                   maxLines: null,
                   decoration: const InputDecoration(
-                    hintText: '输入快捷键 JSON 数据，例如：\n[\n  {\n    "id": "example_shortcut",\n    "name": "Example Shortcut",\n    "description": "An example shortcut",\n    "keys": ["⌘", "C"],\n    "raw": "Cmd+C",\n    "category": "edit",\n    "when": "global"\n  }\n]',
+                    hintText:
+                        '输入快捷键 JSON 数据，例如：\n[\n  {\n    "id": "example_shortcut",\n    "name": "Example Shortcut",\n    "description": "An example shortcut",\n    "keys": ["⌘", "C"],\n    "raw": "Cmd+C",\n    "category": "edit",\n    "when": "global"\n  }\n]',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -446,7 +452,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   void _generateJsonFromInteractive() {
     List<Map<String, dynamic>> shortcutsList = [];
-    
+
     for (int i = 0; i < _shortcutRowsCount; i++) {
       Map<String, dynamic> shortcut = {
         'id': _idControllers[i].text,
@@ -457,34 +463,35 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         'category': _categoryControllers[i].text,
         'when': _whenControllers[i].text,
       };
-      
+
       // 只有当至少有一个字段不为空时才添加到列表中
       if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
         shortcutsList.add(shortcut);
       }
     }
-    
+
     _shortcutsJsonController.text = jsonEncode(shortcutsList);
   }
 
   void _parseJsonToInteractive() {
     if (_shortcutsJsonController.text.isEmpty) return;
-    
+
     try {
       List<dynamic> parsedJson = jsonDecode(_shortcutsJsonController.text);
-      
+
       if (parsedJson is List) {
         // 清空当前的行数和控制器
         _clearAllShortcutRows();
-        
+
         // 添加相应数量的行
         for (int i = 0; i < parsedJson.length; i++) {
           _addShortcutRow();
-          
+
           Map<String, dynamic> shortcut = parsedJson[i];
           _idControllers[i].text = shortcut['id']?.toString() ?? '';
           _nameControllers[i].text = shortcut['name']?.toString() ?? '';
-          _descriptionControllers[i].text = shortcut['description']?.toString() ?? '';
+          _descriptionControllers[i].text =
+              shortcut['description']?.toString() ?? '';
           _keysControllers[i].text = _formatKeysList(shortcut['keys']);
           _rawControllers[i].text = shortcut['raw']?.toString() ?? '';
           _categoryControllers[i].text = shortcut['category']?.toString() ?? '';
@@ -524,7 +531,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     for (var controller in _rawControllers) controller.dispose();
     for (var controller in _categoryControllers) controller.dispose();
     for (var controller in _whenControllers) controller.dispose();
-    
+
     // 清空列表
     _idControllers.clear();
     _nameControllers.clear();
@@ -533,7 +540,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _rawControllers.clear();
     _categoryControllers.clear();
     _whenControllers.clear();
-    
+
     _shortcutRowsCount = 0;
   }
 
@@ -550,7 +557,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             ),
             const SizedBox(height: 10),
             _buildFilePathField(_iconPathController, '图标文件路径', '选择图标文件 (icns)'),
-            _buildFilePathField(_previewPathController, '预览图路径', '选择预览图文件 (png)'),
+            _buildFilePathField(
+              _previewPathController,
+              '预览图路径',
+              '选择预览图文件 (png)',
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -582,17 +593,18 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
-  Widget _buildFilePathField(TextEditingController controller, String label, String hintText) {
+  Widget _buildFilePathField(
+    TextEditingController controller,
+    String label,
+    String hintText,
+  ) {
     return Row(
       children: [
         Expanded(
           child: TextField(
             controller: controller,
             readOnly: true,
-            decoration: InputDecoration(
-              labelText: label,
-              hintText: hintText,
-            ),
+            decoration: InputDecoration(labelText: label, hintText: hintText),
           ),
         ),
         const SizedBox(width: 10),
@@ -613,16 +625,18 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
     return selectedDirectory;
   }
-  
+
   Future<String?> _pickFile(String label) async {
     String? filePath;
-    
+
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: label.contains('图标') ? ['icns', 'png', 'jpg', 'jpeg'] : 
-                         label.contains('预览图') ? ['png', 'jpg', 'jpeg', 'gif'] : 
-                         ['*'],
+        allowedExtensions: label.contains('图标')
+            ? ['icns', 'png', 'jpg', 'jpeg']
+            : label.contains('预览图')
+            ? ['png', 'jpg', 'jpeg', 'gif']
+            : ['*'],
         allowMultiple: false,
       );
 
@@ -635,7 +649,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
     return filePath;
   }
-
 
   Widget _buildGenerateButton() {
     return Center(
@@ -740,7 +753,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             'category': _categoryControllers[i].text,
             'when': _whenControllers[i].text,
           };
-          
+
           // 只有当至少有一个字段不为空时才添加到列表中
           if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
             shortcuts.add(shortcut);
@@ -790,7 +803,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     required String localizedName,
     required String category,
     required String version,
-    required int shortcutCount,  // 这个参数仍然保留，但实际值由调用方传入
+    required int shortcutCount, // 这个参数仍然保留，但实际值由调用方传入
     required String updatedAt,
     required String iconFormat,
     required String description,
@@ -877,14 +890,14 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       // 6. 压缩为 ZIP
       String zipPath = path.join(
         tempDir.path,
-        '${bundleId}_$version}_${updatedAt}.zip',
+        '${bundleId}_${version}_$updatedAt.zip',
       );
       await _createZipFromDirectory(packageDir, zipPath);
 
       // 7. 加密 ZIP 文件
       String encryptedPath = path.join(
         tempDir.path,
-        '${bundleId}_$version}_${updatedAt}.kma',
+        '${bundleId}_${version}_$updatedAt.kma',
       );
       await _encryptFile(zipPath, encryptedPath, _encryptionPassword);
 
@@ -961,7 +974,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     return password;
   }
 
-
   void _showErrorDialog(String message) {
     showDialog(
       context: context,
@@ -1017,7 +1029,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _showLanguageSelectionDialog() {
     // 创建一个临时的已选语言列表，用于对话框中的选择状态
     List<String> selectedLanguages = List.from(_supportedLanguages);
-    
+
     showDialog(
       context: context,
       builder: (context) {
@@ -1033,7 +1045,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                       TextButton(
                         onPressed: () {
                           setState(() {
-                            selectedLanguages = _availableLanguages.keys.toList();
+                            selectedLanguages = _availableLanguages.keys
+                                .toList();
                           });
                         },
                         child: const Text('全选'),
@@ -1088,7 +1101,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                     setState(() {
                       _supportedLanguages.clear();
                       _supportedLanguages.addAll(selectedLanguages);
-                      
+
                       // 更新语言包内容
                       _localeJsons.clear();
                       for (String lang in _supportedLanguages) {
@@ -1231,7 +1244,3 @@ class KmaPackageUtil {
     return password;
   }
 }
-
-
-
-
