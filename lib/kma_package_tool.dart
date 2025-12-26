@@ -53,8 +53,22 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   // 快捷键数据
   final List<Map<String, dynamic>> _shortcuts = [];
-  final TextEditingController _shortcutsJsonController =
-      TextEditingController();
+  final TextEditingController _shortcutsJsonController = TextEditingController();
+  
+  // 新增：交互式快捷键输入相关变量
+  final List<TextEditingController> _idControllers = [];
+  final List<TextEditingController> _nameControllers = [];
+  final List<TextEditingController> _descriptionControllers = [];
+  final List<TextEditingController> _keysControllers = [];
+  final List<TextEditingController> _rawControllers = [];
+  final List<TextEditingController> _categoryControllers = [];
+  final List<TextEditingController> _whenControllers = [];
+  
+  // 控制显示模式的变量
+  bool _isJsonMode = false;
+  
+  // 用于控制快捷键输入行的列表
+  int _shortcutRowsCount = 0;
 
   // 语言包数据
   final Map<String, String> _localeJsons = {};
@@ -89,9 +103,16 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _shortcutsJsonController.dispose();
     _iconPathController.dispose();
     _previewPathController.dispose();
-    for (var controller in _languageControllers) {
-      controller.dispose();
-    }
+    
+    // 处理快捷键相关的控制器
+    for (var controller in _idControllers) controller.dispose();
+    for (var controller in _nameControllers) controller.dispose();
+    for (var controller in _descriptionControllers) controller.dispose();
+    for (var controller in _keysControllers) controller.dispose();
+    for (var controller in _rawControllers) controller.dispose();
+    for (var controller in _categoryControllers) controller.dispose();
+    for (var controller in _whenControllers) controller.dispose();
+    
     super.dispose();
   }
 
@@ -204,27 +225,319 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '快捷键信息 (JSON 格式)',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '快捷键信息',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                Row(
+                  children: [
+                    FilterChip(
+                      label: const Text('交互式'),
+                      selected: !_isJsonMode,
+                      onSelected: (bool selected) {
+                        if (selected) {
+                          // 从 JSON 模式切换到交互模式时，解析 JSON 数据
+                          if (_isJsonMode) {
+                            _parseJsonToInteractive();
+                          }
+                          setState(() {
+                            _isJsonMode = false;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    FilterChip(
+                      label: const Text('JSON'),
+                      selected: _isJsonMode,
+                      onSelected: (bool selected) {
+                        if (selected) {
+                          // 从交互模式切换到 JSON 模式时，生成 JSON 数据
+                          if (!_isJsonMode) {
+                            _generateJsonFromInteractive();
+                          }
+                          setState(() {
+                            _isJsonMode = true;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
             const SizedBox(height: 10),
-            SizedBox(
-              height: 200,
-              child: TextField(
-                controller: _shortcutsJsonController,
-                maxLines: null,
-                decoration: const InputDecoration(
-                  hintText:
-                      '输入快捷键 JSON 数据，例如：\n[\n  {\n    "id": "example_shortcut",\n    "name": "Example Shortcut",\n    "description": "An example shortcut",\n    "keys": ["⌘", "C"],\n    "raw": "Cmd+C",\n    "category": "edit",\n    "when": "global"\n  }\n]',
-                  border: OutlineInputBorder(),
+            if (!_isJsonMode) ...[
+              // 交互式模式
+              ...List.generate(_shortcutRowsCount, (index) => _buildShortcutRow(index)),
+              const SizedBox(height: 10),
+              ElevatedButton.icon(
+                onPressed: _addShortcutRow,
+                icon: const Icon(Icons.add),
+                label: const Text('添加快捷键'),
+              ),
+              const SizedBox(height: 10),
+              ElevatedButton.icon(
+                onPressed: _removeLastShortcutRow,
+                icon: const Icon(Icons.remove),
+                label: const Text('删除最后一行'),
+              ),
+            ] else ...[
+              // JSON 模式
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 200,
+                child: TextField(
+                  controller: _shortcutsJsonController,
+                  maxLines: null,
+                  decoration: const InputDecoration(
+                    hintText: '输入快捷键 JSON 数据，例如：\n[\n  {\n    "id": "example_shortcut",\n    "name": "Example Shortcut",\n    "description": "An example shortcut",\n    "keys": ["⌘", "C"],\n    "raw": "Cmd+C",\n    "category": "edit",\n    "when": "global"\n  }\n]',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShortcutRow(int index) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _idControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: 'ID (英文小写和下划线)',
+                      hintText: '如: copy_text',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _nameControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: '名称',
+                      hintText: '快捷键名称',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _descriptionControllers[index],
+              decoration: const InputDecoration(
+                labelText: '描述',
+                hintText: '快捷键描述',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _keysControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: '按键组合',
+                      hintText: '如: ["⌘", "C"]',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _rawControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: '原始格式',
+                      hintText: '如: Cmd+C',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _categoryControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: '类型',
+                      hintText: '如: edit',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _whenControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: '使用时机',
+                      hintText: '如: global',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  onPressed: () {
+                    _removeShortcutRow(index);
+                  },
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  void _addShortcutRow() {
+    setState(() {
+      _shortcutRowsCount++;
+      _idControllers.add(TextEditingController());
+      _nameControllers.add(TextEditingController());
+      _descriptionControllers.add(TextEditingController());
+      _keysControllers.add(TextEditingController());
+      _rawControllers.add(TextEditingController());
+      _categoryControllers.add(TextEditingController());
+      _whenControllers.add(TextEditingController());
+    });
+  }
+
+  void _removeShortcutRow(int index) {
+    if (_shortcutRowsCount > 0) {
+      setState(() {
+        _idControllers.removeAt(index);
+        _nameControllers.removeAt(index);
+        _descriptionControllers.removeAt(index);
+        _keysControllers.removeAt(index);
+        _rawControllers.removeAt(index);
+        _categoryControllers.removeAt(index);
+        _whenControllers.removeAt(index);
+        _shortcutRowsCount--;
+      });
+    }
+  }
+
+  void _removeLastShortcutRow() {
+    if (_shortcutRowsCount > 0) {
+      _removeShortcutRow(_shortcutRowsCount - 1);
+    }
+  }
+
+  void _generateJsonFromInteractive() {
+    List<Map<String, dynamic>> shortcutsList = [];
+    
+    for (int i = 0; i < _shortcutRowsCount; i++) {
+      Map<String, dynamic> shortcut = {
+        'id': _idControllers[i].text,
+        'name': _nameControllers[i].text,
+        'description': _descriptionControllers[i].text,
+        'keys': _parseKeysString(_keysControllers[i].text),
+        'raw': _rawControllers[i].text,
+        'category': _categoryControllers[i].text,
+        'when': _whenControllers[i].text,
+      };
+      
+      // 只有当至少有一个字段不为空时才添加到列表中
+      if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
+        shortcutsList.add(shortcut);
+      }
+    }
+    
+    _shortcutsJsonController.text = jsonEncode(shortcutsList);
+  }
+
+  void _parseJsonToInteractive() {
+    if (_shortcutsJsonController.text.isEmpty) return;
+    
+    try {
+      List<dynamic> parsedJson = jsonDecode(_shortcutsJsonController.text);
+      
+      if (parsedJson is List) {
+        // 清空当前的行数和控制器
+        _clearAllShortcutRows();
+        
+        // 添加相应数量的行
+        for (int i = 0; i < parsedJson.length; i++) {
+          _addShortcutRow();
+          
+          Map<String, dynamic> shortcut = parsedJson[i];
+          _idControllers[i].text = shortcut['id']?.toString() ?? '';
+          _nameControllers[i].text = shortcut['name']?.toString() ?? '';
+          _descriptionControllers[i].text = shortcut['description']?.toString() ?? '';
+          _keysControllers[i].text = _formatKeysList(shortcut['keys']);
+          _rawControllers[i].text = shortcut['raw']?.toString() ?? '';
+          _categoryControllers[i].text = shortcut['category']?.toString() ?? '';
+          _whenControllers[i].text = shortcut['when']?.toString() ?? '';
+        }
+      }
+    } catch (e) {
+      _showErrorDialog('JSON 格式错误: $e');
+    }
+  }
+
+  List<dynamic> _parseKeysString(String keysString) {
+    if (keysString.startsWith('[') && keysString.endsWith(']')) {
+      try {
+        return jsonDecode(keysString);
+      } catch (e) {
+        // 如果解析失败，返回原字符串
+        return [keysString];
+      }
+    }
+    return [keysString];
+  }
+
+  String _formatKeysList(dynamic keys) {
+    if (keys is List) {
+      return jsonEncode(keys);
+    }
+    return keys?.toString() ?? '';
+  }
+
+  void _clearAllShortcutRows() {
+    // 清空所有控制器
+    for (var controller in _idControllers) controller.dispose();
+    for (var controller in _nameControllers) controller.dispose();
+    for (var controller in _descriptionControllers) controller.dispose();
+    for (var controller in _keysControllers) controller.dispose();
+    for (var controller in _rawControllers) controller.dispose();
+    for (var controller in _categoryControllers) controller.dispose();
+    for (var controller in _whenControllers) controller.dispose();
+    
+    // 清空列表
+    _idControllers.clear();
+    _nameControllers.clear();
+    _descriptionControllers.clear();
+    _keysControllers.clear();
+    _rawControllers.clear();
+    _categoryControllers.clear();
+    _whenControllers.clear();
+    
+    _shortcutRowsCount = 0;
   }
 
   Widget _buildFileSection() {
@@ -392,15 +705,36 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
       // 解析快捷键 JSON
       List<Map<String, dynamic>> shortcuts = [];
-      if (_shortcutsJsonController.text.isNotEmpty) {
-        try {
-          var parsedJson = jsonDecode(_shortcutsJsonController.text);
-          if (parsedJson is List) {
-            shortcuts = parsedJson.cast<Map<String, dynamic>>();
+      if (!_isJsonMode) {
+        // 如果在交互模式下，从输入字段生成快捷键数据
+        for (int i = 0; i < _shortcutRowsCount; i++) {
+          Map<String, dynamic> shortcut = {
+            'id': _idControllers[i].text,
+            'name': _nameControllers[i].text,
+            'description': _descriptionControllers[i].text,
+            'keys': _parseKeysString(_keysControllers[i].text),
+            'raw': _rawControllers[i].text,
+            'category': _categoryControllers[i].text,
+            'when': _whenControllers[i].text,
+          };
+          
+          // 只有当至少有一个字段不为空时才添加到列表中
+          if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
+            shortcuts.add(shortcut);
           }
-        } catch (e) {
-          _showErrorDialog('快捷键 JSON 格式错误: $e');
-          return;
+        }
+      } else {
+        // 如果在 JSON 模式下，解析 JSON 字符串
+        if (_shortcutsJsonController.text.isNotEmpty) {
+          try {
+            var parsedJson = jsonDecode(_shortcutsJsonController.text);
+            if (parsedJson is List) {
+              shortcuts = parsedJson.cast<Map<String, dynamic>>();
+            }
+          } catch (e) {
+            _showErrorDialog('快捷键 JSON 格式错误: $e');
+            return;
+          }
         }
       }
 
@@ -411,7 +745,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         localizedName: _localizedNameController.text,
         category: _categoryController.text,
         version: _versionController.text,
-        shortcutCount: int.tryParse(_shortcutCountController.text) ?? 0,
+        shortcutCount: shortcuts.length,
         updatedAt: _updatedAtController.text,
         iconFormat: _iconFormatController.text,
         description: _descriptionController.text,
@@ -907,6 +1241,14 @@ class KmaPackageUtil {
     return password;
   }
 }
+
+
+
+
+
+
+
+
 
 
 
