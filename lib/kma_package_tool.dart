@@ -87,6 +87,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       ' ',
     )[0]; // 默认为今天
     _iconFormatController.text = 'icns'; // 默认格式
+
+    // 初始化解压功能的控制器
+    _kmaFileController = TextEditingController();
+    _extractOutputDirController = TextEditingController();
   }
 
   @override
@@ -103,6 +107,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _iconPathController.dispose();
     _previewPathController.dispose();
     _outputDirController.dispose();
+    _kmaFileController.dispose();
+    _extractOutputDirController.dispose();
 
     // 处理快捷键相关的控制器
     for (var controller in _idControllers) controller.dispose();
@@ -140,6 +146,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _buildGenerateButton(),
             const SizedBox(height: 20),
             _buildPasswordSection(),
+            const SizedBox(height: 20),
+            _buildExtractSection(),
           ],
         ),
       ),
@@ -711,6 +719,93 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
+  Widget _buildExtractSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '解压 KMA 包',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _kmaFileController,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'KMA 包文件',
+                      hintText: '选择要解压的 KMA 包文件',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: () async {
+                    String? kmaFilePath = await _pickKmaFile();
+                    if (kmaFilePath != null) {
+                      _selectedKmaFile = kmaFilePath;
+                      _kmaFileController.text = kmaFilePath;
+                    }
+                  },
+                  child: const Text('选择'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _extractOutputDirController,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: '解压输出目录',
+                      hintText: '选择解压后的文件存放目录',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: () async {
+                    String? outputDir = await _pickDirectory();
+                    if (outputDir != null) {
+                      _selectedExtractOutputDir = outputDir;
+                      _extractOutputDirController.text = outputDir;
+                    }
+                  },
+                  child: const Text('选择'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Center(
+              child: ElevatedButton.icon(
+                onPressed: _extractKmaPackage,
+                icon: const Icon(Icons.unarchive),
+                label: const Text('解压 KMA 包'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 用于解压功能的控制器和变量
+  late TextEditingController _kmaFileController;
+  late TextEditingController _extractOutputDirController;
+  String? _selectedKmaFile;
+  String? _selectedExtractOutputDir;
+
   Widget _buildTextField(
     TextEditingController controller,
     String label,
@@ -1121,6 +1216,45 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       },
     );
   }
+
+  Future<String?> _pickKmaFile() async {
+    String? filePath;
+
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['kma'],
+        allowMultiple: false,
+      );
+
+      if (result != null) {
+        filePath = result.files.single.path;
+      }
+    } catch (e) {
+      _showErrorDialog('文件选择失败: $e');
+    }
+
+    return filePath;
+  }
+
+  void _extractKmaPackage() async {
+    if (_selectedKmaFile == null || _selectedExtractOutputDir == null) {
+      _showErrorDialog('请选择 KMA 包文件和解压输出目录');
+      return;
+    }
+
+    try {
+      await KmaPackageUtil.extractKmaPackage(
+        inputPath: _selectedKmaFile!,
+        outputDir: _selectedExtractOutputDir!,
+        password: _encryptionPassword,
+      );
+
+      _showSuccessDialog('KMA 包解压成功！\n路径: $_selectedExtractOutputDir');
+    } catch (e) {
+      _showErrorDialog('解压 KMA 包时出错: $e');
+    }
+  }
 }
 
 // 独立的 KMA 包处理工具类
@@ -1232,6 +1366,62 @@ class KmaPackageUtil {
         await File(tempZipPath).delete();
       }
       rethrow;
+    }
+  }
+
+  /// 解压 KMA 包（解密并解压缩）
+  static Future<String> extractKmaPackage({
+    required String inputPath,
+    required String outputDir,
+    required String password,
+  }) async {
+    String tempDecryptedPath = '${outputDir}/temp_decrypted.zip';
+
+    try {
+      // 解密 KMA 文件
+      await decryptFile(inputPath, tempDecryptedPath, password);
+
+      // 解压缩 ZIP 文件到输出目录
+      await extractZipToDirectory(tempDecryptedPath, outputDir);
+
+      // 删除临时解密文件
+      await File(tempDecryptedPath).delete();
+
+      return outputDir;
+    } catch (e) {
+      // 如果出错，清理临时文件
+      if (await File(tempDecryptedPath).exists()) {
+        await File(tempDecryptedPath).delete();
+      }
+      rethrow;
+    }
+  }
+
+  /// 解压缩 ZIP 文件到指定目录
+  static Future<void> extractZipToDirectory(
+    String zipPath,
+    String outputDir,
+  ) async {
+    List<int> zipBytes = await File(zipPath).readAsBytes();
+    Archive archive = ZipDecoder().decodeBytes(zipBytes);
+
+    // 确保输出目录存在
+    await Directory(outputDir).create(recursive: true);
+
+    for (ArchiveFile file in archive) {
+      String filePath = path.join(outputDir, file.name);
+
+      if (file.isFile) {
+        // 确保父目录存在
+        String parentDir = path.dirname(filePath);
+        await Directory(parentDir).create(recursive: true);
+
+        // 写入文件
+        File(filePath).writeAsBytes(file.content as List<int>);
+      } else {
+        // 创建目录
+        await Directory(filePath).create(recursive: true);
+      }
     }
   }
 
