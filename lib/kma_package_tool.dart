@@ -96,7 +96,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   final String _baiduAppId = '20221103001434737'; // 百度翻译API App ID
   final String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
   bool _useTranslation = true; // 是否使用翻译功能
-  String _sourceLanguage = 'zh'; // 源语言，默认为中文
+  String _sourceLanguage = 'en'; // 源语言，默认为英文
+
+  // 日志控制台相关
+  final List<String> _logEntries = [];
+  final ScrollController _logScrollController = ScrollController();
+  final TextEditingController _logController = TextEditingController();
 
   @override
   void initState() {
@@ -109,8 +114,33 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     // 初始化解压功能的控制器
     _kmaFileController = TextEditingController();
     _extractOutputDirController = TextEditingController();
+  
+    // 添加初始日志
+    _addLog('KMA 包生成工具已启动');
+    _addLog('默认源语言设置为: 英文');
   }
 
+  // 添加日志条目
+  void _addLog(String message) {
+    String timestamp = DateTime.now().toString().split('.')[0];
+    String logEntry = '[$timestamp] $message';
+    
+    setState(() {
+      _logEntries.add(logEntry);
+      _logController.text = _logEntries.join('\n');
+      _logController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _logController.text.length),
+      );
+    });
+    
+    // 滚动到底部
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
+      }
+    });
+  }
+  
   @override
   void dispose() {
     _bundleIdController.dispose();
@@ -138,6 +168,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     for (var controller in _categoryControllers) controller.dispose();
     for (var controller in _whenControllers) controller.dispose();
 
+    // 处理日志相关的控制器
+    _logController.dispose();
+
     super.dispose();
   }
 
@@ -158,6 +191,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             const SizedBox(height: 20),
             _buildFileSection(), // 移动到支持语言之前
             const SizedBox(height: 20),
+            _buildTranslationConfigSection(),
+            const SizedBox(height: 20),
             _buildLanguageSection(),
             const SizedBox(height: 20),
             _buildShortcutSection(),
@@ -166,9 +201,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             const SizedBox(height: 20),
             _buildPasswordSection(),
             const SizedBox(height: 20),
-            _buildTranslationConfigSection(),
-            const SizedBox(height: 20),
             _buildExtractSection(),
+            const SizedBox(height: 20),
+            _buildLogConsole(),
           ],
         ),
       ),
@@ -649,13 +684,18 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   void _generateKmaPackage() async {
     try {
+      _addLog('开始生成 KMA 包...');
+      
       // 验证输入
       if (_bundleIdController.text.isEmpty ||
           _nameController.text.isEmpty ||
           _versionController.text.isEmpty) {
         _showErrorDialog('请填写必要的应用信息：Bundle ID、应用名称和版本号');
+        _addLog('输入验证失败：缺少必要的应用信息');
         return;
       }
+      
+      _addLog('输入验证通过');
 
       // 解析快捷键 JSON
       List<Map<String, dynamic>> shortcuts = [];
@@ -685,12 +725,16 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             if (parsedJson is List) {
               shortcuts = parsedJson.cast<Map<String, dynamic>>();
             }
+            _addLog('成功解析快捷键 JSON');
           } catch (e) {
             _showErrorDialog('快捷键 JSON 格式错误: $e');
+            _addLog('快捷键 JSON 格式错误: $e');
             return;
           }
         }
       }
+      
+      _addLog('快捷键数量: ${shortcuts.length}');
 
       // 生成 KMA 包
       String outputPath = await _createKmaPackage(
@@ -708,9 +752,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         iconPath: _iconPathController.text,
         previewPath: _previewPathController.text,
       );
-
+      
+      _addLog('KMA 包生成成功！路径: $outputPath');
       _showSuccessDialog('KMA 包生成成功！\n路径: $outputPath');
     } catch (e) {
+      _addLog('生成 KMA 包时出错: $e');
       _showErrorDialog('生成 KMA 包时出错: $e');
     }
   }
@@ -735,12 +781,13 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     String packageDir = path.join(tempDir.path, 'package');
 
     try {
-      print('开始创建 KMA 包...');
-      print('临时目录: ${tempDir.path}');
-      print('包目录: $packageDir');
+      _addLog('开始创建 KMA 包...');
+      _addLog('临时目录: ${tempDir.path}');
+      _addLog('包目录: $packageDir');
 
       // 创建包目录结构
       await Directory(packageDir).create(recursive: true);
+      _addLog('已创建包目录结构');
 
       // 1. 创建 info.json
       Map<String, dynamic> infoJson = {
@@ -758,28 +805,28 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       };
       String infoJsonPath = path.join(packageDir, 'info.json');
       await File(infoJsonPath).writeAsString(jsonEncode(infoJson));
-      print('已创建 info.json: $infoJsonPath');
+      _addLog('已创建 info.json: $infoJsonPath');
 
       // 2. 复制图标文件
       if (iconPath.isNotEmpty && File(iconPath).existsSync()) {
         String iconDestPath = path.join(packageDir, 'icon.$iconFormat');
         await File(iconPath).copy(iconDestPath);
-        print('已复制图标文件: $iconDestPath');
+        _addLog('已复制图标文件: $iconDestPath');
       } else {
         String placeholderPath = path.join(packageDir, 'icon.$iconFormat');
         await File(placeholderPath).writeAsString('PLACEHOLDER');
-        print('已创建图标占位文件: $placeholderPath');
+        _addLog('已创建图标占位文件: $placeholderPath');
       }
 
       // 3. 复制预览图
       if (previewPath.isNotEmpty && File(previewPath).existsSync()) {
         String previewDestPath = path.join(packageDir, 'preview.png');
         await File(previewPath).copy(previewDestPath);
-        print('已复制预览图: $previewDestPath');
+        _addLog('已复制预览图: $previewDestPath');
       } else {
         String placeholderPath = path.join(packageDir, 'preview.png');
         await File(placeholderPath).writeAsString('PLACEHOLDER');
-        print('已创建预览图占位文件: $placeholderPath');
+        _addLog('已创建预览图占位文件: $placeholderPath');
       }
 
       // 4. 创建 shortcuts.en.json
@@ -787,7 +834,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
       // 如果源语言不是英文，需要将快捷键翻译成英文
       if (_useTranslation && _sourceLanguage != 'en') {
-        print('翻译快捷键列表为英文...');
+        _addLog('翻译快捷键列表为英文...');
         Map<String, dynamic> translatedShortcutsForEn =
             await TranslationUtil.translateShortcuts(
               shortcuts,
@@ -795,17 +842,19 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
               'en', // 翻译到英文
             );
         shortcutsForEnJson = translatedShortcutsForEn['shortcuts'];
-        print('快捷键已翻译为英文');
+        _addLog('快捷键已翻译为英文');
+      } else {
+        _addLog('源语言与目标语言相同，无需翻译快捷键');
       }
 
       String shortcutsPath = path.join(packageDir, 'shortcuts.en.json');
       await File(shortcutsPath).writeAsString(jsonEncode(shortcutsForEnJson));
-      print('已创建 shortcuts.en.json: $shortcutsPath');
+      _addLog('已创建 shortcuts.en.json: $shortcutsPath');
 
       // 5. 创建 locales 目录和语言包
       Directory localesDir = Directory(path.join(packageDir, 'locales'));
       await localesDir.create();
-      print('已创建 locales 目录: ${localesDir.path}');
+      _addLog('已创建 locales 目录: ${localesDir.path}');
 
       // 为每种支持的语言创建语言包，除了 'en'（因为它已经作为 shortcuts.en.json 存在）
       for (String lang in supportedLanguages) {
@@ -814,7 +863,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
           if (_useTranslation) {
             // 使用翻译功能生成语言包
-            print('开始翻译语言包: $lang');
+            _addLog('开始翻译语言包: $lang');
 
             // 如果目标语言和源语言相同，则不需要翻译
             if (lang == _sourceLanguage) {
@@ -825,6 +874,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                 'category': category,
                 'shortcuts': shortcuts, // 直接使用原始快捷键
               };
+              _addLog('目标语言与源语言相同，使用原始内容: $lang');
             } else {
               // 需要翻译
               // 翻译应用信息
@@ -853,7 +903,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
               };
             }
 
-            print('完成翻译语言包: $lang');
+            _addLog('完成翻译语言包: $lang');
           } else {
             // 不使用翻译功能，创建基础语言包
             localeJson = {
@@ -864,11 +914,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                 shortcuts,
               ), // 生成对应语言的快捷键数据
             };
+            _addLog('创建基础语言包 (非翻译模式): $lang');
           }
 
           String localePath = path.join(localesDir.path, '$lang.json');
           await File(localePath).writeAsString(jsonEncode(localeJson));
-          print('已创建语言包: $localePath');
+          _addLog('已创建语言包: $localePath');
         }
       }
 
@@ -878,7 +929,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         '${bundleId}_${version}_$updatedAt.zip',
       );
       await KmaPackageUtil.createZipFromDirectory(packageDir, zipPath);
-      print('已创建 ZIP 文件: $zipPath');
+      _addLog('已创建 ZIP 文件: $zipPath');
 
       // 7. 加密 ZIP 文件
       String encryptedPath = path.join(
@@ -890,42 +941,43 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         encryptedPath,
         _encryptionPassword,
       );
-      print('已创建加密 KMA 文件: $encryptedPath');
+      _addLog('已创建加密 KMA 文件: $encryptedPath');
 
       // 8. 移动到指定的输出目录
       String outputDir = _outputDirController.text;
-      print('输出目录: $outputDir');
+      _addLog('输出目录: $outputDir');
 
       if (outputDir.isNotEmpty) {
         // 确保输出目录存在
         Directory outputDirectory = Directory(outputDir);
         if (!await outputDirectory.exists()) {
-          print('输出目录不存在，尝试创建: $outputDir');
+          _addLog('输出目录不存在，尝试创建: $outputDir');
           await outputDirectory.create(recursive: true);
         }
 
         String finalPath = path.join(outputDir, path.basename(encryptedPath));
-        print('目标路径: $finalPath');
+        _addLog('目标路径: $finalPath');
 
         // 检查源文件是否存在
         File sourceFile = File(encryptedPath);
         if (!await sourceFile.exists()) {
-          print('错误：源文件不存在: $encryptedPath');
+          _addLog('错误：源文件不存在: $encryptedPath');
           throw Exception('源加密文件不存在: $encryptedPath');
         }
 
-        print('开始复制文件从 $encryptedPath 到 $finalPath');
+        _addLog('开始复制文件从 $encryptedPath 到 $finalPath');
         await sourceFile.copy(finalPath);
         await tempDir.delete(recursive: true);
-        print('成功生成 KMA 包: $finalPath');
+        _addLog('成功生成 KMA 包: $finalPath');
         return finalPath;
       } else {
-        print('未指定输出目录，返回临时文件路径: $encryptedPath');
-        // 如果用户没有指定输出目录，则使用临时目录
+        // 如果没有指定输出目录，返回加密文件路径
+        await tempDir.delete(recursive: true);
+        _addLog('返回临时 KMA 文件: $encryptedPath');
         return encryptedPath;
       }
     } catch (e) {
-      print('创建 KMA 包时发生错误: $e');
+      _addLog('创建 KMA 包时发生错误: $e');
       await tempDir.delete(recursive: true);
       rethrow;
     }
@@ -1121,5 +1173,60 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _copyPasswordToClipboard() {
     Clipboard.setData(ClipboardData(text: _encryptionPassword));
     _showSuccessDialog('密码已复制到剪贴板');
+  }
+
+  Widget _buildLogConsole() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '运行日志',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              height: 200,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: TextField(
+                controller: _logController,
+                maxLines: null,
+                expands: true,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.all(8.0),
+                  hintText: '系统运行日志将显示在这里...',
+                ),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'Monospace',
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _logEntries.clear();
+                      _logController.clear();
+                    });
+                  },
+                  child: const Text('清空日志'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
