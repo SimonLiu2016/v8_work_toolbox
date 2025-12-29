@@ -19,6 +19,7 @@ dependencies:
   encrypt: ^5.0.3
   cryptography: ^2.0.0
   http: ^1.2.2
+  rate_limiter: ^1.0.0
 
 dev_dependencies:
   flutter_test:

@@ -9,6 +9,36 @@ import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
+// 限流相关变量
+DateTime? _lastRequestTime;
+int _requestCount = 0;
+const int _maxQps = 8; // 每秒最大请求数
+const int _intervalMs = 1000; // 1秒的毫秒数
+
+// 限流函数，确保QPS不超过8
+Future<void> _rateLimit() async {
+  DateTime now = DateTime.now();
+  int nowMs = now.millisecondsSinceEpoch;
+  int lastMs = _lastRequestTime?.millisecondsSinceEpoch ?? 0;
+
+  // 如果在同一个时间窗口内，检查请求数量
+  if (nowMs - lastMs < _intervalMs) {
+    if (_requestCount >= _maxQps) {
+      // 等待到下一个时间窗口
+      int waitTime = _intervalMs - (nowMs - lastMs);
+      await Future.delayed(Duration(milliseconds: waitTime));
+      _requestCount = 0;
+      _lastRequestTime = DateTime.now();
+    }
+  } else {
+    // 进入新的时间窗口，重置计数器
+    _requestCount = 0;
+    _lastRequestTime = now;
+  }
+
+  _requestCount++;
+}
+
 class KmaPackageUtil {
   /// 将指定目录压缩为 ZIP 文件
   static Future<void> createZipFromDirectory(
@@ -295,6 +325,12 @@ class TranslationUtil {
       'https://fanyi-api.baidu.com/api/trans/vip/translate?' + query,
     );
 
+    // 添加限流，确保QPS不超过8
+    await _rateLimit();
+    // 增加日志打印时间及调用信息
+    print(
+      '[${DateTime.now()}] 百度翻译API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
+    );
     final response = await http.get(
       url,
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
