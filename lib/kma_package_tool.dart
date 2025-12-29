@@ -10,6 +10,8 @@ import 'package:encrypt/encrypt.dart' as encrypt_package;
 import 'package:cryptography/cryptography.dart' as crypto_package;
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class KmaPackageToolPage extends StatefulWidget {
   const KmaPackageToolPage({super.key});
@@ -81,6 +83,13 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 密码固定值
   final String _encryptionPassword = '!QAZ2wsx#EDC\$#@!';
 
+  // 翻译器配置
+  String _translatorType = 'baidu'; // 'baidu'
+  String _baiduAppId = '20221103001434737'; // 百度翻译API App ID
+  String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
+  bool _useTranslation = true; // 是否使用翻译功能
+  String _sourceLanguage = 'zh'; // 源语言，默认为中文
+
   @override
   void initState() {
     super.initState();
@@ -108,6 +117,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _iconPathController.dispose();
     _previewPathController.dispose();
     _outputDirController.dispose();
+
     _kmaFileController.dispose();
     _extractOutputDirController.dispose();
 
@@ -147,6 +157,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _buildGenerateButton(),
             const SizedBox(height: 20),
             _buildPasswordSection(),
+            const SizedBox(height: 20),
+            _buildTranslationConfigSection(),
             const SizedBox(height: 20),
             _buildExtractSection(),
           ],
@@ -719,6 +731,63 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
+  Widget _buildTranslationConfigSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '翻译配置',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            SwitchListTile(
+              title: const Text('启用自动翻译'),
+              value: _useTranslation,
+              onChanged: (bool value) {
+                setState(() {
+                  _useTranslation = value;
+                });
+              },
+            ),
+            if (_useTranslation) ...[
+              const SizedBox(height: 10),
+              const Text(
+                '百度翻译',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                '已配置百度翻译API',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _sourceLanguage,
+                decoration: const InputDecoration(labelText: '源语言'),
+                items: <String>['zh', 'en'].map<DropdownMenuItem<String>>((
+                  String value,
+                ) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value == 'zh' ? '中文' : '英文'),
+                  );
+                }).toList(),
+                onChanged: (String? newValue) {
+                  setState(() {
+                    _sourceLanguage = newValue!;
+                  });
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildExtractSection() {
     return Card(
       child: Padding(
@@ -960,8 +1029,23 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       }
 
       // 4. 创建 shortcuts.en.json
+      List<Map<String, dynamic>> shortcutsForEnJson = shortcuts;
+
+      // 如果源语言不是英文，需要将快捷键翻译成英文
+      if (_useTranslation && _sourceLanguage != 'en') {
+        print('翻译快捷键列表为英文...');
+        Map<String, dynamic> translatedShortcutsForEn =
+            await _translateShortcuts(
+              shortcuts,
+              _sourceLanguage, // 从源语言
+              'en', // 翻译到英文
+            );
+        shortcutsForEnJson = translatedShortcutsForEn['shortcuts'];
+        print('快捷键已翻译为英文');
+      }
+
       String shortcutsPath = path.join(packageDir, 'shortcuts.en.json');
-      await File(shortcutsPath).writeAsString(jsonEncode(shortcuts));
+      await File(shortcutsPath).writeAsString(jsonEncode(shortcutsForEnJson));
       print('已创建 shortcuts.en.json: $shortcutsPath');
 
       // 5. 创建 locales 目录和语言包
@@ -972,16 +1056,59 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       // 为每种支持的语言创建语言包，除了 'en'（因为它已经作为 shortcuts.en.json 存在）
       for (String lang in supportedLanguages) {
         if (lang != 'en') {
-          // 创建语言包 JSON
-          // 为简单起见，这里创建一个基础的语言包，实际应用中可能需要用户提供对应的语言包内容
-          Map<String, dynamic> localeJson = {
-            'appLocalizedName': localizedName,
-            'appShortName': name,
-            'category': category,
-            'shortcuts': _generateEmptyShortcutsForLanguage(
-              shortcuts,
-            ), // 生成对应语言的快捷键数据
-          };
+          Map<String, dynamic> localeJson;
+
+          if (_useTranslation) {
+            // 使用翻译功能生成语言包
+            print('开始翻译语言包: $lang');
+
+            // 如果目标语言和源语言相同，则不需要翻译
+            if (lang == _sourceLanguage) {
+              // 源语言和目标语言相同，直接使用原文
+              localeJson = {
+                'appLocalizedName': localizedName,
+                'appShortName': name,
+                'category': category,
+                'shortcuts': shortcuts, // 直接使用原始快捷键
+              };
+            } else {
+              // 需要翻译
+              // 翻译应用信息
+              Map<String, dynamic> translatedAppInfo = await _translateAppInfo(
+                localizedName,
+                name,
+                category,
+                lang,
+              );
+
+              // 翻译快捷键信息
+              Map<String, dynamic> translatedShortcuts =
+                  await _translateShortcuts(
+                    shortcuts,
+                    _sourceLanguage, // 使用配置的源语言
+                    lang,
+                  );
+
+              localeJson = {
+                'appLocalizedName': translatedAppInfo['appLocalizedName'],
+                'appShortName': translatedAppInfo['appShortName'],
+                'category': translatedAppInfo['category'],
+                'shortcuts': translatedShortcuts['shortcuts'],
+              };
+            }
+
+            print('完成翻译语言包: $lang');
+          } else {
+            // 不使用翻译功能，创建基础语言包
+            localeJson = {
+              'appLocalizedName': localizedName,
+              'appShortName': name,
+              'category': category,
+              'shortcuts': _generateEmptyShortcutsForLanguage(
+                shortcuts,
+              ), // 生成对应语言的快捷键数据
+            };
+          }
 
           String localePath = path.join(localesDir.path, '$lang.json');
           await File(localePath).writeAsString(jsonEncode(localeJson));
@@ -1156,6 +1283,166 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         'when': shortcut['when'],
       };
     }).toList();
+  }
+
+  // 百度翻译 API
+  Future<String> _translateWithBaidu(
+    String text,
+    String sourceLang,
+    String targetLang,
+  ) async {
+    if (_baiduAppId.isEmpty || _baiduAppKey.isEmpty) {
+      throw Exception('百度 API Key 未设置');
+    }
+
+    // 百度翻译需要生成签名
+    String salt = DateTime.now().millisecondsSinceEpoch.toString();
+    String signStr = _baiduAppId + text + salt + _baiduAppKey;
+    String sign = md5.convert(utf8.encode(signStr)).toString();
+
+    // 百度翻译API使用GET请求
+    String query =
+        'q=' +
+        Uri.encodeComponent(text) +
+        '&from=${_convertToBaiduLangCode(sourceLang)}' +
+        '&to=${_convertToBaiduLangCode(targetLang)}' +
+        '&appid=$_baiduAppId' +
+        '&salt=$salt' +
+        '&sign=$sign';
+
+    final url = Uri.parse(
+      'https://fanyi-api.baidu.com/api/trans/vip/translate?' + query,
+    );
+
+    final response = await http.get(
+      url,
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data['trans_result'] != null &&
+          data['trans_result'] is List &&
+          data['trans_result'].isNotEmpty) {
+        return data['trans_result'][0]['dst'];
+      } else if (data['error_code'] != null) {
+        throw Exception('百度翻译错误: ${data['error_code']} - ${data['error_msg']}');
+      } else {
+        throw Exception('翻译失败：未返回翻译结果');
+      }
+    } else {
+      throw Exception('百度翻译 API 错误: ${response.body}');
+    }
+  }
+
+  // 翻译文本
+  Future<String> _translateText(
+    String text,
+    String sourceLang,
+    String targetLang,
+  ) async {
+    if (!text.trim().isNotEmpty) return text; // 如果文本为空，直接返回
+
+    try {
+      return await _translateWithBaidu(text, sourceLang, targetLang);
+    } catch (e) {
+      print('翻译失败: $e');
+      // 翻译失败时返回原文
+      return text;
+    }
+  }
+
+  // 批量翻译文本
+  Future<List<String>> _translateBatch(
+    List<String> texts,
+    String sourceLang,
+    String targetLang,
+  ) async {
+    List<String> results = [];
+    for (String text in texts) {
+      results.add(await _translateText(text, sourceLang, targetLang));
+      // 添加延迟以避免API限制
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    return results;
+  }
+
+  // 将语言代码转换为百度格式
+  String _convertToBaiduLangCode(String lang) {
+    // 百度翻译支持的语言代码映射
+    Map<String, String> baiduLangMap = {
+      'zh': 'zh',
+      'zh_CN': 'zh',
+      'zh_TW': 'cht',
+      'en': 'en',
+      'ja': 'jp',
+      'ko': 'kor',
+      'fr': 'fra',
+      'de': 'de',
+      'es': 'spa',
+      'ru': 'ru',
+      'ar': 'ara',
+      'pt': 'pt',
+      'hi': 'hi',
+    };
+    return baiduLangMap[lang] ?? lang;
+  }
+
+  // 翻译快捷键数据
+  Future<Map<String, dynamic>> _translateShortcuts(
+    List<Map<String, dynamic>> shortcuts,
+    String sourceLang,
+    String targetLang,
+  ) async {
+    List<Map<String, dynamic>> translatedShortcuts = [];
+
+    for (var shortcut in shortcuts) {
+      Map<String, dynamic> translatedShortcut = Map.from(shortcut);
+
+      // 翻译名称
+      if (shortcut['name'] != null && shortcut['name'].isNotEmpty) {
+        translatedShortcut['name'] = await _translateText(
+          shortcut['name'],
+          sourceLang,
+          targetLang,
+        );
+      }
+
+      // 翻译描述
+      if (shortcut['description'] != null &&
+          shortcut['description'].isNotEmpty) {
+        translatedShortcut['description'] = await _translateText(
+          shortcut['description'],
+          sourceLang,
+          targetLang,
+        );
+      }
+
+      translatedShortcuts.add(translatedShortcut);
+    }
+
+    return {'shortcuts': translatedShortcuts};
+  }
+
+  // 翻译应用信息
+  Future<Map<String, dynamic>> _translateAppInfo(
+    String appLocalizedName,
+    String name,
+    String category,
+    String targetLang,
+  ) async {
+    List<String> textsToTranslate = [appLocalizedName, name, category];
+    List<String> translatedTexts = await _translateBatch(
+      textsToTranslate,
+      _sourceLanguage, // 使用配置的源语言
+      targetLang,
+    );
+
+    return {
+      'appLocalizedName': translatedTexts[0],
+      'appShortName': translatedTexts[1],
+      'category': translatedTexts[2],
+    };
   }
 
   void _showLanguageSelectionDialog() {
