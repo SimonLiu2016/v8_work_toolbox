@@ -67,91 +67,93 @@ class KmaPackageUtil {
   static Future<void> encryptFile(
     String inputPath,
     String outputPath,
-    String rawKey,
-  ) async {
-    print('开始加密文件: $inputPath -> $outputPath');
+    String rawKey, [
+    Function(String)? logCallback,
+  ]) async {
+    logCallback?.call('开始加密文件: $inputPath -> $outputPath');
     List<int> fileBytes = await File(inputPath).readAsBytes();
-    print('已读取文件，大小: ${fileBytes.length} 字节');
+    logCallback?.call('已读取文件，大小: ${fileBytes.length} 字节');
 
     // 生成 16 字节随机盐值
     final salt = _generateRandomBytes(16);
-    print('已生成随机盐值，长度: ${salt.length} 字节');
+    logCallback?.call('已生成随机盐值，长度: ${salt.length} 字节');
 
     // 使用 PBKDF2 对 rawKey + salt 进行派生，生成 32 字节 AES-256 密钥
     final aesKeyList = await _deriveKeyWithPbkdf2(rawKey, salt);
     final aesKey = Uint8List.fromList(aesKeyList);
-    print('已派生 AES 密钥，长度: ${aesKey.length} 字节');
+    logCallback?.call('已派生 AES 密钥，长度: ${aesKey.length} 字节');
 
     // 使用派生的密钥进行 AES-256-GCM 加密
     final key = encrypt_package.Key(aesKey);
     final iv = encrypt_package.IV.fromSecureRandom(
       12,
     ); // GCM recommended IV size is 12 bytes
-    print('已生成随机 IV，长度: ${iv.bytes.length} 字节');
+    logCallback?.call('已生成随机 IV，长度: ${iv.bytes.length} 字节');
 
     final encrypter = encrypt_package.Encrypter(
       encrypt_package.AES(key, mode: encrypt_package.AESMode.gcm),
     );
-    print('已创建加密器');
+    logCallback?.call('已创建加密器');
 
     final encrypted = encrypter.encryptBytes(fileBytes, iv: iv);
-    print('已加密数据，加密后大小: ${encrypted.bytes.length} 字节');
+    logCallback?.call('已加密数据，加密后大小: ${encrypted.bytes.length} 字节');
 
     // 构建输出格式：[盐值(16字节) + IV(12字节) + 加密数据]
     final result = <int>[...salt, ...iv.bytes, ...encrypted.bytes];
-    print('构建最终数据，总长度: ${result.length} 字节');
+    logCallback?.call('构建最终数据，总长度: ${result.length} 字节');
 
     await File(outputPath).writeAsBytes(result);
-    print('已写入加密文件: $outputPath');
+    logCallback?.call('已写入加密文件: $outputPath');
   }
 
   /// 解密 AES-256-GCM 加密的文件（使用 PBKDF2 派生密钥）
   static Future<void> decryptFile(
     String inputPath,
     String outputPath,
-    String rawKey,
-  ) async {
-    print('开始解密文件: $inputPath -> $outputPath');
+    String rawKey, [
+    Function(String)? logCallback,
+  ]) async {
+    logCallback?.call('开始解密文件: $inputPath -> $outputPath');
     List<int> fileBytes = await File(inputPath).readAsBytes();
-    print('已读取加密文件，大小: ${fileBytes.length} 字节');
+    logCallback?.call('已读取加密文件，大小: ${fileBytes.length} 字节');
 
     // 提取盐值（前16字节）、IV（接下来12字节）和加密数据
     if (fileBytes.length < 28) {
       // 16 + 12 = 28
-      print('错误：加密文件格式错误：长度不足，实际长度: ${fileBytes.length}');
+      logCallback?.call('错误：加密文件格式错误：长度不足，实际长度: ${fileBytes.length}');
       throw Exception('加密文件格式错误：长度不足');
     }
 
     List<int> salt = fileBytes.sublist(0, 16);
     List<int> ivBytes = fileBytes.sublist(16, 28);
     List<int> encryptedData = fileBytes.sublist(28);
-    print(
+    logCallback?.call(
       '已提取盐值: ${salt.length} 字节, IV: ${ivBytes.length} 字节, 加密数据: ${encryptedData.length} 字节',
     );
 
     // 使用 PBKDF2 派生密钥
     final aesKeyList = await _deriveKeyWithPbkdf2(rawKey, salt);
     final aesKey = Uint8List.fromList(aesKeyList);
-    print('已派生 AES 解密密钥，长度: ${aesKey.length} 字节');
+    logCallback?.call('已派生 AES 解密密钥，长度: ${aesKey.length} 字节');
 
     // 使用派生的密钥进行解密
     final key = encrypt_package.Key(aesKey);
     final iv = encrypt_package.IV(Uint8List.fromList(ivBytes));
-    print('已创建解密 IV，长度: ${iv.bytes.length} 字节');
+    logCallback?.call('已创建解密 IV，长度: ${iv.bytes.length} 字节');
 
     final encrypter = encrypt_package.Encrypter(
       encrypt_package.AES(key, mode: encrypt_package.AESMode.gcm),
     );
-    print('已创建解密器');
+    logCallback?.call('已创建解密器');
 
     final decrypted = encrypter.decryptBytes(
       encrypt_package.Encrypted(Uint8List.fromList(encryptedData)),
       iv: iv,
     );
-    print('已解密数据，解密后大小: ${decrypted.length} 字节');
+    logCallback?.call('已解密数据，解密后大小: ${decrypted.length} 字节');
 
     await File(outputPath).writeAsBytes(decrypted);
-    print('已写入解密文件: $outputPath');
+    logCallback?.call('已写入解密文件: $outputPath');
   }
 
   /// 使用 PBKDF2 派生密钥
@@ -300,8 +302,9 @@ class TranslationUtil {
   static Future<String> _translateWithBaidu(
     String text,
     String sourceLang,
-    String targetLang,
-  ) async {
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
     if (_baiduAppId.isEmpty || _baiduAppKey.isEmpty) {
       throw Exception('百度 API Key 未设置');
     }
@@ -310,6 +313,10 @@ class TranslationUtil {
     String salt = DateTime.now().millisecondsSinceEpoch.toString();
     String signStr = _baiduAppId + text + salt + _baiduAppKey;
     String sign = md5.convert(utf8.encode(signStr)).toString();
+
+    logCallback?.call(
+      '百度翻译请求: 翻译文本(${text.length}字符) $sourceLang -> $targetLang',
+    );
 
     // 百度翻译API使用GET请求
     String query =
@@ -328,8 +335,8 @@ class TranslationUtil {
     // 添加限流，确保QPS不超过8
     await _rateLimit();
     // 增加日志打印时间及调用信息
-    print(
-      '[${DateTime.now()}] 百度翻译API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
+    logCallback?.call(
+      '百度翻译API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
     );
     final response = await http.get(
       url,
@@ -356,14 +363,20 @@ class TranslationUtil {
   static Future<String> translateText(
     String text,
     String sourceLang,
-    String targetLang,
-  ) async {
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
     if (!text.trim().isNotEmpty) return text; // 如果文本为空，直接返回
 
     try {
-      return await _translateWithBaidu(text, sourceLang, targetLang);
+      return await _translateWithBaidu(
+        text,
+        sourceLang,
+        targetLang,
+        logCallback,
+      );
     } catch (e) {
-      print('翻译失败: $e');
+      logCallback?.call('翻译失败: $e');
       // 翻译失败时返回原文
       return text;
     }
@@ -373,34 +386,53 @@ class TranslationUtil {
   static Future<List<String>> translateBatch(
     List<String> texts,
     String sourceLang,
-    String targetLang,
-  ) async {
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
     List<String> results = [];
-    for (String text in texts) {
-      results.add(await translateText(text, sourceLang, targetLang));
-      // 添加延迟以避免API限制
-      await Future.delayed(const Duration(milliseconds: 100));
+
+    for (int i = 0; i < texts.length; i++) {
+      String text = texts[i];
+      logCallback?.call('正在翻译文本 $i/${texts.length}: ${text.length} 字符');
+      String translated = await translateText(
+        text,
+        sourceLang,
+        targetLang,
+        logCallback,
+      );
+      results.add(translated);
     }
+
     return results;
   }
 
-  // 翻译快捷键数据
+  // 翻译快捷键
   static Future<Map<String, dynamic>> translateShortcuts(
     List<Map<String, dynamic>> shortcuts,
     String sourceLang,
-    String targetLang,
-  ) async {
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
     List<Map<String, dynamic>> translatedShortcuts = [];
 
-    for (var shortcut in shortcuts) {
-      Map<String, dynamic> translatedShortcut = Map.from(shortcut);
+    for (int i = 0; i < shortcuts.length; i++) {
+      Map<String, dynamic> shortcut = shortcuts[i];
+      logCallback?.call(
+        '正在翻译快捷键 $i/${shortcuts.length}: ${shortcut['name'] ?? 'unnamed'}',
+      );
 
-      // 翻译名称
+      Map<String, dynamic> translatedShortcut = {};
+
+      // 复制原始字段
+      translatedShortcut.addAll(shortcut);
+
+      // 翻译特定字段
       if (shortcut['name'] != null && shortcut['name'].isNotEmpty) {
         translatedShortcut['name'] = await translateText(
           shortcut['name'],
           sourceLang,
           targetLang,
+          logCallback,
         );
       }
 
@@ -411,6 +443,7 @@ class TranslationUtil {
           shortcut['description'],
           sourceLang,
           targetLang,
+          logCallback,
         );
       }
 
@@ -426,13 +459,15 @@ class TranslationUtil {
     String name,
     String category,
     String sourceLang,
-    String targetLang,
-  ) async {
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
     List<String> textsToTranslate = [appLocalizedName, category];
     List<String> translatedTexts = await translateBatch(
       textsToTranslate,
       sourceLang, // 使用配置的源语言
       targetLang,
+      logCallback,
     );
 
     return {

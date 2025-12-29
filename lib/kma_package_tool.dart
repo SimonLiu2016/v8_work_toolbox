@@ -842,6 +842,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
               shortcuts,
               _sourceLanguage, // 从源语言
               'en', // 翻译到英文
+              _addLog, // 日志回调
             );
         shortcutsForEnJson = translatedShortcutsForEn['shortcuts'];
         _addLog('快捷键已翻译为英文');
@@ -887,6 +888,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                     category,
                     _sourceLanguage,
                     lang,
+                    _addLog, // 日志回调
                   );
 
               // 翻译快捷键信息
@@ -895,6 +897,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                     shortcuts,
                     _sourceLanguage, // 使用配置的源语言
                     lang,
+                    _addLog, // 日志回调
                   );
 
               localeJson = {
@@ -942,6 +945,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         zipPath,
         encryptedPath,
         _encryptionPassword,
+        _addLog,
       );
       _addLog('已创建加密 KMA 文件: $encryptedPath');
 
