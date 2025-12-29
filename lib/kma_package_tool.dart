@@ -114,7 +114,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     // 初始化解压功能的控制器
     _kmaFileController = TextEditingController();
     _extractOutputDirController = TextEditingController();
-  
+
     // 添加初始日志
     _addLog('KMA 包生成工具已启动');
     _addLog('默认源语言设置为: 英文');
@@ -124,7 +124,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _addLog(String message) {
     String timestamp = DateTime.now().toString().split('.')[0];
     String logEntry = '[$timestamp] $message';
-    
+
     setState(() {
       _logEntries.add(logEntry);
       _logController.text = _logEntries.join('\n');
@@ -132,15 +132,17 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         TextPosition(offset: _logController.text.length),
       );
     });
-    
+
     // 滚动到底部
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_logScrollController.hasClients) {
-        _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
+        _logScrollController.jumpTo(
+          _logScrollController.position.maxScrollExtent,
+        );
       }
     });
   }
-  
+
   @override
   void dispose() {
     _bundleIdController.dispose();
@@ -685,7 +687,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _generateKmaPackage() async {
     try {
       _addLog('开始生成 KMA 包...');
-      
+
       // 验证输入
       if (_bundleIdController.text.isEmpty ||
           _nameController.text.isEmpty ||
@@ -694,7 +696,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         _addLog('输入验证失败：缺少必要的应用信息');
         return;
       }
-      
+
       _addLog('输入验证通过');
 
       // 解析快捷键 JSON
@@ -733,7 +735,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
           }
         }
       }
-      
+
       _addLog('快捷键数量: ${shortcuts.length}');
 
       // 生成 KMA 包
@@ -752,7 +754,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         iconPath: _iconPathController.text,
         previewPath: _previewPathController.text,
       );
-      
+
       _addLog('KMA 包生成成功！路径: $outputPath');
       _showSuccessDialog('KMA 包生成成功！\n路径: $outputPath');
     } catch (e) {
@@ -1203,10 +1205,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                   contentPadding: EdgeInsets.all(8.0),
                   hintText: '系统运行日志将显示在这里...',
                 ),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'Monospace',
-                ),
+                style: const TextStyle(fontSize: 12, fontFamily: 'Monospace'),
               ),
             ),
             const SizedBox(height: 10),
