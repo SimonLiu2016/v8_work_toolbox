@@ -428,7 +428,7 @@ class TranslationUtil {
     String sourceLang,
     String targetLang,
   ) async {
-    List<String> textsToTranslate = [appLocalizedName, name, category];
+    List<String> textsToTranslate = [appLocalizedName, category];
     List<String> translatedTexts = await translateBatch(
       textsToTranslate,
       sourceLang, // 使用配置的源语言
@@ -437,8 +437,8 @@ class TranslationUtil {
 
     return {
       'appLocalizedName': translatedTexts[0],
-      'appShortName': translatedTexts[1],
-      'category': translatedTexts[2],
+      'appShortName': name, // 保持原始值，不进行翻译
+      'category': translatedTexts[1],
     };
   }
 }
