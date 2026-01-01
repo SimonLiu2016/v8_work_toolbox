@@ -20,6 +20,7 @@ import 'components/file_path_selector.dart';
 import 'components/password_display.dart';
 import 'components/translation_config.dart';
 import 'components/extract_kma.dart';
+import 'components/compress_kma.dart';
 import 'utils/kma_package_util.dart';
 
 class KmaPackageToolPage extends StatefulWidget {
@@ -115,6 +116,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _kmaFileController = TextEditingController();
     _extractOutputDirController = TextEditingController();
 
+    // 初始化压缩功能的控制器
+    _sourceDirController = TextEditingController();
+    _compressOutputDirController = TextEditingController();
+
     // 添加初始日志
     _addLog('KMA 包生成工具已启动');
     _addLog('默认源语言设置为: 英文');
@@ -160,6 +165,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
     _kmaFileController.dispose();
     _extractOutputDirController.dispose();
+    _sourceDirController.dispose();
+    _compressOutputDirController.dispose();
 
     // 处理快捷键相关的控制器
     for (var controller in _idControllers) controller.dispose();
@@ -204,6 +211,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _buildPasswordSection(),
             const SizedBox(height: 20),
             _buildExtractSection(),
+            const SizedBox(height: 20),
+            _buildCompressSection(),
             const SizedBox(height: 20),
             _buildLogConsole(),
           ],
@@ -591,6 +600,66 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     return selectedDirectory;
   }
 
+  void _onPickSourceDir() async {
+    String? sourceDir = await _pickDirectory();
+    if (sourceDir != null) {
+      _selectedSourceDir = sourceDir;
+      _sourceDirController.text = sourceDir;
+
+      // 自动设置输出目录为源目录的父目录
+      String outputDir = path.dirname(sourceDir);
+      _selectedCompressOutputDir = outputDir;
+      _compressOutputDirController.text = outputDir;
+
+      _addLog('已选择源文件夹: $sourceDir');
+      _addLog('已自动设置输出目录: $outputDir');
+    }
+  }
+
+  void _onPickCompressOutputDir() async {
+    String? outputDir = await _pickDirectory();
+    if (outputDir != null) {
+      _selectedCompressOutputDir = outputDir;
+      _compressOutputDirController.text = outputDir;
+      _addLog('已选择输出目录: $outputDir');
+    }
+  }
+
+  Future<void> _compressToKmaPackage() async {
+    if (_selectedSourceDir == null || _selectedCompressOutputDir == null) {
+      _showErrorDialog('请选择源文件夹和输出目录');
+      return;
+    }
+
+    try {
+      _addLog('开始压缩文件夹为 KMA 包...');
+      _addLog('源文件夹: ${_selectedSourceDir}');
+      _addLog('输出目录: ${_selectedCompressOutputDir}');
+
+      // 生成输出文件名，使用源文件夹名称
+      String sourceDirName = path.basename(_selectedSourceDir!);
+      String outputPath = path.join(
+        _selectedCompressOutputDir!,
+        '\$sourceDirName.kma',
+      );
+
+      _addLog('输出文件路径: \$outputPath');
+
+      // 调用 KmaPackageUtil 的 createKmaPackage 方法
+      await KmaPackageUtil.createKmaPackage(
+        sourceDir: _selectedSourceDir!,
+        outputPath: outputPath,
+        password: _encryptionPassword,
+      );
+
+      _addLog('KMA 包压缩成功！路径: \$outputPath');
+      _showSuccessDialog('KMA 包压缩成功！\n路径: \$outputPath');
+    } catch (e) {
+      _addLog('压缩 KMA 包时出错: \$e');
+      _showErrorDialog('压缩 KMA 包时出错: \$e');
+    }
+  }
+
   Future<String?> _pickFile(String label) async {
     String? filePath;
 
@@ -668,6 +737,18 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
+  Widget _buildCompressSection() {
+    return CompressKma(
+      sourceDirController: _sourceDirController,
+      outputDirController: _compressOutputDirController,
+      selectedSourceDir: _selectedSourceDir,
+      selectedOutputDir: _selectedCompressOutputDir,
+      onPickSourceDir: _onPickSourceDir,
+      onPickOutputDir: _onPickCompressOutputDir,
+      onCompressKmaPackage: _compressToKmaPackage,
+    );
+  }
+
   void _onPickKmaFile() async {
     String? kmaFilePath = await _pickKmaFile();
     if (kmaFilePath != null) {
@@ -689,6 +770,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   late TextEditingController _extractOutputDirController;
   String? _selectedKmaFile;
   String? _selectedExtractOutputDir;
+
+  // 用于压缩功能的控制器和变量
+  late TextEditingController _sourceDirController;
+  late TextEditingController _compressOutputDirController;
+  String? _selectedSourceDir;
+  String? _selectedCompressOutputDir;
 
   Widget _buildTextField(
     TextEditingController controller,
