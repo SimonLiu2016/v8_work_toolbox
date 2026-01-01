@@ -447,6 +447,16 @@ class TranslationUtil {
         );
       }
 
+      // 翻译 when 字段
+      if (shortcut['when'] != null && shortcut['when'].isNotEmpty) {
+        translatedShortcut['when'] = await translateText(
+          shortcut['when'],
+          sourceLang,
+          targetLang,
+          logCallback,
+        );
+      }
+
       translatedShortcuts.add(translatedShortcut);
     }
 

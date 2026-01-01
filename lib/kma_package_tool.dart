@@ -241,23 +241,47 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   }
 
   Widget _buildShortcutSection() {
-    return ShortcutInput(
-      isJsonMode: _isJsonMode,
-      shortcutRowsCount: _shortcutRowsCount,
-      idControllers: _idControllers,
-      nameControllers: _nameControllers,
-      descriptionControllers: _descriptionControllers,
-      keysControllers: _keysControllers,
-      rawControllers: _rawControllers,
-      categoryControllers: _categoryControllers,
-      whenControllers: _whenControllers,
-      shortcutsJsonController: _shortcutsJsonController,
-      onModeChange: _onModeChange,
-      onAddRow: _addShortcutRow,
-      onRemoveRow: _removeShortcutRow,
-      onRemoveLastRow: _removeLastShortcutRow,
-      onGenerateJsonFromInteractive: _generateJsonFromInteractive,
-      onParseJsonToInteractive: _parseJsonToInteractive,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '快捷键',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '总计: $_shortcutRowsCount 个',
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ShortcutInput(
+              isJsonMode: _isJsonMode,
+              shortcutRowsCount: _shortcutRowsCount,
+              idControllers: _idControllers,
+              nameControllers: _nameControllers,
+              descriptionControllers: _descriptionControllers,
+              keysControllers: _keysControllers,
+              rawControllers: _rawControllers,
+              categoryControllers: _categoryControllers,
+              whenControllers: _whenControllers,
+              shortcutsJsonController: _shortcutsJsonController,
+              onModeChange: _onModeChange,
+              onAddRow: _addShortcutRow,
+              onRemoveRow: _removeShortcutRow,
+              onRemoveLastRow: _removeLastShortcutRow,
+              onGenerateJsonFromInteractive: _generateJsonFromInteractive,
+              onParseJsonToInteractive: _parseJsonToInteractive,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
