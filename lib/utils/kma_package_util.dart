@@ -353,6 +353,30 @@ class TranslationUtil {
     }
   }
 
+  // 根据翻译服务类型转换语言代码
+  static String _convertLangCodeForService(
+    String lang,
+    TranslationServiceType service,
+  ) {
+    if (service == TranslationServiceType.libre) {
+      // LibreTranslate对中文有特殊要求
+      if (lang == 'zh_CN') {
+        return 'zh-Hans'; // 简体中文
+      } else if (lang == 'zh_TW') {
+        return 'zh-Hant'; // 繁体中文
+      }
+    } else if (service == TranslationServiceType.baidu) {
+      // 百度翻译使用标准代码，但需要映射
+      if (lang == 'zh-Hans') {
+        return 'zh_CN'; // 简体中文
+      } else if (lang == 'zh-Hant') {
+        return 'zh_TW'; // 繁体中文
+      }
+    }
+    // 其他语言保持不变
+    return lang;
+  }
+
   // LibreTranslate 翻译 API
   static Future<String> _translateWithLibre(
     String text,
@@ -365,17 +389,27 @@ class TranslationUtil {
     );
 
     try {
+      // 转换语言代码为LibreTranslate格式
+      String libreSourceLang = _convertLangCodeForService(
+        sourceLang,
+        TranslationServiceType.libre,
+      );
+      String libreTargetLang = _convertLangCodeForService(
+        targetLang,
+        TranslationServiceType.libre,
+      );
+
       final requestBody = {
         'q': text,
-        'source': sourceLang,
-        'target': targetLang,
+        'source': libreSourceLang,
+        'target': libreTargetLang,
         'format': 'text',
         'alternatives': 3,
         'api_key': _libreApiKey,
       };
 
       logCallback?.call(
-        'LibreTranslate API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
+        'LibreTranslate API调用: 源语言=$libreSourceLang, 目标语言=$libreTargetLang, 文本长度=${text.length}',
       );
 
       // 添加限流，确保QPS不超过设定值
