@@ -52,13 +52,15 @@ class _TranslationConfigState extends State<TranslationConfig> {
               DropdownButtonFormField<TranslationServiceType>(
                 value: widget.translationService,
                 decoration: const InputDecoration(labelText: '翻译服务类型'),
-                items: TranslationServiceType.values.map((TranslationServiceType service) {
+                items: TranslationServiceType.values.map((
+                  TranslationServiceType service,
+                ) {
                   return DropdownMenuItem<TranslationServiceType>(
                     value: service,
                     child: Text(
-                      service == TranslationServiceType.baidu 
-                        ? '百度翻译' 
-                        : 'LibreTranslate (本地)',
+                      service == TranslationServiceType.baidu
+                          ? '百度翻译'
+                          : 'LibreTranslate (本地)',
                     ),
                   );
                 }).toList(),

@@ -12,32 +12,6 @@ import 'package:crypto/crypto.dart';
 // 限流相关变量
 DateTime? _lastRequestTime;
 int _requestCount = 0;
-const int _maxQps = 8; // 每秒最大请求数
-const int _intervalMs = 1000; // 1秒的毫秒数
-
-// 限流函数，确保QPS不超过8
-Future<void> _rateLimit() async {
-  DateTime now = DateTime.now();
-  int nowMs = now.millisecondsSinceEpoch;
-  int lastMs = _lastRequestTime?.millisecondsSinceEpoch ?? 0;
-
-  // 如果在同一个时间窗口内，检查请求数量
-  if (nowMs - lastMs < _intervalMs) {
-    if (_requestCount >= _maxQps) {
-      // 等待到下一个时间窗口
-      int waitTime = _intervalMs - (nowMs - lastMs);
-      await Future.delayed(Duration(milliseconds: waitTime));
-      _requestCount = 0;
-      _lastRequestTime = DateTime.now();
-    }
-  } else {
-    // 进入新的时间窗口，重置计数器
-    _requestCount = 0;
-    _lastRequestTime = now;
-  }
-
-  _requestCount++;
-}
 
 class KmaPackageUtil {
   /// 将指定目录压缩为 ZIP 文件
@@ -275,20 +249,27 @@ class KmaPackageUtil {
 
 // 翻译服务类型枚举
 enum TranslationServiceType {
-  baidu,  // 百度翻译
-  libre,  // LibreTranslate
+  baidu, // 百度翻译
+  libre, // LibreTranslate
 }
 
 class TranslationUtil {
   static const String _baiduAppId = '20221103001434737'; // 百度翻译API App ID
   static const String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
-  
+
   // LibreTranslate 服务配置
-  static const String _libreTranslateUrl = 'http://localhost:5555/translate'; // 默认本地服务地址
+  static const String _libreTranslateUrl =
+      'http://localhost:5555/translate'; // 默认本地服务地址
   static const String _libreApiKey = ''; // LibreTranslate API密钥，如果需要的话
-  
+
   // 当前翻译服务类型
   static TranslationServiceType currentService = TranslationServiceType.baidu;
+
+  // 限流相关变量
+  static int _maxQps = 8; // 每秒最大请求数，默认值
+  static int _intervalMs = 1000; // 时间窗口毫秒数，默认1秒
+  static DateTime? _lastRequestTime;
+  static int _requestCount = 0;
 
   // 将语言代码转换为百度格式
   static String _convertToBaiduLangCode(String lang) {
@@ -345,8 +326,8 @@ class TranslationUtil {
       'https://fanyi-api.baidu.com/api/trans/vip/translate?' + query,
     );
 
-    // 添加限流，确保QPS不超过8
-    await _rateLimit();
+    // 添加限流，确保QPS不超过设定值
+    await TranslationUtil._rateLimit();
     // 增加日志打印时间及调用信息
     logCallback?.call(
       '百度翻译API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
@@ -396,7 +377,10 @@ class TranslationUtil {
       logCallback?.call(
         'LibreTranslate API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
       );
-      
+
+      // 添加限流，确保QPS不超过设定值
+      await _rateLimit();
+
       final response = await http.post(
         Uri.parse(_libreTranslateUrl),
         headers: {'Content-Type': 'application/json'},
@@ -411,7 +395,9 @@ class TranslationUtil {
           throw Exception('LibreTranslate: 未返回翻译结果');
         }
       } else {
-        throw Exception('LibreTranslate API 错误: ${response.statusCode} - ${response.body}');
+        throw Exception(
+          'LibreTranslate API 错误: ${response.statusCode} - ${response.body}',
+        );
       }
     } catch (e) {
       throw Exception('LibreTranslate 翻译失败: $e');
@@ -554,5 +540,40 @@ class TranslationUtil {
       'appShortName': name, // 保持原始值，不进行翻译
       'category': translatedTexts[1],
     };
+  }
+
+  // 限流函数，确保QPS不超过设定值
+  static Future<void> _rateLimit() async {
+    DateTime now = DateTime.now();
+    int nowMs = now.millisecondsSinceEpoch;
+    int lastMs = _lastRequestTime?.millisecondsSinceEpoch ?? 0;
+
+    // 如果在同一个时间窗口内，检查请求数量
+    if (nowMs - lastMs < _intervalMs) {
+      if (_requestCount >= _maxQps) {
+        // 等待到下一个时间窗口
+        int waitTime = _intervalMs - (nowMs - lastMs);
+        await Future.delayed(Duration(milliseconds: waitTime));
+        _requestCount = 0;
+        _lastRequestTime = DateTime.now();
+      }
+    } else {
+      // 进入新的时间窗口，重置计数器
+      _requestCount = 0;
+      _lastRequestTime = now;
+    }
+
+    _requestCount++;
+  }
+
+  // 设置限流参数
+  static void setRateLimitConfig(int maxQps, int intervalMs) {
+    _maxQps = maxQps;
+    _intervalMs = intervalMs;
+  }
+
+  // 获取当前限流配置
+  static Map<String, int> getRateLimitConfig() {
+    return {'maxQps': _maxQps, 'intervalMs': _intervalMs};
   }
 }

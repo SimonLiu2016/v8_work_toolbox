@@ -21,6 +21,7 @@ import 'components/password_display.dart';
 import 'components/translation_config.dart';
 import 'components/extract_kma.dart';
 import 'components/compress_kma.dart';
+import 'components/rate_limit_config.dart';
 import 'utils/kma_package_util.dart';
 
 class KmaPackageToolPage extends StatefulWidget {
@@ -98,7 +99,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   final String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
   bool _useTranslation = true; // 是否使用翻译功能
   String _sourceLanguage = 'en'; // 源语言，默认为英文
-  TranslationServiceType _translationService = TranslationServiceType.baidu; // 翻译服务类型，默认为百度
+  TranslationServiceType _translationService =
+      TranslationServiceType.baidu; // 翻译服务类型，默认为百度
+  int _maxQps = 8; // 最大QPS，默认值
+  int _intervalMs = 1000; // 时间窗口毫秒数，默认值
 
   // 日志控制台相关
   final List<String> _logEntries = [];
@@ -120,6 +124,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     // 初始化压缩功能的控制器
     _sourceDirController = TextEditingController();
     _compressOutputDirController = TextEditingController();
+
+    // 初始化限流配置
+    TranslationUtil.setRateLimitConfig(_maxQps, _intervalMs);
 
     // 添加初始日志
     _addLog('KMA 包生成工具已启动');
@@ -202,6 +209,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _buildFileSection(), // 移动到支持语言之前
             const SizedBox(height: 20),
             _buildTranslationConfigSection(),
+            const SizedBox(height: 20),
+            _buildRateLimitConfigSection(),
             const SizedBox(height: 20),
             _buildLanguageSection(),
             const SizedBox(height: 20),
@@ -716,6 +725,14 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
+  Widget _buildRateLimitConfigSection() {
+    return RateLimitConfig(
+      maxQps: _maxQps,
+      intervalMs: _intervalMs,
+      onRateLimitChanged: _onRateLimitChanged,
+    );
+  }
+
   void _onUseTranslationChanged(bool value) {
     setState(() {
       _useTranslation = value;
@@ -733,6 +750,15 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       _translationService = newValue;
       // 同时更新TranslationUtil中的当前服务类型
       TranslationUtil.currentService = newValue;
+    });
+  }
+
+  void _onRateLimitChanged(int maxQps, int intervalMs) {
+    setState(() {
+      _maxQps = maxQps;
+      _intervalMs = intervalMs;
+      // 更新TranslationUtil中的限流配置
+      TranslationUtil.setRateLimitConfig(maxQps, intervalMs);
     });
   }
 
