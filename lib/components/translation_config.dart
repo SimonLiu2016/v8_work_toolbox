@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
+import '../utils/kma_package_util.dart';
 
 class TranslationConfig extends StatefulWidget {
   final bool useTranslation;
   final String sourceLanguage;
+  final TranslationServiceType translationService;
   final Function(bool) onUseTranslationChanged;
   final Function(String?) onSourceLanguageChanged;
+  final Function(TranslationServiceType) onTranslationServiceChanged;
 
   const TranslationConfig({
     Key? key,
     required this.useTranslation,
     required this.sourceLanguage,
+    required this.translationService,
     required this.onUseTranslationChanged,
     required this.onSourceLanguageChanged,
+    required this.onTranslationServiceChanged,
   }) : super(key: key);
 
   @override
@@ -40,13 +45,28 @@ class _TranslationConfigState extends State<TranslationConfig> {
             if (widget.useTranslation) ...[
               const SizedBox(height: 10),
               const Text(
-                '百度翻译',
+                '翻译服务',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 10),
-              const Text(
-                '已配置百度翻译API',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
+              DropdownButtonFormField<TranslationServiceType>(
+                value: widget.translationService,
+                decoration: const InputDecoration(labelText: '翻译服务类型'),
+                items: TranslationServiceType.values.map((TranslationServiceType service) {
+                  return DropdownMenuItem<TranslationServiceType>(
+                    value: service,
+                    child: Text(
+                      service == TranslationServiceType.baidu 
+                        ? '百度翻译' 
+                        : 'LibreTranslate (本地)',
+                    ),
+                  );
+                }).toList(),
+                onChanged: (TranslationServiceType? newValue) {
+                  if (newValue != null) {
+                    widget.onTranslationServiceChanged(newValue);
+                  }
+                },
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(

@@ -273,9 +273,22 @@ class KmaPackageUtil {
   }
 }
 
+// 翻译服务类型枚举
+enum TranslationServiceType {
+  baidu,  // 百度翻译
+  libre,  // LibreTranslate
+}
+
 class TranslationUtil {
   static const String _baiduAppId = '20221103001434737'; // 百度翻译API App ID
   static const String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
+  
+  // LibreTranslate 服务配置
+  static const String _libreTranslateUrl = 'http://localhost:5555/translate'; // 默认本地服务地址
+  static const String _libreApiKey = ''; // LibreTranslate API密钥，如果需要的话
+  
+  // 当前翻译服务类型
+  static TranslationServiceType currentService = TranslationServiceType.baidu;
 
   // 将语言代码转换为百度格式
   static String _convertToBaiduLangCode(String lang) {
@@ -359,6 +372,52 @@ class TranslationUtil {
     }
   }
 
+  // LibreTranslate 翻译 API
+  static Future<String> _translateWithLibre(
+    String text,
+    String sourceLang,
+    String targetLang, [
+    Function(String)? logCallback,
+  ]) async {
+    logCallback?.call(
+      'LibreTranslate请求: 翻译文本(${text.length}字符) $sourceLang -> $targetLang',
+    );
+
+    try {
+      final requestBody = {
+        'q': text,
+        'source': sourceLang,
+        'target': targetLang,
+        'format': 'text',
+        'alternatives': 3,
+        'api_key': _libreApiKey,
+      };
+
+      logCallback?.call(
+        'LibreTranslate API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
+      );
+      
+      final response = await http.post(
+        Uri.parse(_libreTranslateUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(requestBody),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['translatedText'] != null) {
+          return data['translatedText'];
+        } else {
+          throw Exception('LibreTranslate: 未返回翻译结果');
+        }
+      } else {
+        throw Exception('LibreTranslate API 错误: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('LibreTranslate 翻译失败: $e');
+    }
+  }
+
   // 翻译文本
   static Future<String> translateText(
     String text,
@@ -369,12 +428,22 @@ class TranslationUtil {
     if (!text.trim().isNotEmpty) return text; // 如果文本为空，直接返回
 
     try {
-      return await _translateWithBaidu(
-        text,
-        sourceLang,
-        targetLang,
-        logCallback,
-      );
+      switch (currentService) {
+        case TranslationServiceType.baidu:
+          return await _translateWithBaidu(
+            text,
+            sourceLang,
+            targetLang,
+            logCallback,
+          );
+        case TranslationServiceType.libre:
+          return await _translateWithLibre(
+            text,
+            sourceLang,
+            targetLang,
+            logCallback,
+          );
+      }
     } catch (e) {
       logCallback?.call('翻译失败: $e');
       // 翻译失败时返回原文

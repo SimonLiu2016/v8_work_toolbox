@@ -98,6 +98,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   final String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
   bool _useTranslation = true; // 是否使用翻译功能
   String _sourceLanguage = 'en'; // 源语言，默认为英文
+  TranslationServiceType _translationService = TranslationServiceType.baidu; // 翻译服务类型，默认为百度
 
   // 日志控制台相关
   final List<String> _logEntries = [];
@@ -708,8 +709,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     return TranslationConfig(
       useTranslation: _useTranslation,
       sourceLanguage: _sourceLanguage,
+      translationService: _translationService,
       onUseTranslationChanged: _onUseTranslationChanged,
       onSourceLanguageChanged: _onSourceLanguageChanged,
+      onTranslationServiceChanged: _onTranslationServiceChanged,
     );
   }
 
@@ -722,6 +725,14 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _onSourceLanguageChanged(String? newValue) {
     setState(() {
       _sourceLanguage = newValue!;
+    });
+  }
+
+  void _onTranslationServiceChanged(TranslationServiceType newValue) {
+    setState(() {
+      _translationService = newValue;
+      // 同时更新TranslationUtil中的当前服务类型
+      TranslationUtil.currentService = newValue;
     });
   }
 
