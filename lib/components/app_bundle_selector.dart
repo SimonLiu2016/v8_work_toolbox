@@ -56,24 +56,24 @@ class AppBundleSelector extends StatelessWidget {
     try {
       // 通过MethodChannel调用原生代码选择.app包
       const MethodChannel channel = MethodChannel('app_package_browser');
-  
+
       // 调用原生方法选择.app包
       print('调用原生方法selectAppPackage');
       final result = await channel.invokeMethod('selectAppPackage');
       print('原生方法返回结果: $result');
-        
+
       // 确保结果是Map类型
       if (result is! Map) {
         print('结果类型错误: ${result.runtimeType}');
         _showErrorDialog(context, '获取应用包信息失败');
         return;
       }
-        
+
       // 将结果转换为Map<String, dynamic>
       Map<String, dynamic> resultMap = Map<String, dynamic>.from(result);
       String? appPath = resultMap['appPath'];
       print('获取到appPath: $appPath');
-  
+
       if (appPath != null) {
         // 检查context是否仍然有效
         if (context.mounted) {

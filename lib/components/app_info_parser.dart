@@ -8,23 +8,27 @@ class AppInfoParser {
       // 通过MethodChannel调用原生代码解析.app包
       const MethodChannel channel = MethodChannel('app_package_browser');
 
-      final result = await channel.invokeMethod('readInfoPlist', {'appPath': appPath});
+      final result = await channel.invokeMethod('readInfoPlist', {
+        'appPath': appPath,
+      });
       print('readInfoPlist返回结果: $result');
-      
+
       // 确保结果是Map类型
       if (result is! Map) {
         print('解析应用程序包失败: 返回结果类型错误 ${result.runtimeType}');
         return null;
       }
-      
+
       // 将结果转换为Map<String, dynamic>
       Map<String, dynamic> resultMap = Map<String, dynamic>.from(result);
-      
+
       String bundleId = resultMap['bundleId'] ?? '';
       String bundleName = resultMap['name'] ?? '';
       String bundleVersion = resultMap['version'] ?? '';
-      
-      print('解析到的信息 - Bundle ID: $bundleId, Bundle Name: $bundleName, Version: $bundleVersion');
+
+      print(
+        '解析到的信息 - Bundle ID: $bundleId, Bundle Name: $bundleName, Version: $bundleVersion',
+      );
 
       // 查找Resources目录下的icns文件
       String resourcesPath = '\$appPath/Contents/Resources';
