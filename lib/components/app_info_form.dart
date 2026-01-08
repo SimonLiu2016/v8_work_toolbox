@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'app_bundle_selector.dart';
 
 class AppInfoForm extends StatefulWidget {
   final TextEditingController bundleIdController;
@@ -9,6 +11,7 @@ class AppInfoForm extends StatefulWidget {
   final TextEditingController updatedAtController;
   final TextEditingController iconFormatController;
   final TextEditingController descriptionController;
+  final Function(String) onIconPathUpdated; // 用于更新图标路径
 
   const AppInfoForm({
     Key? key,
@@ -20,6 +23,7 @@ class AppInfoForm extends StatefulWidget {
     required this.updatedAtController,
     required this.iconFormatController,
     required this.descriptionController,
+    required this.onIconPathUpdated,
   }) : super(key: key);
 
   @override
@@ -35,9 +39,32 @@ class _AppInfoFormState extends State<AppInfoForm> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '应用信息',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '应用信息',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                AppBundleSelector(
+                  onAppInfoParsed: (result) {
+                    // 更新各个控制器的值
+                    widget.bundleIdController.text = result['bundleId'] ?? '';
+                    widget.nameController.text = result['bundleName'] ?? '';
+                    widget.localizedNameController.text =
+                        result['bundleName'] ?? '';
+                    widget.categoryController.text =
+                        result['appType'] ?? 'Utils';
+                    widget.versionController.text =
+                        result['bundleVersion'] ?? '';
+                    // 如果有图标路径，则更新
+                    String iconPath = result['iconPath'] ?? '';
+                    if (iconPath.isNotEmpty) {
+                      widget.onIconPathUpdated(iconPath);
+                    }
+                  },
+                ),
+              ],
             ),
             const SizedBox(height: 10),
             _buildTextField(
