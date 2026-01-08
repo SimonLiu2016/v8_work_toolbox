@@ -906,7 +906,115 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       );
 
       _addLog('KMA 包生成成功！路径: $outputPath');
-      _showSuccessDialog('KMA 包生成成功！\n路径: $outputPath');
+
+      // 获取输出目录路径
+      String outputDir = _outputDirController.text;
+      if (outputDir.isEmpty) {
+        _showErrorDialog('请先设置KMA包输出目录');
+        return;
+      }
+
+      // 创建data目录
+      String dataDir = '$outputDir/data';
+      Directory(dataDir).createSync(recursive: true);
+
+      // 将生成的KMA包移动到data目录
+      String fileName = Uri.file(outputPath).pathSegments.last;
+      String newPathInDataDir = '$dataDir/$fileName';
+      File(outputPath).copySync(newPathInDataDir);
+      File(outputPath).deleteSync(); // 删除原始文件
+
+      _addLog('KMA 包已移动到: $newPathInDataDir');
+
+      // 复制图标文件到images目录
+      String iconPath = _iconPathController.text;
+      if (iconPath.isNotEmpty) {
+        String imagesDir = '$outputDir/images';
+        Directory(imagesDir).createSync(recursive: true);
+
+        String iconName = Uri.file(iconPath).pathSegments.last;
+        String iconExtension = iconName.split('.').last;
+        String appName = _nameController.text;
+        String newIconName = '$appName.$iconExtension';
+        String newIconPath = '$imagesDir/$newIconName';
+
+        try {
+          File(iconPath).copySync(newIconPath);
+          _addLog('图标已复制到: $newIconPath');
+        } catch (e) {
+          _addLog('复制图标失败: $e');
+        }
+      }
+
+      // 读取并更新app.json文件
+      String appJsonPath = '$dataDir/app.json';
+      Map<String, dynamic> appJson = {};
+
+      // 尝试读取现有的app.json文件
+      if (await File(appJsonPath).exists()) {
+        try {
+          String jsonString = await File(appJsonPath).readAsString();
+          appJson = json.decode(jsonString);
+        } catch (e) {
+          _addLog('读取app.json失败: $e');
+          // 如果读取失败，使用空的JSON对象
+          appJson = {};
+        }
+      }
+
+      // 获取实际的快捷键个数
+      int actualShortcutCount = await _getActualShortcutCount(newPathInDataDir);
+
+      // 获取KMA包大小
+      int kmaFileSize = File(newPathInDataDir).lengthSync();
+
+      // 构建新的应用信息
+      Map<String, dynamic> newAppInfo = {
+        "bundleId": _bundleIdController.text,
+        "name": _nameController.text,
+        "localizedName": _localizedNameController.text,
+        "category": _categoryController.text,
+        "version": _versionController.text,
+        "shortcutCount": actualShortcutCount,
+        "updatedAt": _updatedAtController.text,
+        "size": kmaFileSize,
+        "supportsLanguages": _supportedLanguages,
+        "preview": "../images/${_nameController.text}.icns", // 使用应用名称作为图标名
+      };
+
+      // 更新app.json内容
+      List<dynamic> apps = [];
+      if (appJson.containsKey('apps') && appJson['apps'] is List) {
+        apps = List.from(appJson['apps']);
+      }
+
+      // 添加新的应用信息
+      apps.add(newAppInfo);
+
+      // 更新总数
+      appJson['apps'] = apps;
+      appJson['totalApps'] = apps.length;
+      appJson['lastUpdated'] = DateTime.now().toIso8601String();
+
+      // 如果没有分类信息，添加默认分类
+      if (!appJson.containsKey('categories')) {
+        appJson['categories'] = {
+          "browser": "浏览器",
+          "developer": "开发工具",
+          "system": "系统工具",
+          "OS": "操作系统",
+        };
+      }
+
+      // 写入更新后的app.json文件
+      try {
+        await File(appJsonPath).writeAsString(json.encode(appJson));
+        _addLog('app.json文件已更新');
+      } catch (e) {
+        _addLog('写入app.json失败: $e');
+      }
+
+      _showSuccessDialog('KMA 包生成成功！\n路径: $newPathInDataDir');
     } catch (e) {
       _addLog('生成 KMA 包时出错: $e');
       _showErrorDialog('生成 KMA 包时出错: $e');
@@ -1155,6 +1263,34 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         );
       },
     );
+  }
+
+  Future<int> _getActualShortcutCount(String kmaFilePath) async {
+    try {
+      // 解压KMA包来获取实际的快捷键数量
+      List<int> kmaBytes = await File(kmaFilePath).readAsBytes();
+      Archive archive = ZipDecoder().decodeBytes(kmaBytes);
+
+      // 查找所有的 shortcuts.*.json 文件
+      int count = 0;
+      for (ArchiveFile file in archive) {
+        if (file.name.startsWith('shortcuts.') && file.name.endsWith('.json')) {
+          // 解析每个语言的快捷键文件
+          String content = utf8.decode(file.content as List<int>);
+          Map<String, dynamic> jsonData = json.decode(content);
+          if (jsonData.containsKey('shortcuts') &&
+              jsonData['shortcuts'] is List) {
+            count += (jsonData['shortcuts'] as List).length;
+          }
+        }
+      }
+
+      return count;
+    } catch (e) {
+      _addLog('获取实际快捷键数量失败: $e');
+      // 如果解析失败，返回当前计算的数量
+      return 0;
+    }
   }
 
   void _showSuccessDialog(String message) {
