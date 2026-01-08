@@ -8,6 +8,7 @@ class AppInfoParser {
       // 通过MethodChannel调用原生代码解析.app包
       const MethodChannel channel = MethodChannel('app_package_browser');
 
+      print('准备调用原生方法readInfoPlist');
       final result = await channel.invokeMethod('readInfoPlist', {
         'appPath': appPath,
       });
@@ -31,8 +32,10 @@ class AppInfoParser {
       );
 
       // 查找Resources目录下的icns文件
-      String resourcesPath = '\$appPath/Contents/Resources';
+      String resourcesPath = '$appPath/Contents/Resources';
+      print('正在查找资源文件: $resourcesPath');
       String? iconPath = await _findIcnsFile(resourcesPath);
+      print('找到图标路径: $iconPath');
 
       if (bundleId.isNotEmpty && bundleName.isNotEmpty) {
         var returnResult = {
@@ -41,16 +44,22 @@ class AppInfoParser {
           'bundleVersion': bundleVersion,
           'iconPath': iconPath ?? '',
           'appType': 'Utils',
+          'appPath': appPath,
         };
         print('返回解析结果: $returnResult');
         return returnResult;
+      } else {
+        print('Bundle ID 或 Bundle Name 为空，解析失败');
       }
     } catch (e) {
-      print('解析应用程序包失败: \$e');
+      print('解析应用程序包失败: $e');
+      print('错误堆栈: ');
+      print(e.toString());
       // 即使出错也返回null而不是抛出异常，以便上层处理
       return null;
     }
 
+    print('解析结束，返回null');
     return null;
   }
 

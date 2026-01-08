@@ -241,7 +241,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       updatedAtController: _updatedAtController,
       iconFormatController: _iconFormatController,
       descriptionController: _descriptionController,
-      onIconPathUpdated: _onIconPathUpdated,
+      iconPathController: _iconPathController,
+      previewPathController: _previewPathController,
     );
   }
 
@@ -760,14 +761,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       _intervalMs = intervalMs;
       // 更新TranslationUtil中的限流配置
       TranslationUtil.setRateLimitConfig(maxQps, intervalMs);
-    });
-  }
-
-  void _onIconPathUpdated(String iconPath) {
-    setState(() {
-      _iconPathController.text = iconPath;
-      // 可以同时更新图标格式为icns，因为通常macOS应用使用icns格式
-      _iconFormatController.text = 'icns';
     });
   }
 

@@ -75,23 +75,16 @@ class AppBundleSelector extends StatelessWidget {
       print('获取到appPath: $appPath');
 
       if (appPath != null) {
-        // 检查context是否仍然有效
-        if (context.mounted) {
-          print('调用解析对话框');
-          // 弹出解析进度对话框
-          await _showParsingDialog(context, appPath);
-        }
+        print('调用解析对话框');
+        // 弹出解析进度对话框
+        await _showParsingDialog(context, appPath);
       } else {
         print('appPath为空');
-        if (context.mounted) {
-          _showErrorDialog(context, '未选择任何应用包');
-        }
+        _showErrorDialog(context, '未选择任何应用包');
       }
     } on PlatformException catch (e) {
       print('PlatformException: $e');
-      if (context.mounted) {
-        _showErrorDialog(context, '选择应用包时出错: ${e.message}');
-      }
+      _showErrorDialog(context, '选择应用包时出错: ${e.message}');
     }
   }
 
@@ -100,16 +93,14 @@ class AppBundleSelector extends StatelessWidget {
     try {
       Map<String, String>? result = await AppInfoParser.parseAppBundle(appPath);
 
-      if (result != null && context.mounted) {
+      if (result != null) {
         // 调用回调函数传递解析结果
         onAppInfoParsed(result);
-      } else if (context.mounted) {
+      } else {
         _showErrorDialog(context, '未能解析到应用信息');
       }
     } catch (e) {
-      if (context.mounted) {
-        _showErrorDialog(context, '解析失败: $e');
-      }
+      _showErrorDialog(context, '解析失败: $e');
     }
   }
 

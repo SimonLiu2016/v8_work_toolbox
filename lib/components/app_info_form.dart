@@ -11,7 +11,8 @@ class AppInfoForm extends StatefulWidget {
   final TextEditingController updatedAtController;
   final TextEditingController iconFormatController;
   final TextEditingController descriptionController;
-  final Function(String) onIconPathUpdated; // 用于更新图标路径
+  final TextEditingController iconPathController;
+  final TextEditingController previewPathController;
 
   const AppInfoForm({
     Key? key,
@@ -23,7 +24,8 @@ class AppInfoForm extends StatefulWidget {
     required this.updatedAtController,
     required this.iconFormatController,
     required this.descriptionController,
-    required this.onIconPathUpdated,
+    required this.iconPathController,
+    required this.previewPathController,
   }) : super(key: key);
 
   @override
@@ -60,7 +62,14 @@ class _AppInfoFormState extends State<AppInfoForm> {
                     // 如果有图标路径，则更新
                     String iconPath = result['iconPath'] ?? '';
                     if (iconPath.isNotEmpty) {
-                      widget.onIconPathUpdated(iconPath);
+                      String fullIconPath = result['appPath'] != null
+                          ? '${result['appPath']}/Contents/$iconPath'
+                          : iconPath;
+                      // 直接更新图标路径和预览路径
+                      widget.iconPathController.text = fullIconPath;
+                      widget.previewPathController.text = fullIconPath;
+                      // 同时更新图标格式为icns，因为通常macOS应用使用icns格式
+                      widget.iconFormatController.text = 'icns';
                     }
                   },
                 ),
