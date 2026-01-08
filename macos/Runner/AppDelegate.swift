@@ -75,32 +75,46 @@ class AppDelegate: FlutterAppDelegate {
   // 选择.app包并解析其内部文件
   private func selectAppPackage(completion: @escaping FlutterResult) {
     let openPanel = NSOpenPanel()
-    openPanel.canChooseFiles = true  // .app被识别为文件，需允许选择文件
-    openPanel.canChooseDirectories = false
-    openPanel.allowedFileTypes = ["app"]  // 只显示.app类型文件
+    openPanel.canChooseFiles = true  // 允许选择文件
+    openPanel.canChooseDirectories = true  // 允许选择目录
+    openPanel.allowsMultipleSelection = false
     openPanel.title = "选择应用程序包"
     openPanel.directoryURL = URL(fileURLWithPath: "/Applications")  // 默认打开/Applications目录
 
+    // 设置为仅显示目录
+    openPanel.showsHiddenFiles = false
+    openPanel.canCreateDirectories = false
+
     openPanel.begin { response in
       if response == .OK, let appURL = openPanel.url {
-        // 解析.app包内的文件列表
-        do {
-          let contents = try FileManager.default.contentsOfDirectory(
-            at: appURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-          )
-          let filePaths = contents.map { $0.path }
-          // 返回结果给Flutter：包含.app路径和内部文件列表
-          completion([
-            "appPath": appURL.path,
-            "filePaths": filePaths,
-          ])
-        } catch {
+        // 验证是否为.app包
+        if appURL.path.lowercased().hasSuffix(".app") {
+          // 解析.app包内的文件列表
+          do {
+            let contents = try FileManager.default.contentsOfDirectory(
+              at: appURL,
+              includingPropertiesForKeys: nil,
+              options: [.skipsHiddenFiles]
+            )
+            let filePaths = contents.map { $0.path }
+            // 返回结果给Flutter：包含.app路径和内部文件列表
+            completion([
+              "appPath": appURL.path,
+              "filePaths": filePaths,
+            ])
+          } catch {
+            completion(
+              FlutterError(
+                code: "PARSE_FAILED",
+                message: "解析.app包失败：\(error.localizedDescription)",
+                details: nil
+              ))
+          }
+        } else {
           completion(
             FlutterError(
-              code: "PARSE_FAILED",
-              message: "解析.app包失败：\(error.localizedDescription)",
+              code: "INVALID_APP_BUNDLE",
+              message: "选择的不是有效的.app应用程序包",
               details: nil
             ))
         }
