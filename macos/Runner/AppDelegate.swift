@@ -74,6 +74,7 @@ class AppDelegate: FlutterAppDelegate {
 
   // 选择.app包并解析其内部文件
   private func selectAppPackage(completion: @escaping FlutterResult) {
+    print("开始选择app包")
     let openPanel = NSOpenPanel()
     openPanel.canChooseFiles = true  // 允许选择文件
     openPanel.canChooseDirectories = true  // 允许选择目录
@@ -85,10 +86,14 @@ class AppDelegate: FlutterAppDelegate {
     openPanel.showsHiddenFiles = false
     openPanel.canCreateDirectories = false
 
+    print("即将显示openPanel")
     openPanel.begin { response in
+      print("收到选择响应: \(response)")
       if response == .OK, let appURL = openPanel.url {
+        print("选择的URL: \(appURL.path)")
         // 验证是否为.app包
         if appURL.path.lowercased().hasSuffix(".app") {
+          print("验证为.app包，开始解析")
           // 解析.app包内的文件列表
           do {
             let contents = try FileManager.default.contentsOfDirectory(
@@ -97,12 +102,14 @@ class AppDelegate: FlutterAppDelegate {
               options: [.skipsHiddenFiles]
             )
             let filePaths = contents.map { $0.path }
+            print("解析完成，返回结果")
             // 返回结果给Flutter：包含.app路径和内部文件列表
             completion([
               "appPath": appURL.path,
               "filePaths": filePaths,
             ])
           } catch {
+            print("解析.app包失败: \(error.localizedDescription)")
             completion(
               FlutterError(
                 code: "PARSE_FAILED",
@@ -111,6 +118,7 @@ class AppDelegate: FlutterAppDelegate {
               ))
           }
         } else {
+          print("选择的不是有效的.app包")
           completion(
             FlutterError(
               code: "INVALID_APP_BUNDLE",
@@ -119,6 +127,7 @@ class AppDelegate: FlutterAppDelegate {
             ))
         }
       } else {
+        print("用户取消选择")
         // 用户取消选择
         completion(
           FlutterError(
@@ -128,6 +137,7 @@ class AppDelegate: FlutterAppDelegate {
           ))
       }
     }
+    print("openPanel已开始")
   }
 
   // 读取.app包内的Info.plist文件

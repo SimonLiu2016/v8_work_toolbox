@@ -52,15 +52,19 @@ class AppBundleSelector extends StatelessWidget {
   }
 
   Future<void> _selectAppBundle(BuildContext context) async {
+    print('开始选择app bundle');
     try {
       // 通过MethodChannel调用原生代码选择.app包
       const MethodChannel channel = MethodChannel('app_package_browser');
   
       // 调用原生方法选择.app包
+      print('调用原生方法selectAppPackage');
       final result = await channel.invokeMethod('selectAppPackage');
+      print('原生方法返回结果: $result');
         
       // 确保结果是Map类型
       if (result is! Map) {
+        print('结果类型错误: ${result.runtimeType}');
         _showErrorDialog(context, '获取应用包信息失败');
         return;
       }
@@ -68,19 +72,23 @@ class AppBundleSelector extends StatelessWidget {
       // 将结果转换为Map<String, dynamic>
       Map<String, dynamic> resultMap = Map<String, dynamic>.from(result);
       String? appPath = resultMap['appPath'];
+      print('获取到appPath: $appPath');
   
       if (appPath != null) {
         // 检查context是否仍然有效
         if (context.mounted) {
+          print('调用解析对话框');
           // 弹出解析进度对话框
           await _showParsingDialog(context, appPath);
         }
       } else {
+        print('appPath为空');
         if (context.mounted) {
           _showErrorDialog(context, '未选择任何应用包');
         }
       }
     } on PlatformException catch (e) {
+      print('PlatformException: $e');
       if (context.mounted) {
         _showErrorDialog(context, '选择应用包时出错: ${e.message}');
       }
