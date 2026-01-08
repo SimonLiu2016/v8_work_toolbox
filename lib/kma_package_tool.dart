@@ -888,6 +888,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
       _addLog('快捷键数量: ${shortcuts.length}');
 
+      // 保存快捷键总数
+      int shortcutCountValue = shortcuts.length;
+            
       // 生成 KMA 包
       String outputPath = await _createKmaPackage(
         bundleId: _bundleIdController.text,
@@ -895,7 +898,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         localizedName: _localizedNameController.text,
         category: _categoryController.text,
         version: _versionController.text,
-        shortcutCount: shortcuts.length,
+        shortcutCount: shortcutCountValue,
         updatedAt: _updatedAtController.text,
         iconFormat: _iconFormatController.text,
         description: _descriptionController.text,
@@ -904,40 +907,40 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         iconPath: _iconPathController.text,
         previewPath: _previewPathController.text,
       );
-
+      
       _addLog('KMA 包生成成功！路径: $outputPath');
-
+            
       // 获取输出目录路径
       String outputDir = _outputDirController.text;
       if (outputDir.isEmpty) {
         _showErrorDialog('请先设置KMA包输出目录');
         return;
       }
-
+            
       // 创建data目录
       String dataDir = '$outputDir/data';
       Directory(dataDir).createSync(recursive: true);
-
+            
       // 将生成的KMA包移动到data目录
       String fileName = Uri.file(outputPath).pathSegments.last;
       String newPathInDataDir = '$dataDir/$fileName';
       File(outputPath).copySync(newPathInDataDir);
       File(outputPath).deleteSync(); // 删除原始文件
-
+            
       _addLog('KMA 包已移动到: $newPathInDataDir');
-
+            
       // 复制图标文件到images目录
       String iconPath = _iconPathController.text;
       if (iconPath.isNotEmpty) {
         String imagesDir = '$outputDir/images';
         Directory(imagesDir).createSync(recursive: true);
-
+              
         String iconName = Uri.file(iconPath).pathSegments.last;
         String iconExtension = iconName.split('.').last;
         String appName = _nameController.text;
         String newIconName = '$appName.$iconExtension';
         String newIconPath = '$imagesDir/$newIconName';
-
+              
         try {
           File(iconPath).copySync(newIconPath);
           _addLog('图标已复制到: $newIconPath');
@@ -945,11 +948,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
           _addLog('复制图标失败: $e');
         }
       }
-
+            
       // 读取并更新app.json文件
       String appJsonPath = '$dataDir/app.json';
       Map<String, dynamic> appJson = {};
-
+            
       // 尝试读取现有的app.json文件
       if (await File(appJsonPath).exists()) {
         try {
@@ -961,13 +964,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
           appJson = {};
         }
       }
-
-      // 获取实际的快捷键个数
-      int actualShortcutCount = await _getActualShortcutCount(newPathInDataDir);
-
+            
       // 获取KMA包大小
       int kmaFileSize = File(newPathInDataDir).lengthSync();
-
+            
       // 构建新的应用信息
       Map<String, dynamic> newAppInfo = {
         "bundleId": _bundleIdController.text,
@@ -975,7 +975,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         "localizedName": _localizedNameController.text,
         "category": _categoryController.text,
         "version": _versionController.text,
-        "shortcutCount": actualShortcutCount,
+        "shortcutCount": shortcutCountValue, // 使用界面上的快捷键总数
         "updatedAt": _updatedAtController.text,
         "size": kmaFileSize,
         "supportsLanguages": _supportedLanguages,
