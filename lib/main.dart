@@ -6,6 +6,7 @@ import 'bc_config_shell.dart';
 import 'batch_rename_tool.dart';
 import 'folder_compare_tool.dart';
 import 'kma_package_tool.dart';
+import 'image_resize_tool.dart';
 
 void main() {
   runApp(const FileToolsApp());
@@ -112,6 +113,20 @@ class MainToolsPage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const KmaPackageToolPage(),
+                  ),
+                );
+              },
+            ),
+            _buildToolCard(
+              context,
+              title: '图片尺寸修改',
+              subtitle: '批量修改图片尺寸',
+              icon: Icons.photo_size_select_large,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ImageResizeHomePage(),
                   ),
                 );
               },
