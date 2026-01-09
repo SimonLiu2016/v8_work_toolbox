@@ -332,25 +332,59 @@ class TranslationUtil {
     logCallback?.call(
       '百度翻译API调用: 源语言=$sourceLang, 目标语言=$targetLang, 文本长度=${text.length}',
     );
-    final response = await http.get(
-      url,
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data['trans_result'] != null &&
-          data['trans_result'] is List &&
-          data['trans_result'].isNotEmpty) {
-        return data['trans_result'][0]['dst'];
-      } else if (data['error_code'] != null) {
-        throw Exception('百度翻译错误: ${data['error_code']} - ${data['error_msg']}');
-      } else {
-        throw Exception('翻译失败：未返回翻译结果');
+    // 增加超时和重试机制
+    int maxRetries = 3;
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        final response = await http
+            .get(
+              url,
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            )
+            .timeout(const Duration(seconds: 10)); // 10秒超时
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['trans_result'] != null &&
+              data['trans_result'] is List &&
+              data['trans_result'].isNotEmpty) {
+            return data['trans_result'][0]['dst'];
+          } else if (data['error_code'] != null) {
+            String errorCode = data['error_code'];
+            String errorMsg = data['error_msg'];
+
+            // 某些错误码需要特殊处理
+            if (errorCode == '54003') {
+              // QPS超限
+              logCallback?.call('百度翻译QPS超限，等待后重试: $errorMsg');
+              await Future.delayed(Duration(seconds: 1)); // 等待1秒后重试
+              continue;
+            } else {
+              throw Exception('百度翻译错误: $errorCode - $errorMsg');
+            }
+          } else {
+            throw Exception('翻译失败：未返回翻译结果');
+          }
+        } else {
+          throw Exception(
+            '百度翻译 API 错误: ${response.statusCode} - ${response.body}',
+          );
+        }
+      } catch (e) {
+        logCallback?.call('百度翻译请求失败 (尝试 $attempt/$maxRetries): $e');
+        if (attempt == maxRetries) {
+          rethrow; // 最后一次尝试失败，抛出异常
+        }
+        // 等待一段时间再重试
+        await Future.delayed(Duration(seconds: attempt));
       }
-    } else {
-      throw Exception('百度翻译 API 错误: ${response.body}');
+
+      // 让出控制权，避免阻塞UI线程
+      await Future.delayed(Duration.zero);
     }
+
+    throw Exception('百度翻译请求失败，已达到最大重试次数');
   }
 
   // 根据翻译服务类型转换语言代码
@@ -415,24 +449,44 @@ class TranslationUtil {
       // 添加限流，确保QPS不超过设定值
       await _rateLimit();
 
-      final response = await http.post(
-        Uri.parse(_libreTranslateUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(requestBody),
-      );
+      // 增加超时和重试机制
+      int maxRetries = 3;
+      for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          final response = await http
+              .post(
+                Uri.parse(_libreTranslateUrl),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode(requestBody),
+              )
+              .timeout(const Duration(seconds: 15)); // 15秒超时
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['translatedText'] != null) {
-          return data['translatedText'];
-        } else {
-          throw Exception('LibreTranslate: 未返回翻译结果');
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            if (data['translatedText'] != null) {
+              return data['translatedText'];
+            } else {
+              throw Exception('LibreTranslate: 未返回翻译结果');
+            }
+          } else {
+            throw Exception(
+              'LibreTranslate API 错误: ${response.statusCode} - ${response.body}',
+            );
+          }
+        } catch (e) {
+          logCallback?.call('LibreTranslate请求失败 (尝试 $attempt/$maxRetries): $e');
+          if (attempt == maxRetries) {
+            rethrow; // 最后一次尝试失败，抛出异常
+          }
+          // 等待一段时间再重试
+          await Future.delayed(Duration(seconds: attempt));
         }
-      } else {
-        throw Exception(
-          'LibreTranslate API 错误: ${response.statusCode} - ${response.body}',
-        );
+
+        // 让出控制权，避免阻塞UI线程
+        await Future.delayed(Duration.zero);
       }
+
+      throw Exception('LibreTranslate请求失败，已达到最大重试次数');
     } catch (e) {
       throw Exception('LibreTranslate 翻译失败: $e');
     }
@@ -448,22 +502,32 @@ class TranslationUtil {
     if (!text.trim().isNotEmpty) return text; // 如果文本为空，直接返回
 
     try {
+      String result;
       switch (currentService) {
         case TranslationServiceType.baidu:
-          return await _translateWithBaidu(
+          result = await _translateWithBaidu(
             text,
             sourceLang,
             targetLang,
             logCallback,
           );
+          break;
         case TranslationServiceType.libre:
-          return await _translateWithLibre(
+          result = await _translateWithLibre(
             text,
             sourceLang,
             targetLang,
             logCallback,
           );
+          break;
+        default:
+          result = text;
       }
+
+      // 让出控制权，避免阻塞UI线程
+      await Future.delayed(Duration.zero);
+
+      return result;
     } catch (e) {
       logCallback?.call('翻译失败: $e');
       // 翻译失败时返回原文
@@ -483,6 +547,7 @@ class TranslationUtil {
     for (int i = 0; i < texts.length; i++) {
       String text = texts[i];
       logCallback?.call('正在翻译文本 $i/${texts.length}: ${text.length} 字符');
+
       String translated = await translateText(
         text,
         sourceLang,
@@ -490,6 +555,12 @@ class TranslationUtil {
         logCallback,
       );
       results.add(translated);
+
+      // 让出控制权，避免阻塞UI线程
+      if (i % 5 == 0) {
+        // 每处理5个项目让出一次控制权
+        await Future.delayed(Duration.zero);
+      }
     }
 
     return results;
@@ -523,6 +594,8 @@ class TranslationUtil {
           targetLang,
           logCallback,
         );
+        // 让出控制权，避免阻塞UI线程
+        await Future.delayed(Duration.zero);
       }
 
       // 翻译描述
@@ -534,6 +607,8 @@ class TranslationUtil {
           targetLang,
           logCallback,
         );
+        // 让出控制权，避免阻塞UI线程
+        await Future.delayed(Duration.zero);
       }
 
       // 翻译 when 字段
@@ -544,9 +619,17 @@ class TranslationUtil {
           targetLang,
           logCallback,
         );
+        // 让出控制权，避免阻塞UI线程
+        await Future.delayed(Duration.zero);
       }
 
       translatedShortcuts.add(translatedShortcut);
+
+      // 让出控制权，避免阻塞UI线程
+      if (i % 5 == 0) {
+        // 每处理5个项目让出一次控制权
+        await Future.delayed(Duration.zero);
+      }
     }
 
     return {'shortcuts': translatedShortcuts};
@@ -578,25 +661,33 @@ class TranslationUtil {
 
   // 限流函数，确保QPS不超过设定值
   static Future<void> _rateLimit() async {
+    await Future.delayed(Duration.zero); // 让出控制权，避免阻塞
+
+    // 简单的令牌桶算法实现
     DateTime now = DateTime.now();
     int nowMs = now.millisecondsSinceEpoch;
-    int lastMs = _lastRequestTime?.millisecondsSinceEpoch ?? 0;
 
-    // 如果在同一个时间窗口内，检查请求数量
-    if (nowMs - lastMs < _intervalMs) {
-      if (_requestCount >= _maxQps) {
-        // 等待到下一个时间窗口
-        int waitTime = _intervalMs - (nowMs - lastMs);
-        await Future.delayed(Duration(milliseconds: waitTime));
-        _requestCount = 0;
-        _lastRequestTime = DateTime.now();
-      }
-    } else {
-      // 进入新的时间窗口，重置计数器
+    // 如果不在当前时间窗口内，重置计数器
+    if (_lastRequestTime == null ||
+        (nowMs - _lastRequestTime!.millisecondsSinceEpoch) >= _intervalMs) {
       _requestCount = 0;
       _lastRequestTime = now;
     }
 
+    // 检查是否超过QPS限制
+    if (_requestCount >= _maxQps) {
+      // 等待到下一个时间窗口
+      int elapsed = nowMs - _lastRequestTime!.millisecondsSinceEpoch;
+      int remaining = _intervalMs - elapsed;
+      if (remaining > 0) {
+        await Future.delayed(Duration(milliseconds: remaining));
+        // 重置时间窗口
+        _lastRequestTime = DateTime.now();
+        _requestCount = 0;
+      }
+    }
+
+    // 增加请求计数
     _requestCount++;
   }
 

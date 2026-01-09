@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as path;
 import 'package:file_picker/file_picker.dart';
@@ -24,6 +26,53 @@ import 'components/extract_kma.dart';
 import 'components/compress_kma.dart';
 import 'components/rate_limit_config.dart';
 import 'utils/kma_package_util.dart';
+
+// 参数类用于后台线程通信
+class KmaGenerationParams {
+  final String bundleId;
+  final String name;
+  final String localizedName;
+  final String category;
+  final String version;
+  final String updatedAt;
+  final String iconFormat;
+  final String description;
+  final List<String> supportedLanguages;
+  final List<Map<String, dynamic>> shortcuts;
+  final String iconPath;
+  final String previewPath;
+  final String outputDir;
+  final String encryptionPassword;
+  final bool useTranslation;
+  final String sourceLanguage;
+  final TranslationServiceType translationService;
+  final int maxQps;
+  final int intervalMs;
+  final int totalSteps;
+
+  KmaGenerationParams({
+    required this.bundleId,
+    required this.name,
+    required this.localizedName,
+    required this.category,
+    required this.version,
+    required this.updatedAt,
+    required this.iconFormat,
+    required this.description,
+    required this.supportedLanguages,
+    required this.shortcuts,
+    required this.iconPath,
+    required this.previewPath,
+    required this.outputDir,
+    required this.encryptionPassword,
+    required this.useTranslation,
+    required this.sourceLanguage,
+    required this.translationService,
+    required this.maxQps,
+    required this.intervalMs,
+    required this.totalSteps,
+  });
+}
 
 class KmaPackageToolPage extends StatefulWidget {
   const KmaPackageToolPage({super.key});
@@ -112,6 +161,15 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   // 状态管理
   bool _isLoading = false;
+  bool _showProgress = false;
+  // 使用 ValueNotifier 来单独更新进度，避免整个UI重建
+  final ValueNotifier<double> _progressValueNotifier = ValueNotifier<double>(0.0);
+  final ValueNotifier<String> _progressTextNotifier = ValueNotifier<String>('');
+
+  // 日志缓冲区和更新控制
+  final List<String> _logBuffer = [];
+  bool _isUpdatingLogs = false;
+  Timer? _logUpdateTimer;
 
   @override
   void initState() {
@@ -142,22 +200,64 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     String timestamp = DateTime.now().toString().split('.')[0];
     String logEntry = '[$timestamp] $message';
 
-    setState(() {
-      _logEntries.add(logEntry);
-      _logController.text = _logEntries.join('\n');
-      _logController.selection = TextSelection.fromPosition(
-        TextPosition(offset: _logController.text.length),
-      );
-    });
+    // 添加到缓冲区
+    _logBuffer.add(logEntry);
 
-    // 滚动到底部
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_logScrollController.hasClients) {
-        _logScrollController.jumpTo(
-          _logScrollController.position.maxScrollExtent,
-        );
-      }
-    });
+    // 如果没有正在进行的更新，启动一个更新
+    if (!_isUpdatingLogs) {
+      _isUpdatingLogs = true;
+
+      // 延迟更新日志显示，避免频繁UI更新
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateLogDisplay();
+      });
+    }
+  }
+
+  void _updateLogDisplay() {
+    // 将缓冲区的日志条目添加到显示列表
+    _logEntries.addAll(_logBuffer);
+    _logBuffer.clear();
+
+    // 获取新的日志文本
+    String newLogText = _logEntries.join('\n');
+
+    // 只在文本真正改变时才更新，避免不必要的UI重建
+    if (_logController.text != newLogText) {
+      _logController.value = TextEditingValue(
+        text: newLogText,
+        selection: TextSelection.collapsed(offset: newLogText.length),
+      );
+
+      // 滚动到底部
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_logScrollController.hasClients) {
+          _logScrollController.animateTo(
+            _logScrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 100),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+
+    // 标记更新完成
+    _isUpdatingLogs = false;
+
+    // 如果在更新期间又有新的日志条目，则继续更新
+    if (_logBuffer.isNotEmpty) {
+      _isUpdatingLogs = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateLogDisplay();
+      });
+    }
+  }
+
+  // 轻量级日志方法，用于在密集操作中减少UI更新
+  void _addLightLog(String message) {
+    String timestamp = DateTime.now().toString().split('.')[0];
+    String logEntry = '[$timestamp] $message';
+    _logBuffer.add(logEntry);
   }
 
   @override
@@ -191,6 +291,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
     // 处理日志相关的控制器
     _logController.dispose();
+
+    // 取消可能存在的定时器
+    _logUpdateTimer?.cancel();
 
     super.dispose();
   }
@@ -703,7 +806,32 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   Widget _buildGenerateButton() {
     return Center(
       child: _isLoading
-          ? const CircularProgressIndicator()
+          ? _showProgress
+                ? ValueListenableBuilder<double>(
+                    valueListenable: _progressValueNotifier,
+                    builder: (context, progressValue, child) {
+                      return ValueListenableBuilder<String>(
+                        valueListenable: _progressTextNotifier,
+                        builder: (context, progressText, child) {
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              LinearProgressIndicator(
+                                value: progressValue,
+                                backgroundColor: Colors.grey[300],
+                                valueColor: const AlwaysStoppedAnimation<Color>(
+                                  Colors.blue,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(progressText),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  )
+                : const CircularProgressIndicator()
           : ElevatedButton(
               onPressed: _generateKmaPackage,
               style: ElevatedButton.styleFrom(
@@ -846,198 +974,231 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   void _generateKmaPackage() async {
     if (_isLoading) return; // 防止重复点击
 
+    // 收集当前表单数据
+    List<Map<String, dynamic>> shortcuts = [];
+    if (!_isJsonMode) {
+      // 如果在交互模式下，从输入字段生成快捷键数据
+      for (int i = 0; i < _shortcutRowsCount; i++) {
+        Map<String, dynamic> shortcut = {
+          'id': _idControllers[i].text,
+          'name': _nameControllers[i].text,
+          'description': _descriptionControllers[i].text,
+          'keys': _parseKeysString(_keysControllers[i].text),
+          'raw': _rawControllers[i].text,
+          'category': _categoryControllers[i].text,
+          'when': _whenControllers[i].text,
+        };
+
+        // 只有当至少有一个字段不为空时才添加到列表中
+        if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
+          shortcuts.add(shortcut);
+        }
+      }
+    } else {
+      // 如果在 JSON 模式下，解析 JSON 字符串
+      if (_shortcutsJsonController.text.isNotEmpty) {
+        try {
+          var parsedJson = jsonDecode(_shortcutsJsonController.text);
+          if (parsedJson is List) {
+            shortcuts = parsedJson.cast<Map<String, dynamic>>();
+          }
+        } catch (e) {
+          _showErrorDialog('快捷键 JSON 格式错误: $e');
+          _addLog('快捷键 JSON 格式错误: $e');
+          return;
+        }
+      }
+    }
+
+    int totalSteps =
+        shortcuts.length * (_supportedLanguages.length - 1); // 减去en，因为en是基础语言
+    if (_supportedLanguages.contains('en')) {
+      totalSteps = shortcuts.length * (_supportedLanguages.length - 1);
+    } else {
+      totalSteps = shortcuts.length * _supportedLanguages.length;
+    }
+
     setState(() {
       _isLoading = true;
+      _showProgress = true;
     });
+    // 使用 ValueNotifier 初始化进度，避免整个UI重建
+    _progressValueNotifier.value = 0.0;
+    _progressTextNotifier.value = '准备开始... (0/$totalSteps)';
 
-    try {
-      _addLog('开始生成 KMA 包...');
-
-      // 验证输入
-      if (_bundleIdController.text.isEmpty ||
-          _nameController.text.isEmpty ||
-          _versionController.text.isEmpty) {
-        _showErrorDialog('请填写必要的应用信息：Bundle ID、应用名称和版本号');
-        _addLog('输入验证失败：缺少必要的应用信息');
-        return;
-      }
-
-      _addLog('输入验证通过');
-
-      // 解析快捷键 JSON
-      List<Map<String, dynamic>> shortcuts = [];
-      if (!_isJsonMode) {
-        // 如果在交互模式下，从输入字段生成快捷键数据
-        for (int i = 0; i < _shortcutRowsCount; i++) {
-          Map<String, dynamic> shortcut = {
-            'id': _idControllers[i].text,
-            'name': _nameControllers[i].text,
-            'description': _descriptionControllers[i].text,
-            'keys': _parseKeysString(_keysControllers[i].text),
-            'raw': _rawControllers[i].text,
-            'category': _categoryControllers[i].text,
-            'when': _whenControllers[i].text,
-          };
-
-          // 只有当至少有一个字段不为空时才添加到列表中
-          if (shortcut.values.any((value) => value.toString().isNotEmpty)) {
-            shortcuts.add(shortcut);
-          }
-        }
-      } else {
-        // 如果在 JSON 模式下，解析 JSON 字符串
-        if (_shortcutsJsonController.text.isNotEmpty) {
-          try {
-            var parsedJson = jsonDecode(_shortcutsJsonController.text);
-            if (parsedJson is List) {
-              shortcuts = parsedJson.cast<Map<String, dynamic>>();
-            }
-            _addLog('成功解析快捷键 JSON');
-          } catch (e) {
-            _showErrorDialog('快捷键 JSON 格式错误: $e');
-            _addLog('快捷键 JSON 格式错误: $e');
-            return;
-          }
-        }
-      }
-
-      _addLog('快捷键数量: ${shortcuts.length}');
-
-      // 保存快捷键总数
-      int shortcutCountValue = shortcuts.length;
-
-      // 生成 KMA 包
-      String outputPath = await _createKmaPackage(
-        bundleId: _bundleIdController.text,
-        name: _nameController.text,
-        localizedName: _localizedNameController.text,
-        category: _categoryController.text,
-        version: _versionController.text,
-        shortcutCount: shortcutCountValue,
-        updatedAt: _updatedAtController.text,
-        iconFormat: _iconFormatController.text,
-        description: _descriptionController.text,
-        supportedLanguages: _supportedLanguages,
-        shortcuts: shortcuts,
-        iconPath: _iconPathController.text,
-        previewPath: _previewPathController.text,
-      );
-
-      _addLog('KMA 包生成成功！路径: $outputPath');
-
-      // 获取输出目录路径
-      String outputDir = _outputDirController.text;
-      if (outputDir.isEmpty) {
-        _showErrorDialog('请先设置KMA包输出目录');
-        return;
-      }
-
-      // 创建data目录
-      String dataDir = '$outputDir/data';
-      Directory(dataDir).createSync(recursive: true);
-
-      // 将生成的KMA包移动到data目录
-      String fileName = Uri.file(outputPath).pathSegments.last;
-      String newPathInDataDir = '$dataDir/$fileName';
-      File(outputPath).copySync(newPathInDataDir);
-      File(outputPath).deleteSync(); // 删除原始文件
-
-      _addLog('KMA 包已移动到: $newPathInDataDir');
-
-      // 复制图标文件到images目录
-      String iconPath = _iconPathController.text;
-      if (iconPath.isNotEmpty) {
-        String imagesDir = '$outputDir/images';
-        Directory(imagesDir).createSync(recursive: true);
-
-        String iconName = Uri.file(iconPath).pathSegments.last;
-        String iconExtension = iconName.split('.').last;
-        String appName = _nameController.text;
-        String newIconName = '$appName.$iconExtension';
-        String newIconPath = '$imagesDir/$newIconName';
-
-        try {
-          File(iconPath).copySync(newIconPath);
-          _addLog('图标已复制到: $newIconPath');
-        } catch (e) {
-          _addLog('复制图标失败: $e');
-        }
-      }
-
-      // 读取并更新app.json文件
-      String appJsonPath = '$dataDir/app.json';
-      Map<String, dynamic> appJson = {};
-
-      // 尝试读取现有的app.json文件
-      if (await File(appJsonPath).exists()) {
-        try {
-          String jsonString = await File(appJsonPath).readAsString();
-          appJson = json.decode(jsonString);
-        } catch (e) {
-          _addLog('读取app.json失败: $e');
-          // 如果读取失败，使用空的JSON对象
-          appJson = {};
-        }
-      }
-
-      // 获取KMA包大小
-      int kmaFileSize = File(newPathInDataDir).lengthSync();
-
-      // 构建新的应用信息
-      Map<String, dynamic> newAppInfo = {
-        "bundleId": _bundleIdController.text,
-        "name": _nameController.text,
-        "localizedName": _localizedNameController.text,
-        "category": _categoryController.text,
-        "version": _versionController.text,
-        "shortcutCount": shortcutCountValue, // 使用界面上的快捷键总数
-        "updatedAt": _updatedAtController.text,
-        "size": kmaFileSize,
-        "supportsLanguages": _supportedLanguages,
-        "preview": "../images/${_nameController.text}.icns", // 使用应用名称作为图标名
-      };
-
-      // 更新app.json内容
-      List<dynamic> apps = [];
-      if (appJson.containsKey('apps') && appJson['apps'] is List) {
-        apps = List.from(appJson['apps']);
-      }
-
-      // 添加新的应用信息
-      apps.add(newAppInfo);
-
-      // 更新总数
-      appJson['apps'] = apps;
-      appJson['totalApps'] = apps.length;
-      appJson['lastUpdated'] = DateTime.now().toIso8601String();
-
-      // 如果没有分类信息，添加默认分类
-      if (!appJson.containsKey('categories')) {
-        appJson['categories'] = {
-          "browser": "浏览器",
-          "developer": "开发工具",
-          "system": "系统工具",
-          "OS": "操作系统",
-        };
-      }
-
-      // 写入更新后的app.json文件
-      try {
-        await File(appJsonPath).writeAsString(json.encode(appJson));
-        _addLog('app.json文件已更新');
-      } catch (e) {
-        _addLog('写入app.json失败: $e');
-      }
-
-      _showSuccessDialog('KMA 包生成成功！\n路径: $newPathInDataDir');
-    } catch (e) {
-      _addLog('生成 KMA 包时出错: $e');
-      _showErrorDialog('生成 KMA 包时出错: $e');
-    } finally {
+    // 验证输入
+    if (_bundleIdController.text.isEmpty ||
+        _nameController.text.isEmpty ||
+        _versionController.text.isEmpty) {
       setState(() {
         _isLoading = false;
+        _showProgress = false;
       });
+      _showErrorDialog('请填写必要的应用信息：Bundle ID、应用名称和版本号');
+      _addLog('输入验证失败：缺少必要的应用信息');
+      return;
     }
+
+    // 使用微任务确保UI更新，然后执行耗时操作
+    scheduleMicrotask(() async {
+      try {
+        _addLog('开始生成 KMA 包...');
+        _addLog('输入验证通过');
+        _addLog('快捷键数量: ${shortcuts.length}');
+
+        // 保存快捷键总数
+        int shortcutCountValue = shortcuts.length;
+
+        // 生成 KMA 包，传入进度回调
+        String outputPath = await _createKmaPackage(
+          bundleId: _bundleIdController.text,
+          name: _nameController.text,
+          localizedName: _localizedNameController.text,
+          category: _categoryController.text,
+          version: _versionController.text,
+          shortcutCount: shortcutCountValue,
+          updatedAt: _updatedAtController.text,
+          iconFormat: _iconFormatController.text,
+          description: _descriptionController.text,
+          supportedLanguages: _supportedLanguages,
+          shortcuts: shortcuts,
+          iconPath: _iconPathController.text,
+          previewPath: _previewPathController.text,
+          totalSteps: totalSteps, // 传递总步数
+          onProgress: (double progress, String progressText) {
+            // 使用更轻量级的方式更新进度，避免不必要的UI重建
+            // 使用 ValueNotifier 更新进度，避免整个UI重建
+            _progressValueNotifier.value = progress;
+            _progressTextNotifier.value = progressText;
+          },
+        );
+
+        _addLog('KMA 包生成成功！路径: $outputPath');
+
+        // 获取输出目录路径
+        String outputDir = _outputDirController.text;
+        if (outputDir.isEmpty) {
+          _showErrorDialog('请先设置KMA包输出目录');
+          return;
+        }
+
+        // 创建data目录
+        String dataDir = '$outputDir/data';
+        Directory(dataDir).createSync(recursive: true);
+
+        // 将生成的KMA包移动到data目录
+        String fileName = Uri.file(outputPath).pathSegments.last;
+        String newPathInDataDir = '$dataDir/$fileName';
+        File(outputPath).copySync(newPathInDataDir);
+        File(outputPath).deleteSync(); // 删除原始文件
+
+        _addLog('KMA 包已移动到: $newPathInDataDir');
+
+        // 复制图标文件到images目录
+        String iconPath = _iconPathController.text;
+        if (iconPath.isNotEmpty) {
+          String imagesDir = '$outputDir/images';
+          Directory(imagesDir).createSync(recursive: true);
+
+          String iconName = Uri.file(iconPath).pathSegments.last;
+          String iconExtension = iconName.split('.').last;
+          String appName = _nameController.text;
+          String newIconName = '$appName.$iconExtension';
+          String newIconPath = '$imagesDir/$newIconName';
+
+          try {
+            File(iconPath).copySync(newIconPath);
+            _addLog('图标已复制到: $newIconPath');
+          } catch (e) {
+            _addLog('复制图标失败: $e');
+          }
+        }
+
+        // 读取并更新app.json文件
+        String appJsonPath = '$dataDir/app.json';
+        Map<String, dynamic> appJson = {};
+
+        // 尝试读取现有的app.json文件
+        if (await File(appJsonPath).exists()) {
+          try {
+            String jsonString = await File(appJsonPath).readAsString();
+            appJson = json.decode(jsonString);
+          } catch (e) {
+            _addLog('读取app.json失败: $e');
+            // 如果读取失败，使用空的JSON对象
+            appJson = {};
+          }
+        }
+
+        // 获取KMA包大小
+        int kmaFileSize = File(newPathInDataDir).lengthSync();
+
+        // 构建新的应用信息
+        Map<String, dynamic> newAppInfo = {
+          "bundleId": _bundleIdController.text,
+          "name": _nameController.text,
+          "localizedName": _localizedNameController.text,
+          "category": _categoryController.text,
+          "version": _versionController.text,
+          "shortcutCount": shortcutCountValue, // 使用界面上的快捷键总数
+          "updatedAt": _updatedAtController.text,
+          "size": kmaFileSize,
+          "supportsLanguages": _supportedLanguages,
+          "preview": "../images/${_nameController.text}.icns", // 使用应用名称作为图标名
+        };
+
+        // 更新app.json内容
+        List<dynamic> apps = [];
+        if (appJson.containsKey('apps') && appJson['apps'] is List) {
+          apps = List.from(appJson['apps']);
+        }
+
+        // 添加新的应用信息
+        apps.add(newAppInfo);
+
+        // 更新总数
+        appJson['apps'] = apps;
+        appJson['totalApps'] = apps.length;
+        appJson['lastUpdated'] = DateTime.now().toIso8601String();
+
+        // 如果没有分类信息，添加默认分类
+        if (!appJson.containsKey('categories')) {
+          appJson['categories'] = {
+            "browser": "浏览器",
+            "developer": "开发工具",
+            "system": "系统工具",
+            "OS": "操作系统",
+          };
+        }
+
+        // 写入更新后的app.json文件
+        try {
+          await File(appJsonPath).writeAsString(json.encode(appJson));
+          _addLog('app.json文件已更新');
+        } catch (e) {
+          _addLog('写入app.json失败: $e');
+        }
+
+        // 在UI线程中更新状态并显示成功对话框
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _showProgress = false;
+          });
+          _showSuccessDialog('KMA 包生成成功！\n路径: $newPathInDataDir');
+        }
+      } catch (e) {
+        _addLog('生成 KMA 包时出错: $e');
+        // 在UI线程中更新状态并显示错误对话框
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _showProgress = false;
+          });
+          _showErrorDialog('生成 KMA 包时出错: $e');
+        }
+      }
+    });
   }
 
   Future<String> _createKmaPackage({
@@ -1054,6 +1215,8 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     required List<Map<String, dynamic>> shortcuts,
     required String iconPath,
     required String previewPath,
+    int totalSteps = 0,
+    Function(double, String)? onProgress,
   }) async {
     // 创建临时目录
     Directory tempDir = await Directory.systemTemp.createTemp('kma_package_');
@@ -1063,6 +1226,14 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       _addLog('开始创建 KMA 包...');
       _addLog('临时目录: ${tempDir.path}');
       _addLog('包目录: $packageDir');
+
+      // 更新初始进度
+      if (totalSteps > 0 && onProgress != null) {
+        onProgress(0.0, '正在初始化... (0/$totalSteps)');
+      }
+
+      // 让UI线程有机会更新
+      await Future.microtask(() {});
 
       // 创建包目录结构
       await Directory(packageDir).create(recursive: true);
@@ -1119,7 +1290,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
               shortcuts,
               _sourceLanguage, // 从源语言
               'en', // 翻译到英文
-              _addLog, // 日志回调
+              _addLightLog, // 日志回调 - 使用轻量级方法
             );
         shortcutsForEnJson = translatedShortcutsForEn['shortcuts'];
         _addLog('快捷键已翻译为英文');
@@ -1137,6 +1308,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       _addLog('已创建 locales 目录: ${localesDir.path}');
 
       // 为每种支持的语言创建语言包，除了 'en'（因为它已经作为 shortcuts.en.json 存在）
+      int progressStep = 0;
       for (String lang in supportedLanguages) {
         if (lang != 'en') {
           Map<String, dynamic> localeJson;
@@ -1165,17 +1337,79 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                     category,
                     _sourceLanguage,
                     lang,
-                    _addLog, // 日志回调
+                    null, // 不输出详细日志
                   );
 
-              // 翻译快捷键信息
-              Map<String, dynamic> translatedShortcuts =
-                  await TranslationUtil.translateShortcuts(
-                    shortcuts,
-                    _sourceLanguage, // 使用配置的源语言
-                    lang,
-                    _addLog, // 日志回调
-                  );
+              _addLog('开始翻译语言包: $lang (快捷键数量: ${shortcuts.length})');
+
+              // 翻译快捷键信息 - 逐个处理以更新进度
+              List<Map<String, dynamic>> translatedShortcutsList = [];
+
+              for (int i = 0; i < shortcuts.length; i++) {
+                Map<String, dynamic> shortcut = shortcuts[i];
+
+                Map<String, dynamic> translatedShortcut = {};
+                // 复制原始字段
+                translatedShortcut.addAll(shortcut);
+
+                // 翻译特定字段
+                if (shortcut['name'] != null && shortcut['name'].isNotEmpty) {
+                  translatedShortcut['name'] =
+                      await TranslationUtil.translateText(
+                        shortcut['name'],
+                        _sourceLanguage,
+                        lang,
+                        null, // 不输出详细日志
+                      );
+                }
+
+                // 翻译描述
+                if (shortcut['description'] != null &&
+                    shortcut['description'].isNotEmpty) {
+                  translatedShortcut['description'] =
+                      await TranslationUtil.translateText(
+                        shortcut['description'],
+                        _sourceLanguage,
+                        lang,
+                        null, // 不输出详细日志
+                      );
+                }
+
+                // 翻译 when 字段
+                if (shortcut['when'] != null && shortcut['when'].isNotEmpty) {
+                  translatedShortcut['when'] =
+                      await TranslationUtil.translateText(
+                        shortcut['when'],
+                        _sourceLanguage,
+                        lang,
+                        null, // 不输出详细日志
+                      );
+                }
+
+                translatedShortcutsList.add(translatedShortcut);
+
+                // 让出控制权，允许UI更新
+                await Future.delayed(Duration.zero);
+
+                // 更新进度
+                if (totalSteps > 0 && onProgress != null) {
+                  double progress = totalSteps > 0
+                      ? ((progressStep + i + 1) / totalSteps)
+                      : 0.0;
+                  String progressText =
+                      '正在处理语言包: $lang (${progressStep + i + 1}/$totalSteps)';
+                  onProgress(progress, progressText);
+
+                  // 再次让出控制权，确保UI更新
+                  await Future.delayed(Duration.zero);
+                }
+              }
+
+              _addLog('完成翻译语言包: $lang');
+
+              Map<String, dynamic> translatedShortcuts = {
+                'shortcuts': translatedShortcutsList,
+              };
 
               localeJson = {
                 'appLocalizedName': translatedAppInfo['appLocalizedName'],
@@ -1201,7 +1435,23 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
           String localePath = path.join(localesDir.path, '$lang.json');
           await File(localePath).writeAsString(jsonEncode(localeJson));
-          _addLog('已创建语言包: $localePath');
+
+          // 让UI线程有机会更新
+          await Future.microtask(() {});
+
+          // 更新进度
+          if (totalSteps > 0 && onProgress != null) {
+            progressStep += shortcuts.length; // 每处理一种语言，进度增加快捷键数量
+            double progress = totalSteps > 0
+                ? (progressStep / totalSteps)
+                : 0.0;
+            String progressText =
+                '正在处理语言包: $lang (${progressStep}/$totalSteps)';
+            onProgress(progress, progressText);
+
+            // 再次让出控制权，确保UI更新
+            await Future.delayed(Duration.zero);
+          }
         }
       }
 
@@ -1212,6 +1462,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       );
       await KmaPackageUtil.createZipFromDirectory(packageDir, zipPath);
       _addLog('已创建 ZIP 文件: $zipPath');
+
+      // 让UI线程有机会更新
+      await Future.delayed(Duration.zero);
 
       // 7. 加密 ZIP 文件
       String encryptedPath = path.join(
@@ -1225,6 +1478,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         _addLog,
       );
       _addLog('已创建加密 KMA 文件: $encryptedPath');
+
+      // 让UI线程有机会更新
+      await Future.delayed(Duration.zero);
 
       // 8. 移动到指定的输出目录
       String outputDir = _outputDirController.text;
@@ -1250,11 +1506,29 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
         _addLog('开始复制文件从 $encryptedPath 到 $finalPath');
         await sourceFile.copy(finalPath);
+
+        // 让UI线程有机会更新
+        await Future.microtask(() {});
+
+        // 更新完成进度
+        if (totalSteps > 0 && onProgress != null) {
+          onProgress(1.0, '完成! (100%)');
+        }
+
         await tempDir.delete(recursive: true);
         _addLog('成功生成 KMA 包: $finalPath');
         return finalPath;
       } else {
         // 如果没有指定输出目录，返回加密文件路径
+
+        // 让UI线程有机会更新
+        await Future.microtask(() {});
+
+        // 更新完成进度
+        if (totalSteps > 0 && onProgress != null) {
+          onProgress(1.0, '完成! (100%)');
+        }
+
         await tempDir.delete(recursive: true);
         _addLog('返回临时 KMA 文件: $encryptedPath');
         return encryptedPath;
@@ -1344,6 +1618,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         'when': shortcut['when'],
       };
     }).toList();
+  }
+
+  void _updateProgress(double progress, String text) {
+    // 使用 ValueNotifier 更新进度，避免整个UI重建
+    _progressValueNotifier.value = progress;
+    _progressTextNotifier.value = text;
   }
 
   void _showLanguageSelectionDialog() {
