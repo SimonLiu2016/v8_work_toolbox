@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:encrypt/encrypt.dart' as encrypt_package;
 import 'package:cryptography/cryptography.dart' as crypto_package;
 import 'dart:math' as math;
+import 'dart:async';
 
 // 导入新组件
 import 'components/app_info_form.dart';
@@ -108,6 +109,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   final List<String> _logEntries = [];
   final ScrollController _logScrollController = ScrollController();
   final TextEditingController _logController = TextEditingController();
+
+  // 状态管理
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -698,17 +702,22 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   Widget _buildGenerateButton() {
     return Center(
-      child: ElevatedButton(
-        onPressed: _generateKmaPackage,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-          backgroundColor: Colors.blue,
-        ),
-        child: const Text(
-          '生成 KMA 包',
-          style: TextStyle(fontSize: 16, color: Colors.white),
-        ),
-      ),
+      child: _isLoading
+          ? const CircularProgressIndicator()
+          : ElevatedButton(
+              onPressed: _generateKmaPackage,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                backgroundColor: Colors.blue,
+              ),
+              child: const Text(
+                '生成 KMA 包',
+                style: TextStyle(fontSize: 16, color: Colors.white),
+              ),
+            ),
     );
   }
 
@@ -835,6 +844,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   }
 
   void _generateKmaPackage() async {
+    if (_isLoading) return; // 防止重复点击
+
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
       _addLog('开始生成 KMA 包...');
 
@@ -1018,6 +1033,10 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     } catch (e) {
       _addLog('生成 KMA 包时出错: $e');
       _showErrorDialog('生成 KMA 包时出错: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 

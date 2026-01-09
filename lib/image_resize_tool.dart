@@ -76,7 +76,10 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       _addLogMessage('请先选择图片文件夹');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先选择图片文件夹'), backgroundColor: Colors.red),
+          const SnackBar(
+            content: Text('请先选择图片文件夹'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
       return;
@@ -99,7 +102,10 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       _addLogMessage('请设置有效的尺寸');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请设置有效的尺寸'), backgroundColor: Colors.red),
+          const SnackBar(
+            content: Text('请设置有效的尺寸'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
       return;
@@ -111,7 +117,9 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       builder: (context) {
         return AlertDialog(
           title: const Text('确认转换'),
-          content: Text('确定要在 "${_folderController.text}" 中转换所有图片为 ${targetWidth}x$targetHeight 尺寸吗？\n\n转换后的图片将保存在同目录下的 "resized_images" 文件夹中。'),
+          content: Text(
+            '确定要在 "${_folderController.text}" 中转换所有图片为 ${targetWidth}x$targetHeight 尺寸吗？\n\n转换后的图片将保存在同目录下的 "resized_images" 文件夹中。',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -171,7 +179,12 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       // 转换每张图片
       for (final imageFile in imageFiles) {
         try {
-          await _resizeSingleImage(imageFile, outputDirectory, targetWidth, targetHeight);
+          await _resizeSingleImage(
+            imageFile,
+            outputDirectory,
+            targetWidth,
+            targetHeight,
+          );
           processedCount++;
           _addLogMessage('✓ 已转换: ${imageFile.uri.pathSegments.last}');
         } catch (e) {
@@ -192,13 +205,18 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
 
   bool _isImageFile(String fileName) {
     return fileName.endsWith('.jpg') ||
-           fileName.endsWith('.jpeg') ||
-           fileName.endsWith('.png') ||
-           fileName.endsWith('.bmp') ||
-           fileName.endsWith('.gif');
+        fileName.endsWith('.jpeg') ||
+        fileName.endsWith('.png') ||
+        fileName.endsWith('.bmp') ||
+        fileName.endsWith('.gif');
   }
 
-  Future<void> _resizeSingleImage(File sourceFile, Directory outputDirectory, int targetWidth, int targetHeight) async {
+  Future<void> _resizeSingleImage(
+    File sourceFile,
+    Directory outputDirectory,
+    int targetWidth,
+    int targetHeight,
+  ) async {
     final bytes = await sourceFile.readAsBytes();
     final image = img.decodeImage(bytes);
 
@@ -207,12 +225,19 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
     }
 
     // 调整图片尺寸
-    final resizedImage = img.copyResize(image, width: targetWidth, height: targetHeight);
+    final resizedImage = img.copyResize(
+      image,
+      width: targetWidth,
+      height: targetHeight,
+    );
 
     // 生成输出文件路径
     final fileName = sourceFile.uri.pathSegments.last;
     final fileExtension = fileName.split('.').last.toLowerCase();
-    final outputFileName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '_${targetWidth}x${targetHeight}.$fileExtension');
+    final outputFileName = fileName.replaceAll(
+      RegExp(r'\.[^.]+$'),
+      '_${targetWidth}x${targetHeight}.$fileExtension',
+    );
     final outputFile = File('${outputDirectory.path}/$outputFileName');
 
     // 根据原文件格式保存
@@ -294,7 +319,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 尺寸选择部分
               Card(
                 child: Padding(
@@ -311,7 +336,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      
+
                       // 固定尺寸选择
                       const Text(
                         '固定尺寸:',
@@ -322,8 +347,8 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                           title: Text(entry.value),
                           value: entry.key,
                           groupValue: _selectedSize,
-                          onChanged: _isProcessing 
-                              ? null 
+                          onChanged: _isProcessing
+                              ? null
                               : (String? value) {
                                   setState(() {
                                     _selectedSize = value;
@@ -334,23 +359,23 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                                 },
                         );
                       }).toList(),
-                      
+
                       const Divider(),
-                      
+
                       // 自定义尺寸选择
                       RadioListTile<String>(
                         title: const Text('自定义尺寸'),
                         value: 'custom',
                         groupValue: _selectedSize,
-                        onChanged: _isProcessing 
-                            ? null 
+                        onChanged: _isProcessing
+                            ? null
                             : (String? value) {
                                 setState(() {
                                   _selectedSize = value;
                                 });
                               },
                       ),
-                      
+
                       if (_selectedSize == 'custom') ...[
                         const SizedBox(height: 8),
                         Row(
@@ -386,7 +411,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 转换按钮
               Center(
                 child: ElevatedButton.icon(
@@ -403,13 +428,16 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                       : const Icon(Icons.transform),
                   label: Text(_isProcessing ? '转换中...' : '开始转换'),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 12,
+                    ),
                     textStyle: const TextStyle(fontSize: 16),
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // 操作日志部分
               Card(
                 child: Padding(
