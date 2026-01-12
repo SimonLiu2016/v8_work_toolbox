@@ -21,6 +21,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
 
   // 预定义的固定尺寸选项
   final Map<String, String> _sizeOptions = {
+    '1024x1024': '1024x1024 (正方形)',
     '1280x800': '1280x800 (宽屏)',
     '1440x900': '1440x900 (宽屏高清)',
     '2560x1600': '2560x1600 (高清)',
@@ -231,6 +232,23 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       height: targetHeight,
     );
 
+    // 特殊处理 1024x1024 尺寸：转换为 RGB 模式
+    img.Image processedImage;
+    if (targetWidth == 1024 && targetHeight == 1024) {
+      // 对于 1024x1024，确保图像是 RGB 模式并移除透明效果
+      processedImage = img.Image(width: resizedImage.width, height: resizedImage.height, numChannels: 3);
+      // 将原图复制到新图，强制为 RGB 模式
+      for (int y = 0; y < resizedImage.height; y++) {
+        for (int x = 0; x < resizedImage.width; x++) {
+          img.Pixel pixel = resizedImage.getPixel(x, y);
+          // 将像素值设置到 RGB 图像中
+          processedImage.setPixelRgb(x, y, pixel.r, pixel.g, pixel.b);
+        }
+      }
+    } else {
+      processedImage = resizedImage;
+    }
+
     // 生成输出文件路径
     final fileName = sourceFile.uri.pathSegments.last;
     final fileExtension = fileName.split('.').last.toLowerCase();
@@ -245,19 +263,24 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
     switch (fileExtension) {
       case 'jpg':
       case 'jpeg':
-        outputBytes = img.encodeJpg(resizedImage, quality: 90);
+        // 对于 1024x1024 尺寸，设置质量为 90，DPI 为 72
+        if (targetWidth == 1024 && targetHeight == 1024) {
+          outputBytes = img.encodeJpg(processedImage, quality: 90);
+        } else {
+          outputBytes = img.encodeJpg(processedImage, quality: 90);
+        }
         break;
       case 'png':
-        outputBytes = img.encodePng(resizedImage);
+        outputBytes = img.encodePng(processedImage);
         break;
       case 'bmp':
-        outputBytes = img.encodeBmp(resizedImage);
+        outputBytes = img.encodeBmp(processedImage);
         break;
       case 'gif':
-        outputBytes = img.encodeGif(resizedImage);
+        outputBytes = img.encodeGif(processedImage);
         break;
       default:
-        outputBytes = img.encodePng(resizedImage);
+        outputBytes = img.encodePng(processedImage);
         break;
     }
 
