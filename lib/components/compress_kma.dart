@@ -82,11 +82,7 @@ class _CompressKmaState extends State<CompressKma> {
             ),
             const SizedBox(height: 10),
             ElevatedButton(
-              onPressed:
-                  widget.selectedSourceDir != null &&
-                      widget.selectedOutputDir != null
-                  ? widget.onCompressKmaPackage
-                  : null,
+              onPressed: widget.onCompressKmaPackage,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
