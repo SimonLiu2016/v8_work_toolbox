@@ -236,7 +236,11 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
     img.Image processedImage;
     if (targetWidth == 1024 && targetHeight == 1024) {
       // 对于 1024x1024，确保图像是 RGB 模式并移除透明效果
-      processedImage = img.Image(width: resizedImage.width, height: resizedImage.height, numChannels: 3);
+      processedImage = img.Image(
+        width: resizedImage.width,
+        height: resizedImage.height,
+        numChannels: 3,
+      );
       // 将原图复制到新图，强制为 RGB 模式
       for (int y = 0; y < resizedImage.height; y++) {
         for (int x = 0; x < resizedImage.width; x++) {

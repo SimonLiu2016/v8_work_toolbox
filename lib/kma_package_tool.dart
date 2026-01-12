@@ -163,7 +163,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   bool _isLoading = false;
   bool _showProgress = false;
   // 使用 ValueNotifier 来单独更新进度，避免整个UI重建
-  final ValueNotifier<double> _progressValueNotifier = ValueNotifier<double>(0.0);
+  final ValueNotifier<double> _progressValueNotifier = ValueNotifier<double>(
+    0.0,
+  );
   final ValueNotifier<String> _progressTextNotifier = ValueNotifier<String>('');
 
   // 日志缓冲区和更新控制
@@ -1317,6 +1319,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             // 使用翻译功能生成语言包
             _addLog('开始翻译语言包: $lang');
 
+            // 检查应用英文名称和中文名称是否相同
+            bool isEnglishAndChineseNameSame = localizedName == name;
+
             // 如果目标语言和源语言相同，则不需要翻译
             if (lang == _sourceLanguage) {
               // 源语言和目标语言相同，直接使用原文
@@ -1329,16 +1334,46 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
               _addLog('目标语言与源语言相同，使用原始内容: $lang');
             } else {
               // 需要翻译
-              // 翻译应用信息
-              Map<String, dynamic> translatedAppInfo =
-                  await TranslationUtil.translateAppInfo(
-                    localizedName,
-                    name,
-                    category,
-                    _sourceLanguage,
-                    lang,
-                    null, // 不输出详细日志
-                  );
+              Map<String, dynamic> translatedAppInfo;
+
+              // 检查是否是中文语言包
+              bool isChineseLang = lang.startsWith('zh');
+
+              if (isEnglishAndChineseNameSame) {
+                // 如果应用英文名称和中文名称相同，所有语言包都使用应用英文名称
+                translatedAppInfo = await TranslationUtil.translateAppInfo(
+                  localizedName, // 使用localizedName作为翻译源
+                  name,
+                  category,
+                  _sourceLanguage,
+                  lang,
+                  null, // 不输出详细日志
+                );
+                // 强制将appLocalizedName设为应用英文名称
+                translatedAppInfo['appLocalizedName'] = localizedName;
+              } else if (isChineseLang) {
+                // 如果应用英文名称和中文名称不同，且当前是中文语言包，使用应用中文名称
+                translatedAppInfo = await TranslationUtil.translateAppInfo(
+                  localizedName, // 使用localizedName作为翻译源
+                  name,
+                  category,
+                  _sourceLanguage,
+                  lang,
+                  null, // 不输出详细日志
+                );
+                // 强制将appLocalizedName设为应用中文名称
+                translatedAppInfo['appLocalizedName'] = localizedName;
+              } else {
+                // 如果应用英文名称和中文名称不同，且当前不是中文语言包，使用翻译后的应用名称
+                translatedAppInfo = await TranslationUtil.translateAppInfo(
+                  localizedName, // 使用localizedName作为翻译源
+                  name,
+                  category,
+                  _sourceLanguage,
+                  lang,
+                  null, // 不输出详细日志
+                );
+              }
 
               _addLog('开始翻译语言包: $lang (快捷键数量: ${shortcuts.length})');
 
@@ -1422,8 +1457,24 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             _addLog('完成翻译语言包: $lang');
           } else {
             // 不使用翻译功能，创建基础语言包
+            // 检查应用英文名称和中文名称是否相同
+            bool isEnglishAndChineseNameSame = localizedName == name;
+            bool isChineseLang = lang.startsWith('zh');
+
+            String appLocalizedNameValue;
+            if (isEnglishAndChineseNameSame) {
+              // 如果应用英文名称和中文名称相同，所有语言包都使用应用英文名称
+              appLocalizedNameValue = localizedName;
+            } else if (isChineseLang) {
+              // 如果应用英文名称和中文名称不同，且当前是中文语言包，使用应用中文名称
+              appLocalizedNameValue = localizedName;
+            } else {
+              // 如果应用英文名称和中文名称不同，且当前不是中文语言包，使用应用英文名称
+              appLocalizedNameValue = name;
+            }
+
             localeJson = {
-              'appLocalizedName': localizedName,
+              'appLocalizedName': appLocalizedNameValue,
               'appShortName': name,
               'category': category,
               'shortcuts': _generateEmptyShortcutsForLanguage(
