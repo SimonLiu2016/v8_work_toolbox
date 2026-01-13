@@ -55,7 +55,7 @@ class AppBundleSelector extends StatelessWidget {
     print('开始选择app bundle');
     try {
       // 通过MethodChannel调用原生代码选择.app包
-      const MethodChannel channel = MethodChannel('app_package_browser');
+      const MethodChannel channel = MethodChannel('app_manager_channel');
 
       // 调用原生方法选择.app包
       print('调用原生方法selectAppPackage');

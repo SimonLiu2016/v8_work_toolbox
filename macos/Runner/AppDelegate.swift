@@ -1,19 +1,11 @@
+import ApplicationServices
+import Carbon
 import Cocoa
 import FlutterMacOS
 import Foundation
 
 @main
 class AppDelegate: FlutterAppDelegate {
-  private let channelName = "app_package_browser"
-  private var channelInitialized = false
-
-  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    return true
-  }
-
-  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-    return true
-  }
 
   override func applicationDidFinishLaunching(_ aNotification: Notification) {
     super.applicationDidFinishLaunching(aNotification)
@@ -22,6 +14,17 @@ class AppDelegate: FlutterAppDelegate {
     DispatchQueue.main.async {
       self.initMethodChannelIfNeeded()
     }
+  }
+
+  private let channelName = "app_manager_channel"
+  private var channelInitialized = false
+
+  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    return true
+  }
+
+  override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+    return true
   }
 
   override var mainFlutterWindow: NSWindow? {
@@ -58,6 +61,28 @@ class AppDelegate: FlutterAppDelegate {
           return
         }
         self?.readInfoPlist(appPath: appPath, completion: result)
+      case "getAppShortcuts":
+        guard let arguments = call.arguments as? [String: Any],
+          let appName = arguments["appName"] as? String
+        else {
+          result(
+            FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments", details: nil))
+          return
+        }
+
+        if let strongSelf = self {
+          let shortcuts = strongSelf.getAppShortcuts(for: appName)
+          result(shortcuts)
+        } else {
+          result([])
+        }
+      case "getRunningApps":
+        if let strongSelf = self {
+          let runningApps = strongSelf.getRunningApps()
+          result(runningApps)
+        } else {
+          result([])
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -177,4 +202,17 @@ class AppDelegate: FlutterAppDelegate {
         ))
     }
   }
+
+  // MARK: - App Shortcuts Methods
+
+  private let appShortcutsHandler = AppShortcutsHandler()
+
+  private func getAppShortcuts(for appName: String) -> [[String: String]] {
+    return appShortcutsHandler.getAppShortcuts(for: appName)
+  }
+
+  private func getRunningApps() -> [[String: String]] {
+    return appShortcutsHandler.getRunningApps()
+  }
+
 }

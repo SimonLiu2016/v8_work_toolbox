@@ -6,7 +6,7 @@ class AppInfoParser {
     print('开始解析app bundle: $appPath');
     try {
       // 通过MethodChannel调用原生代码解析.app包
-      const MethodChannel channel = MethodChannel('app_package_browser');
+      const MethodChannel channel = MethodChannel('app_manager_channel');
 
       print('准备调用原生方法readInfoPlist');
       final result = await channel.invokeMethod('readInfoPlist', {

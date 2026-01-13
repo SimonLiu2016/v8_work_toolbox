@@ -7,6 +7,7 @@ import 'batch_rename_tool.dart';
 import 'folder_compare_tool.dart';
 import 'kma_package_tool.dart';
 import 'image_resize_tool.dart';
+import 'app_shortcut_tool.dart';
 
 void main() {
   runApp(const FileToolsApp());
@@ -127,6 +128,20 @@ class MainToolsPage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const ImageResizeHomePage(),
+                  ),
+                );
+              },
+            ),
+            _buildToolCard(
+              context,
+              title: '应用快捷键获取',
+              subtitle: '获取应用的快捷键信息并导出',
+              icon: Icons.keyboard,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AppShortcutToolPage(),
                   ),
                 );
               },

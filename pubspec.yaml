@@ -22,6 +22,8 @@ dependencies:
   rate_limiter: ^1.0.0
   xml: ^6.0.0
   image: ^4.2.0
+#  app_shortcuts:
+#    path: packages/app_shortcuts
 
 dev_dependencies:
   flutter_test:

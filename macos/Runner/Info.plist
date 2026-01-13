@@ -22,17 +22,21 @@
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
 		<key>LSMinimumSystemVersion</key>
 		<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+		<key>NSAccessibilityUsageDescription</key>
+		<string>需要访问辅助功能API以获取应用程序的快捷键信息</string>
+		<key>NSApplicationsFolderUsageDescription</key>
+		<string>需要访问应用程序包以读取内部文件</string>
+		<key>NSDesktopFolderUsageDescription</key>
+		<string>需要访问应用程序包以读取内部文件</string>
+		<key>NSDownloadsFolderUsageDescription</key>
+		<string>需要访问应用程序包以读取内部文件</string>
 		<key>NSHumanReadableCopyright</key>
 		<string>$(PRODUCT_COPYRIGHT)</string>
 		<key>NSMainNibFile</key>
 		<string>MainMenu</string>
 		<key>NSPrincipalClass</key>
 		<string>NSApplication</string>
-		<key>NSDesktopFolderUsageDescription</key>
-		<string>需要访问应用程序包以读取内部文件</string>
-		<key>NSDownloadsFolderUsageDescription</key>
-		<string>需要访问应用程序包以读取内部文件</string>
-		<key>NSApplicationsFolderUsageDescription</key>
-		<string>需要访问应用程序包以读取内部文件</string>
+		<key>NSAppleEventsUsageDescription</key>
+		<string>需要访问其他应用的UI元素以读取快捷键信息</string>
 	</dict>
 </plist>
