@@ -190,6 +190,14 @@ class AppShortcutsHandler {
                     {
                         print("发现命令字符: \(cmdChar)")
 
+                        // 处理特殊字符键的显示问题
+                        var displayChar = cmdChar
+
+                        // 检查并转换特殊字符
+                        if let specialChar = convertSpecialCharacter(cmdChar) {
+                            displayChar = specialChar
+                        }
+
                         var modifierStr = ""
                         if cmdModifiersError == .success,
                             let cmdModifiersInt = cmdModifiersValue as! UInt32?
@@ -199,7 +207,7 @@ class AppShortcutsHandler {
                             print("命令字符修饰符: \(modifierStr), 原始值: \(cmdModifiersInt)")
                         }
 
-                        shortcut = "\(modifierStr)\(cmdChar)"
+                        shortcut = "\(modifierStr)\(displayChar)"
                         hasShortcut = true
                     }
 
@@ -268,7 +276,7 @@ class AppShortcutsHandler {
             modifierStrings.append("fn")  // Function key
         }
 
-      // 检查 Control 键 (bit 2)
+        // 检查 Control 键 (bit 2)
         if modifiers & 4 != 0 {
             modifierStrings.append("^")  // Control
         }
@@ -278,11 +286,10 @@ class AppShortcutsHandler {
             modifierStrings.append("⌥")  // Option/Alt
         }
 
-       // 检查 Shift 键 (bit 0)
+        // 检查 Shift 键 (bit 0)
         if modifiers & 1 != 0 {
             modifierStrings.append("⇧")  // Shift
         }
-
 
         // 检查 Command 键 (bit 3) - 逻辑相反
         // 如果 bit 3 为 0 (即 modifiers & 8 == 0)，则表示有 Command 键
@@ -291,5 +298,50 @@ class AppShortcutsHandler {
         }
 
         return modifierStrings.joined(separator: "")
+    }
+
+    // 转换特殊字符键为可读符号
+    private func convertSpecialCharacter(_ char: String) -> String? {
+        // 检查字符的Unicode值来确定是否为特殊键
+        if let firstChar = char.unicodeScalars.first {
+            let scalarValue = firstChar.value
+
+            switch scalarValue {
+            case 0x19: return "↑"  // 上箭头
+            case 0x1A: return "↓"  // 下箭头
+            case 0x1C: return "←"  // 左箭头
+            case 0x1D: return "→"  // 右箭头
+            case 0x7F: return "⌫"  // 删除键
+            case 0x08: return "⌦"  // 向前删除键
+            case 0x0D: return "⏎"  // 回车键
+            case 0x0A: return "↵"  // 换行符
+            case 0x1B: return "⎋"  // ESC键
+            case 0x20: return "␣"  // 空格键
+            case 0x09: return "⇥"  // Tab键
+            default:
+                // 检查是否为F1-F12键
+                // 在某些情况下，功能键可能以特定方式编码
+                if char.count == 1 {  // 单字符
+                    switch char {
+                    case "\u{F704}": return "F1"
+                    case "\u{F705}": return "F2"
+                    case "\u{F706}": return "F3"
+                    case "\u{F707}": return "F4"
+                    case "\u{F708}": return "F5"
+                    case "\u{F709}": return "F6"
+                    case "\u{F70A}": return "F7"
+                    case "\u{F70B}": return "F8"
+                    case "\u{F70C}": return "F9"
+                    case "\u{F70D}": return "F10"
+                    case "\u{F70E}": return "F11"
+                    case "\u{F70F}": return "F12"
+                    default:
+                        return nil
+                    }
+                }
+                return nil
+            }
+        }
+        return nil
     }
 }
