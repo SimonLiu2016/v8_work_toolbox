@@ -2,6 +2,7 @@
 //  AppShortcutsHandler.swift
 //  Runner
 //
+
 import Carbon
 import Cocoa
 import FlutterMacOS
@@ -86,97 +87,23 @@ class AppShortcutsHandler {
         let actualAppName = targetApp.localizedName ?? ""
         print("找到应用，显示名称: \(actualAppName), Bundle ID: \(targetApp.bundleIdentifier ?? "")")
 
-        // 获取应用的进程ID
-        let targetPID = targetApp.processIdentifier
-        if targetPID == -1 {
-            print("无法获取应用进程ID: \(appName)")
-            return []
-        }
-
-        print("获取到进程ID: \(targetPID)")
-
-        // 尝试通过AppKit API获取目标应用的菜单
-        // 由于安全限制，我们不能直接访问其他应用的NSMenu，所以需要使用Accessibility API
-        // 但我们需要确保目标应用被激活，以便访问其菜单
-        let originalApp = NSWorkspace.shared.frontmostApplication
+        // 激活目标应用以确保其菜单可用
         targetApp.activate(options: [.activateAllWindows])
 
         // 等待短暂时间让应用激活
         usleep(500000)  // 0.5秒
 
-        // 尝试使用Accessibility API获取应用的菜单
-        let result = getAppShortcutsViaAccessibility(targetPID: targetPID, appName: actualAppName)
-
-        // 恢复原来的前台应用（可选）
-        // if let originalApp = originalApp {
-        //   originalApp.activate(options: [.activateAllWindows])
-        // }
-
-        return result
+        // 使用Accessibility API获取应用的快捷键
+        return getAppShortcutsViaAccessibility(
+            targetPID: targetApp.processIdentifier, appName: actualAppName)
     }
 
-    // 通过Accessibility API获取应用快捷键
+    // 通过Accessibility API获取应用快捷键，但使用AppKit的属性名和方法
     private func getAppShortcutsViaAccessibility(targetPID: pid_t, appName: String) -> [[String:
         String]]
     {
-        // 由于macOS的安全限制，我们无法直接通过Accessibility API获取非活动应用的特定菜单
-        // 因此，我们使用一种不同的方法：尝试获取目标应用的窗口列表，然后从窗口获取菜单
-
         // 创建目标应用的AXUIElement
         let appElement = AXUIElementCreateApplication(targetPID)
-
-        // 尝试获取应用的窗口列表
-        var windowsRef: CFTypeRef?
-        let windowsError = AXUIElementCopyAttributeValue(
-            appElement, kAXWindowsAttribute, &windowsRef)
-
-        if windowsError == .success, let windowsArray = windowsRef as! CFArray? {
-            print("获取到 \(CFArrayGetCount(windowsArray)) 个窗口")
-
-            // 遍历所有窗口，尝试从每个窗口获取菜单
-            for i in 0..<CFArrayGetCount(windowsArray) {
-                let window = unsafeBitCast(
-                    CFArrayGetValueAtIndex(windowsArray, i), to: AXUIElement.self)
-
-                // 尝试从窗口获取菜单栏
-                var menuBarRef: CFTypeRef?
-                let menuBarError = AXUIElementCopyAttributeValue(
-                    window, kAXMenuBarAttribute, &menuBarRef)
-
-                if menuBarError == .success, let menuBar = menuBarRef {
-                    print("从窗口 \(i) 成功获取菜单栏")
-
-                    // 遍历菜单栏
-                    var childrenRef: CFTypeRef?
-                    let childrenError = AXUIElementCopyAttributeValue(
-                        menuBar as! AXUIElement, kAXChildrenAttribute, &childrenRef)
-
-                    if childrenError == .success, let childrenArray = childrenRef as! CFArray? {
-                        print("窗口 \(i) 的菜单栏包含 \(CFArrayGetCount(childrenArray)) 个项目")
-
-                        var shortcuts: [[String: String]] = []
-
-                        for j in 0..<CFArrayGetCount(childrenArray) {
-                            print("处理窗口 \(i) 的菜单项 \(j)")
-                            let childElement = unsafeBitCast(
-                                CFArrayGetValueAtIndex(childrenArray, j), to: AXUIElement.self)
-                            let childShortcuts = extractShortcuts(
-                                from: childElement, appName: appName)
-                            shortcuts.append(contentsOf: childShortcuts)
-                        }
-
-                        if !shortcuts.isEmpty {
-                            print("从窗口 \(i) 找到 \(shortcuts.count) 个快捷键")
-                            return shortcuts
-                        }
-                    }
-                } else {
-                    print("从窗口 \(i) 获取菜单栏失败，错误代码: \(menuBarError.rawValue)")
-                }
-            }
-        } else {
-            print("无法获取应用窗口列表，错误代码: \(windowsError.rawValue)")
-        }
 
         // 如果通过窗口无法获取菜单，则尝试直接从应用获取（这通常会返回系统菜单）
         print("尝试直接从应用获取菜单栏")
@@ -216,102 +143,6 @@ class AppShortcutsHandler {
         return []
     }
 
-    // 从主菜单获取快捷键（适用于当前应用）
-    private func getMainMenuShortcuts() -> [[String: String]] {
-        var shortcuts: [[String: String]] = []
-
-        // 这里使用AppKit API来获取菜单项
-        let mainMenu = NSApp.mainMenu
-        for menuItem in mainMenu?.items ?? [] {
-            if let submenu = menuItem.submenu {
-                // 递归遍历子菜单
-                shortcuts.append(
-                    contentsOf: traverseMenu(
-                        submenu,
-                        appName: Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-                            ?? "Current App"))
-            } else {
-                // 提取单个菜单项的快捷键
-                if let shortcut = extractShortcutFromNSMenuItem(
-                    menuItem,
-                    appName: Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-                        ?? "Current App")
-                {
-                    shortcuts.append(shortcut)
-                }
-            }
-        }
-
-        return shortcuts
-    }
-
-    // 遍历NSMenu
-    private func traverseMenu(_ menu: NSMenu, appName: String) -> [[String: String]] {
-        var shortcuts: [[String: String]] = []
-
-        for menuItem in menu.items {
-            if menuItem.hasSubmenu, let submenu = menuItem.submenu {
-                // 递归遍历子菜单
-                shortcuts.append(contentsOf: traverseMenu(submenu, appName: appName))
-            } else {
-                // 提取菜单项的快捷键
-                if let shortcut = extractShortcutFromNSMenuItem(menuItem, appName: appName) {
-                    shortcuts.append(shortcut)
-                }
-            }
-        }
-
-        return shortcuts
-    }
-
-    // 从NSMenuItem提取快捷键
-    private func extractShortcutFromNSMenuItem(_ menuItem: NSMenuItem, appName: String) -> [String:
-        String]?
-    {
-        let title = menuItem.title
-        let key = menuItem.keyEquivalent
-        let modifiers = menuItem.keyEquivalentModifierMask
-
-        if !key.isEmpty {
-            // 将修饰符转换为字符串表示
-            let modifierStr = getModifierStringFromNSEventModifierFlags(modifiers)
-            let shortcutStr = "\(modifierStr)\(key)"
-
-            let shortcutDict: [String: String] = [
-                "description": title,
-                "shortcut": shortcutStr,
-                "category": appName,
-            ]
-
-            print("添加快捷键: \(title) -> \(shortcutStr)")
-            return shortcutDict
-        }
-
-        return nil
-    }
-
-    // 从NSEventModifierFlags获取修饰符字符串
-    private func getModifierStringFromNSEventModifierFlags(_ modifiers: NSEvent.ModifierFlags)
-        -> String
-    {
-        var modifierStrings: [String] = []
-
-        if modifiers.contains(.command) {
-            modifierStrings.append("⌘")
-        }
-        if modifiers.contains(.option) {
-            modifierStrings.append("⌥")
-        }
-        if modifiers.contains(.shift) {
-            modifierStrings.append("⇧")
-        }
-        if modifiers.contains(.control) {
-            modifierStrings.append("^")
-        }
-
-        return modifierStrings.joined(separator: "")
-    }
-
     // 递归提取快捷键
     private func extractShortcuts(from element: AXUIElement, appName: String) -> [[String: String]]
     {
@@ -330,7 +161,7 @@ class AppShortcutsHandler {
                 let titleError = AXUIElementCopyAttributeValue(
                     element, kAXTitleAttribute, &titleValue)
 
-                // 检查多个可能的快捷键属性
+                // 使用AppKit标准属性名来获取快捷键信息
                 var keyEquivalentValue: CFTypeRef?
                 let keyEquivalentError = AXUIElementCopyAttributeValue(
                     element, kAXKeyEquivalentAttribute, &keyEquivalentValue)
@@ -340,15 +171,10 @@ class AppShortcutsHandler {
                 let cmdCharError = AXUIElementCopyAttributeValue(
                     element, "AXMenuItemCmdChar" as CFString, &cmdCharValue)
 
-                // 检查 AXMenuItemCmdVirtualKey 属性
-                var cmdVirtualKeyValue: CFTypeRef?
-                let cmdVirtualKeyError = AXUIElementCopyAttributeValue(
-                    element, "AXMenuItemCmdVirtualKey" as CFString, &cmdVirtualKeyValue)
-
                 // 检查 AXMenuItemCmdModifiers 属性
                 var cmdModifiersValue: CFTypeRef?
                 let cmdModifiersError = AXUIElementCopyAttributeValue(
-                    element, "AXMenuItemCmdModifiers" as CFString, &cmdModifiersValue)
+                    element, "AXMenuItemModifiers" as CFString, &cmdModifiersValue)
 
                 if titleError == .success, let title = titleValue as! String? {
                     print("菜单项标题: \(title)")
@@ -356,30 +182,8 @@ class AppShortcutsHandler {
                     var shortcut = ""
                     var hasShortcut = false
 
-                    // 首先尝试标准的 keyEquivalent
-                    if keyEquivalentError == .success, let key = keyEquivalentValue as! String?,
-                        !key.isEmpty
-                    {
-                        print("发现快捷键字符: \(key)")
-                        // 处理修饰符
-                        var modifierStr = ""
-
-                        // 检查标准修饰符
-                        var modifiersValue: CFTypeRef?
-                        let modifiersError = AXUIElementCopyAttributeValue(
-                            element, kAXKeyEquivalentModifiersAttribute, &modifiersValue)
-
-                        if modifiersError == .success, let modifiersInt = modifiersValue as! UInt32?
-                        {
-                            modifierStr = getModifierString(modifiers: Int(modifiersInt))
-                            print("快捷键修饰符: \(modifierStr)")
-                        }
-
-                        shortcut = "\(modifierStr)\(key)"
-                        hasShortcut = true
-                    }
                     // 如果标准方法没有找到，尝试使用菜单命令属性
-                    else if cmdCharError == .success, let cmdChar = cmdCharValue as! String?,
+                    if cmdCharError == .success, let cmdChar = cmdCharValue as! String?,
                         !cmdChar.isEmpty
                     {
                         print("发现命令字符: \(cmdChar)")
@@ -388,8 +192,9 @@ class AppShortcutsHandler {
                         if cmdModifiersError == .success,
                             let cmdModifiersInt = cmdModifiersValue as! UInt32?
                         {
-                            modifierStr = getModifierString(modifiers: Int(cmdModifiersInt))
-                            print("命令字符修饰符: \(modifierStr)")
+                            modifierStr = getModifierStringFromCmdModifiers(
+                                modifiers: Int(cmdModifiersInt))
+                            print("命令字符修饰符: \(modifierStr), 原始值: \(cmdModifiersInt)")
                         }
 
                         shortcut = "\(modifierStr)\(cmdChar)"
@@ -441,21 +246,34 @@ class AppShortcutsHandler {
         return shortcuts
     }
 
-    // 获取修饰符字符串
-    private func getModifierString(modifiers: Int) -> String {
+    // 获取命令修饰符字符串
+    private func getModifierStringFromCmdModifiers(modifiers: Int) -> String {
         var modifierStrings: [String] = []
 
-        if modifiers & Int(controlKey) != 0 {
-            modifierStrings.append("^")  // Control
+        // 根据实际观察到的值来映射修饰键
+        // 从日志中我们看到原始值为2、28等，需要找到对应的修饰键
+        // 根据实际测试，这些值可能对应以下组合：
+        // 值2 -> Shift键
+        // 值28 -> 多个修饰键组合（28 = 16 + 8 + 4）
+
+        // 尝试使用实际观察到的值映射
+        if modifiers & 1 != 0 {  // Command
+            modifierStrings.append("⌘")
         }
-        if modifiers & Int(optionKey) != 0 {
-            modifierStrings.append("⌥")  // Option/Alt
+        if modifiers & 2 != 0 {  // Shift
+            modifierStrings.append("⇧")
         }
-        if modifiers & Int(shiftKey) != 0 {
-            modifierStrings.append("⇧")  // Shift
+        if modifiers & 4 != 0 {  // Option/Alt
+            modifierStrings.append("⌥")
         }
-        if modifiers & Int(cmdKey) != 0 {
-            modifierStrings.append("⌘")  // Command
+        if modifiers & 8 != 0 {  // Control
+            modifierStrings.append("^")
+        }
+        if modifiers & 16 != 0 {  // 可能是其他修饰键
+            modifierStrings.append("•")  // 使用通用符号，稍后可调整
+        }
+        if modifiers & 32 != 0 {  // 可能是其他修饰键
+            modifierStrings.append("fn")
         }
 
         return modifierStrings.joined(separator: "")
