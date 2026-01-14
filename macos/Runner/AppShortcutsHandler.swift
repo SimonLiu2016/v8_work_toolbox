@@ -311,11 +311,20 @@ class AppShortcutsHandler {
         if let firstChar = char.unicodeScalars.first {
             let scalarValue = firstChar.value
 
+            // 添加调试输出，特别是针对您提到的菜单项
+            print(
+                "调试: 检测到字符 '\(char)' (scalarValue: \(scalarValue)), Unicode: U+\(String(format: "%04X", scalarValue))"
+            )
+
             switch scalarValue {
             case 0x19: return "↑"  // 上箭头
             case 0x1A: return "↓"  // 下箭头
             case 0x1C: return "←"  // 左箭头
             case 0x1D: return "→"  // 右箭头
+            case 63232: return "▲"  // 向上实心三角形 (U+F700)
+            case 63233: return "▼"  // 向下实心三角形 (U+F701)
+            case 63234: return "◀"  // 向左实心三角形 (U+F702)
+            case 63235: return "▶"  // 向右实心三角形 (U+F703)
             case 0x7F: return "⌫"  // 删除键
             case 0x08: return "⌦"  // 向前删除键
             case 0x0D: return "⏎"  // 回车键
