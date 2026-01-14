@@ -252,14 +252,23 @@ class AppShortcutsHandler {
     private func getModifierStringFromCmdModifiers(modifiers: Int) -> String {
         var modifierStrings: [String] = []
 
-        // kAXMenuItemCmdModifiersAttribute 使用特殊的4位掩码
-        // 每个位代表一个修饰键，但Command键的逻辑是相反的：
+        // kAXMenuItemCmdModifiersAttribute 使用特殊的掩码
+        // 基础4位掩码（低4位）：
         // bit 0 (1): Shift 键存在 -> ⇧ (正向逻辑)
         // bit 1 (2): Option 键存在 -> ⌥ (正向逻辑)
         // bit 2 (4): Control 键存在 -> ^ (正向逻辑)
         // bit 3 (8): Command 键不存在 -> ⌘ (反向逻辑! 如果该位为0则有Command键)
+        //
+        // 高位可能包含其他修饰键：
+        // bit 4 (16): 可能是 Fn 键
+        // 值 24 专门表示 Fn 键
 
-        // 检查 Control 键 (bit 2)
+        // 检查 Fn 键 (bit 4 - 16)
+        if modifiers & 16 != 0 {
+            modifierStrings.append("fn")  // Function key
+        }
+
+      // 检查 Control 键 (bit 2)
         if modifiers & 4 != 0 {
             modifierStrings.append("^")  // Control
         }
@@ -269,10 +278,11 @@ class AppShortcutsHandler {
             modifierStrings.append("⌥")  // Option/Alt
         }
 
-        // 检查 Shift 键 (bit 0)
+       // 检查 Shift 键 (bit 0)
         if modifiers & 1 != 0 {
             modifierStrings.append("⇧")  // Shift
         }
+
 
         // 检查 Command 键 (bit 3) - 逻辑相反
         // 如果 bit 3 为 0 (即 modifiers & 8 == 0)，则表示有 Command 键
