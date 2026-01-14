@@ -130,7 +130,9 @@ class AppShortcutsHandler {
                     print("处理应用菜单项 \(i)")
                     let childElement = unsafeBitCast(
                         CFArrayGetValueAtIndex(childrenArray, i), to: AXUIElement.self)
-                    let childShortcuts = extractShortcuts(from: childElement, appName: appName)
+                    // 获取顶级菜单项的名称作为顶级菜单名
+                    let topLevelName = getElementTitle(childElement)
+                    let childShortcuts = extractShortcuts(from: childElement, topLevelMenuName: topLevelName, appName: appName)
                     shortcuts.append(contentsOf: childShortcuts)
                 }
 
@@ -146,7 +148,7 @@ class AppShortcutsHandler {
     }
 
     // 递归提取快捷键
-    private func extractShortcuts(from element: AXUIElement, appName: String) -> [[String: String]]
+    private func extractShortcuts(from element: AXUIElement, topLevelMenuName: String?, appName: String) -> [[String: String]]
     {
         var shortcuts: [[String: String]] = []
 
@@ -214,14 +216,16 @@ class AppShortcutsHandler {
                     if hasShortcut {
                         // 过滤系统菜单项，只保留应用特有的快捷键
                         if !isSystemMenuItem(title: title) {
+                            // 使用顶级菜单名称作为分类，如果不存在则使用应用名称
+                            let categoryName = topLevelMenuName ?? appName
                             let shortcutDict: [String: String] = [
                                 "description": title,
                                 "shortcut": shortcut,
-                                "category": appName,
+                                "category": categoryName,
                             ]
 
                             shortcuts.append(shortcutDict)
-                            print("添加快捷键: \(title) -> \(shortcut)")
+                            print("添加快捷键: \(title) -> \(shortcut) (分类: \(categoryName))")
                         } else {
                             print("跳过系统菜单项: \(title)")
                         }
@@ -234,6 +238,7 @@ class AppShortcutsHandler {
             } else if role == (kAXMenuRole as String) || role == (kAXMenuBarItem as String) {
                 print("进入子菜单或菜单栏项")
                 // 如果是子菜单或菜单栏项，递归处理其子元素
+                // 保持相同的顶级菜单名称
                 var submenuItems: CFTypeRef?
                 let submenuError = AXUIElementCopyAttributeValue(
                     element, kAXChildrenAttribute, &submenuItems)
@@ -245,7 +250,7 @@ class AppShortcutsHandler {
                         return unsafeBitCast(element, to: AXUIElement.self)
                     }
                     for item in items {
-                        let itemShortcuts = extractShortcuts(from: item, appName: appName)
+                        let itemShortcuts = extractShortcuts(from: item, topLevelMenuName: topLevelMenuName, appName: appName)
                         shortcuts.append(contentsOf: itemShortcuts)
                     }
                 } else {
@@ -261,6 +266,17 @@ class AppShortcutsHandler {
         return shortcuts
     }
 
+    // 获取元素的标题
+    private func getElementTitle(_ element: AXUIElement) -> String? {
+        var titleValue: CFTypeRef?
+        let titleError = AXUIElementCopyAttributeValue(element, kAXTitleAttribute, &titleValue)
+        
+        if titleError == .success, let title = titleValue as! String?, !title.isEmpty {
+            return title
+        }
+        return nil
+    }
+    
     // 获取命令修饰符字符串
     private func getModifierStringFromCmdModifiers(modifiers: Int) -> String {
         var modifierStrings: [String] = []
