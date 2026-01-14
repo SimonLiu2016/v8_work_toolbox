@@ -20,6 +20,8 @@ class AppShortcutsHandler {
     private let kAXMenuBarItem = "AXMenuBarItem" as CFString
     private let kAXMenuRole = "AXMenu" as CFString
     private let kAXMenuItemRole = "AXMenuItem" as CFString
+    private let kAXMenuItemCmdCharAttribute = "AXMenuItemCmdChar" as CFString
+    private let kAXMenuItemCmdModifiersAttribute = "AXMenuItemCmdModifiers" as CFString
 
     // 获取当前运行的应用列表
     func getRunningApps() -> [[String: String]] {
@@ -250,30 +252,32 @@ class AppShortcutsHandler {
     private func getModifierStringFromCmdModifiers(modifiers: Int) -> String {
         var modifierStrings: [String] = []
 
-        // 根据实际观察到的值来映射修饰键
-        // 从日志中我们看到原始值为2、28等，需要找到对应的修饰键
-        // 根据实际测试，这些值可能对应以下组合：
-        // 值2 -> Shift键
-        // 值28 -> 多个修饰键组合（28 = 16 + 8 + 4）
+        // kAXMenuItemCmdModifiersAttribute 使用特殊的4位掩码
+        // 每个位代表一个修饰键，但Command键的逻辑是相反的：
+        // bit 0 (1): Shift 键存在 -> ⇧ (正向逻辑)
+        // bit 1 (2): Option 键存在 -> ⌥ (正向逻辑)
+        // bit 2 (4): Control 键存在 -> ^ (正向逻辑)
+        // bit 3 (8): Command 键不存在 -> ⌘ (反向逻辑! 如果该位为0则有Command键)
 
-        // 尝试使用实际观察到的值映射
-        if modifiers & 1 != 0 {  // Command
-            modifierStrings.append("⌘")
+        // 检查 Control 键 (bit 2)
+        if modifiers & 4 != 0 {
+            modifierStrings.append("^")  // Control
         }
-        if modifiers & 2 != 0 {  // Shift
-            modifierStrings.append("⇧")
+
+        // 检查 Option 键 (bit 1)
+        if modifiers & 2 != 0 {
+            modifierStrings.append("⌥")  // Option/Alt
         }
-        if modifiers & 4 != 0 {  // Option/Alt
-            modifierStrings.append("⌥")
+
+        // 检查 Shift 键 (bit 0)
+        if modifiers & 1 != 0 {
+            modifierStrings.append("⇧")  // Shift
         }
-        if modifiers & 8 != 0 {  // Control
-            modifierStrings.append("^")
-        }
-        if modifiers & 16 != 0 {  // 可能是其他修饰键
-            modifierStrings.append("•")  // 使用通用符号，稍后可调整
-        }
-        if modifiers & 32 != 0 {  // 可能是其他修饰键
-            modifierStrings.append("fn")
+
+        // 检查 Command 键 (bit 3) - 逻辑相反
+        // 如果 bit 3 为 0 (即 modifiers & 8 == 0)，则表示有 Command 键
+        if modifiers & 8 == 0 {
+            modifierStrings.append("⌘")  // Command (反向逻辑)
         }
 
         return modifierStrings.joined(separator: "")
