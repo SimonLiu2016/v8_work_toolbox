@@ -382,11 +382,13 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
           print('警告: 获取到的快捷键列表为空');
         }
 
-        return result.cast<Map<String, dynamic>>().map((item) {
+        return result.map((item) {
+          final mapItem = item as Map<Object?, Object?>;
           return {
-            'description': item['description']?.toString() ?? '',
-            'shortcut': item['shortcut']?.toString() ?? '',
-            'category': item['category']?.toString() ?? appName,
+            'description':
+                (mapItem['description'] as String?)?.toString() ?? '',
+            'shortcut': (mapItem['shortcut'] as String?)?.toString() ?? '',
+            'category': (mapItem['category'] as String?)?.toString() ?? appName,
           };
         }).toList();
       } else {
