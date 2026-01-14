@@ -163,18 +163,18 @@ class AppShortcutsHandler {
 
                 // 使用AppKit标准属性名来获取快捷键信息
                 var keyEquivalentValue: CFTypeRef?
-                let keyEquivalentError = AXUIElementCopyAttributeValue(
+                let _ = AXUIElementCopyAttributeValue(
                     element, kAXKeyEquivalentAttribute, &keyEquivalentValue)
 
                 // 检查 AXMenuItemCmdChar 属性，这是菜单项的命令字符
                 var cmdCharValue: CFTypeRef?
                 let cmdCharError = AXUIElementCopyAttributeValue(
-                    element, "AXMenuItemCmdChar" as CFString, &cmdCharValue)
+                    element, kAXMenuItemCmdCharAttribute as CFString, &cmdCharValue)
 
                 // 检查 AXMenuItemCmdModifiers 属性
                 var cmdModifiersValue: CFTypeRef?
                 let cmdModifiersError = AXUIElementCopyAttributeValue(
-                    element, "AXMenuItemModifiers" as CFString, &cmdModifiersValue)
+                    element, kAXMenuItemCmdModifiersAttribute as CFString, &cmdModifiersValue)
 
                 if titleError == .success, let title = titleValue as! String? {
                     print("菜单项标题: \(title)")
