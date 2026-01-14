@@ -212,14 +212,19 @@ class AppShortcutsHandler {
                     }
 
                     if hasShortcut {
-                        let shortcutDict: [String: String] = [
-                            "description": title,
-                            "shortcut": shortcut,
-                            "category": appName,
-                        ]
+                        // 过滤系统菜单项，只保留应用特有的快捷键
+                        if !isSystemMenuItem(title: title) {
+                            let shortcutDict: [String: String] = [
+                                "description": title,
+                                "shortcut": shortcut,
+                                "category": appName,
+                            ]
 
-                        shortcuts.append(shortcutDict)
-                        print("添加快捷键: \(title) -> \(shortcut)")
+                            shortcuts.append(shortcutDict)
+                            print("添加快捷键: \(title) -> \(shortcut)")
+                        } else {
+                            print("跳过系统菜单项: \(title)")
+                        }
                     } else {
                         print("跳过无快捷键的菜单项: \(title)")
                     }
@@ -343,5 +348,38 @@ class AppShortcutsHandler {
             }
         }
         return nil
+    }
+
+    // 判断是否为系统菜单项
+    private func isSystemMenuItem(title: String) -> Bool {
+        let systemMenuItems = [
+            "关于",
+            "关于本机",
+            "系统信息",
+            "系统设置",
+            "系统偏好设置",
+            "App Store",
+            "强制退出",
+            "强制退出…",
+            "睡眠",
+            "重新启动",
+            "重新启动…",
+            "关机",
+            "关机…",
+            "锁定屏幕",
+            "注销",
+            "退出登录",
+            "退出",
+            "偏好设置",
+            "服务",
+        ]
+
+        for item in systemMenuItems {
+            if title.hasPrefix(item) || title.localizedCaseInsensitiveContains(item) {
+                return true
+            }
+        }
+
+        return false
     }
 }
