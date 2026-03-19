@@ -132,7 +132,8 @@ class AppShortcutsHandler {
                         CFArrayGetValueAtIndex(childrenArray, i), to: AXUIElement.self)
                     // 获取顶级菜单项的名称作为顶级菜单名
                     let topLevelName = getElementTitle(childElement)
-                    let childShortcuts = extractShortcuts(from: childElement, topLevelMenuName: topLevelName, appName: appName)
+                    let childShortcuts = extractShortcuts(
+                        from: childElement, topLevelMenuName: topLevelName, appName: appName)
                     shortcuts.append(contentsOf: childShortcuts)
                 }
 
@@ -148,8 +149,9 @@ class AppShortcutsHandler {
     }
 
     // 递归提取快捷键
-    private func extractShortcuts(from element: AXUIElement, topLevelMenuName: String?, appName: String) -> [[String: String]]
-    {
+    private func extractShortcuts(
+        from element: AXUIElement, topLevelMenuName: String?, appName: String
+    ) -> [[String: String]] {
         var shortcuts: [[String: String]] = []
 
         // 检查是否是菜单项
@@ -250,7 +252,8 @@ class AppShortcutsHandler {
                         return unsafeBitCast(element, to: AXUIElement.self)
                     }
                     for item in items {
-                        let itemShortcuts = extractShortcuts(from: item, topLevelMenuName: topLevelMenuName, appName: appName)
+                        let itemShortcuts = extractShortcuts(
+                            from: item, topLevelMenuName: topLevelMenuName, appName: appName)
                         shortcuts.append(contentsOf: itemShortcuts)
                     }
                 } else {
@@ -270,13 +273,13 @@ class AppShortcutsHandler {
     private func getElementTitle(_ element: AXUIElement) -> String? {
         var titleValue: CFTypeRef?
         let titleError = AXUIElementCopyAttributeValue(element, kAXTitleAttribute, &titleValue)
-        
+
         if titleError == .success, let title = titleValue as! String?, !title.isEmpty {
             return title
         }
         return nil
     }
-    
+
     // 获取命令修饰符字符串
     private func getModifierStringFromCmdModifiers(modifiers: Int) -> String {
         var modifierStrings: [String] = []

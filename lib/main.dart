@@ -8,6 +8,7 @@ import 'folder_compare_tool.dart';
 import 'kma_package_tool.dart';
 import 'image_resize_tool.dart';
 import 'app_shortcut_tool.dart';
+import 'clean_builds_tool.dart';
 
 void main() {
   runApp(const FileToolsApp());
@@ -142,6 +143,20 @@ class MainToolsPage extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) => const AppShortcutToolPage(),
+                  ),
+                );
+              },
+            ),
+            _buildToolCard(
+              context,
+              title: '清理构建产物',
+              subtitle: '扫描并删除项目生成的 build/ target 等目录',
+              icon: Icons.cleaning_services,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CleanBuildsHomePage(),
                   ),
                 );
               },
