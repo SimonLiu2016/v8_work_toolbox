@@ -1,7 +1,10 @@
-import 'package:flutter/material.dart';
 import 'dart:io';
-import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
+import 'components/app_components.dart';
+import 'theme/app_theme.dart';
 
 class BatchRenameHomePage extends StatefulWidget {
   const BatchRenameHomePage({super.key});
@@ -14,16 +17,16 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
   final TextEditingController _folderController = TextEditingController();
   final TextEditingController _patternController = TextEditingController();
   final TextEditingController _replacementController = TextEditingController();
+  final ScrollController _logScrollController = ScrollController();
 
   bool _isProcessing = false;
-  List<String> _logMessages = [];
-  List<FileSystemEntity> _files = [];
-  int _previewCount = 0; // 用于预览计数
+  final List<String> _logMessages = [];
+  final List<FileSystemEntity> _files = [];
+  int _previewCount = 0;
 
   @override
   void initState() {
     super.initState();
-    // 设置默认的正则表达式模式和替换格式
     _patternController.text = r'^(.*)-pet\.yml$';
     _replacementController.text = r'$1.yml';
   }
@@ -33,29 +36,29 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
     _folderController.dispose();
     _patternController.dispose();
     _replacementController.dispose();
+    _logScrollController.dispose();
     super.dispose();
   }
 
   void _addLogMessage(String message) {
+    if (!mounted) return;
     setState(() {
-      _logMessages.add(
-        '${DateTime.now().toString().split('.').first}: $message',
+      _logMessages.insert(
+        0,
+        '${DateTime.now().toIso8601String().substring(11, 19)} $message',
       );
     });
   }
 
-  /// 应用正则表达式替换，处理捕获组引用
   String _applyRegexReplacement(
     String input,
     RegExp pattern,
     String replacement,
   ) {
-    // 如果出现错误，使用手动方式处理捕获组
     final match = pattern.firstMatch(input);
     if (match == null) return input;
 
     String result = replacement;
-    // 替换 $1, $2 等捕获组引用
     for (int i = 1; i <= match.groupCount; i++) {
       final groupValue = match.group(i) ?? '';
       result = result.replaceAll('\$$i', groupValue);
@@ -64,101 +67,23 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
   }
 
   Future<void> _selectFolder() async {
-    _addLogMessage('正在尝试打开文件夹选择对话框...');
-
     try {
-      // 使用 file_picker 插件选择文件夹
-      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择要重命名文件的目录',
+      );
 
       if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
         _folderController.text = selectedDirectory;
-        _addLogMessage('已选择文件夹: $selectedDirectory');
-      } else {
-        _addLogMessage('用户取消了文件夹选择');
+        _addLogMessage('已选择目录: $selectedDirectory');
       }
     } catch (e) {
-      _addLogMessage('选择文件夹时出现错误: $e');
-      // 显示错误提示
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('文件选择器出现错误: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _showManualInputDialog() async {
-    final TextEditingController manualPathController = TextEditingController();
-
-    // 如果已经有路径，则预填充
-    if (_folderController.text.isNotEmpty) {
-      manualPathController.text = _folderController.text;
-    }
-
-    final result = await showDialog<String?>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('选择文件夹'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('请输入或粘贴文件夹路径:'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: manualPathController,
-                decoration: const InputDecoration(
-                  hintText: '例如: /Users/username/Documents',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                '提示: 您可以在 Finder 中右键点击文件夹，选择"显示简介"来复制路径',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(manualPathController.text),
-              child: const Text('确定'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result != null && result.isNotEmpty) {
-      // 验证路径是否存在
-      final directory = Directory(result);
-      if (await directory.exists()) {
-        _folderController.text = result;
-        _addLogMessage('已设置文件夹路径: $result');
-      } else {
-        _addLogMessage('错误: 路径不存在: $result');
-        // 显示错误提示
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('路径不存在，请检查后重试'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } else if (result != null) {
-      _addLogMessage('未输入路径');
+      _addLogMessage('选择目录异常: $e');
     }
   }
 
   Future<void> _scanFiles() async {
-    if (_folderController.text.isEmpty) {
+    final folder = _folderController.text.trim();
+    if (folder.isEmpty) {
       _addLogMessage('请先选择文件夹');
       return;
     }
@@ -170,41 +95,45 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
     });
 
     try {
-      final directory = Directory(_folderController.text);
+      final directory = Directory(folder);
       if (!await directory.exists()) {
         _addLogMessage('错误: 文件夹不存在');
         return;
       }
 
-      // 获取文件夹中的所有文件
-      await for (var entity in directory.list(recursive: false)) {
+      await for (final entity in directory.list(recursive: false)) {
         if (entity is File) {
           _files.add(entity);
         }
       }
 
-      _addLogMessage('扫描完成，找到 ${_files.length} 个文件');
+      _addLogMessage('扫描完成，发现 ${_files.length} 个文件');
     } catch (e) {
-      _addLogMessage('扫描文件时出现错误: $e');
+      _addLogMessage('扫描出错: $e');
     } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
 
   Future<void> _previewRename() async {
-    if (_folderController.text.isEmpty) {
+    final folder = _folderController.text.trim();
+    if (folder.isEmpty) {
       _addLogMessage('请先选择文件夹');
       return;
     }
 
-    if (_patternController.text.isEmpty) {
-      _addLogMessage('请输入匹配模式');
+    final patternStr = _patternController.text.trim();
+    if (patternStr.isEmpty) {
+      _addLogMessage('请输入正则表达式匹配模式');
       return;
     }
 
-    if (_replacementController.text.isEmpty) {
+    final replacementStr = _replacementController.text;
+    if (replacementStr.isEmpty) {
       _addLogMessage('请输入替换格式');
       return;
     }
@@ -216,41 +145,28 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
     });
 
     try {
-      final directory = Directory(_folderController.text);
+      final directory = Directory(folder);
       if (!await directory.exists()) {
         _addLogMessage('错误: 文件夹不存在');
         return;
       }
 
-      _addLogMessage('开始预览重命名...');
-      _addLogMessage('匹配模式: ${_patternController.text}');
-      _addLogMessage('替换格式: ${_replacementController.text}');
+      _addLogMessage('开始预览匹配: $patternStr -> $replacementStr');
 
       int count = 0;
-      // 获取文件夹中的所有文件
-      await for (var entity in directory.list(recursive: false)) {
+      final pattern = RegExp(patternStr);
+
+      await for (final entity in directory.list(recursive: false)) {
         if (entity is File) {
           final fileName = entity.uri.pathSegments.last;
-
-          // 使用正则表达式进行匹配和替换
-          try {
-            final pattern = RegExp(_patternController.text);
-            final match = pattern.firstMatch(fileName);
-            if (match != null) {
-              // 使用 replaceFirst 方法处理捕获组
-              String newFileName = fileName;
-              // 替换捕获组引用，如 $1, $2 等
-              newFileName = _applyRegexReplacement(
-                fileName,
-                pattern,
-                _replacementController.text,
-              );
-              _addLogMessage('预览: $fileName -> $newFileName');
-              count++;
-            }
-          } catch (e) {
-            _addLogMessage('正则表达式错误: $e');
-            break;
+          if (pattern.hasMatch(fileName)) {
+            final newFileName = _applyRegexReplacement(
+              fileName,
+              pattern,
+              replacementStr,
+            );
+            _addLogMessage('预览: $fileName → $newFileName');
+            count++;
           }
         }
       }
@@ -259,56 +175,57 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
         _previewCount = count;
       });
 
-      _addLogMessage('预览完成，将重命名 $_previewCount 个文件');
+      _addLogMessage('预览完成，匹配到 $_previewCount 个文件将进行重命名');
     } catch (e) {
-      _addLogMessage('预览重命名时出现错误: $e');
+      _addLogMessage('正则解析或预览异常: $e');
     } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
 
   Future<void> _executeRename() async {
-    if (_folderController.text.isEmpty) {
-      _addLogMessage('请先选择文件夹');
+    final folder = _folderController.text.trim();
+    if (folder.isEmpty || _patternController.text.isEmpty || _replacementController.text.isEmpty) {
+      _addLogMessage('请补全必要路径与规则');
       return;
     }
 
-    if (_patternController.text.isEmpty) {
-      _addLogMessage('请输入匹配模式');
-      return;
-    }
-
-    if (_replacementController.text.isEmpty) {
-      _addLogMessage('请输入替换格式');
-      return;
-    }
-
-    // 确认对话框
     final shouldProceed = await showDialog<bool>(
       context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
       builder: (context) {
         return AlertDialog(
-          title: const Text('确认重命名'),
-          content: Text('确定要重命名 $_previewCount 个文件吗？此操作不可撤销。'),
+          backgroundColor: AppTheme.bgCard,
+          shape: RoundedRectangleBorder(
+            borderRadius: AppTheme.borderRadiusMedium,
+            side: const BorderSide(color: AppTheme.borderStrong),
+          ),
+          title: const Text('确认重命名', style: AppTheme.fontTitle),
+          content: Text(
+            '确定要按规则重命名 $_previewCount 个文件吗？\n该操作将直接修改磁盘文件名。',
+            style: AppTheme.fontBody,
+          ),
           actions: [
-            TextButton(
+            AppButton.ghost(
+              label: '取消',
+              size: AppButtonSize.small,
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
             ),
-            TextButton(
+            AppButton.danger(
+              label: '确认执行',
+              size: AppButtonSize.small,
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('确定'),
             ),
           ],
         );
       },
     );
 
-    if (shouldProceed != true) {
-      return;
-    }
+    if (shouldProceed != true) return;
 
     setState(() {
       _isProcessing = true;
@@ -317,229 +234,227 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
 
     int renamedCount = 0;
     try {
-      final directory = Directory(_folderController.text);
+      final directory = Directory(folder);
       if (!await directory.exists()) {
         _addLogMessage('错误: 文件夹不存在');
         return;
       }
 
       _addLogMessage('开始执行重命名...');
+      final pattern = RegExp(_patternController.text.trim());
 
-      // 获取文件夹中的所有文件
-      await for (var entity in directory.list(recursive: false)) {
+      await for (final entity in directory.list(recursive: false)) {
         if (entity is File) {
           final fileName = entity.uri.pathSegments.last;
-
-          // 使用正则表达式进行匹配和替换
-          try {
-            final pattern = RegExp(_patternController.text);
-            final match = pattern.firstMatch(fileName);
-            if (match != null) {
-              // 使用 replaceFirst 方法处理捕获组
-              final newFileName = _applyRegexReplacement(
-                fileName,
-                pattern,
-                _replacementController.text,
-              );
-              final newFile = File('${entity.parent.path}/$newFileName');
-
-              // 执行重命名
-              await entity.rename(newFile.path);
-              _addLogMessage('✓ $fileName -> $newFileName');
-              renamedCount++;
-            }
-          } catch (e) {
-            _addLogMessage('重命名文件时出现错误: $e');
+          if (pattern.hasMatch(fileName)) {
+            final newFileName = _applyRegexReplacement(
+              fileName,
+              pattern,
+              _replacementController.text,
+            );
+            final newFile = File('${entity.parent.path}/$newFileName');
+            await entity.rename(newFile.path);
+            _addLogMessage('✓ $fileName → $newFileName');
+            renamedCount++;
           }
         }
       }
 
-      _addLogMessage('重命名完成，共重命名 $renamedCount 个文件');
-    } catch (e) {
-      _addLogMessage('执行重命名时出现错误: $e');
-    } finally {
+      _addLogMessage('执行完毕，成功重命名 $renamedCount 个文件');
       setState(() {
-        _isProcessing = false;
+        _previewCount = 0;
       });
+    } catch (e) {
+      _addLogMessage('执行重命名发生错误: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('批量重命名工具'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 文件夹选择部分
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
+      backgroundColor: AppTheme.bgContent,
+      body: Padding(
+        padding: const EdgeInsets.all(AppTheme.space24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 标题
+            Row(
+              children: [
+                const Icon(Icons.text_format, size: 22, color: AppTheme.accent),
+                const SizedBox(width: AppTheme.space8),
+                const Text('批量重命名', style: AppTheme.fontHeadline),
+                const Spacer(),
+                if (_previewCount > 0)
+                  AppBadge(
+                    label: '匹配到 $_previewCount 个文件',
+                    color: AppTheme.accentSubtle,
+                    textColor: AppTheme.accentLight,
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.space4),
+            Text(
+              '使用正则表达式对指定目录中的文件进行批量匹配与捕获组替换',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: AppTheme.space16),
+
+            // 路径选择卡片
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      const Text(
-                        '文件夹选择',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                      Expanded(
+                        child: AppTextField(
+                          controller: _folderController,
+                          label: '文件夹路径',
+                          hintText: '选择或粘贴包含待重命名文件的目录...',
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _folderController,
-                              decoration: const InputDecoration(
-                                hintText: '请输入文件夹路径',
-                                border: OutlineInputBorder(),
-                              ),
+                      const SizedBox(width: AppTheme.space8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 18),
+                        child: AppButton.secondary(
+                          label: '浏览',
+                          icon: Icons.folder_open,
+                          size: AppButtonSize.regular,
+                          onPressed: _isProcessing ? null : _selectFolder,
+                        ),
+                      ),
+                      const SizedBox(width: AppTheme.space8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 18),
+                        child: AppButton.secondary(
+                          label: '扫描文件',
+                          icon: Icons.search,
+                          size: AppButtonSize.regular,
+                          onPressed: _isProcessing ? null : _scanFiles,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppTheme.space16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppTextField(
+                          controller: _patternController,
+                          label: '匹配模式 (正则表达式)',
+                          hintText: r'如 ^(.*)-pet\.yml$',
+                        ),
+                      ),
+                      const SizedBox(width: AppTheme.space12),
+                      Expanded(
+                        child: AppTextField(
+                          controller: _replacementController,
+                          label: r'替换格式 (支持 $1, $2 捕获组)',
+                          hintText: r'如 $1.yml',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppTheme.space16),
+                  Row(
+                    children: [
+                      AppButton.secondary(
+                        label: '预览变更',
+                        icon: Icons.visibility_outlined,
+                        size: AppButtonSize.regular,
+                        isLoading: _isProcessing && _previewCount == 0,
+                        onPressed: _isProcessing ? null : _previewRename,
+                      ),
+                      const SizedBox(width: AppTheme.space8),
+                      AppButton.primary(
+                        label: _previewCount > 0 ? '执行重命名 ($_previewCount)' : '执行重命名',
+                        icon: Icons.play_arrow,
+                        size: AppButtonSize.regular,
+                        isLoading: _isProcessing && _previewCount > 0,
+                        onPressed: (_isProcessing || _previewCount == 0) ? null : _executeRename,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppTheme.space12),
+
+            // 日志预览区
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppTheme.space12),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgInput,
+                  borderRadius: AppTheme.borderRadiusMedium,
+                  border: Border.all(color: AppTheme.borderSubtle),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
+                        const SizedBox(width: AppTheme.space6),
+                        Text(
+                          '处理与预览日志',
+                          style: AppTheme.fontCaption.copyWith(
+                            color: AppTheme.textTertiary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_logMessages.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => setState(() {
+                              _logMessages.clear();
+                              _previewCount = 0;
+                            }),
+                            child: Text(
+                              '清空日志',
+                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            onPressed: _isProcessing ? null : _selectFolder,
-                            icon: const Icon(Icons.folder),
-                            label: const Text('选择'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _isProcessing ? null : _scanFiles,
-                        icon: _isProcessing
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.search),
-                        label: Text(_isProcessing ? '扫描中...' : '扫描文件'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // 重命名规则部分
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '重命名规则',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        '使用正则表达式匹配文件名，支持捕获组',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _patternController,
-                        decoration: const InputDecoration(
-                          labelText: '匹配模式 (正则表达式)',
-                          hintText: r'例如: ^(.*)-pet\.yml$',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _replacementController,
-                        decoration: const InputDecoration(
-                          labelText: '替换格式',
-                          hintText: r'例如: \$1.yml',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: _isProcessing ? null : _previewRename,
-                            icon: const Icon(Icons.visibility),
-                            label: const Text('预览'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            onPressed: _isProcessing || _previewCount == 0
-                                ? null
-                                : _executeRename,
-                            icon: const Icon(Icons.play_arrow),
-                            label: const Text('执行'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              // 操作日志部分
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '操作日志',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SelectionArea(
-                        child: Container(
-                          height: 200, // 固定高度
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: ListView.builder(
+                      ],
+                    ),
+                    const SizedBox(height: AppTheme.space8),
+                    const Divider(height: 1, color: AppTheme.borderSubtle),
+                    const SizedBox(height: AppTheme.space8),
+                    Expanded(
+                      child: _logMessages.isEmpty
+                          ? Center(
+                              child: Text(
+                                '暂无日志记录，可点击"预览变更"查看重命名计划',
+                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                              ),
+                            )
+                          : ListView.builder(
+                              controller: _logScrollController,
                               itemCount: _logMessages.length,
                               itemBuilder: (context, index) {
-                                return Text(
-                                  _logMessages[index],
-                                  style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 12,
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Text(
+                                    _logMessages[index],
+                                    style: AppTheme.fontMono.copyWith(fontSize: 11),
                                   ),
                                 );
                               },
                             ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

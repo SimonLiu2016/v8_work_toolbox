@@ -22,6 +22,8 @@ dependencies:
   rate_limiter: ^1.0.0
   xml: ^6.0.0
   image: ^4.2.0
+  path_provider: ^2.1.5
+  flutter_secure_storage: ^9.2.4
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 

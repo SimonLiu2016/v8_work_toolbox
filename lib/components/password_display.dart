@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/app_theme.dart';
 
 class PasswordDisplay extends StatefulWidget {
   final String encryptionPassword;
 
-  const PasswordDisplay({Key? key, required this.encryptionPassword})
-    : super(key: key);
+  const PasswordDisplay({super.key, required this.encryptionPassword});
 
   @override
   State<PasswordDisplay> createState() => _PasswordDisplayState();
@@ -52,25 +52,36 @@ class _PasswordDisplayState extends State<PasswordDisplay> {
               children: [
                 Expanded(
                   child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppTheme.space12,
+                      vertical: AppTheme.space8,
                     ),
-                    child: Text(widget.encryptionPassword),
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgInput,
+                      border: Border.all(color: AppTheme.borderSubtle),
+                      borderRadius: AppTheme.borderRadiusSmall,
+                    ),
+                    child: Text(
+                      widget.encryptionPassword,
+                      style: AppTheme.fontMono.copyWith(color: AppTheme.accentLight),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 ElevatedButton(
                   onPressed: _copyPasswordToClipboard,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accent,
+                    foregroundColor: Colors.white,
+                  ),
                   child: const Text('复制'),
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            const Text(
-              '注意：密码已固定为 "!QAZ2wsx#EDC\$#@!"，请妥善保管。',
-              style: TextStyle(color: Colors.red),
+            Text(
+              '注意：密码已固定为 "!QAZ2wsx#EDC\$#@!"，解密此工具生成的包需使用相同密码。',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
             ),
           ],
         ),

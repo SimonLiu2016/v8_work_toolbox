@@ -1,236 +1,104 @@
-# V8 工作工具箱
+# V8 Work Toolbox (V8 工作工具箱)
 
-V8 工作工具箱是一个实用的文件处理工具集合，包含以下工具：
+面向 macOS 开发者打造的效率工具箱，采用现代化 Raycast 深色卡片风格桌面启动器架构，常驻系统菜单栏并支持全局快捷键快速唤起。
 
-1. Beyond Compare 配置修改工具 - 用于自动修改 Beyond Compare 的配置文件，以禁用更新检查并清理会话标志。
-2. 批量重命名工具 - 按规则批量重命名文件。
-3. 文件夹对比工具 - 对比两个文件夹中同名文件的内容差异。
-4. 应用快捷键获取工具 - 获取指定 macOS 应用的所有快捷键信息，并导出为格式化的文本文件。
+---
 
-## 应用快捷键获取工具
+## 🌟 核心特性
 
-新增了应用快捷键获取工具，使用 macOS Accessibility API 获取指定应用的快捷键信息并导出为 txt 文件。文件格式为三列：描述|快捷键|分类，以 | 分隔。
+- **Raycast 桌面启动器体验**：全局深色极简风格设计（60fps 动效、4 阶字体阶梯、精细色彩对比度）。
+- **常驻系统菜单栏**：支持系统托盘常驻与菜单操作（快速唤起 / 隐藏 / 退出）。
+- **全局呼出热键**：默认 `⌥ Space` (Option+Space) 一键呼出或隐藏主窗口，支持在设置中切换为 `⌃⌥ K` 或 `⌥ K`。
+- **后台窗口保活**：点击窗口红色关闭按钮或按 Esc 隐藏到后台菜单栏，不退出进程，二次呼出零等待。
+- **统一配置存储**：所有配置集中收纳于 `~/Library/Application Support/V8WorkToolbox/`，告别主目录散落配置文件。
+- **无损自动迁移**：自动检测并无损迁移旧版配置文件（如 `~/.v8_cleaner_config.json`），保持旧文件完好并记录迁移状态。
 
-**重要说明**：由于 macOS 系统安全机制的限制，许多现代应用都限制了外部访问其菜单结构，因此此工具可能无法获取大部分应用的快捷键信息。这是正常的安全保护行为，而非工具故障。
+---
 
-### 权限设置
-使用此功能需要授予应用辅助功能权限：
-1. 打开系统设置 > 隐私与安全性 > 辅助功能
-2. 将 V8WorkToolbox 应用添加到允许列表
+## 🧰 工具矩阵（8 大集成工具）
 
-### 使用方法
-1. 在主界面点击 "应用快捷键获取" 工具卡片
-2. 输入目标应用名称（如 Finder、Safari 等）
-3. 选择保存路径
-4. 点击 "开始提取"
+| 工具名称 | 分类 | 核心功能 |
+| :--- | :--- | :--- |
+| **BC 配置工具** | 开发配置 | 自动处理 Beyond Compare 更新检查与会话标记，一键修复并启动应用 |
+| **BC 脚本管理** | 开发配置 | 管理并独立运行终端修复脚本，解决应用沙盒与权限隔离问题 |
+| **批量重命名** | 文件处理 | 正则表达式模式匹配与 `$1`, `$2` 捕获组替换，重命名前实时差异预览 |
+| **文件夹对比** | 文件处理 | 深度比对两个目录同名配置文件（YAML/JSON/Properties），支持路径表达式提取并导出 CSV |
+| **KMA 包生成** | 资源打包 | 制作加密的 KMA 资源包，集成多语言翻译（百度/本地）、快捷键配置与解包/压包维护 |
+| **图片尺寸修改** | 图片处理 | 支持常用尺寸预设与自定义宽高缩放，保持长宽比，实时预览与安全确认 |
+| **应用快捷键获取** | 系统工具 | 借助 macOS Accessibility API 提取目标应用程序的菜单快捷键，导出为格式化文件 |
+| **清理构建产物** | 系统工具 | 递归扫描 Flutter/iOS/Android/Node 衍生缓存与构建产物（`build/`, `.dart_tool/`, `Pods/`, `DerivedData/` 等），一键安全释放磁盘空间 |
 
-### 详细说明
-完整的使用说明请参考 [USING_APP_SHORTCUTS_TOOL.md](USING_APP_SHORTCUTS_TOOL.md) 文件。
+---
 
-### 特殊应用说明
-对于某些特殊应用（如iTerm2）的使用说明，请参考 [ITERM2_USAGE_NOTE.md](ITERM2_USAGE_NOTE.md) 文件。
+## ⌨️ 快捷键与导航
 
-## Beyond Compare 配置修改工具功能说明
+| 快捷键 | 功能 |
+| :--- | :--- |
+| **`⌥ Space`** (Option + Space) | **全局唤起 / 隐藏主工具箱**（全局生效） |
+| **`⌘ ,`** (Cmd + Comma) | 打开设置面板（配置快捷键与存储管理） |
+| **`↑` / `↓`** | 工具搜索过滤列表上下导航 |
+| **`Enter`** | 进入选中的工具页面 |
+| **`Esc`** | 退出工具回到搜索，或在主页直接隐藏窗口 |
 
-1. 自动导航到 Beyond Compare 配置目录
-2. 修改 BCState.xml 文件，删除更新检查相关的 CheckID 和 LastChecked 标签
-3. 修改 BCSessions.xml 文件，删除 Flags 属性
-4. 启动 Beyond Compare 应用程序
+> [!TIP]
+> 全局热键可在主界面左下角「设置」中更改，支持 `⌥ Space`、`⌃⌥ K`、`⌥ K`，热键注册冲突时会有温和提示。
 
-## 批量重命名工具功能说明
+---
 
-批量重命名工具允许用户使用正则表达式规则批量重命名文件。
+## 📁 配置存储与目录规范
 
-## 文件夹对比工具功能说明
+所有用户数据和配置现已统一部署于 macOS 标准应用支持目录：
 
-文件夹对比工具用于对比两个文件夹中同名文件的内容差异，支持多种文件格式（目前实现 YAML 格式），并可将差异结果导出为 CSV 文件。
+```text
+~/Library/Application Support/V8WorkToolbox/
+├── app.json                  # 全局应用配置 (最近使用的工具列表、全局热键、迁移源记录)
+├── config/                   # 各工具专属独立配置文件
+│   ├── clean-builds.json     # 清理构建产物工具目录与规则
+│   └── ...                   # 其它工具配置
+└── fix_bc_config.sh          # 终端备用脚本
+```
 
-详细使用说明请参见 [文件夹对比工具使用说明](README_COMPARE_TOOL.md)。
+- **原子保存机制**：所有配置采用临时文件写入 + 原子重命名（`.tmp` -> `.json`），防止意外断电或崩溃损坏文件。
+- **旧版配置迁移**：首次运行新版本时，若检测到 `~/.v8_cleaner_config.json`，会自动无损复制至 `config/clean-builds.json` 并记录到 `app.json`，原始文件完全保留。
 
-## 使用方法
+---
 
-### 方法一：使用图形界面应用程序（可能遇到权限问题）
+## 🛠️ 构建与开发
 
-在应用程序中运行 V8WorkToolbox，选择 "BC 配置工具"。
+### 环境要求
 
-### 方法二：使用终端脚本（推荐，避免权限问题）
+- macOS 11.0+
+- Flutter 3.27+ (Dart 3.6+)
+- Xcode 15+
 
-在终端中执行以下命令：
+### 运行调试
 
 ```bash
-./fix_bc_config.sh
+# 获取依赖
+flutter pub get
+
+# 代码静态分析 (应为 0 errors, 0 warnings)
+flutter analyze --no-fatal-infos
+
+# 运行自动化测试
+flutter test
+
+# 本地以 macOS 桌面方式启动
+flutter run -d macos
 ```
 
-### 方法三：手动执行命令
-
-如果上述方法都无法使用，可以手动执行以下命令：
+### 发布打包
 
 ```bash
-cd "/Users/$USER/Library/Application Support/Beyond Compare"
-sed -i "" "/<CheckID/d" BCState.xml
-sed -i "" "/<LastChecked/d" BCState.xml
-sed -i "" "s/Flags=\"[^\"]*\" //" BCSessions.xml
-open -a "Beyond Compare"
+flutter build macos --release
 ```
 
-## 脚本说明
+打包生成的可执行应用位于：`build/macos/Build/Products/Release/V8WorkToolbox.app`。
 
-### fix_bc_config.sh（推荐使用）
+---
 
-这个脚本是为了解决 macOS 权限问题而创建的终端脚本版本。
+## 📜 辅助功能权限说明
 
-```bash
-#!/bin/bash
-
-# Beyond Compare 配置修复脚本
-# 这个脚本可以直接在终端中运行，避免 macOS 应用程序权限问题
-
-echo "Beyond Compare 配置修复工具"
-echo "=========================="
-
-# 检查是否提供了 Beyond Compare 配置目录路径
-if [ $# -eq 0 ]; then
-    # 默认路径
-    BC_DIR="/Users/$(whoami)/Library/Application Support/Beyond Compare"
-    echo "使用默认路径: $BC_DIR"
-else
-    BC_DIR="$1"
-    echo "使用指定路径: $BC_DIR"
-fi
-
-# 检查目录是否存在
-if [ ! -d "$BC_DIR" ]; then
-    echo "错误: Beyond Compare 配置目录不存在: $BC_DIR"
-    echo "请确保 Beyond Compare 已安装，或提供正确的配置目录路径"
-    echo "用法: ./fix_bc_config.sh [配置目录路径]"
-    exit 1
-fi
-
-echo "正在处理 Beyond Compare 配置文件..."
-
-# 步骤1: 修改 BCState.xml 文件
-BC_STATE_FILE="$BC_DIR/BCState.xml"
-if [ -f "$BC_STATE_FILE" ]; then
-    # 创建备份文件
-    cp "$BC_STATE_FILE" "$BC_STATE_FILE.bak"
-    echo "已创建 BCState.xml 备份文件"
-
-    # 删除 CheckID 和 LastChecked 标签
-    sed -i '' '/<CheckID/d' "$BC_STATE_FILE"
-    sed -i '' '/<LastChecked/d' "$BC_STATE_FILE"
-    echo "✓ BCState.xml 文件已更新"
-else
-    echo "警告: BCState.xml 文件不存在: $BC_STATE_FILE"
-fi
-
-# 步骤2: 修改 BCSessions.xml 文件
-BC_SESSIONS_FILE="$BC_DIR/BCSessions.xml"
-if [ -f "$BC_SESSIONS_FILE" ]; then
-    # 创建备份文件
-    cp "$BC_SESSIONS_FILE" "$BC_SESSIONS_FILE.bak"
-    echo "已创建 BCSessions.xml 备份文件"
-
-    # 删除 Flags 属性
-    sed -i '' 's/Flags="[^"]*" //' "$BC_SESSIONS_FILE"
-    echo "✓ BCSessions.xml 文件已更新"
-else
-    echo "警告: BCSessions.xml 文件不存在: $BC_SESSIONS_FILE"
-fi
-
-# 步骤3: 启动 Beyond Compare
-echo "正在启动 Beyond Compare..."
-open -a "Beyond Compare"
-
-echo "所有操作已完成！"
-echo ""
-echo "提示: 如果仍然遇到权限问题，请尝试以下方法:"
-echo "1. 在终端中运行此脚本: ./fix_bc_config.sh"
-echo "2. 或者手动运行以下命令:"
-echo "   cd '/Users/$(whoami)/Library/Application Support/Beyond Compare'"
-echo "   sed -i '' '/<CheckID/d' BCState.xml"
-echo "   sed -i '' '/<LastChecked/d' BCState.xml"
-echo "   sed -i '' 's/Flags=\"[^\"]*\" //' BCSessions.xml"
-```
-
-### modify_bc_config.sh（原始版本）
-
-```bash
-#!/bin/bash
-
-# 定义 Beyond Compare 配置文件路径
-BC_DIR="$HOME/Library/ApplicationSupport/Beyond Compare"
-
-echo "正在处理 Beyond Compare 配置文件..."
-
-# 检查目录是否存在
-if [ ! -d "$BC_DIR" ]; then
-  echo "错误: Beyond Compare 配置目录不存在: $BC_DIR"
-  exit 1
-fi
-
-# 步骤1: 修改 BCState.xml 文件
-BC_STATE_FILE="$BC_DIR/BCState.xml"
-if [ -f "$BC_STATE_FILE" ]; then
-  # 删除 CheckID 和 LastChecked 标签
-  sed -i '' '/<CheckID/d' "$BC_STATE_FILE"
-  sed -i '' '/<LastChecked/d' "$BC_STATE_FILE"
-  echo "BCState.xml 文件已更新"
-else
-  echo "警告: BCState.xml 文件不存在: $BC_STATE_FILE"
-fi
-
-# 步骤2: 修改 BCSessions.xml 文件
-BC_SESSIONS_FILE="$BC_DIR/BCSessions.xml"
-if [ -f "$BC_SESSIONS_FILE" ]; then
-  # 删除 Flags 属性
-  sed -i '' 's/Flags="[^"]*" //' "$BC_SESSIONS_FILE"
-  echo "BCSessions.xml 文件已更新"
-else
-  echo "警告: BCSessions.xml 文件不存在: $BC_SESSIONS_FILE"
-fi
-
-# 步骤3: 启动 Beyond Compare
-echo "正在启动 Beyond Compare..."
-open -a "Beyond Compare"
-
-echo "所有操作已完成！"
-```
-
-## 修改前后的文件格式示例
-
-### BCState.xml
-
-修改前：
-
-```xml
-<TCheckForUpdatesState>
-    <Build Value="24545"/>
-    <CheckID Value="173864067260425"/>
-    <LastChecked Value="2019-12-13 10:28:02"/>
-</TCheckForUpdatesState>
-```
-
-修改后：
-
-```
-<TCheckForUpdatesState>
-    <Build Value="24545"/>
-</TCheckForUpdatesState>
-```
-
-### BCSessions.xml
-
-修改前：
-
-``xml
-<BCSessions Flags="2516348444542" Version="1" MinVersion="1">
-</BCSessions>
-
-```
-
-修改后：
-
-```
-
-<BCSessions Version="1" MinVersion="1">
-</BCSessions>
+使用「应用快捷键获取」功能时，因调用了 macOS Accessibility API（`AXUIElement`），需授予辅助功能权限：
+1. 打开系统设置 > **隐私与安全性** > **辅助功能**。
+2. 将 **V8WorkToolbox** 添加到允许列表并开启开关。

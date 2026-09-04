@@ -9,10 +9,6 @@ import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
-// 限流相关变量
-DateTime? _lastRequestTime;
-int _requestCount = 0;
-
 class KmaPackageUtil {
   /// 将指定目录压缩为 ZIP 文件
   static Future<void> createZipFromDirectory(
@@ -33,7 +29,7 @@ class KmaPackageUtil {
       }
     }
 
-    List<int> zipBytes = ZipEncoder().encode(archive)!;
+    List<int> zipBytes = ZipEncoder().encode(archive);
     await File(outputPath).writeAsBytes(zipBytes);
   }
 
@@ -168,7 +164,7 @@ class KmaPackageUtil {
     required String outputPath,
     required String password,
   }) async {
-    String tempZipPath = '${outputPath}.tmp.zip';
+    String tempZipPath = '$outputPath.tmp.zip';
 
     try {
       // 压缩目录
@@ -196,7 +192,7 @@ class KmaPackageUtil {
     required String outputDir,
     required String password,
   }) async {
-    String tempDecryptedPath = '${outputDir}/temp_decrypted.zip';
+    String tempDecryptedPath = '$outputDir/temp_decrypted.zip';
 
     try {
       // 解密 KMA 文件
@@ -313,17 +309,13 @@ class TranslationUtil {
     );
 
     // 百度翻译API使用GET请求
-    String query =
-        'q=' +
-        Uri.encodeComponent(text) +
-        '&from=${_convertToBaiduLangCode(sourceLang)}' +
-        '&to=${_convertToBaiduLangCode(targetLang)}' +
-        '&appid=$_baiduAppId' +
-        '&salt=$salt' +
-        '&sign=$sign';
+    final fromLang = _convertToBaiduLangCode(sourceLang);
+    final toLang = _convertToBaiduLangCode(targetLang);
+    final encodedText = Uri.encodeComponent(text);
+    final query = 'q=$encodedText&from=$fromLang&to=$toLang&appid=$_baiduAppId&salt=$salt&sign=$sign';
 
     final url = Uri.parse(
-      'https://fanyi-api.baidu.com/api/trans/vip/translate?' + query,
+      'https://fanyi-api.baidu.com/api/trans/vip/translate?$query',
     );
 
     // 添加限流，确保QPS不超过设定值
@@ -520,8 +512,6 @@ class TranslationUtil {
             logCallback,
           );
           break;
-        default:
-          result = text;
       }
 
       // 让出控制权，避免阻塞UI线程

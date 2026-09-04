@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import '../theme/app_theme.dart';
 
 class ExtractKma extends StatefulWidget {
   final TextEditingController kmaFileController;
@@ -11,7 +11,7 @@ class ExtractKma extends StatefulWidget {
   final Function() onExtractKmaPackage;
 
   const ExtractKma({
-    Key? key,
+    super.key,
     required this.kmaFileController,
     required this.extractOutputDirController,
     required this.selectedKmaFile,
@@ -19,7 +19,7 @@ class ExtractKma extends StatefulWidget {
     required this.onPickKmaFile,
     required this.onPickExtractOutputDir,
     required this.onExtractKmaPackage,
-  }) : super(key: key);
+  });
 
   @override
   State<ExtractKma> createState() => _ExtractKmaState();
@@ -82,10 +82,10 @@ class _ExtractKmaState extends State<ExtractKma> {
             Center(
               child: ElevatedButton.icon(
                 onPressed: widget.onExtractKmaPackage,
-                icon: const Icon(Icons.unarchive),
+                icon: const Icon(Icons.unarchive, size: 16),
                 label: const Text('解压 KMA 包'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
+                  backgroundColor: AppTheme.accent,
                   foregroundColor: Colors.white,
                 ),
               ),

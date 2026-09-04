@@ -1,22 +1,22 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'app_info_parser.dart';
 
+import '../theme/app_theme.dart';
+
 class AppBundleSelector extends StatelessWidget {
   final Function(Map<String, String>) onAppInfoParsed;
 
-  const AppBundleSelector({Key? key, required this.onAppInfoParsed})
-    : super(key: key);
+  const AppBundleSelector({super.key, required this.onAppInfoParsed});
 
   @override
   Widget build(BuildContext context) {
     return ElevatedButton.icon(
       onPressed: () => _showInstructionsDialog(context),
-      icon: const Icon(Icons.folder_outlined),
+      icon: const Icon(Icons.folder_outlined, size: 16),
       label: const Text('解析应用'),
       style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blue,
+        backgroundColor: AppTheme.accent,
         foregroundColor: Colors.white,
       ),
     );

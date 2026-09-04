@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'app_bundle_selector.dart';
 
 class AppInfoForm extends StatefulWidget {
@@ -15,7 +14,7 @@ class AppInfoForm extends StatefulWidget {
   final TextEditingController previewPathController;
 
   const AppInfoForm({
-    Key? key,
+    super.key,
     required this.bundleIdController,
     required this.nameController,
     required this.localizedNameController,
@@ -26,7 +25,7 @@ class AppInfoForm extends StatefulWidget {
     required this.descriptionController,
     required this.iconPathController,
     required this.previewPathController,
-  }) : super(key: key);
+  });
 
   @override
   State<AppInfoForm> createState() => _AppInfoFormState();

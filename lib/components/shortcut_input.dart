@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
 class ShortcutInput extends StatefulWidget {
@@ -20,7 +19,7 @@ class ShortcutInput extends StatefulWidget {
   final Function() onParseJsonToInteractive;
 
   const ShortcutInput({
-    Key? key,
+    super.key,
     required this.isJsonMode,
     required this.shortcutRowsCount,
     required this.idControllers,
@@ -37,7 +36,7 @@ class ShortcutInput extends StatefulWidget {
     required this.onRemoveLastRow,
     required this.onGenerateJsonFromInteractive,
     required this.onParseJsonToInteractive,
-  }) : super(key: key);
+  });
 
   @override
   State<ShortcutInput> createState() => _ShortcutInputState();
@@ -238,24 +237,5 @@ class _ShortcutInputState extends State<ShortcutInput> {
         ),
       ),
     );
-  }
-
-  List<dynamic> _parseKeysString(String keysString) {
-    if (keysString.startsWith('[') && keysString.endsWith(']')) {
-      try {
-        return jsonDecode(keysString);
-      } catch (e) {
-        // 如果解析失败，返回原字符串
-        return [keysString];
-      }
-    }
-    return [keysString];
-  }
-
-  String _formatKeysList(dynamic keys) {
-    if (keys is List) {
-      return jsonEncode(keys);
-    }
-    return keys?.toString() ?? '';
   }
 }

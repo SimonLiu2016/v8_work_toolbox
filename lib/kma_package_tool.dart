@@ -1,19 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
-import 'package:archive/archive.dart';
-import 'package:path/path.dart' as path;
-import 'package:file_picker/file_picker.dart';
-import 'package:http/http.dart' as http;
-import 'package:crypto/crypto.dart';
-import 'dart:typed_data';
-import 'package:encrypt/encrypt.dart' as encrypt_package;
-import 'package:cryptography/cryptography.dart' as crypto_package;
-import 'dart:math' as math;
 import 'dart:async';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
+
+import 'components/app_components.dart';
+import 'theme/app_theme.dart';
 
 // 导入新组件
 import 'components/app_info_form.dart';
@@ -95,7 +88,9 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   // 语言包列表
   final List<String> _supportedLanguages = ['en'];
-  final List<TextEditingController> _languageControllers = [];
+
+  // 标签索引
+  int _currentTabIndex = 0;
 
   // 可选语言列表
   final Map<String, String> _availableLanguages = {
@@ -114,7 +109,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   };
 
   // 快捷键数据
-  final List<Map<String, dynamic>> _shortcuts = [];
   final TextEditingController _shortcutsJsonController =
       TextEditingController();
 
@@ -133,9 +127,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 用于控制快捷键输入行的列表
   int _shortcutRowsCount = 0;
 
-  // 语言包数据
-  final Map<String, String> _localeJsons = {};
-
   // 文件路径控制器（新增输出目录）
   final TextEditingController _iconPathController = TextEditingController();
   final TextEditingController _previewPathController = TextEditingController();
@@ -144,9 +135,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   // 密码固定值
   final String _encryptionPassword = '!QAZ2wsx#EDC\$#@!';
 
-  // 翻译器配置
-  final String _baiduAppId = '20221103001434737'; // 百度翻译API App ID
-  final String _baiduAppKey = 'arHn_8TPwN2_vZmJAyvc'; // 百度翻译API密钥
   bool _useTranslation = true; // 是否使用翻译功能
   String _sourceLanguage = 'en'; // 源语言，默认为英文
   TranslationServiceType _translationService =
@@ -283,13 +271,27 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     _compressOutputDirController.dispose();
 
     // 处理快捷键相关的控制器
-    for (var controller in _idControllers) controller.dispose();
-    for (var controller in _nameControllers) controller.dispose();
-    for (var controller in _descriptionControllers) controller.dispose();
-    for (var controller in _keysControllers) controller.dispose();
-    for (var controller in _rawControllers) controller.dispose();
-    for (var controller in _categoryControllers) controller.dispose();
-    for (var controller in _whenControllers) controller.dispose();
+    for (var controller in _idControllers) {
+      controller.dispose();
+    }
+    for (var controller in _nameControllers) {
+      controller.dispose();
+    }
+    for (var controller in _descriptionControllers) {
+      controller.dispose();
+    }
+    for (var controller in _keysControllers) {
+      controller.dispose();
+    }
+    for (var controller in _rawControllers) {
+      controller.dispose();
+    }
+    for (var controller in _categoryControllers) {
+      controller.dispose();
+    }
+    for (var controller in _whenControllers) {
+      controller.dispose();
+    }
 
     // 处理日志相关的控制器
     _logController.dispose();
@@ -300,40 +302,132 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     super.dispose();
   }
 
+  Widget _buildTabButton(int index, String label, IconData icon, {int? badgeCount}) {
+    final isSelected = _currentTabIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _currentTabIndex = index),
+      borderRadius: AppTheme.borderRadiusSmall,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppTheme.space12,
+          vertical: AppTheme.space8,
+        ),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.bgSelected : AppTheme.bgInput,
+          borderRadius: AppTheme.borderRadiusSmall,
+          border: Border.all(
+            color: isSelected ? AppTheme.accent.withValues(alpha: 0.6) : AppTheme.borderSubtle,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? AppTheme.accentLight : AppTheme.textSecondary,
+            ),
+            const SizedBox(width: AppTheme.space8),
+            Text(
+              label,
+              style: AppTheme.fontBody.copyWith(
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? Colors.white : AppTheme.textSecondary,
+              ),
+            ),
+            if (badgeCount != null && badgeCount > 0) ...[
+              const SizedBox(width: AppTheme.space6),
+              AppBadge(label: '$badgeCount', color: AppTheme.bgCardHover),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('KMA 包生成工具'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+      backgroundColor: AppTheme.bgContent,
+      body: Padding(
+        padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildAppInfoSection(),
-            const SizedBox(height: 20),
-            _buildFileSection(), // 移动到支持语言之前
-            const SizedBox(height: 20),
-            _buildTranslationConfigSection(),
-            const SizedBox(height: 20),
-            _buildRateLimitConfigSection(),
-            const SizedBox(height: 20),
-            _buildLanguageSection(),
-            const SizedBox(height: 20),
-            _buildShortcutSection(),
-            const SizedBox(height: 20),
-            _buildGenerateButton(),
-            const SizedBox(height: 20),
-            _buildPasswordSection(),
-            const SizedBox(height: 20),
-            _buildExtractSection(),
-            const SizedBox(height: 20),
-            _buildCompressSection(),
-            const SizedBox(height: 20),
-            _buildLogConsole(),
+            // 顶部标题栏
+            Row(
+              children: [
+                const Icon(Icons.archive, size: 22, color: AppTheme.accent),
+                const SizedBox(width: AppTheme.space8),
+                const Text('KMA 包生成', style: AppTheme.fontHeadline),
+                const Spacer(),
+                if (_isLoading)
+                  const AppBadge(
+                    label: '处理中...',
+                    color: AppTheme.warningSubtle,
+                    textColor: AppTheme.warning,
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.space4),
+            Text(
+              '生成加密的 KMA 资源包，支持多语言本地化翻译、快捷键录入与解包/压包维护',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: AppTheme.space16),
+
+            // 选项卡切换
+            Row(
+              children: [
+                _buildTabButton(0, '生成 KMA 包', Icons.add_circle_outline),
+                const SizedBox(width: AppTheme.space8),
+                _buildTabButton(1, '解包与压缩', Icons.folder_zip_outlined),
+                const SizedBox(width: AppTheme.space8),
+                _buildTabButton(2, '运行日志', Icons.terminal, badgeCount: _logEntries.length),
+              ],
+            ),
+            const SizedBox(height: AppTheme.space16),
+
+            // 选项卡对应内容
+            Expanded(
+              child: _currentTabIndex == 0
+                  ? SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildAppInfoSection(),
+                          const SizedBox(height: 16),
+                          _buildFileSection(),
+                          const SizedBox(height: 16),
+                          _buildTranslationConfigSection(),
+                          const SizedBox(height: 16),
+                          _buildRateLimitConfigSection(),
+                          const SizedBox(height: 16),
+                          _buildLanguageSection(),
+                          const SizedBox(height: 16),
+                          _buildShortcutSection(),
+                          const SizedBox(height: 20),
+                          _buildGenerateButton(),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    )
+                  : _currentTabIndex == 1
+                      ? SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildPasswordSection(),
+                              const SizedBox(height: 16),
+                              _buildExtractSection(),
+                              const SizedBox(height: 16),
+                              _buildCompressSection(),
+                              const SizedBox(height: 32),
+                            ],
+                          ),
+                        )
+                      : _buildLogConsole(),
+            ),
           ],
         ),
       ),
@@ -421,113 +515,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     });
   }
 
-  Widget _buildShortcutRow(int index) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    controller: _idControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: 'ID (英文小写和下划线)',
-                      hintText: '如: copy_text',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _nameControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: '名称',
-                      hintText: '快捷键名称',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _descriptionControllers[index],
-              decoration: const InputDecoration(
-                labelText: '描述',
-                hintText: '快捷键描述',
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _keysControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: '按键组合',
-                      hintText: '如: ["⌘", "C"]',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _rawControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: '原始格式',
-                      hintText: '如: Cmd+C',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _categoryControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: '类型',
-                      hintText: '如: edit',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _whenControllers[index],
-                    decoration: const InputDecoration(
-                      labelText: '使用时机',
-                      hintText: '如: global',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () {
-                    _removeShortcutRow(index);
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _addShortcutRow() {
     setState(() {
       _shortcutRowsCount++;
@@ -589,7 +576,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     if (_shortcutsJsonController.text.isEmpty) return;
 
     try {
-      List<dynamic> parsedJson = jsonDecode(_shortcutsJsonController.text);
+      final parsedJson = jsonDecode(_shortcutsJsonController.text);
 
       if (parsedJson is List) {
         // 清空当前的行数和控制器
@@ -636,13 +623,27 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
   void _clearAllShortcutRows() {
     // 清空所有控制器
-    for (var controller in _idControllers) controller.dispose();
-    for (var controller in _nameControllers) controller.dispose();
-    for (var controller in _descriptionControllers) controller.dispose();
-    for (var controller in _keysControllers) controller.dispose();
-    for (var controller in _rawControllers) controller.dispose();
-    for (var controller in _categoryControllers) controller.dispose();
-    for (var controller in _whenControllers) controller.dispose();
+    for (var controller in _idControllers) {
+      controller.dispose();
+    }
+    for (var controller in _nameControllers) {
+      controller.dispose();
+    }
+    for (var controller in _descriptionControllers) {
+      controller.dispose();
+    }
+    for (var controller in _keysControllers) {
+      controller.dispose();
+    }
+    for (var controller in _rawControllers) {
+      controller.dispose();
+    }
+    for (var controller in _categoryControllers) {
+      controller.dispose();
+    }
+    for (var controller in _whenControllers) {
+      controller.dispose();
+    }
 
     // 清空列表
     _idControllers.clear();
@@ -688,34 +689,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     }
   }
 
-  Widget _buildFilePathField(
-    TextEditingController controller,
-    String label,
-    String hintText,
-  ) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            readOnly: true,
-            decoration: InputDecoration(labelText: label, hintText: hintText),
-          ),
-        ),
-        const SizedBox(width: 10),
-        ElevatedButton(
-          onPressed: () async {
-            String? result = await _pickFile(label);
-            if (result != null) {
-              controller.text = result;
-            }
-          },
-          child: const Text('选择'),
-        ),
-      ],
-    );
-  }
-
   Future<String?> _pickDirectory() async {
     String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
     return selectedDirectory;
@@ -754,17 +727,17 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
 
     try {
       _addLog('开始压缩文件夹为 KMA 包...');
-      _addLog('源文件夹: ${_selectedSourceDir}');
-      _addLog('输出目录: ${_selectedCompressOutputDir}');
+      _addLog('源文件夹: $_selectedSourceDir');
+      _addLog('输出目录: $_selectedCompressOutputDir');
 
       // 生成输出文件名，使用源文件夹名称
       String sourceDirName = path.basename(_selectedSourceDir!);
       String outputPath = path.join(
         _selectedCompressOutputDir!,
-        '\$sourceDirName.kma',
+        '$sourceDirName.kma',
       );
 
-      _addLog('输出文件路径: \$outputPath');
+      _addLog('输出文件路径: $outputPath');
 
       // 调用 KmaPackageUtil 的 createKmaPackage 方法
       await KmaPackageUtil.createKmaPackage(
@@ -808,45 +781,60 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   Widget _buildGenerateButton() {
     return Center(
       child: _isLoading
-          ? _showProgress
-                ? ValueListenableBuilder<double>(
-                    valueListenable: _progressValueNotifier,
-                    builder: (context, progressValue, child) {
-                      return ValueListenableBuilder<String>(
-                        valueListenable: _progressTextNotifier,
-                        builder: (context, progressText, child) {
-                          return Column(
+          ? (_showProgress
+              ? ValueListenableBuilder<double>(
+                  valueListenable: _progressValueNotifier,
+                  builder: (context, progressValue, child) {
+                    return ValueListenableBuilder<String>(
+                      valueListenable: _progressTextNotifier,
+                      builder: (context, progressText, child) {
+                        return Container(
+                          width: 420,
+                          padding: const EdgeInsets.all(AppTheme.space16),
+                          decoration: BoxDecoration(
+                            color: AppTheme.bgCard,
+                            borderRadius: AppTheme.borderRadiusMedium,
+                            border: Border.all(color: AppTheme.borderSubtle),
+                          ),
+                          child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              LinearProgressIndicator(
-                                value: progressValue,
-                                backgroundColor: Colors.grey[300],
-                                valueColor: const AlwaysStoppedAnimation<Color>(
-                                  Colors.blue,
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: progressValue,
+                                  backgroundColor: AppTheme.bgInput,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(
+                                    AppTheme.accent,
+                                  ),
+                                  minHeight: 8,
                                 ),
                               ),
-                              const SizedBox(height: 10),
-                              Text(progressText),
+                              const SizedBox(height: AppTheme.space8),
+                              Text(
+                                progressText,
+                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                              ),
                             ],
-                          );
-                        },
-                      );
-                    },
-                  )
-                : const CircularProgressIndicator()
-          : ElevatedButton(
+                          ),
+                        );
+                      },
+                    );
+                  },
+                )
+              : const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accent),
+                  ),
+                ))
+          : AppButton.primary(
+              label: '生成 KMA 包',
+              icon: Icons.archive,
+              size: AppButtonSize.regular,
               onPressed: _generateKmaPackage,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 16,
-                ),
-                backgroundColor: Colors.blue,
-              ),
-              child: const Text(
-                '生成 KMA 包',
-                style: TextStyle(fontSize: 16, color: Colors.white),
-              ),
             ),
     );
   }
@@ -954,24 +942,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   late TextEditingController _compressOutputDirController;
   String? _selectedSourceDir;
   String? _selectedCompressOutputDir;
-
-  Widget _buildTextField(
-    TextEditingController controller,
-    String label,
-    String hintText,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10.0),
-      child: TextField(
-        controller: controller,
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hintText,
-          border: const OutlineInputBorder(),
-        ),
-      ),
-    );
-  }
 
   void _generateKmaPackage() async {
     if (_isLoading) return; // 防止重复点击
@@ -1497,7 +1467,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                 ? (progressStep / totalSteps)
                 : 0.0;
             String progressText =
-                '正在处理语言包: $lang (${progressStep}/$totalSteps)';
+                '正在处理语言包: $lang ($progressStep/$totalSteps)';
             onProgress(progress, progressText);
 
             // 再次让出控制权，确保UI更新
@@ -1609,34 +1579,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     );
   }
 
-  Future<int> _getActualShortcutCount(String kmaFilePath) async {
-    try {
-      // 解压KMA包来获取实际的快捷键数量
-      List<int> kmaBytes = await File(kmaFilePath).readAsBytes();
-      Archive archive = ZipDecoder().decodeBytes(kmaBytes);
-
-      // 查找所有的 shortcuts.*.json 文件
-      int count = 0;
-      for (ArchiveFile file in archive) {
-        if (file.name.startsWith('shortcuts.') && file.name.endsWith('.json')) {
-          // 解析每个语言的快捷键文件
-          String content = utf8.decode(file.content as List<int>);
-          Map<String, dynamic> jsonData = json.decode(content);
-          if (jsonData.containsKey('shortcuts') &&
-              jsonData['shortcuts'] is List) {
-            count += (jsonData['shortcuts'] as List).length;
-          }
-        }
-      }
-
-      return count;
-    } catch (e) {
-      _addLog('获取实际快捷键数量失败: $e');
-      // 如果解析失败，返回当前计算的数量
-      return 0;
-    }
-  }
-
   void _showSuccessDialog(String message) {
     showDialog(
       context: context,
@@ -1669,108 +1611,6 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
         'when': shortcut['when'],
       };
     }).toList();
-  }
-
-  void _updateProgress(double progress, String text) {
-    // 使用 ValueNotifier 更新进度，避免整个UI重建
-    _progressValueNotifier.value = progress;
-    _progressTextNotifier.value = text;
-  }
-
-  void _showLanguageSelectionDialog() {
-    // 创建一个临时的已选语言列表，用于对话框中的选择状态
-    List<String> selectedLanguages = List.from(_supportedLanguages);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('选择语言'),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            selectedLanguages = _availableLanguages.keys
-                                .toList();
-                          });
-                        },
-                        child: const Text('全选'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            selectedLanguages = [];
-                          });
-                        },
-                        child: const Text('全不选'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 300,
-                height: 400,
-                child: ListView.builder(
-                  itemCount: _availableLanguages.length,
-                  itemBuilder: (context, index) {
-                    String lang = _availableLanguages.keys.elementAt(index);
-                    String langName = _availableLanguages[lang]!;
-                    bool isSelected = selectedLanguages.contains(lang);
-                    return CheckboxListTile(
-                      title: Text('$lang ($langName)'),
-                      value: isSelected,
-                      onChanged: (value) {
-                        setState(() {
-                          if (value == true) {
-                            if (!selectedLanguages.contains(lang)) {
-                              selectedLanguages.add(lang);
-                            }
-                          } else {
-                            selectedLanguages.remove(lang);
-                          }
-                        });
-                      },
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    // 将选择结果应用到主状态
-                    setState(() {
-                      _supportedLanguages.clear();
-                      _supportedLanguages.addAll(selectedLanguages);
-
-                      // 更新语言包内容
-                      _localeJsons.clear();
-                      for (String lang in _supportedLanguages) {
-                        _localeJsons[lang] = '{}';
-                      }
-                    });
-                    // 重要：更新主界面状态
-                    this.setState(() {});
-                    Navigator.pop(context);
-                  },
-                  child: const Text('确定'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
   }
 
   Future<String?> _pickKmaFile() async {
@@ -1812,59 +1652,66 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
     }
   }
 
-  void _copyPasswordToClipboard() {
-    Clipboard.setData(ClipboardData(text: _encryptionPassword));
-    _showSuccessDialog('密码已复制到剪贴板');
-  }
-
   Widget _buildLogConsole() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '运行日志',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              height: 200,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: TextField(
-                controller: _logController,
-                maxLines: null,
-                expands: true,
-                readOnly: true,
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(8.0),
-                  hintText: '系统运行日志将显示在这里...',
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppTheme.space12),
+      decoration: BoxDecoration(
+        color: AppTheme.bgInput,
+        borderRadius: AppTheme.borderRadiusMedium,
+        border: Border.all(color: AppTheme.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
+              const SizedBox(width: AppTheme.space6),
+              Text(
+                '运行日志',
+                style: AppTheme.fontCaption.copyWith(
+                  color: AppTheme.textTertiary,
+                  fontWeight: FontWeight.w600,
                 ),
-                style: const TextStyle(fontSize: 12, fontFamily: 'Monospace'),
               ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                ElevatedButton(
-                  onPressed: () {
+              const Spacer(),
+              if (_logEntries.isNotEmpty)
+                GestureDetector(
+                  onTap: () {
                     setState(() {
                       _logEntries.clear();
                       _logController.clear();
                     });
                   },
-                  child: const Text('清空日志'),
+                  child: Text(
+                    '清空日志',
+                    style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                  ),
                 ),
-              ],
+            ],
+          ),
+          const SizedBox(height: AppTheme.space8),
+          const Divider(height: 1, color: AppTheme.borderSubtle),
+          const SizedBox(height: AppTheme.space8),
+          Expanded(
+            child: TextField(
+              controller: _logController,
+              maxLines: null,
+              expands: true,
+              readOnly: true,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: EdgeInsets.zero,
+                hintText: '系统运行日志将显示在这里...',
+              ),
+              style: AppTheme.fontMono.copyWith(fontSize: 11),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

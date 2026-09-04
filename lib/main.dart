@@ -1,225 +1,50 @@
 import 'package:flutter/material.dart';
 
-// 导入新工具页面
-import 'bc_config_tool.dart';
-import 'bc_config_shell.dart';
-import 'batch_rename_tool.dart';
-import 'folder_compare_tool.dart';
-import 'kma_package_tool.dart';
-import 'image_resize_tool.dart';
-import 'app_shortcut_tool.dart';
-import 'clean_builds_tool.dart';
+import 'services/ai_config_store.dart';
+import 'services/launcher_service.dart';
+import 'services/settings_store.dart';
+import 'shell/app_shell.dart';
+import 'shell/settings_dialog.dart';
+import 'theme/app_theme.dart';
 
-void main() {
-  runApp(const FileToolsApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 初始化统一配置存储与迁移
+  await SettingsStore.instance.init();
+
+  // 初始化 AI 平台级配置存储
+  await AiConfigStore.instance.init();
+
+  // 注册全局快捷键
+  final hotKey = SettingsStore.instance.getHotKeyConfig();
+  await LauncherService.instance.registerHotKey(hotKey);
+
+  runApp(const V8WorkToolboxApp());
 }
 
-class FileToolsApp extends StatelessWidget {
-  const FileToolsApp({super.key});
+class V8WorkToolboxApp extends StatelessWidget {
+  const V8WorkToolboxApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '文件工具箱',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+      title: 'V8 工作工具箱',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      home: Builder(
+        builder: (context) {
+          return AppShell(
+            initialRecentToolIds: SettingsStore.instance.getRecentToolIds(),
+            onToolUsed: (toolId) {
+              SettingsStore.instance.recordToolUsed(toolId);
+            },
+            onOpenSettings: () {
+              SettingsDialog.show(context);
+            },
+          );
+        },
       ),
-      home: const MainToolsPage(),
-    );
-  }
-}
-
-class MainToolsPage extends StatelessWidget {
-  const MainToolsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('文件工具箱'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: GridView.count(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          children: [
-            _buildToolCard(
-              context,
-              title: 'BC配置工具',
-              subtitle: '修改Beyond Compare配置',
-              icon: Icons.settings,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BcConfigHomePage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: '批量重命名',
-              subtitle: '按规则批量重命名文件',
-              icon: Icons.text_format,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BatchRenameHomePage(),
-                  ),
-                );
-              },
-            ),
-            // 可以在这里添加更多工具卡片
-            _buildToolCard(
-              context,
-              title: '文件夹对比',
-              subtitle: '对比两个文件夹中的文件',
-              icon: Icons.compare,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const FolderCompareHomePage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: 'BC脚本管理',
-              subtitle: '管理BC配置脚本',
-              icon: Icons.code,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const BcConfigShellPage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: 'KMA 包生成',
-              subtitle: '生成加密的 KMA 包',
-              icon: Icons.archive,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const KmaPackageToolPage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: '图片尺寸修改',
-              subtitle: '批量修改图片尺寸',
-              icon: Icons.photo_size_select_large,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ImageResizeHomePage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: '应用快捷键获取',
-              subtitle: '获取应用的快捷键信息并导出',
-              icon: Icons.keyboard,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AppShortcutToolPage(),
-                  ),
-                );
-              },
-            ),
-            _buildToolCard(
-              context,
-              title: '清理构建产物',
-              subtitle: '扫描并删除项目生成的 build/ target 等目录',
-              icon: Icons.cleaning_services,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const CleanBuildsHomePage(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToolCard(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Card(
-      elevation: 4,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 48, color: Theme.of(context).primaryColor),
-              const SizedBox(height: 16),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                subtitle,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class BcConfigApp extends StatelessWidget {
-  const BcConfigApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Beyond Compare 配置工具',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
-      home: const BcConfigHomePage(),
     );
   }
 }

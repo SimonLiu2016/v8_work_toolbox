@@ -10,14 +10,14 @@ class TranslationConfig extends StatefulWidget {
   final Function(TranslationServiceType) onTranslationServiceChanged;
 
   const TranslationConfig({
-    Key? key,
+    super.key,
     required this.useTranslation,
     required this.sourceLanguage,
     required this.translationService,
     required this.onUseTranslationChanged,
     required this.onSourceLanguageChanged,
     required this.onTranslationServiceChanged,
-  }) : super(key: key);
+  });
 
   @override
   State<TranslationConfig> createState() => _TranslationConfigState();
@@ -50,7 +50,7 @@ class _TranslationConfigState extends State<TranslationConfig> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<TranslationServiceType>(
-                value: widget.translationService,
+                initialValue: widget.translationService,
                 decoration: const InputDecoration(labelText: '翻译服务类型'),
                 items: TranslationServiceType.values.map((
                   TranslationServiceType service,
@@ -72,7 +72,7 @@ class _TranslationConfigState extends State<TranslationConfig> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: widget.sourceLanguage,
+                initialValue: widget.sourceLanguage,
                 decoration: const InputDecoration(labelText: '源语言'),
                 items: <String>['zh', 'en'].map<DropdownMenuItem<String>>((
                   String value,

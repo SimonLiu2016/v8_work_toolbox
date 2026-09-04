@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 
 class FilePathSelector extends StatefulWidget {
   final TextEditingController iconPathController;
@@ -10,14 +9,14 @@ class FilePathSelector extends StatefulWidget {
   final Function() onPickOutputDir;
 
   const FilePathSelector({
-    Key? key,
+    super.key,
     required this.iconPathController,
     required this.previewPathController,
     required this.outputDirController,
     required this.onPickIcon,
     required this.onPickPreview,
     required this.onPickOutputDir,
-  }) : super(key: key);
+  });
 
   @override
   State<FilePathSelector> createState() => _FilePathSelectorState();

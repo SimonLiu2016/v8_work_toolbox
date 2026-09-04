@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../utils/kma_package_util.dart';
 
 class RateLimitConfig extends StatefulWidget {
   final int maxQps;
@@ -7,11 +6,11 @@ class RateLimitConfig extends StatefulWidget {
   final Function(int, int) onRateLimitChanged;
 
   const RateLimitConfig({
-    Key? key,
+    super.key,
     required this.maxQps,
     required this.intervalMs,
     required this.onRateLimitChanged,
-  }) : super(key: key);
+  });
 
   @override
   State<RateLimitConfig> createState() => _RateLimitConfigState();

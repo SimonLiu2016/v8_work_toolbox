@@ -1,8 +1,4 @@
 import 'dart:io';
-import 'dart:convert';
-
-// 添加 Platform 导入
-import 'dart:io' show Platform;
 
 void main() async {
   // 定义 Beyond Compare 配置文件路径
@@ -36,7 +32,7 @@ void main() async {
     print('提示: 如果遇到权限问题，请尝试以下方法:');
     print('1. 在终端中运行此脚本: ./fix_bc_config.sh');
     print('2. 或者在系统偏好设置中为应用程序授权');
-  } on PathAccessException catch (e) {
+  } on PathAccessException {
     handlePermissionError(bcDir);
   } catch (e) {
     // 检查是否为权限错误

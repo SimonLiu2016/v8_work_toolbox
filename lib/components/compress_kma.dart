@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import '../theme/app_theme.dart';
 
 class CompressKma extends StatefulWidget {
   final TextEditingController sourceDirController;
@@ -11,7 +11,7 @@ class CompressKma extends StatefulWidget {
   final Function() onCompressKmaPackage;
 
   const CompressKma({
-    Key? key,
+    super.key,
     required this.sourceDirController,
     required this.outputDirController,
     required this.selectedSourceDir,
@@ -19,7 +19,7 @@ class CompressKma extends StatefulWidget {
     required this.onPickSourceDir,
     required this.onPickOutputDir,
     required this.onCompressKmaPackage,
-  }) : super(key: key);
+  });
 
   @override
   State<CompressKma> createState() => _CompressKmaState();
@@ -84,7 +84,7 @@ class _CompressKmaState extends State<CompressKma> {
             ElevatedButton(
               onPressed: widget.onCompressKmaPackage,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
+                backgroundColor: AppTheme.accent,
                 foregroundColor: Colors.white,
               ),
               child: const Text('压缩为 KMA 包'),

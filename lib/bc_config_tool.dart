@@ -1,8 +1,10 @@
-import 'package:flutter/material.dart';
 import 'dart:io';
-import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
-import 'dart:io' show Platform, Process, ProcessResult;
+import 'package:flutter/material.dart';
+
+import 'components/app_components.dart';
+import 'theme/app_theme.dart';
 
 class BcConfigHomePage extends StatefulWidget {
   const BcConfigHomePage({super.key});
@@ -12,34 +14,61 @@ class BcConfigHomePage extends StatefulWidget {
 }
 
 class _BcConfigHomePageState extends State<BcConfigHomePage> {
-  String get defaultBcDir =>
-      '/Users/${getCurrentUsername()}/Library/Application Support/Beyond Compare';
-  String bcDir = '/Users/simon/Library/Application Support/Beyond Compare';
+  final TextEditingController _bcDirController = TextEditingController();
+  final ScrollController _logScrollController = ScrollController();
+
   bool _isProcessing = false;
-  List<String> _logMessages = [];
+  final List<String> _logMessages = [];
   bool _bcStateModified = false;
   bool _bcSessionsModified = false;
   bool _bcLaunched = false;
-  bool _useTerminalScript = false;
 
-  String getCurrentUsername() {
-    if (Platform.isMacOS || Platform.isLinux) {
-      // Unix-like系统：从环境变量获取
-      return Platform.environment['USER'] ?? '未知用户';
-    } else if (Platform.isWindows) {
-      // Windows系统：从环境变量获取
-      return Platform.environment['USERNAME'] ?? '未知用户';
-    } else {
-      return '未知用户';
+  String get defaultBcDir {
+    final home = Platform.environment['HOME'] ?? '';
+    if (home.isNotEmpty) {
+      return '$home/Library/Application Support/Beyond Compare';
     }
+    final user = Platform.environment['USER'] ?? 'user';
+    return '/Users/$user/Library/Application Support/Beyond Compare';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _bcDirController.text = defaultBcDir;
+  }
+
+  @override
+  void dispose() {
+    _bcDirController.dispose();
+    _logScrollController.dispose();
+    super.dispose();
   }
 
   void _addLogMessage(String message) {
+    if (!mounted) return;
     setState(() {
-      _logMessages.add(
-        '${DateTime.now().toString().split('.').first}: $message',
+      _logMessages.insert(
+        0,
+        '${DateTime.now().toIso8601String().substring(11, 19)} $message',
       );
     });
+  }
+
+  Future<void> _selectBcDir() async {
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择 Beyond Compare 配置目录',
+      );
+      if (selectedDirectory != null && selectedDirectory.isNotEmpty) {
+        setState(() {
+          _bcDirController.text = selectedDirectory;
+        });
+        _addLogMessage('已选择目录: $selectedDirectory');
+      }
+    } catch (e) {
+      _addLogMessage('选择目录出错: $e');
+    }
   }
 
   Future<void> _modifyBcConfig() async {
@@ -51,193 +80,140 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
       _bcLaunched = false;
     });
 
+    final targetDir = _bcDirController.text.trim();
+
     try {
-      // 检查目录是否存在
-      final directory = Directory(bcDir);
+      final directory = Directory(targetDir);
       if (!await directory.exists()) {
-        _addLogMessage('错误: Beyond Compare 配置目录不存在');
-        // 尝试使用默认目录
-        bcDir = defaultBcDir;
-        final defaultDirectory = Directory(bcDir);
-        if (!await defaultDirectory.exists()) {
-          _addLogMessage('默认目录也不存在，请手动选择配置文件目录');
+        _addLogMessage('指定的配置目录不存在: $targetDir');
+        if (targetDir != defaultBcDir) {
+          final defaultDirectory = Directory(defaultBcDir);
+          if (await defaultDirectory.exists()) {
+            _bcDirController.text = defaultBcDir;
+            _addLogMessage('已自动切换到默认目录: $defaultBcDir');
+          } else {
+            _addLogMessage('默认目录亦不存在，请手动浏览选择有效的 Beyond Compare 支持目录');
+            return;
+          }
+        } else {
           return;
         }
       }
 
-      _addLogMessage('正在处理配置文件...');
-      _addLogMessage('配置目录: $bcDir');
+      final activeDir = _bcDirController.text.trim();
+      _addLogMessage('开始处理配置文件...');
+      _addLogMessage('目标配置目录: $activeDir');
 
-      // 首先尝试直接修改
-      bool directModificationSuccess = await _tryDirectModification();
+      final directOk = await _tryDirectModification(activeDir);
 
-      if (!directModificationSuccess) {
-        // 如果直接修改失败，尝试使用终端脚本
-        _addLogMessage('直接修改失败，尝试使用终端脚本...');
-        await _modifyBcConfigWithTerminalScript();
+      if (!directOk) {
+        _addLogMessage('直接写文件失败，尝试运行本地终端修复脚本...');
+        await _modifyBcConfigWithTerminalScript(activeDir);
       } else {
-        _addLogMessage('✓ 直接修改成功');
+        _addLogMessage('✓ 配置文件修改成功');
       }
 
-      // 步骤3: 启动 Beyond Compare
       await _launchBeyondCompare();
-
-      _addLogMessage('所有操作已完成！');
+      _addLogMessage('全部操作完成！');
     } catch (e) {
-      _addLogMessage('执行过程中出现错误: $e');
+      _addLogMessage('处理过程发生异常: $e');
     } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
     }
   }
 
-  /// 尝试直接修改配置文件
-  Future<bool> _tryDirectModification() async {
+  Future<bool> _tryDirectModification(String dirPath) async {
     try {
-      // 步骤1: 修改 BCState.xml 文件
-      await _modifyBcStateFile();
-
-      // 步骤2: 修改 BCSessions.xml 文件
-      await _modifyBcSessionsFile();
-
+      await _modifyBcStateFile(dirPath);
+      await _modifyBcSessionsFile(dirPath);
       return true;
     } catch (e) {
-      // 检查是否是权限错误
       if (e.toString().contains('Operation not permitted') ||
           e.toString().contains('errno = 1') ||
           e is PathAccessException) {
-        _addLogMessage('❌ 权限错误，将尝试使用终端脚本');
-        return false;
+        _addLogMessage('❌ 遭遇系统沙盒/文件权限限制，将尝试终端执行');
       } else {
-        _addLogMessage('❌ 修改配置文件时出现错误: $e');
-        return false;
+        _addLogMessage('❌ 修改配置错误: $e');
       }
+      return false;
     }
   }
 
-  Future<void> _modifyBcStateFile() async {
-    final bcStateFile = File('$bcDir/BCState.xml');
+  Future<void> _modifyBcStateFile(String dirPath) async {
+    final bcStateFile = File('$dirPath/BCState.xml');
     if (await bcStateFile.exists()) {
-      // 创建备份文件
-      await bcStateFile.copy('$bcDir/BCState.xml.bak');
-      _addLogMessage('已创建 BCState.xml 备份文件');
+      await bcStateFile.copy('$dirPath/BCState.xml.bak');
+      _addLogMessage('已创建 BCState.xml.bak 备份');
 
-      // 读取文件内容
       String content = await bcStateFile.readAsString();
-
-      // 删除 CheckID 和 LastChecked 标签
       content = content.replaceAll(RegExp(r'<CheckID[^>]*>\s*'), '');
       content = content.replaceAll(RegExp(r'<LastChecked[^>]*>\s*'), '');
 
-      // 写入修改后的内容
       await bcStateFile.writeAsString(content);
-      _addLogMessage('✓ BCState.xml 文件已更新');
-      setState(() {
-        _bcStateModified = true;
-      });
+      _addLogMessage('✓ BCState.xml 清除 CheckID/LastChecked 成功');
+      setState(() => _bcStateModified = true);
     } else {
-      _addLogMessage('警告: BCState.xml 文件不存在');
+      _addLogMessage('提示: BCState.xml 未找到，跳过');
     }
   }
 
-  Future<void> _modifyBcSessionsFile() async {
-    final bcSessionsFile = File('$bcDir/BCSessions.xml');
-
-    // 先检查目录是否存在
-    if (!await Directory(bcDir).exists()) {
-      _addLogMessage('❌ 错误: 目录 $bcDir 不存在');
-      return;
-    }
-
+  Future<void> _modifyBcSessionsFile(String dirPath) async {
+    final bcSessionsFile = File('$dirPath/BCSessions.xml');
     if (await bcSessionsFile.exists()) {
-      // 创建备份文件
-      final backupPath = '$bcDir/BCSessions.xml.bak';
+      final backupPath = '$dirPath/BCSessions.xml.bak';
       final backupFile = File(backupPath);
-
-      // 如果备份文件已存在，先删除
       if (await backupFile.exists()) {
         await backupFile.delete();
       }
-
       await bcSessionsFile.copy(backupPath);
-      _addLogMessage('已创建 BCSessions.xml 备份文件');
+      _addLogMessage('已创建 BCSessions.xml.bak 备份');
 
-      // 读取文件内容
       String content = await bcSessionsFile.readAsString();
-
-      // 删除 Flags 属性
       content = content.replaceAll(RegExp(r'Flags="[^"]*"\s*'), '');
 
-      // 写入修改后的内容
       await bcSessionsFile.writeAsString(content);
-      _addLogMessage('✓ BCSessions.xml 文件已更新');
-      setState(() {
-        _bcSessionsModified = true;
-      });
+      _addLogMessage('✓ BCSessions.xml 清除 Flags 成功');
+      setState(() => _bcSessionsModified = true);
     } else {
-      _addLogMessage('警告: BCSessions.xml 文件不存在');
+      _addLogMessage('提示: BCSessions.xml 未找到，跳过');
     }
   }
 
-  /// 使用终端脚本修改配置文件
-  Future<void> _modifyBcConfigWithTerminalScript() async {
-    _addLogMessage('🔧 使用终端脚本修改配置文件...');
-
+  Future<void> _modifyBcConfigWithTerminalScript(String dirPath) async {
     try {
-      // 获取项目根目录
-      String projectRoot = Directory.current.path;
-      String scriptPath = '$projectRoot/fix_bc_config.sh';
+      final projectRoot = Directory.current.path;
+      final scriptPath = '$projectRoot/fix_bc_config.sh';
+      final scriptFile = File(scriptPath);
 
-      _addLogMessage('脚本路径: $scriptPath');
-      _addLogMessage('配置目录: $bcDir');
-
-      // 检查脚本是否存在
-      File scriptFile = File(scriptPath);
       if (!await scriptFile.exists()) {
-        _addLogMessage('❌ 错误: 终端脚本不存在: $scriptPath');
-        _addLogMessage('💡 请确保 fix_bc_config.sh 文件在项目根目录中');
+        _addLogMessage('❌ 终端脚本不存在: $scriptPath');
         return;
       }
 
-      // 确保脚本有执行权限
       await Process.run('chmod', ['+x', scriptPath]);
-      _addLogMessage('✓ 脚本权限已设置');
+      final result = await Process.run(scriptPath, [dirPath]);
 
-      // 执行脚本
-      _addLogMessage('正在执行终端脚本...');
-      ProcessResult result = await Process.run(scriptPath, [bcDir]);
-
-      // 输出脚本执行结果
-      if (result.stdout.isNotEmpty) {
-        List<String> lines = result.stdout.toString().split('\n');
-        for (String line in lines) {
-          if (line.trim().isNotEmpty) {
-            _addLogMessage('脚本输出: $line');
-          }
+      if (result.stdout.toString().isNotEmpty) {
+        for (final line in result.stdout.toString().split('\n')) {
+          if (line.trim().isNotEmpty) _addLogMessage('脚本: $line');
         }
       }
 
-      if (result.stderr.isNotEmpty) {
-        _addLogMessage('脚本错误输出: ${result.stderr}');
-      }
-
       if (result.exitCode == 0) {
-        _addLogMessage('✓ 终端脚本执行成功');
+        _addLogMessage('✓ 终端修复脚本执行成功');
         setState(() {
           _bcStateModified = true;
           _bcSessionsModified = true;
         });
       } else {
-        _addLogMessage('❌ 终端脚本执行失败，退出码: ${result.exitCode}');
-        _addLogMessage('💡 提示: 您也可以手动在终端中运行:');
-        _addLogMessage('   $scriptPath "$bcDir"');
+        _addLogMessage('❌ 终端脚本执行失败 (退出码 ${result.exitCode}): ${result.stderr}');
       }
     } catch (e) {
-      _addLogMessage('❌ 执行终端脚本时出现错误: $e');
-      _addLogMessage('💡 您可以手动在终端中运行以下命令:');
-      _addLogMessage('   chmod +x fix_bc_config.sh');
-      _addLogMessage('   ./fix_bc_config.sh "$bcDir"');
+      _addLogMessage('❌ 执行终端脚本异常: $e');
     }
   }
 
@@ -247,220 +223,222 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
       final result = await Process.run('open', ['-a', 'Beyond Compare']);
       if (result.exitCode == 0) {
         _addLogMessage('✓ Beyond Compare 已启动');
-        setState(() {
-          _bcLaunched = true;
-        });
+        setState(() => _bcLaunched = true);
       } else {
-        _addLogMessage('启动 Beyond Compare 时出现错误: ${result.stderr}');
+        _addLogMessage('启动 Beyond Compare 提示: ${result.stderr}');
       }
     } catch (e) {
-      _addLogMessage('启动 Beyond Compare 时出现异常: $e');
+      _addLogMessage('启动应用失败: $e');
     }
   }
 
   Future<void> _openSystemSettings() async {
-    _addLogMessage('正在打开系统设置...');
     try {
-      // 打开系统设置的安全性与隐私页面
-      final result = await Process.run('open', [
-        'x-apple.systempreferences:com.apple.preference.security',
-      ]);
-      if (result.exitCode == 0) {
-        _addLogMessage('✓ 系统设置已打开，请在"隐私"选项卡中授予权限');
-      } else {
-        _addLogMessage('打开系统设置时出现错误: ${result.stderr}');
-        // 备用方案：打开通用系统设置
-        final fallbackResult = await Process.run('open', [
-          'x-apple.systempreferences:',
-        ]);
-        if (fallbackResult.exitCode != 0) {
-          _addLogMessage('备用方案也失败了: ${fallbackResult.stderr}');
-        }
-      }
+      await Process.run('open', ['x-apple.systempreferences:com.apple.preference.security']);
+      _addLogMessage('已唤起系统设置「隐私与安全性」');
     } catch (e) {
-      _addLogMessage('打开系统设置时出现异常: $e');
+      _addLogMessage('打开系统设置失败: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Beyond Compare 配置工具'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
+      backgroundColor: AppTheme.bgContent,
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
+            // 标题
+            Row(
+              children: [
+                const Icon(Icons.tune, size: 22, color: AppTheme.accent),
+                const SizedBox(width: AppTheme.space8),
+                const Text('BC 配置工具', style: AppTheme.fontHeadline),
+                const Spacer(),
+                if (_bcLaunched)
+                  const AppBadge(
+                    label: '已完成并启动',
+                    color: AppTheme.successSubtle,
+                    textColor: AppTheme.success,
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.space4),
+            Text(
+              '一键重置 Beyond Compare 试用状态与会话标记（自动备份原配置文件）',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: AppTheme.space16),
+
+            // 功能配置卡片
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppTextField(
+                          controller: _bcDirController,
+                          label: 'Beyond Compare 配置目录',
+                          hintText: 'Beyond Compare 数据存放目录...',
+                        ),
+                      ),
+                      const SizedBox(width: AppTheme.space8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 18),
+                        child: AppButton.secondary(
+                          label: '浏览',
+                          icon: Icons.folder_open,
+                          size: AppButtonSize.regular,
+                          onPressed: _isProcessing ? null : _selectBcDir,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppTheme.space16),
+
+                  // 处理步骤状态指示
+                  Row(
+                    children: [
+                      _buildStepChip('BCState.xml 修改', _bcStateModified),
+                      const SizedBox(width: AppTheme.space8),
+                      _buildStepChip('BCSessions.xml 修改', _bcSessionsModified),
+                      const SizedBox(width: AppTheme.space8),
+                      _buildStepChip('Beyond Compare 启动', _bcLaunched),
+                    ],
+                  ),
+
+                  const SizedBox(height: AppTheme.space16),
+                  Row(
+                    children: [
+                      AppButton.primary(
+                        label: _isProcessing ? '正在处理...' : '一键执行修改并启动',
+                        icon: Icons.play_arrow,
+                        size: AppButtonSize.regular,
+                        isLoading: _isProcessing,
+                        onPressed: _isProcessing ? null : _modifyBcConfig,
+                      ),
+                      const SizedBox(width: AppTheme.space8),
+                      AppButton.ghost(
+                        label: '系统隐私权限设置',
+                        icon: Icons.security,
+                        size: AppButtonSize.regular,
+                        onPressed: _openSystemSettings,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppTheme.space12),
+
+            // 权限说明提示条
+            const AppBanner(
+              message: '首次在 macOS 上操作可能需要授予此工具访问 Application Support 文件夹的权限。若遭遇权限阻拦，会自动调用本地终端脚本协助完成。',
+              type: AppBannerType.info,
+            ),
+            const SizedBox(height: AppTheme.space12),
+
+            // 执行日志
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppTheme.space12),
+                decoration: BoxDecoration(
+                  color: AppTheme.bgInput,
+                  borderRadius: AppTheme.borderRadiusMedium,
+                  border: Border.all(color: AppTheme.borderSubtle),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '功能说明',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('• 修改 BCState.xml 文件，删除 CheckID 和 LastChecked'),
-                    const Text('• 修改 BCSessions.xml 文件，删除 Flags 属性'),
-                    const Text('• 启动 Beyond Compare 应用程序'),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '🔒 权限说明:',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Text(
-                      '• 首次运行需授权文件访问权限',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                    const Text(
-                      '• 遇权限错误将自动使用终端脚本',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: TextEditingController(text: bcDir),
-                            decoration: const InputDecoration(
-                              hintText: 'Beyond Compare 配置目录路径',
-                              border: OutlineInputBorder(),
-                            ),
-                            onChanged: (value) {
-                              setState(() {
-                                bcDir = value;
-                              });
-                            },
+                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
+                        const SizedBox(width: AppTheme.space6),
+                        Text(
+                          '操作日志',
+                          style: AppTheme.fontCaption.copyWith(
+                            color: AppTheme.textTertiary,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: _isProcessing
-                              ? null
-                              : () async {
-                                  String? selectedDirectory = await FilePicker
-                                      .platform
-                                      .getDirectoryPath();
-                                  if (selectedDirectory != null) {
-                                    setState(() {
-                                      bcDir = selectedDirectory;
-                                    });
-                                    _addLogMessage('已选择目录: $selectedDirectory');
-                                  }
-                                },
-                          child: const Text('选择'),
-                        ),
+                        const Spacer(),
+                        if (_logMessages.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => setState(() => _logMessages.clear()),
+                            child: Text(
+                              '清空日志',
+                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                            ),
+                          ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _isProcessing ? null : _modifyBcConfig,
-                          icon: _isProcessing
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
+                    const SizedBox(height: AppTheme.space8),
+                    const Divider(height: 1, color: AppTheme.borderSubtle),
+                    const SizedBox(height: AppTheme.space8),
+                    Expanded(
+                      child: _logMessages.isEmpty
+                          ? Center(
+                              child: Text(
+                                '暂无日志记录',
+                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                              ),
+                            )
+                          : ListView.builder(
+                              controller: _logScrollController,
+                              itemCount: _logMessages.length,
+                              itemBuilder: (context, index) {
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Text(
+                                    _logMessages[index],
+                                    style: AppTheme.fontMono.copyWith(fontSize: 11),
                                   ),
-                                )
-                              : const Icon(Icons.play_arrow),
-                          label: Text(_isProcessing ? '处理中...' : '执行修改'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
+                                );
+                              },
                             ),
-                            textStyle: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _isProcessing ? null : _openSystemSettings,
-                          icon: const Icon(Icons.settings, size: 18),
-                          label: const Text('系统设置'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            textStyle: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              flex: 2, // 增加日志区域的比例
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '操作日志',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: ListView.builder(
-                              itemCount: _logMessages.length,
-                              itemBuilder: (context, index) {
-                                return Text(
-                                  _logMessages[index],
-                                  style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 12,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildStepChip(String label, bool isDone) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDone ? AppTheme.successSubtle : AppTheme.bgInput,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: isDone ? AppTheme.success.withValues(alpha: 0.4) : AppTheme.borderSubtle,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isDone ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 12,
+            color: isDone ? AppTheme.success : AppTheme.textTertiary,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: AppTheme.fontCaption.copyWith(
+              color: isDone ? AppTheme.success : AppTheme.textSecondary,
+              fontWeight: isDone ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ],
       ),
     );
   }
