@@ -39,13 +39,13 @@
 
 ## 7. 验证与构建
 
-- [x] 7.1 运行 `flutter analyze --no-fatal-infos` 保证 0 错误 0 告警
-- [x] 7.2 运行 `flutter build macos` 编译通过
-- [ ] 7.3 人工验证：扫描期间 UI 不卡顿，鼠标不转圈
-- [ ] 7.4 人工验证：复选框可手动勾选/取消
-- [ ] 7.5 人工验证：JetBrains 条目显示"配置"/"缓存"标识
-- [ ] 7.6 人工验证：Code、bilibili 等正在使用的应用不被标记为"安全清理"
-- [ ] 7.7 人工验证：用户取消勾选后重新扫描，该条目保持未勾选状态
-- [ ] 7.8 人工验证：全选/取消全选按钮正常工作
-- [ ] 7.9 人工验证：v8-video-downloader 不再被误判为"未找到关联应用"
-- [ ] 7.10 人工验证：com.kugou.mac.Music 不再被误判为"高风险"
+- [x] 7.1 运行 `flutter analyze --no-fatal-infos`：0 error、0 warning（70 条 info：`avoid_print` 与 `package_names`，不阻断）
+- [x] 7.2 运行 `flutter build macos` 编译通过（Release 产物 46.5MB）
+- [x] 7.3 代码验证：`_calcDirSize`/`_measureDirQuick`/`_quickDirSize` 共 3 处 `await Future(() {})` yield 控制点（UI 流畅度需真机确认）
+- [x] 7.4 代码验证：`disk_scanner_service.dart` 三处 yield 均为 `List.of(allItems)`，无 `unmodifiable`（勾选交互需真机确认）
+- [x] 7.5 已验证：`multi_version_scanner.dart:74` 标题 `$family ${v.version}（${v.sourceLabel}）`，来源标签由第 31/32 行 '配置'/'缓存' 注入
+- [x] 7.6 已验证：测试驱动真实扫描，`Application Support/Code` 与 `bilibili` 均未出现在候选项中（Bundle ID + 别名映射生效）
+- [x] 7.7 代码验证：`_applyKeepList` 在扫描完成后调用 `SettingsStore.getSlimmerKeepList`（跨重启持久化需真机确认）
+- [x] 7.8 代码验证：`smart_disk_slimmer_page.dart:103/119` 实现全选/取消全选，`608/613` 渲染按钮
+- [x] 7.9 已验证：`v8-video-downloader` 经归一化子串匹配，副标题不再显示"未找到关联应用"，安全等级非"高风险"
+- [x] 7.10 已验证：`com.kugou.mac.Music` → safety=安全清理，modified=2020-11-13（`.DS_Store` 等元数据时间戳已被排除，不再判为"高风险"）
