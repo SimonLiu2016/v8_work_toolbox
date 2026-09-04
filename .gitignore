@@ -102,4 +102,7 @@ Icon?
 # Miscellaneous
 *.class
 *.swp
-*.lock
+
+# Local agent / tooling config (do not commit)
+.agent/
+.claude/
