@@ -310,7 +310,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
           content: Text(
             results.length == targets.length
                 ? '✓ AI 成功研判了 ${results.length} 个候选项目！'
-                : '✓ AI 研判完成 ${results.length}/${targets.length} 个项目' + (err != null ? '（部分条目异常: $err）' : ''),
+                : '✓ AI 研判完成 ${results.length}/${targets.length} 个项目${err != null ? '（部分条目异常: $err）' : ''}',
           ),
         ),
       );
