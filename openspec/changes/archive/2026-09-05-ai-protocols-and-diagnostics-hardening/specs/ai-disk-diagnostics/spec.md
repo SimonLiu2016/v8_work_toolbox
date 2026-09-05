@@ -1,8 +1,5 @@
-# ai-disk-diagnostics Specification
+## MODIFIED Requirements
 
-## Purpose
-Provides privacy-preserving metadata analysis and AI-driven risk assessment for ambiguous disk directories and unknown files.
-## Requirements
 ### Requirement: Batch diagnostics for low-confidence items
 The system SHALL collect metadata for disk candidate items and query `AiService` for safety categorization, prioritizing user-selected items when triggered manually, and preserving error context upon request failure.
 
@@ -20,4 +17,3 @@ The user interface SHALL provide a dedicated AI inspection button on any file or
 #### Scenario: User queries unknown item
 - **WHEN** user clicks "Ask AI" on a specific candidate item
 - **THEN** a detailed analysis sheet displays inferred source application, risk evaluation, and human-readable recommendation without transmitting file contents.
-

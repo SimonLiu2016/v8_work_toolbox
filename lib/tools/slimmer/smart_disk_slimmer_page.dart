@@ -229,11 +229,11 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       return;
     }
 
-    // 优先分析未研判的条目，如果没有则分析所有选中的条目
-    final unanalyzed = _items.where((it) => !it.isAiAnalyzed).take(8).toList();
-    final targets = unanalyzed.isNotEmpty
-        ? unanalyzed
-        : _items.where((it) => it.isSelected).take(8).toList();
+    // 优先分析用户显式勾选的条目；若无勾选，则分析未研判的条目
+    final selected = _items.where((it) => it.isSelected).take(8).toList();
+    final targets = selected.isNotEmpty
+        ? selected
+        : _items.where((it) => !it.isAiAnalyzed).take(8).toList();
 
     if (targets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -267,7 +267,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('AI 研判失败：$e\n请在左侧「AI 基础设施配置」中设置供应商与模型。'),
+          content: Text('AI 研判失败：$e\n请在左侧「AI 配置」中检查供应商与模型设置。'),
           backgroundColor: AppTheme.error,
           duration: const Duration(seconds: 6),
         ),
@@ -294,9 +294,27 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       }
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('AI 成功研判了 ${results.length} 个候选项目！')),
-    );
+    if (results.isEmpty) {
+      final err = AiDiskDiagnosticsService.instance.lastError;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err != null ? 'AI 研判未成功: $err' : 'AI 研判返回 0 个有效结果，请检查模型响应或配置'),
+          backgroundColor: AppTheme.warning,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    } else {
+      final err = AiDiskDiagnosticsService.instance.lastError;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            results.length == targets.length
+                ? '✓ AI 成功研判了 ${results.length} 个候选项目！'
+                : '✓ AI 研判完成 ${results.length}/${targets.length} 个项目' + (err != null ? '（部分条目异常: $err）' : ''),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _showSingleAiDialog(SlimCandidateItem item) async {

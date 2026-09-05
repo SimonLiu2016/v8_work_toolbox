@@ -32,6 +32,8 @@ class AiDiskDiagnosticsService {
   AiDiskDiagnosticsService._();
   static final AiDiskDiagnosticsService instance = AiDiskDiagnosticsService._();
 
+  String? lastError;
+
   /// 逐条研判，带进度回调
   Future<List<AiDiagnosticResult>> diagnoseBatch(
     List<SlimCandidateItem> items, {
@@ -39,6 +41,7 @@ class AiDiskDiagnosticsService {
   }) async {
     if (items.isEmpty) return [];
 
+    lastError = null;
     final results = <AiDiagnosticResult>[];
     final home = Platform.environment['HOME'] ?? '';
 
@@ -50,8 +53,11 @@ class AiDiskDiagnosticsService {
         final result = await _diagnoseOne(item, home);
         if (result != null) {
           results.add(result);
+        } else {
+          lastError ??= '条目 "${item.title}" AI 解析结果为空或格式不匹配';
         }
       } catch (e) {
+        lastError = e.toString();
         debugPrint('AI 研判 "${item.title}" 失败: $e');
         // 单条失败继续下一条
       }
