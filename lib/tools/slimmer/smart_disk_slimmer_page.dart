@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../services/ai_config_store.dart';
 import '../../services/settings_store.dart';
 import '../../services/system_service.dart';
+import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import 'ai_disk_diagnostics_service.dart';
 import 'disk_scanner_service.dart';
@@ -179,7 +181,54 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     });
   }
 
+  bool _isAiConfigured() {
+    return AiConfigStore.instance.providers.any((p) => p.enabled);
+  }
+
+  void _showUnconfiguredAiDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Row(
+          children: [
+            Icon(Icons.auto_awesome_rounded, color: AppTheme.accent),
+            SizedBox(width: AppTheme.space8),
+            Text('未配置 AI 模型', style: AppTheme.fontTitle),
+          ],
+        ),
+        content: const Text(
+          '使用 AI 智能研判功能需要先在「AI 配置」中启用一个模型供应商（如 DeepSeek、OpenAI、Claude、智谱 GLM 或本地 Ollama）。\n\n是否立即前往配置？',
+          style: AppTheme.fontBodySecondary,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('稍后再说'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.settings_rounded, size: 16),
+            label: const Text('前往 AI 配置'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              AppShell.of(context)?.openAiConfig();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _triggerManualBatchAi() async {
+    if (!_isAiConfigured()) {
+      _showUnconfiguredAiDialog();
+      return;
+    }
+
     // 优先分析未研判的条目，如果没有则分析所有选中的条目
     final unanalyzed = _items.where((it) => !it.isAiAnalyzed).take(8).toList();
     final targets = unanalyzed.isNotEmpty
@@ -251,6 +300,11 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   }
 
   Future<void> _showSingleAiDialog(SlimCandidateItem item) async {
+    if (!_isAiConfigured()) {
+      _showUnconfiguredAiDialog();
+      return;
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -444,6 +498,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             _buildDiskOverviewCard(selectedTotalBytes),
             const SizedBox(height: AppTheme.space16),
 
+            // 完全磁盘访问权限 (FDA) 受限警示横幅
+            if (_scanProgress?.hasPermissionError == true)
+              _buildFdaWarningBanner(),
+
             // 未扫描且不在扫描中时，展示就绪待扫引导面板
             if (!_hasScanned && !_scanner.isScanning)
               Expanded(child: _buildReadyToScanView())
@@ -492,6 +550,42 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildFdaWarningBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppTheme.space12),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withValues(alpha: 0.12),
+        borderRadius: AppTheme.borderRadiusSmall,
+        border: Border.all(color: AppTheme.warning.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.shield_outlined, color: AppTheme.warning, size: 20),
+          const SizedBox(width: AppTheme.space10),
+          Expanded(
+            child: Text(
+              '检测到部分目录受 macOS 权限限制无法读取完整信息。建议在系统设置中开启「完全磁盘访问权限」以获得最彻底的瘦身分析。',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+            ),
+          ),
+          const SizedBox(width: AppTheme.space10),
+          TextButton.icon(
+            icon: const Icon(Icons.open_in_new_rounded, size: 14),
+            label: const Text('去开启'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.warning,
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space8),
+            ),
+            onPressed: () {
+              Process.run('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles']);
+            },
+          ),
+        ],
       ),
     );
   }

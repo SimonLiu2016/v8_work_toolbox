@@ -12,6 +12,7 @@ class ScanProgress {
   final int itemsFound;
   final int totalReclaimableBytes;
   final bool isCompleted;
+  final bool hasPermissionError;
 
   const ScanProgress({
     required this.stage,
@@ -20,6 +21,7 @@ class ScanProgress {
     required this.itemsFound,
     required this.totalReclaimableBytes,
     this.isCompleted = false,
+    this.hasPermissionError = false,
   });
 }
 
@@ -30,6 +32,7 @@ class DiskScannerService {
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
+  bool get hasPermissionError => _orphanDetector.hasPermissionError;
 
   /// 开始执行三阶段渐进式扫描
   Stream<List<SlimCandidateItem>> startScan({
@@ -49,6 +52,7 @@ class DiskScannerService {
         itemsFound: allItems.length,
         totalReclaimableBytes: totalBytes,
         isCompleted: done,
+        hasPermissionError: _orphanDetector.hasPermissionError,
       ));
     }
 

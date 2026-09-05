@@ -59,6 +59,22 @@ void main() {
         }
       }
     });
+
+    test('系统服务与常见 CLI 工具（AddressBook/GeoServices/Homebrew/rtk 等）不在候选列表中', () {
+      for (final r in results) {
+        final folderName = r.path.split('/').where((s) => s.isNotEmpty).last.toLowerCase();
+        if (folderName == 'addressbook' ||
+            folderName == 'geoservices' ||
+            folderName == 'homebrew' ||
+            folderName == 'rtk' ||
+            folderName == 'mysql' ||
+            folderName == 'tabnine' ||
+            folderName == 'docker desktop' ||
+            folderName == 'claude-cli-nodejs') {
+          fail('受保护的系统服务或 CLI 工具 $folderName 被错误列为孤立应用候选项');
+        }
+      }
+    });
   });
 
   group('7.9 v8-video-downloader 不再被误判为"未找到关联应用"', () {

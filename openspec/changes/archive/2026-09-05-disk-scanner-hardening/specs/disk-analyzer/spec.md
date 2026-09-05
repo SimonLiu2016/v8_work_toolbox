@@ -26,6 +26,8 @@ The system SHALL detect parallel installations and historical upgrade versions o
 - **WHEN** the scan finds both `~/Library/Application Support/JetBrains/IntelliJIdea2026.2` and `~/Library/Caches/JetBrains/IntelliJIdea2026.2`
 - **THEN** each entry displays a source label in its title (e.g., "IntelliJIdea 2026.2（配置）" vs "IntelliJIdea 2026.2（缓存）") so the user can distinguish them.
 
+## ADDED Requirements
+
 ### Requirement: Interactive cleanup selection
 The cleanup candidate list SHALL support manual checkbox toggling for every item. The scan result list MUST be stored as a mutable collection, MUST NOT use `List.unmodifiable`.
 

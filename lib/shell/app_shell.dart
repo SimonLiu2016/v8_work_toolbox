@@ -19,6 +19,10 @@ class AppShell extends StatefulWidget {
     this.onOpenSettings,
   });
 
+  static AppShellState? of(BuildContext context) {
+    return context.findAncestorStateOfType<AppShellState>();
+  }
+
   @override
   State<AppShell> createState() => AppShellState();
 }
@@ -28,6 +32,12 @@ class AppShellState extends State<AppShell> {
   ToolCategory? _currentCategory;
   late String _selectedToolId;
   bool _isPanelCollapsed = false;
+
+  void openAiConfig() {
+    setState(() {
+      _currentView = ActivityViewType.ai;
+    });
+  }
   late List<String> _recentToolIds;
   final Set<int> _activatedToolIndices = <int>{};
 

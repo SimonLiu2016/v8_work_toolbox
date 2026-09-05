@@ -32,6 +32,46 @@ class AppOrphanDetector {
     'antigravity ide': 'antigravity ide',
   };
 
+  /// 系统级非 com.apple. 前缀的原生受保护服务
+  static const Set<String> _systemProtectedNames = {
+    'addressbook',
+    'geoservices',
+    'coretelephony',
+    'clouddocs',
+    'mobilesync',
+    'callhistory',
+    'callhistorydb',
+    'accountsettings',
+    'identityservices',
+    'passkit',
+    'quicklook',
+    'knowledge',
+    'feedbackassistant',
+  };
+
+  /// 常见开发者 CLI 工具与后台服务（无独立 .app 包体）
+  static const Set<String> _developerCliProtectedNames = {
+    'homebrew',
+    'rtk',
+    'claude-cli-nodejs',
+    'mysql',
+    'ms-playwright',
+    'docker desktop',
+    'docker',
+    'wetype',
+    'tabnine',
+    'pip',
+    'npm',
+    'pnpm',
+    'yarn',
+    'cargo',
+    'rustup',
+    'git',
+    'gnupg',
+    'keybase',
+    'jdyjittermonitor',
+  };
+
   /// 初始化并预热系统中已安装的应用清单
   Future<void> initialize() async {
     _installedBundleIds.clear();
@@ -69,8 +109,12 @@ class AppOrphanDetector {
     }
   }
 
+  /// 是否在扫描过程中遭遇了权限限制 (如完全磁盘访问权限受限)
+  bool hasPermissionError = false;
+
   /// 扫描 ~/Library/ 下的孤立残留
   Future<List<SlimCandidateItem>> scanOrphans() async {
+    hasPermissionError = false;
     final results = <SlimCandidateItem>[];
     final home = Platform.environment['HOME'];
     if (home == null) return results;
@@ -90,7 +134,7 @@ class AppOrphanDetector {
           final folderName = item.uri.pathSegments.where((s) => s.isNotEmpty).last;
           final lowerName = folderName.toLowerCase();
 
-          // 保护系统核心苹果应用与关键基础服务
+          // 保护系统核心苹果应用、关键系统服务与已知 CLI 开发者工具
           if (lowerName.startsWith('com.apple.') ||
               lowerName == 'apple' ||
               lowerName == 'google' && _installedAppNames.contains('google chrome') ||
@@ -100,7 +144,9 @@ class AppOrphanDetector {
               lowerName == 'dock' ||
               lowerName == 'icloud' ||
               lowerName == 'system' ||
-              lowerName == 'cloudstorage') {
+              lowerName == 'cloudstorage' ||
+              _systemProtectedNames.contains(lowerName) ||
+              _developerCliProtectedNames.contains(lowerName)) {
             continue;
           }
 
@@ -131,6 +177,10 @@ class AppOrphanDetector {
               isSelected: isSelected,
             ));
           }
+        }
+      } on FileSystemException catch (e) {
+        if (e.osError?.errorCode == 1 || e.osError?.errorCode == 13) {
+          hasPermissionError = true;
         }
       } catch (_) {}
     }

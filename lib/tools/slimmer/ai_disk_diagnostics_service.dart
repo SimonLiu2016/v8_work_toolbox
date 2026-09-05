@@ -173,49 +173,5 @@ class AiDiskDiagnosticsService {
 
     return null;
   }
-
-  /// 兼容旧的批量解析（保留用于可能的批量场景）
-  List<AiDiagnosticResult> _parseJsonArray(String raw) {
-    final results = <AiDiagnosticResult>[];
-    try {
-      String jsonStr = raw.trim();
-      final start = jsonStr.indexOf('[');
-      final end = jsonStr.lastIndexOf(']');
-      if (start != -1 && end != -1 && end > start) {
-        jsonStr = jsonStr.substring(start, end + 1);
-      }
-
-      final dynamic decoded = jsonDecode(jsonStr);
-      if (decoded is List) {
-        for (final obj in decoded) {
-          if (obj is Map) {
-            final id = obj['id']?.toString() ?? '';
-            final app = obj['inferredApp']?.toString() ?? '未知应用';
-            final safetyStr = obj['safety']?.toString().toLowerCase() ?? 'safe';
-            final canDel = obj['canDelete'] == true;
-            final advice = obj['advice']?.toString() ?? '建议清理';
-
-            SafetyRating rating;
-            if (safetyStr == 'danger') {
-              rating = SafetyRating.danger;
-            } else if (safetyStr == 'caution') {
-              rating = SafetyRating.caution;
-            } else {
-              rating = SafetyRating.safe;
-            }
-
-            results.add(AiDiagnosticResult(
-              itemId: id,
-              inferredApp: app,
-              safety: rating,
-              advice: advice,
-              canDelete: canDel,
-            ));
-          }
-        }
-      }
-    } catch (_) {}
-
-    return results;
-  }
 }
+
