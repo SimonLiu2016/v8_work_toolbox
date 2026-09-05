@@ -186,6 +186,7 @@ class AiConfigStore {
       }
 
       _configFile = File(p.join(dir.path, 'ai_config.json'));
+      await KeychainService.instance.init(customRootDir: dir);
       await _load();
     } catch (e) {
       debugPrint('初始化 AI 配置失败: $e');

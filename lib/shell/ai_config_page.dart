@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../components/app_components.dart';
 import '../services/ai_config_store.dart';
 import '../services/ai_service.dart';
+import '../services/keychain_service.dart';
 import '../theme/app_theme.dart';
 
 class AiConfigPage extends StatefulWidget {
@@ -362,13 +363,113 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: AppTheme.bgCard,
-          title: Text(isEditing ? '编辑 AI 供应商' : '添加 AI 供应商', style: AppTheme.fontTitle),
+          title: Row(
+            children: [
+              Text(isEditing ? '编辑 AI 供应商' : '添加 AI 供应商', style: AppTheme.fontTitle),
+              if (isEditing) ...[
+                const SizedBox(width: AppTheme.space8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppTheme.success.withValues(alpha: 0.15),
+                    borderRadius: AppTheme.borderRadiusSmall,
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.shield_outlined, size: 12, color: AppTheme.success),
+                      SizedBox(width: 4),
+                      Text('已加密存储', style: TextStyle(fontSize: 11, color: AppTheme.success)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
           content: SizedBox(
-            width: 480,
+            width: 520,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 快速预设模板
+                  const Text('快速填充预设:', style: AppTheme.fontCaption),
+                  const SizedBox(height: AppTheme.space8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(Icons.bolt, size: 14, color: AppTheme.accent),
+                        label: const Text('DeepSeek', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'DeepSeek';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = 'https://api.deepseek.com/v1';
+                            modelsCtrl.text = 'deepseek-chat, deepseek-reasoner';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('OpenAI', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'OpenAI';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = 'https://api.openai.com/v1';
+                            modelsCtrl.text = 'gpt-4o, gpt-4o-mini';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Claude', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'Anthropic Claude';
+                            protocol = AiProtocolType.anthropic;
+                            urlCtrl.text = 'https://api.anthropic.com';
+                            modelsCtrl.text = 'claude-3-7-sonnet-20250219, claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Gemini', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'Google Gemini';
+                            protocol = AiProtocolType.gemini;
+                            urlCtrl.text = 'https://generativelanguage.googleapis.com';
+                            modelsCtrl.text = 'gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Ollama(本地)', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'Ollama 本地';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = 'http://localhost:11434/v1';
+                            modelsCtrl.text = 'qwen2.5:latest, llama3.1:latest';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('硅基流动', style: TextStyle(fontSize: 11)),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = '硅基流动 (SiliconFlow)';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = 'https://api.siliconflow.cn/v1';
+                            modelsCtrl.text = 'deepseek-ai/DeepSeek-V3, deepseek-ai/DeepSeek-R1';
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(height: AppTheme.space24),
                   AppTextField(controller: nameCtrl, label: '供应商名称', hintText: '如 OpenAI / DeepSeek / Ollama'),
                   const SizedBox(height: AppTheme.space12),
                   DropdownButtonFormField<AiProtocolType>(
@@ -382,7 +483,12 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   const SizedBox(height: AppTheme.space12),
                   AppTextField(controller: urlCtrl, label: 'API Base URL', hintText: 'https://api.openai.com/v1'),
                   const SizedBox(height: AppTheme.space12),
-                  AppTextField(controller: keyCtrl, label: isEditing ? 'API Key (若不修改请留空)' : 'API Key', hintText: 'sk-...', obscureText: true),
+                  AppTextField(
+                    controller: keyCtrl,
+                    label: isEditing ? 'API Key (已安全保存，若不修改请留空)' : 'API Key',
+                    hintText: isEditing ? '留空则保持原有密钥不变' : 'sk-...',
+                    obscureText: true,
+                  ),
                   const SizedBox(height: AppTheme.space12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -397,20 +503,51 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           onPressed: () async {
                             setDialogState(() => isDetecting = true);
                             try {
+                              String keyToUse = keyCtrl.text.trim();
+                              if (keyToUse.isEmpty && provider != null) {
+                                keyToUse = await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
+                              }
+
+                              if (keyToUse.isEmpty && !urlCtrl.text.contains('localhost') && !urlCtrl.text.contains('127.0.0.1')) {
+                                if (ctx.mounted) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('请先输入 API Key 再进行自动探测'),
+                                      backgroundColor: AppTheme.warning,
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+
                               final tempProv = AiProviderConfig(
-                                id: 'temp',
-                                name: nameCtrl.text,
+                                id: provider?.id ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
+                                name: nameCtrl.text.trim().isEmpty ? '临时供应商' : nameCtrl.text.trim(),
                                 protocol: protocol,
-                                baseUrl: urlCtrl.text,
-                                keychainKeyId: 'temp',
+                                baseUrl: urlCtrl.text.trim(),
+                                keychainKeyId: provider?.keychainKeyId ?? 'temp',
                               );
-                              final found = await AiService.instance.discoverModels(tempProv, apiKey: keyCtrl.text);
+                              final found = await AiService.instance.discoverModels(tempProv, apiKey: keyToUse.isNotEmpty ? keyToUse : null);
                               setDialogState(() {
                                 modelsCtrl.text = found.join(', ');
                               });
+                              if (ctx.mounted) {
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  SnackBar(
+                                    content: Text('✓ 成功探测到 ${found.length} 个可用模型！'),
+                                    backgroundColor: AppTheme.success,
+                                  ),
+                                );
+                              }
                             } catch (e) {
                               if (ctx.mounted) {
-                                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('探测失败: $e')));
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  SnackBar(
+                                    content: Text('探测失败: $e'),
+                                    backgroundColor: AppTheme.error,
+                                    duration: const Duration(seconds: 6),
+                                  ),
+                                );
                               }
                             } finally {
                               setDialogState(() => isDetecting = false);
@@ -513,14 +650,25 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   void _testProvider(AiProviderConfig p) async {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(const SnackBar(content: Text('正在测试与供应商连接...')));
-    final ok = await AiService.instance.testConnection(p);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok ? '✓ 连接成功，模型正常探测！' : '✕ 连接失败，请检查 Base URL 与 API Key'),
-        backgroundColor: ok ? AppTheme.success : AppTheme.error,
-      ),
-    );
+    try {
+      final models = await AiService.instance.discoverModels(p);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(models.isNotEmpty ? '✓ 连接成功，正常探测到 ${models.length} 个模型！' : '✕ 连接成功但未返回可用模型'),
+          backgroundColor: models.isNotEmpty ? AppTheme.success : AppTheme.warning,
+        ),
+      );
+    } catch (e) {
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('✕ 连接失败: $e'),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
   }
 
   void _deleteProvider(AiProviderConfig p) async {

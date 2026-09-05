@@ -90,14 +90,10 @@ class AiService {
           models.sort();
           return models;
         }
+        throw Exception('Anthropic /models 返回了空列表');
+      } else {
+        throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
       }
-      // 如果官方 /models 端点未开放或权限受限，回退到已知常用模型
-      return [
-        'claude-3-7-sonnet-20250219',
-        'claude-3-5-sonnet-20241022',
-        'claude-3-5-haiku-20241022',
-        'claude-3-opus-20240229',
-      ];
     } catch (e) {
       debugPrint('Anthropic 探测模型失败: $e');
       rethrow;
@@ -128,16 +124,10 @@ class AiService {
             .toList();
         models.sort();
         if (models.isNotEmpty) return models;
+        throw Exception('Gemini /models 返回中未找到支持 generateContent 的模型');
       } else {
         throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
       }
-
-      return [
-        'gemini-2.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-pro',
-      ];
     } catch (e) {
       debugPrint('Gemini 探测模型失败: $e');
       rethrow;

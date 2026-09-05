@@ -22,6 +22,7 @@ void main() {
   group('KeychainService Tests', () {
     test('密钥保存、读取与删除正常', () async {
       final keyService = KeychainService.instance;
+      await keyService.init(customRootDir: tempDir);
       await keyService.writeSecret('test_key_1', 'sk-test-secret-value');
 
       final readVal = await keyService.readSecret('test_key_1');
@@ -33,6 +34,21 @@ void main() {
       await keyService.deleteSecret('test_key_1');
       final afterDelete = await keyService.readSecret('test_key_1');
       expect(afterDelete, isNull);
+    });
+
+    test('模拟重启：当内存被清空时，从本地安全文件 .secrets.dat 正确恢复密钥', () async {
+      final keyService = KeychainService.instance;
+      await keyService.init(customRootDir: tempDir);
+      await keyService.writeSecret('key_persisted_test', 'sk-durable-secret-999');
+
+      // 验证 .secrets.dat 文件已在磁盘上生成
+      final secretsFile = File('${tempDir.path}/.secrets.dat');
+      expect(await secretsFile.exists(), isTrue);
+
+      // 模拟重启：重新初始化 KeychainService 并读取
+      await keyService.init(customRootDir: tempDir);
+      final restored = await keyService.readSecret('key_persisted_test');
+      expect(restored, 'sk-durable-secret-999');
     });
   });
 

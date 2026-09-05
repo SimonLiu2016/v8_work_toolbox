@@ -4,16 +4,16 @@ Establishes a centralized AI capability infrastructure with secure Keychain cred
 
 ## Requirements
 
-### Requirement: Secure credential storage via macOS Keychain
-The application SHALL store all sensitive provider API keys and authentication tokens in the macOS Keychain rather than plain text JSON configuration files.
+### Requirement: Secure credential storage via macOS Keychain and Protected File Fallback
+The application SHALL store all sensitive provider API keys and authentication tokens in the macOS Keychain with a fallback protected encrypted file (`.secrets.dat`) to guarantee persistence even in unsigned/development environments without entitlements.
 
 #### Scenario: Storing and retrieving provider API key
 - **WHEN** user inputs or updates an API key for a provider in the AI settings interface
-- **THEN** the key is encrypted and stored in the macOS Keychain using a unique identifier, and the on-disk config only stores the reference key ID.
+- **THEN** the key is encrypted and stored in the macOS Keychain (and synced to local protected obfuscation store) using a unique identifier, and the on-disk config only stores the reference key ID.
 
-#### Scenario: Keychain fallback or retrieval error
-- **WHEN** the application fails to retrieve a key from Keychain
-- **THEN** the system logs a non-fatal warning, indicates the missing credential status in the UI, and prevents requests to that provider without crashing.
+#### Scenario: Keychain unavailable in dev/unsigned environment
+- **WHEN** the macOS Keychain is unavailable due to missing code signature entitlements
+- **THEN** the system automatically falls back to reading/writing the local obfuscated secret store, ensuring credentials are preserved across app restarts without throwing fatal crashes.
 
 ### Requirement: Multi-protocol AI provider management
 The AI configuration module SHALL support configuring multiple providers adhering to OpenAI-compatible, Anthropic, or Google Gemini protocols, executing authentic HTTP connection handshakes and chat requests according to each protocol's API specification.
