@@ -15,7 +15,7 @@ The system SHALL play local media files and parsed online streams across popular
 - **THEN** player streams the media using appropriate network headers without requiring full file download
 
 ### Requirement: Comprehensive playback controls
-The system SHALL provide intuitive controls including play/pause, seek scrub, volume adjustment, speed switching (0.5x to 3.0x), aspect ratio toggle, fullscreen mode, and default-off subtitle toggle.
+The system SHALL provide intuitive controls including play/pause, seek scrub, volume adjustment, speed switching (0.5x to 3.0x), aspect ratio toggle, fullscreen mode, and default-off subtitle toggle, ensuring continuous subtitle synchronization during seeking.
 
 #### Scenario: Speed adjustment
 - **WHEN** user selects a playback rate from 0.5x to 3.0x
@@ -28,6 +28,10 @@ The system SHALL provide intuitive controls including play/pause, seek scrub, vo
 #### Scenario: Subtitle visibility default
 - **WHEN** a video or audio track is initially loaded
 - **THEN** subtitle visibility SHALL default to off until explicitly toggled or mounted
+
+#### Scenario: Seek scrub retains subtitle synchronization
+- **WHEN** user scrubs or seeks playback position via mouse along the timeline
+- **THEN** player immediately evaluates and renders the subtitle matching the new timestamp across the entire video duration without losing subtitle tracking
 
 ### Requirement: Playback history and favorites persistence
 The system SHALL store playback progress timestamps and user favorites in private local storage, enabling one-click resumption and organized media bookmarking.

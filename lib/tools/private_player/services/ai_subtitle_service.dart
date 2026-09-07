@@ -92,7 +92,21 @@ class AiSubtitleService {
 
     try {
       onStatus?.call('正在请求 AI 语音识别 (STT)...');
-      final rawSegments = await _transcribeAudioFile(audioFile);
+      final (provider, model, apiKey) = await _resolveSttProvider();
+      List<SubtitleSegment> rawSegments;
+
+      if (isMimoProvider(provider, model)) {
+        rawSegments = await transcribeFullAudioWithMimo(
+          audioFile: audioFile,
+          totalDuration: intervalDuration,
+          provider: provider,
+          model: model,
+          apiKey: apiKey,
+          onProgress: (st, _) => onStatus?.call(st),
+        );
+      } else {
+        rawSegments = await _transcribeAudioFile(audioFile);
+      }
 
       // 将分段的相对时间换算为视频全局时间轴
       final result = <SubtitleSegment>[];
@@ -183,10 +197,250 @@ class AiSubtitleService {
     }
   }
 
-  /// 调用商业 AI 语音识别接口 (兼容 OpenAI Whisper /v1/audio/transcriptions 规范)
+  /// 判断目标供应商/模型是否为小米 MiMo ASR
+  static bool isMimoProvider(AiProviderConfig provider, String model) {
+    final m = model.toLowerCase();
+    if (m.contains('mimo') || m.contains('asr')) {
+      return true;
+    }
+    final base = provider.baseUrl.toLowerCase();
+    if (base.contains('xiaomimimo') || base.contains('mimo')) {
+      return true;
+    }
+    return false;
+  }
+
+  /// 过滤纯语气词、静音及无意义标点（MiMo 在静音/无声区间常返回 "嗯。"、"..."）
+  static bool isSilenceOrFiller(String text) {
+    final clean = text.trim().replaceAll(RegExp(r'''[\s，。！？、….,!?~`"'()（）\-_]'''), '');
+    if (clean.isEmpty) return true;
+    const fillers = {'嗯', '啊', '哦', '呃', '额', '哈', '哎', '呀', '哼', '呼', '静音', '无声'};
+    if (fillers.contains(clean)) return true;
+    return false;
+  }
+
+  /// 通过小米 MiMo `/v1/chat/completions` API 转写单段音频切片
+  Future<String> _transcribeChunkWithMimo({
+    required File chunkFile,
+    required AiProviderConfig provider,
+    required String model,
+    required String apiKey,
+  }) async {
+    String endpoint = provider.baseUrl.trim();
+    if (endpoint.endsWith('/chat/completions')) {
+      // 保持原样
+    } else if (endpoint.endsWith('/v1')) {
+      endpoint = '$endpoint/chat/completions';
+    } else {
+      endpoint = '$endpoint/v1/chat/completions';
+    }
+
+    final bytes = await chunkFile.readAsBytes();
+    final b64 = base64Encode(bytes);
+    final ext = p.extension(chunkFile.path).toLowerCase().replaceAll('.', '');
+    final mimeType = (ext == 'wav') ? 'audio/wav' : 'audio/mp3';
+
+    final payload = {
+      'model': model.isNotEmpty ? model : 'mimo-v2.5-asr',
+      'messages': [
+        {
+          'role': 'user',
+          'content': [
+            {
+              'type': 'input_audio',
+              'input_audio': {
+                'data': 'data:$mimeType;base64,$b64',
+              },
+            },
+          ],
+        },
+      ],
+      'asr_options': {
+        'language': 'auto',
+      },
+    };
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+    };
+    if (apiKey.isNotEmpty) {
+      headers['api-key'] = apiKey;
+      headers['Authorization'] = 'Bearer $apiKey';
+    }
+
+    final stopwatch = Stopwatch()..start();
+    AiLogger.logRequest(
+      providerName: provider.name,
+      protocol: 'mimo-asr',
+      model: model,
+      endpoint: endpoint,
+      promptSummary: 'MiMo ASR 转写切片: ${p.basename(chunkFile.path)} (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+    );
+
+    final response = await http.post(
+      Uri.parse(endpoint),
+      headers: headers,
+      body: jsonEncode(payload),
+    ).timeout(const Duration(seconds: 45));
+    stopwatch.stop();
+
+    AiLogger.logResponse(
+      providerName: provider.name,
+      statusCode: response.statusCode,
+      durationMs: stopwatch.elapsedMilliseconds,
+      bodyPreview: 'MiMo ASR 响应完成: ${response.statusCode}',
+    );
+
+    if (response.statusCode != 200) {
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      AiLogger.logError('MiMo ASR 识别失败 (HTTP ${response.statusCode}): $body', providerName: provider.name);
+      throw Exception('MiMo ASR 请求失败 (HTTP ${response.statusCode}): $body');
+    }
+
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map<String, dynamic>) return '';
+    final choices = decoded['choices'] as List?;
+    if (choices == null || choices.isEmpty) return '';
+    final msg = choices[0]['message'] as Map?;
+    final text = (msg?['content'] as String?)?.trim() ?? '';
+
+    if (isSilenceOrFiller(text)) return '';
+    return text;
+  }
+
+  /// 使用 MiMo ASR 对整片音频进行快速切片与并发转写（生成带精确时间戳的完整字幕）
+  Future<List<SubtitleSegment>> transcribeFullAudioWithMimo({
+    required File audioFile,
+    Duration? totalDuration,
+    required AiProviderConfig provider,
+    required String model,
+    required String apiKey,
+    void Function(String status, double? progress)? onProgress,
+  }) async {
+    final ffmpeg = await YtdlpVideoParser.instance.resolveFfmpegPath();
+    if (ffmpeg == null) {
+      throw Exception('系统未检测到 ffmpeg 工具，无法切片音频');
+    }
+
+    final tempDir = PrivateStorageManager.instance.tempAudioDir;
+    final chunkPrefix = 'mimo_seg_${DateTime.now().millisecondsSinceEpoch}_';
+    final chunkPattern = p.join(tempDir.path, '$chunkPrefix%04d.mp3');
+
+    const sliceSeconds = 12;
+
+    onProgress?.call('正在快速智能切片音频...', 0.35);
+    final sliceArgs = [
+      '-y',
+      '-i', audioFile.path,
+      '-f', 'segment',
+      '-segment_time', '$sliceSeconds',
+      '-c', 'copy',
+      chunkPattern,
+    ];
+
+    final sliceRes = await Process.run(ffmpeg, sliceArgs);
+    if (sliceRes.exitCode != 0) {
+      throw Exception('音频切片失败: ${sliceRes.stderr}');
+    }
+
+    final chunkFiles = tempDir.listSync()
+        .whereType<File>()
+        .where((f) => p.basename(f.path).startsWith(chunkPrefix) && f.path.endsWith('.mp3'))
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+
+    if (chunkFiles.isEmpty) {
+      throw Exception('未能生成有效音频切片');
+    }
+
+    final totalChunks = chunkFiles.length;
+    final results = List<String?>.filled(totalChunks, null);
+    int completedCount = 0;
+
+    onProgress?.call('正在并发请求 MiMo ASR 语音识别 (共 $totalChunks 个片段)...', 0.4);
+
+    const concurrency = 5;
+    int nextIndex = 0;
+
+    Future<void> worker() async {
+      while (true) {
+        if (nextIndex >= totalChunks) return;
+        final currentIndex = nextIndex++;
+        final currentFile = chunkFiles[currentIndex];
+
+        try {
+          final text = await _transcribeChunkWithMimo(
+            chunkFile: currentFile,
+            provider: provider,
+            model: model,
+            apiKey: apiKey,
+          );
+          results[currentIndex] = text;
+        } catch (e) {
+          debugPrint('片段 $currentIndex 转写失败: $e');
+          results[currentIndex] = '';
+        } finally {
+          completedCount++;
+          final pct = 0.4 + (completedCount / totalChunks) * 0.55;
+          onProgress?.call('正在识别语音 ($completedCount/$totalChunks)...', pct);
+        }
+      }
+    }
+
+    final workers = List.generate(
+      totalChunks < concurrency ? totalChunks : concurrency,
+      (_) => worker(),
+    );
+    await Future.wait(workers);
+
+    // 清理分片临时文件
+    for (final f in chunkFiles) {
+      try { f.deleteSync(); } catch (_) {}
+    }
+
+    // 组装最终带时间戳的字幕片段
+    final segments = <SubtitleSegment>[];
+    for (int i = 0; i < totalChunks; i++) {
+      final text = results[i]?.trim();
+      if (text != null && text.isNotEmpty && !isSilenceOrFiller(text)) {
+        final start = Duration(seconds: i * sliceSeconds);
+        final end = Duration(seconds: (i + 1) * sliceSeconds);
+        segments.add(SubtitleSegment(
+          id: segments.length + 1,
+          start: start,
+          end: end,
+          text: text,
+        ));
+      }
+    }
+
+    return segments;
+  }
+
+  /// 调用商业 AI 语音识别接口（支持自适应路由：MiMo ASR 或 OpenAI Whisper）
   Future<List<SubtitleSegment>> _transcribeAudioFile(File audioFile) async {
     final (provider, model, apiKey) = await _resolveSttProvider();
 
+    // 1. 若为小米 MiMo 协议，调用专属 Base64 Chat Completions
+    if (isMimoProvider(provider, model)) {
+      final text = await _transcribeChunkWithMimo(
+        chunkFile: audioFile,
+        provider: provider,
+        model: model,
+        apiKey: apiKey,
+      );
+      if (text.isEmpty) return [];
+      return [
+        SubtitleSegment(
+          id: 1,
+          start: Duration.zero,
+          end: const Duration(seconds: 12),
+          text: text,
+        ),
+      ];
+    }
+
+    // 2. 标准 OpenAI Whisper /v1/audio/transcriptions 规范
     String endpoint = provider.baseUrl.trim();
     if (endpoint.endsWith('/audio/transcriptions')) {
       // 已完整
@@ -262,7 +516,6 @@ class AiSubtitleService {
         }
       }
     } else {
-      // 兜底：若仅有 text 字段无 segment 时间戳
       final text = (decoded['text'] as String?)?.trim() ?? '';
       if (text.isNotEmpty) {
         result.add(SubtitleSegment(
@@ -434,22 +687,78 @@ class AiSubtitleService {
     return segments;
   }
 
-  /// 抽取超轻量化单声道 MP3 (16kHz, 32kbps，用于极速单文件全量转写)
+  /// 抽取超轻量化单声道 MP3 (16kHz, 32kbps，用于极速全量转写)
+  /// 本地视频使用 ffmpeg 极速转压，在线视频优先通过 yt-dlp 仅抓取音频轨，避免全量下载大体积视频
   Future<File> extractAudioFast({
     required String videoPathOrUrl,
   }) async {
-    final ffmpeg = await YtdlpVideoParser.instance.resolveFfmpegPath();
-    if (ffmpeg == null) {
-      throw Exception('系统未检测到 ffmpeg 工具，无法抽取音频');
-    }
-
     final tempDir = PrivateStorageManager.instance.tempAudioDir;
     final name = 'fast_audio_${DateTime.now().millisecondsSinceEpoch}.mp3';
     final targetFile = File(p.join(tempDir.path, name));
     if (targetFile.existsSync()) targetFile.deleteSync();
 
+    final isOnline = videoPathOrUrl.startsWith('http://') || videoPathOrUrl.startsWith('https://');
+
+    // 在线视频策略 1: yt-dlp 纯音频流抽取
+    if (isOnline) {
+      final ytdlp = await YtdlpVideoParser.instance.resolveYtdlpPath();
+      if (ytdlp != null) {
+        final args = [
+          '-f', 'ba/b',
+          '-x',
+          '--audio-format', 'mp3',
+          '--audio-quality', '32k',
+          '-o', targetFile.path,
+          '--no-playlist',
+          '--no-warnings',
+        ];
+        final customFlags = YtdlpVideoParser.instance.getCustomFlagsForUrl(videoPathOrUrl);
+        args.addAll(customFlags);
+        args.add(videoPathOrUrl);
+
+        try {
+          final res = await Process.run(ytdlp, args).timeout(const Duration(minutes: 3));
+          if (res.exitCode == 0 && targetFile.existsSync() && targetFile.lengthSync() > 1024) {
+            return targetFile;
+          }
+        } catch (e) {
+          debugPrint('yt-dlp 极速拉取音频流失败，回退至 ffmpeg 直连: $e');
+        }
+      }
+    }
+
+    // 本地文件或流地址直接使用 ffmpeg 提取单声道 16kHz 32kbps MP3
+    final ffmpeg = await YtdlpVideoParser.instance.resolveFfmpegPath();
+    if (ffmpeg == null) {
+      throw Exception('系统未检测到 ffmpeg 工具，无法抽取音频');
+    }
+
     final args = <String>[
       '-y',
+    ];
+
+    if (isOnline) {
+      final customFlags = YtdlpVideoParser.instance.getCustomFlagsForUrl(videoPathOrUrl);
+      final refererIdx = customFlags.indexOf('--referer');
+      String? referer;
+      if (refererIdx != -1 && refererIdx + 1 < customFlags.length) {
+        referer = customFlags[refererIdx + 1];
+      }
+      final uaIdx = customFlags.indexOf('--user-agent');
+      String? userAgent;
+      if (uaIdx != -1 && uaIdx + 1 < customFlags.length) {
+        userAgent = customFlags[uaIdx + 1];
+      }
+
+      final headerBuffer = StringBuffer();
+      if (userAgent != null) headerBuffer.write('User-Agent: $userAgent\r\n');
+      if (referer != null) headerBuffer.write('Referer: $referer\r\n');
+      if (headerBuffer.isNotEmpty) {
+        args.addAll(['-headers', headerBuffer.toString()]);
+      }
+    }
+
+    args.addAll([
       '-i', videoPathOrUrl,
       '-vn',
       '-ar', '16000',
@@ -457,7 +766,7 @@ class AiSubtitleService {
       '-b:a', '32k',
       '-f', 'mp3',
       targetFile.path,
-    ];
+    ]);
 
     final res = await Process.run(ffmpeg, args);
     if (res.exitCode != 0 || !targetFile.existsSync()) {
@@ -470,7 +779,7 @@ class AiSubtitleService {
   /// 极速生成/提取全部字幕（三级阶梯策略）
   /// Tier 1: 在线视频 - yt-dlp 秒级直取原生/自动字幕 (1~2秒)
   /// Tier 2: 本地视频 - ffmpeg 瞬间导出内嵌软字幕轨 (<1秒)
-  /// Tier 3: 极致单文件压缩 (32kbps) 快速全量转写
+  /// Tier 3: 极致单文件压缩 (32kbps) + AI (MiMo/Whisper) 极速全量转写并生成完整 .srt
   Future<List<SubtitleSegment>> fastGenerateSubtitles({
     required String videoPathOrUrl,
     required String title,
@@ -510,16 +819,31 @@ class AiSubtitleService {
     }
 
     // Tier 3: 极速全量语音转录
-    onProgress?.call('正在抽取轻量音频轨 (Tier 3)...', 0.3);
+    onProgress?.call('正在抽取全量轻量音频轨 (Tier 3)...', 0.3);
     final audioFile = await extractAudioFast(videoPathOrUrl: videoPathOrUrl);
 
     try {
-      onProgress?.call('正在快速转写音频...', 0.65);
-      final segments = await _transcribeAudioFile(audioFile);
+      final (provider, model, apiKey) = await _resolveSttProvider();
+      List<SubtitleSegment> segments;
+
+      if (isMimoProvider(provider, model)) {
+        segments = await transcribeFullAudioWithMimo(
+          audioFile: audioFile,
+          totalDuration: duration,
+          provider: provider,
+          model: model,
+          apiKey: apiKey,
+          onProgress: onProgress,
+        );
+      } else {
+        onProgress?.call('正在快速全量转写音频...', 0.65);
+        segments = await _transcribeAudioFile(audioFile);
+      }
+
       if (segments.isNotEmpty) {
         await saveSubtitleFile(title: title, segments: segments);
       }
-      onProgress?.call('字幕生成完成！', 1.0);
+      onProgress?.call('全量字幕生成完成！已就绪', 1.0);
       return segments;
     } finally {
       if (audioFile.existsSync()) {

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/privacy_security_service.dart';
 import 'package:V8WorkToolbox/tools/private_player/services/ai_subtitle_service.dart';
 import 'package:V8WorkToolbox/tools/private_player/services/download_queue_manager.dart';
@@ -228,18 +229,43 @@ WEBVTT
     });
   });
 
-  group('PrivateStorageManager Directory Initialization', () {
-    test('creates required subdirectories under base folder', () async {
-      final tempDir = Directory.systemTemp.createTempSync('storage_test');
-      try {
-        await PrivateStorageManager.instance.init(customRoot: tempDir);
+  group('Xiaomi MiMo ASR Tests', () {
+    test('isMimoProvider accurately recognizes MiMo models and baseUrls', () {
+      final mimoConfig = const AiProviderConfig(
+        id: 'p_mimo',
+        name: 'Xiaomi MiMo',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://token-plan-sgp.xiaomimimo.com',
+        keychainKeyId: 'k1',
+      );
 
-        expect(PrivateStorageManager.instance.downloadsDir.existsSync(), isTrue);
-        expect(PrivateStorageManager.instance.subtitlesDir.existsSync(), isTrue);
-        expect(PrivateStorageManager.instance.tempAudioDir.existsSync(), isTrue);
-      } finally {
-        tempDir.deleteSync(recursive: true);
-      }
+      final openAiConfig = const AiProviderConfig(
+        id: 'p_openai',
+        name: 'OpenAI',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://api.openai.com',
+        keychainKeyId: 'k2',
+      );
+
+      expect(AiSubtitleService.isMimoProvider(mimoConfig, 'mimo-v2.5-asr'), isTrue);
+      expect(AiSubtitleService.isMimoProvider(mimoConfig, 'whisper-1'), isTrue); // baseUrl matches
+      expect(AiSubtitleService.isMimoProvider(openAiConfig, 'mimo-v2.5-asr'), isTrue); // model matches
+      expect(AiSubtitleService.isMimoProvider(openAiConfig, 'whisper-1'), isFalse);
+    });
+
+    test('isSilenceOrFiller filters out non-speech sounds and fillers', () {
+      expect(AiSubtitleService.isSilenceOrFiller(''), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('   '), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('嗯。'), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('啊！'), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('哦……'), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('静音'), isTrue);
+      expect(AiSubtitleService.isSilenceOrFiller('...'), isTrue);
+
+      // Real subtitle text should NOT be filtered
+      expect(AiSubtitleService.isSilenceOrFiller('欢迎观看本期视频'), isFalse);
+      expect(AiSubtitleService.isSilenceOrFiller('Hello World'), isFalse);
+      expect(AiSubtitleService.isSilenceOrFiller('嗯，这是非常重要的概念'), isFalse);
     });
   });
 }

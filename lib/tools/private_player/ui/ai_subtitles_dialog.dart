@@ -143,9 +143,9 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                     value: 0,
                     activeColor: AppTheme.accent,
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('按当前进度区间生成 (推荐)', style: TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+                    title: const Text('极速全量生成完整字幕 (推荐)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary)),
                     subtitle: Text(
-                      '提取当前播放位置 (${_formatDuration(ctrl.position)}) 前后约 10 分钟音频，快速生成实时字幕',
+                      '优先直取原生/内嵌轨，无内置时最速提取整片轻量音频并发调用 AI 转录，整片时间轴无缝同步',
                       style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
                     ),
                   ),
@@ -153,9 +153,9 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                     value: 1,
                     activeColor: AppTheme.accent,
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('全量后台生成完整字幕', style: TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+                    title: const Text('按当前播放点生成切片 (快速调试)', style: TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
                     subtitle: Text(
-                      '后台自动分片并串行识别整部视频（时长: ${_formatDuration(ctrl.duration)}），生成完整时间轴字幕',
+                      '仅提取当前播放位置 (${_formatDuration(ctrl.position)}) 前后约 10 分钟音频快速生成局部字幕',
                       style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
                     ),
                   ),
@@ -252,24 +252,25 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
       List<SubtitleSegment> segments;
 
       if (_selectedMode == 0) {
+        segments = await _subtitleService.fastGenerateSubtitles(
+          videoPathOrUrl: src,
+          title: ctrl.currentTitle,
+          duration: ctrl.duration,
+          onProgress: (st, pct) {
+            if (mounted) {
+              setState(() {
+                _statusText = st;
+                if (pct != null) _progressPct = pct;
+              });
+            }
+          },
+        );
+      } else {
         segments = await _subtitleService.generateIntervalSubtitles(
           videoPathOrUrl: src,
           currentPosition: ctrl.position,
           onStatus: (st) {
             if (mounted) setState(() => _statusText = st);
-          },
-        );
-      } else {
-        segments = await _subtitleService.generateFullSubtitles(
-          videoPathOrUrl: src,
-          totalDuration: ctrl.duration,
-          onProgress: (pct, st) {
-            if (mounted) {
-              setState(() {
-                _progressPct = pct;
-                _statusText = st;
-              });
-            }
           },
         );
       }

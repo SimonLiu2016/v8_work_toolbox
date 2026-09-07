@@ -1,8 +1,5 @@
-# ai-subtitles Specification
+## MODIFIED Requirements
 
-## Purpose
-Provides AI-powered speech-to-text subtitle generation, dual-mode interval or full transcription, real-time synchronized overlay rendering, and subtitle file export.
-## Requirements
 ### Requirement: Integrated AI STT slot transcription
 The system SHALL transcribe audio extracted from local media or online streams into timestamped subtitle segments utilizing the global AI STT slot binding, adaptively selecting between standard OpenAI Whisper multipart transcription and Xiaomi MiMo chat completions speech recognition protocols based on provider and model metadata.
 
@@ -13,28 +10,6 @@ The system SHALL transcribe audio extracted from local media or online streams i
 #### Scenario: STT transcription with segment timestamps
 - **WHEN** audio is submitted to the configured AI STT provider
 - **THEN** system dispatches to the corresponding protocol (OpenAI Whisper multipart or MiMo Chat Completions with base64 audio and asr_options) and parses the response into structured subtitle segments with start and end timestamps
-
-### Requirement: Dual-mode subtitle generation
-The system SHALL support on-demand interval generation centered around the current playback timestamp, as well as full-video background transcription.
-
-#### Scenario: On-demand playback interval generation
-- **WHEN** user chooses on-demand subtitle generation during playback
-- **THEN** system extracts and transcribes only the audio segment corresponding to the current playback window (e.g. within 10 minutes), displaying results within seconds
-
-#### Scenario: Full-video background batch generation
-- **WHEN** user chooses full-length subtitle generation
-- **THEN** system splits long audio into sequenced chunks, transcribes them sequentially in background, and merges the segments with continuous timestamps
-
-### Requirement: Real-time subtitle overlay and export
-The system SHALL render synchronized subtitles over the video surface during playback, provide a display toggle switch, and allow exporting subtitles as .srt or .vtt files.
-
-#### Scenario: Synchronized subtitle display with toggle
-- **WHEN** playback progresses and subtitle switch is enabled
-- **THEN** player dynamically highlights and renders the subtitle matching current playback position over a semi-transparent background
-
-#### Scenario: Export and save subtitle
-- **WHEN** user clicks the "Save Subtitle" button
-- **THEN** system exports the generated subtitle as a standard .srt file to the private media directory or chosen destination
 
 ### Requirement: Multi-tier fast subtitle extraction and offline generation
 The system SHALL provide a multi-tier fast generation pipeline prioritizing instant native/embedded subtitle extraction before falling back to fastest full-audio extraction and AI transcription.
@@ -51,6 +26,8 @@ The system SHALL provide a multi-tier fast generation pipeline prioritizing inst
 - **WHEN** no native or embedded subtitle tracks exist on the video
 - **THEN** system extracts the complete audio using the fastest method (ffmpeg 16kHz 32kbps mono for local media, or yt-dlp audio-only download for web URLs), submits to the configured AI STT service, compiles a complete .srt file, and mounts it to the player
 
+## ADDED Requirements
+
 ### Requirement: Xiaomi MiMo ASR protocol and chunk-based timestamp alignment
 The system SHALL support Xiaomi MiMo's `mimo-v2.5-asr` model via the `/v1/chat/completions` API using Base64 encoded audio payloads and concurrent slice processing to establish accurate subtitle timestamps.
 
@@ -61,4 +38,3 @@ The system SHALL support Xiaomi MiMo's `mimo-v2.5-asr` model via the `/v1/chat/c
 #### Scenario: Concurrent slice processing for full timeline alignment
 - **WHEN** transcribing a full audio track with MiMo ASR
 - **THEN** system segments the audio into short time intervals with known start and end offsets, executes transcriptions using a concurrent worker pool, and stitches the resulting text into consecutive subtitle segments covering the entire timeline
-
