@@ -8,8 +8,10 @@ import '../clean_builds_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
+import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
 import 'tool_definition.dart';
+import 'unattended/unattended_page.dart';
 
 export 'tool_definition.dart';
 
@@ -152,6 +154,36 @@ class SmartDiskSlimmerToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const SmartDiskSlimmerPage();
 }
 
+class UnattendedApproverToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'unattended-approver';
+  @override
+  String get title => '无人值守助手';
+  @override
+  String get subtitle => '离开电脑时自动审批 AI 终端工具调用，机械安全硬地板兜底';
+  @override
+  IconData get icon => Icons.verified_user_rounded;
+  @override
+  ToolCategory get category => ToolCategory.system;
+  @override
+  Widget buildPage(BuildContext context) => const UnattendedPage();
+}
+
+class DocAudioReaderToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'doc-audio-reader';
+  @override
+  String get title => '文档语音朗读';
+  @override
+  String get subtitle => '多格式文档与网页正文提取，实时 AI 语音朗读与 MP3 导出';
+  @override
+  IconData get icon => Icons.record_voice_over_rounded;
+  @override
+  ToolCategory get category => ToolCategory.file;
+  @override
+  Widget buildPage(BuildContext context) => const DocAudioReaderPage();
+}
+
 /// ---------------------------------------------------------------------------
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
@@ -161,6 +193,7 @@ class ToolRegistry {
 
   static final List<ToolDefinition> tools = <ToolDefinition>[
     // 文件处理
+    DocAudioReaderToolDefinition(),
     BatchRenameToolDefinition(),
     FolderCompareToolDefinition(),
     ImageResizeToolDefinition(),
@@ -169,6 +202,7 @@ class ToolRegistry {
     CleanBuildsToolDefinition(),
     // 系统与配置
     SmartDiskSlimmerToolDefinition(),
+    UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),
     BcConfigShellToolDefinition(),
     AppShortcutToolDefinition(),

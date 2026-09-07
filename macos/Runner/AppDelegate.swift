@@ -19,7 +19,10 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   private var launcherChannel: FlutterMethodChannel?
 
   override func applicationDidFinishLaunching(_ aNotification: Notification) {
-    super.applicationDidFinishLaunching(aNotification)
+    // 注意：不要调用 super.applicationDidFinishLaunching(aNotification)
+    // 因为 FlutterAppDelegate (直接继承自 NSObject) 并未实现该可选代理方法，
+    // 调用 super 会在运行时抛出 NSInvalidArgumentException (unrecognized selector)
+    // 导致整个生命周期初始化中断，进而使托盘图标和热键均无法加载。
     AppDelegate.shared = self
 
     setupStatusItem()
@@ -73,25 +76,40 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   private var statusMenu: NSMenu?
 
   private func setupStatusItem() {
-    statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    NSLog("[V8Tray] Initializing status item...")
+    statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     statusItem?.isVisible = true
-    guard let button = statusItem?.button else { return }
 
-    // 使用系统标准 SF 符号与原生标题双保险，保证深浅色菜单栏稳定可见
-    if #available(macOS 11.0, *) {
+    guard let button = statusItem?.button else {
+      NSLog("[V8Tray] ERROR: Failed to obtain statusItem button!")
+      return
+    }
+
+    // 优先加载高品质专属 TrayIcon Template 资产，若缺失则优雅降级为 SF Symbol
+    var trayImage = NSImage(named: "TrayIcon")
+    if trayImage == nil, #available(macOS 11.0, *) {
       let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-      let symbolImage = NSImage(
+      trayImage = NSImage(
         systemSymbolName: "wrench.and.screwdriver.fill",
         accessibilityDescription: "V8"
       )?.withSymbolConfiguration(config)
-      symbolImage?.isTemplate = true
-      button.image = symbolImage
-      button.imagePosition = .imageLeading
     }
-    button.title = " V8"
-    button.toolTip = "V8 工作工具箱 (⌥Space)"
 
-    // 创建右键/次级操作菜单
+    if let image = trayImage {
+      image.isTemplate = true
+      button.image = image
+      button.imagePosition = .imageOnly
+      NSLog("[V8Tray] Tray image set successfully (size: \(image.size.width)x\(image.size.height))")
+    } else {
+      button.title = "V8"
+      NSLog("[V8Tray] Warning: Tray image missing, fallback to title 'V8'")
+    }
+
+    button.toolTip = "V8 工作工具箱 (⌥Space)"
+    button.target = self
+    button.action = #selector(statusItemClicked(_:))
+
+    // 创建标准上下文菜单
     let menu = NSMenu()
     let openItem = NSMenuItem(
       title: "打开主窗口 (⌥Space)",
@@ -113,19 +131,25 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
     self.statusMenu = menu
 
-    // 绑定点击事件：左键直接唤起/隐藏窗口，右键呼出菜单
-    button.target = self
-    button.action = #selector(statusItemClicked(_:))
-    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    // 监听托盘按钮上的右键点击事件
+    NSEvent.addLocalMonitorForEvents(matching: [.rightMouseUp]) { [weak self] event in
+      guard let self = self, let statusButton = self.statusItem?.button else { return event }
+      if event.window == statusButton.window, let menu = self.statusMenu {
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        return nil
+      }
+      return event
+    }
+
+    NSLog("[V8Tray] Status item initialized successfully!")
   }
 
   @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
     let event = NSApp.currentEvent
-    if event?.type == .rightMouseUp {
+    // 按住 Control 键或者右键点击时呼出菜单
+    if event?.type == .rightMouseUp || (event?.modifierFlags.contains(.control) == true) {
       if let menu = self.statusMenu {
-        statusItem?.menu = menu
-        statusItem?.button?.performClick(nil)
-        statusItem?.menu = nil
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
       }
     } else {
       toggleMainWindow()
@@ -139,6 +163,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   @objc private func quitApp() {
     NSApp.terminate(nil)
   }
+
 
   // MARK: - Window Toggle Logic
   func handleHotKey() {

@@ -34,6 +34,9 @@ class AiDiskDiagnosticsService {
 
   String? lastError;
 
+  /// 批量诊断条目间的步频间隔（避免触发服务商 QPS 限流）
+  Duration pacingDuration = const Duration(milliseconds: 800);
+
   /// 逐条研判，带进度回调
   Future<List<AiDiagnosticResult>> diagnoseBatch(
     List<SlimCandidateItem> items, {
@@ -56,10 +59,19 @@ class AiDiskDiagnosticsService {
         } else {
           lastError ??= '条目 "${item.title}" AI 解析结果为空或格式不匹配';
         }
+      } on SlotUnavailableException catch (e) {
+        lastError = e.toString();
+        debugPrint('AI 槽位不可用，终止批量诊断: $e');
+        break; // 槽位级别错误，无需继续逐条重试
       } catch (e) {
         lastError = e.toString();
         debugPrint('AI 研判 "${item.title}" 失败: $e');
         // 单条失败继续下一条
+      }
+
+      // 步频控制：非最后一项时等待缓冲间隔，避免密集请求触发 429
+      if (i < items.length - 1 && pacingDuration > Duration.zero) {
+        await Future.delayed(pacingDuration);
       }
     }
 
@@ -94,7 +106,7 @@ class AiDiskDiagnosticsService {
 - 分类: ${item.category.label}
 ''';
 
-    final responseText = await AiService.instance.chat(
+    final result = await AiService.instance.chat(
       slot: 'text',
       messages: [
         {'role': 'system', 'content': systemPrompt},
@@ -102,7 +114,7 @@ class AiDiskDiagnosticsService {
       ],
     );
 
-    return _parseJsonObject(responseText, item.id);
+    return _parseJsonObject(result.text, item.id);
   }
 
   /// 单个条目深度研判会诊（详情弹窗用）
@@ -128,13 +140,15 @@ class AiDiskDiagnosticsService {
 ''';
 
     try {
-      final advice = await AiService.instance.chat(
+      final result = await AiService.instance.chat(
         slot: 'text',
         messages: [
           {'role': 'user', 'content': prompt},
         ],
       );
-      return advice;
+      return result.text;
+    } on SlotUnavailableException catch (e) {
+      return '⚠️ AI 槽位不可用\n\n$e\n\n请在左侧「AI能力配置」→「默认能力槽位」中为 Text 槽位添加至少一个供应商候选。';
     } catch (e) {
       return 'AI 诊断请求失败: $e\n请检查左侧「AI能力配置」中的供应商与模型设置是否正常。';
     }

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../components/app_components.dart';
 import '../services/ai_config_store.dart';
 import '../services/ai_service.dart';
 import '../services/keychain_service.dart';
 import '../theme/app_theme.dart';
+import 'ai_log_dialog.dart';
 
 class AiConfigPage extends StatefulWidget {
   const AiConfigPage({super.key});
@@ -15,15 +17,21 @@ class AiConfigPage extends StatefulWidget {
 class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final store = AiConfigStore.instance;
+  Timer? _healthRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    // 每 10 秒刷新健康状态指示器
+    _healthRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _healthRefreshTimer?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -41,11 +49,29 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('AI 基础设施配置', style: AppTheme.fontHeadline),
-                const SizedBox(height: AppTheme.space4),
-                Text(
-                  '配置多协议模型供应商、全局能力槽位与外部 MCP 服务。凭证由 macOS Keychain 安全保护。',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('AI 基础设施配置', style: AppTheme.fontHeadline),
+                          const SizedBox(height: AppTheme.space4),
+                          Text(
+                            '配置多协议模型供应商、全局能力槽位与外部 MCP 服务。凭证由 macOS Keychain 安全保护。',
+                            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: AppTheme.space16),
+                    AppButton.secondary(
+                      label: '查看调用日志',
+                      icon: Icons.receipt_long_rounded,
+                      onPressed: () => AiLogDialog.show(context),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: AppTheme.space16),
                 TabBar(
@@ -181,7 +207,7 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   }
 
   // ---------------------------------------------------------------------------
-  // Tab 2: 默认槽位映射
+  // Tab 2: 默认槽位映射（多候选管理 + 健康展示）
   // ---------------------------------------------------------------------------
   Widget _buildSlotsTab() {
     final slots = [
@@ -196,76 +222,326 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
       children: [
         Text('全局能力槽位绑定', style: AppTheme.fontTitle),
         const SizedBox(height: AppTheme.space4),
-        Text('所有业务工具在调用 AI 能力时，将默认自动路由至此绑定的供应商与模型。', style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+        Text(
+          '每个槽位支持多个候选供应商，按优先级排列。运行时自动路由至最优可用供应商，首选不可用时自动降级。',
+          style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+        ),
         const SizedBox(height: AppTheme.space16),
         ...slots.map((s) => _buildSlotCard(s['key']!, s['label']!, s['desc']!)),
       ],
     );
   }
 
+  /// 计算槽位聚合健康状态: 0=空, 1=全部健康, 2=降级, 3=全部不可用
+  int _getSlotHealthLevel(List<SlotCandidate> candidates) {
+    if (candidates.isEmpty) return 0;
+    int healthyCount = 0;
+    for (final c in candidates) {
+      if (AiService.instance.getProviderHealth(c.providerId)?.isHealthy != false) {
+        healthyCount++;
+      }
+    }
+    if (healthyCount == candidates.length) return 1;
+    if (healthyCount > 0) return 2;
+    return 3;
+  }
+
+  Color _healthColor(int level) {
+    switch (level) {
+      case 1: return AppTheme.success;
+      case 2: return AppTheme.warning;
+      case 3: return AppTheme.error;
+      default: return AppTheme.textTertiary;
+    }
+  }
+
+  String _healthLabel(int level) {
+    switch (level) {
+      case 1: return '全部健康';
+      case 2: return '已降级';
+      case 3: return '全部不可用';
+      default: return '未配置';
+    }
+  }
+
   Widget _buildSlotCard(String slotKey, String label, String desc) {
-    final binding = store.slotBindings[slotKey] ?? {'providerId': '', 'model': ''};
-    final currentProviderId = binding['providerId'] ?? '';
-    final currentModel = binding['model'] ?? '';
+    final candidates = store.slotBindings[slotKey] ?? <SlotCandidate>[];
+    final healthLevel = _getSlotHealthLevel(candidates);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppTheme.space12),
+      padding: const EdgeInsets.only(bottom: AppTheme.space16),
       child: AppCard(
         child: Padding(
           padding: const EdgeInsets.all(AppTheme.space16),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 4,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: AppTheme.space2),
-                    Text(desc, style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
-                  ],
-                ),
+              // 标题行：槽位名称 + 健康指示器 + 添加按钮
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(label, style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600)),
+                            const SizedBox(width: AppTheme.space8),
+                            // 聚合健康指示器
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _healthColor(healthLevel).withValues(alpha: 0.15),
+                                borderRadius: AppTheme.borderRadiusSmall,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: _healthColor(healthLevel),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _healthLabel(healthLevel),
+                                    style: TextStyle(fontSize: 11, color: _healthColor(healthLevel)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppTheme.space2),
+                        Text(desc, style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+                        // 降级/不可用时显示额外信息
+                        if (healthLevel == 2) ...[
+                          const SizedBox(height: AppTheme.space4),
+                          Builder(builder: (_) {
+                            // 找到当前活跃的供应商（第一个健康的）
+                            for (final c in candidates) {
+                              final health = AiService.instance.getProviderHealth(c.providerId);
+                              if (health?.isHealthy != false) {
+                                final provider = store.providers.cast<AiProviderConfig?>().firstWhere(
+                                  (p) => p!.id == c.providerId, orElse: () => null,
+                                );
+                                return Text(
+                                  '当前活跃: ${provider?.name ?? c.providerId}',
+                                  style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
+                                );
+                              }
+                            }
+                            return const SizedBox.shrink();
+                          }),
+                        ],
+                        if (healthLevel == 3) ...[
+                          const SizedBox(height: AppTheme.space4),
+                          Text(
+                            '请检查供应商配置或网络连接',
+                            style: AppTheme.fontCaption.copyWith(color: AppTheme.error),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  AppButton.secondary(
+                    label: '添加候选',
+                    icon: Icons.add,
+                    onPressed: () => _showAddCandidateDialog(slotKey),
+                  ),
+                ],
               ),
-              const SizedBox(width: AppTheme.space16),
-              // 供应商选择
-              Expanded(
-                flex: 3,
-                child: DropdownButtonFormField<String>(
-                  initialValue: currentProviderId.isEmpty ? null : currentProviderId,
-                  decoration: const InputDecoration(labelText: '供应商'),
-                  items: store.providers.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      store.setSlotBinding(slotKey, val, '');
-                      setState(() {});
-                    }
+              // 候选列表
+              if (candidates.isNotEmpty) ...[
+                const SizedBox(height: AppTheme.space12),
+                const Divider(height: 1, color: AppTheme.borderSubtle),
+                const SizedBox(height: AppTheme.space8),
+                ReorderableListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  buildDefaultDragHandles: false,
+                  itemCount: candidates.length,
+                  onReorder: (oldIndex, newIndex) async {
+                    await store.reorderSlotCandidates(slotKey, oldIndex, newIndex);
+                    setState(() {});
+                  },
+                  proxyDecorator: (child, index, animation) {
+                    return Material(
+                      color: Colors.transparent,
+                      elevation: 4,
+                      child: child,
+                    );
+                  },
+                  itemBuilder: (context, index) {
+                    final candidate = candidates[index];
+                    final provider = store.providers.cast<AiProviderConfig?>().firstWhere(
+                      (p) => p!.id == candidate.providerId, orElse: () => null,
+                    );
+                    final providerName = provider?.name ?? '未知供应商';
+                    final health = AiService.instance.getProviderHealth(candidate.providerId);
+                    final isHealthy = health?.isHealthy != false;
+                    final candidateHealthColor = isHealthy ? AppTheme.success : AppTheme.error;
+
+                    return Container(
+                      key: ValueKey('${slotKey}_${candidate.providerId}_${candidate.model}_$index'),
+                      margin: const EdgeInsets.only(bottom: AppTheme.space4),
+                      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.bgSidebar,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: AppTheme.borderSubtle, width: 0.5),
+                      ),
+                      child: Row(
+                        children: [
+                          // 拖拽手柄
+                          ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(Icons.drag_indicator, size: 16, color: AppTheme.textTertiary),
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          // 优先级编号
+                          Container(
+                            width: 22,
+                            height: 22,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppTheme.accent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${index + 1}',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.accentLight),
+                            ),
+                          ),
+                          const SizedBox(width: AppTheme.space12),
+                          // 健康指示圆点
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: candidateHealthColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          // 供应商名称
+                          Text(providerName, style: AppTheme.fontBody.copyWith(fontSize: 13)),
+                          const SizedBox(width: AppTheme.space8),
+                          // 模型名
+                          Expanded(
+                            child: Text(
+                              candidate.model.isEmpty ? '(未指定模型)' : candidate.model,
+                              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          // 不健康时显示错误摘要
+                          if (!isHealthy && health?.lastError != null)
+                            Tooltip(
+                              message: health!.lastError!,
+                              child: const Icon(Icons.warning_amber_rounded, size: 14, color: AppTheme.warning),
+                            ),
+                          const SizedBox(width: AppTheme.space4),
+                          // 删除按钮
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 14, color: AppTheme.textTertiary),
+                            tooltip: '移除候选',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(maxWidth: 24, maxHeight: 24),
+                            onPressed: () async {
+                              await store.removeSlotCandidate(slotKey, index);
+                              setState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                    );
                   },
                 ),
-              ),
-              const SizedBox(width: AppTheme.space12),
-              // 模型选择
-              Expanded(
-                flex: 3,
-                child: Builder(builder: (context) {
-                  final provider = store.providers.firstWhere((p) => p.id == currentProviderId, orElse: () => const AiProviderConfig(id: '', name: '', protocol: AiProtocolType.openai, baseUrl: '', keychainKeyId: ''));
-                  final models = provider.textModels;
-
-                  return DropdownButtonFormField<String>(
-                    initialValue: models.contains(currentModel) ? currentModel : null,
-                    decoration: const InputDecoration(labelText: '模型'),
-                    items: models.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        store.setSlotBinding(slotKey, currentProviderId, val);
-                        setState(() {});
-                      }
-                    },
-                  );
-                }),
-              ),
+              ] else ...[
+                const SizedBox(height: AppTheme.space12),
+                Center(
+                  child: Text(
+                    '暂无候选供应商，点击"添加候选"配置',
+                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 添加候选弹窗：选择供应商 → 选择模型
+  void _showAddCandidateDialog(String slotKey) {
+    String? selectedProviderId;
+    String? selectedModel;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final providers = store.providers;
+          List<String> availableModels = [];
+          if (selectedProviderId != null) {
+            final provider = providers.firstWhere(
+              (p) => p.id == selectedProviderId,
+              orElse: () => const AiProviderConfig(id: '', name: '', protocol: AiProtocolType.openai, baseUrl: '', keychainKeyId: ''),
+            );
+            availableModels = provider.textModels;
+          }
+
+          return AlertDialog(
+            backgroundColor: AppTheme.bgCard,
+            title: const Text('添加槽位候选', style: AppTheme.fontTitle),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: selectedProviderId,
+                    decoration: const InputDecoration(labelText: '选择供应商'),
+                    items: providers.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
+                    onChanged: (val) {
+                      setDialogState(() {
+                        selectedProviderId = val;
+                        selectedModel = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: AppTheme.space12),
+                  DropdownButtonFormField<String>(
+                    value: selectedModel,
+                    decoration: const InputDecoration(labelText: '选择模型'),
+                    items: availableModels.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
+                    onChanged: (val) {
+                      setDialogState(() => selectedModel = val);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              AppButton.ghost(label: '取消', onPressed: () => Navigator.pop(ctx)),
+              AppButton.primary(
+                label: '添加',
+                onPressed: selectedProviderId != null
+                    ? () async {
+                        await store.addSlotCandidate(slotKey, selectedProviderId!, selectedModel ?? '');
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        setState(() {});
+                      }
+                    : null,
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -579,6 +855,7 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   textModels: models,
                 );
 
+                AiService.instance.invalidateProviderEndpoint(id);
                 await store.saveProvider(newProv, apiKey: keyCtrl.text.trim().isEmpty ? null : keyCtrl.text.trim());
                 if (ctx.mounted) Navigator.pop(ctx);
                 setState(() {});
@@ -649,29 +926,31 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
 
   void _testProvider(AiProviderConfig p) async {
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(content: Text('正在测试与供应商连接...')));
+    messenger.showSnackBar(const SnackBar(content: Text('正在测试连接与真机对话 Ping...')));
     try {
+      await AiService.instance.testConnection(p);
       final models = await AiService.instance.discoverModels(p);
       messenger.clearSnackBars();
       messenger.showSnackBar(
         SnackBar(
-          content: Text(models.isNotEmpty ? '✓ 连接成功，正常探测到 ${models.length} 个模型！' : '✕ 连接成功但未返回可用模型'),
-          backgroundColor: models.isNotEmpty ? AppTheme.success : AppTheme.warning,
+          content: Text('✓ 连接与真机对话测试均通过！已探测到 ${models.length} 个模型'),
+          backgroundColor: AppTheme.success,
         ),
       );
     } catch (e) {
       messenger.clearSnackBars();
       messenger.showSnackBar(
         SnackBar(
-          content: Text('✕ 连接失败: $e'),
+          content: Text('✕ 连接测试失败: $e'),
           backgroundColor: AppTheme.error,
-          duration: const Duration(seconds: 6),
+          duration: const Duration(seconds: 8),
         ),
       );
     }
   }
 
   void _deleteProvider(AiProviderConfig p) async {
+    AiService.instance.invalidateProviderEndpoint(p.id);
     await store.deleteProvider(p.id);
     setState(() {});
   }

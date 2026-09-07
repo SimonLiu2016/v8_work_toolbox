@@ -159,7 +159,7 @@ void main() {
       await AiConfigStore.instance.saveProvider(provider, apiKey: 'sk-ant-chat');
       await AiConfigStore.instance.setSlotBinding('text', 'ant_chat_prov', 'claude-3-5-sonnet-20241022');
 
-      final resp = await AiService.instance.chat(
+      final result = await AiService.instance.chat(
         slot: 'text',
         messages: [
           {'role': 'system', 'content': 'Mac expert system prompt'},
@@ -167,7 +167,7 @@ void main() {
         ],
       );
 
-      expect(resp, contains('Xcode'));
+      expect(result.text, contains('Xcode'));
     });
 
     test('Gemini 协议 chat 消息组装与解析', () async {
@@ -208,7 +208,7 @@ void main() {
       await AiConfigStore.instance.saveProvider(provider, apiKey: 'gm-chat-key');
       await AiConfigStore.instance.setSlotBinding('text', 'gm_chat_prov', 'gemini-2.0-flash');
 
-      final resp = await AiService.instance.chat(
+      final result = await AiService.instance.chat(
         slot: 'text',
         messages: [
           {'role': 'system', 'content': 'System instruction'},
@@ -216,7 +216,7 @@ void main() {
         ],
       );
 
-      expect(resp, contains('Chrome'));
+      expect(result.text, contains('Chrome'));
     });
   });
 

@@ -105,6 +105,59 @@ class AiProviderConfig {
   }
 }
 
+/// 槽位候选绑定项（有序候选列表中的单个条目）
+class SlotCandidate {
+  final String providerId;
+  final String model;
+  final int priority;
+
+  const SlotCandidate({
+    required this.providerId,
+    required this.model,
+    required this.priority,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'providerId': providerId,
+    'model': model,
+    'priority': priority,
+  };
+
+  factory SlotCandidate.fromJson(Map<String, dynamic> json) {
+    return SlotCandidate(
+      providerId: json['providerId'] as String? ?? '',
+      model: json['model'] as String? ?? '',
+      priority: json['priority'] as int? ?? 0,
+    );
+  }
+
+  SlotCandidate copyWith({
+    String? providerId,
+    String? model,
+    int? priority,
+  }) {
+    return SlotCandidate(
+      providerId: providerId ?? this.providerId,
+      model: model ?? this.model,
+      priority: priority ?? this.priority,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SlotCandidate &&
+          runtimeType == other.runtimeType &&
+          providerId == other.providerId &&
+          model == other.model;
+
+  @override
+  int get hashCode => providerId.hashCode ^ model.hashCode;
+
+  @override
+  String toString() => 'SlotCandidate(providerId: $providerId, model: $model, priority: $priority)';
+}
+
 /// 外部第三方 MCP 客户端配置
 class McpClientConfig {
   final String id;
@@ -159,11 +212,11 @@ class AiConfigStore {
 
   File? _configFile;
   List<AiProviderConfig> _providers = [];
-  Map<String, Map<String, String>> _slotBindings = {}; // slotName -> {'providerId': ..., 'model': ...}
+  Map<String, List<SlotCandidate>> _slotBindings = {};
   List<McpClientConfig> _mcpClients = [];
 
   List<AiProviderConfig> get providers => List.unmodifiable(_providers);
-  Map<String, Map<String, String>> get slotBindings => Map.unmodifiable(_slotBindings);
+  Map<String, List<SlotCandidate>> get slotBindings => Map.unmodifiable(_slotBindings);
   List<McpClientConfig> get mcpClients => List.unmodifiable(_mcpClients);
 
   Future<void> init({Directory? customRootDir}) async {
@@ -211,12 +264,40 @@ class AiConfigStore {
       _providers = providerList.map((e) => AiProviderConfig.fromJson(e as Map<String, dynamic>)).toList();
 
       final slots = (json['defaultSlots'] as Map<String, dynamic>?) ?? {};
+      bool needsMigration = false;
       _slotBindings = slots.map((key, value) {
-        return MapEntry(key, Map<String, String>.from(value as Map? ?? {}));
+        if (value is List) {
+          // 新格式：候选列表
+          final candidates = value
+              .map((e) => SlotCandidate.fromJson(e as Map<String, dynamic>))
+              .toList();
+          return MapEntry(key, candidates);
+        } else if (value is Map) {
+          // 旧格式：单一 {providerId, model} 映射 → 自动迁移为单元素候选列表
+          needsMigration = true;
+          final providerId = (value['providerId'] as String?) ?? '';
+          final model = (value['model'] as String?) ?? '';
+          if (providerId.isNotEmpty) {
+            return MapEntry(key, [SlotCandidate(providerId: providerId, model: model, priority: 0)]);
+          }
+          return MapEntry(key, <SlotCandidate>[]);
+        }
+        return MapEntry(key, <SlotCandidate>[]);
       });
+
+      // 确保所有标准槽位存在
+      for (final slot in ['text', 'multimodal', 'tts', 'stt']) {
+        _slotBindings.putIfAbsent(slot, () => <SlotCandidate>[]);
+      }
 
       final mcps = (json['mcpServers'] as List<dynamic>?) ?? [];
       _mcpClients = mcps.map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>)).toList();
+
+      // 旧格式检测到后立即重新保存为新格式
+      if (needsMigration) {
+        debugPrint('检测到旧格式 defaultSlots，已自动迁移为候选列表格式');
+        await _save();
+      }
     } catch (e) {
       debugPrint('读取 ai_config.json 异常，加载默认配置: $e');
       _initDefaults();
@@ -226,10 +307,10 @@ class AiConfigStore {
   void _initDefaults() {
     _providers = [];
     _slotBindings = {
-      'text': {'providerId': '', 'model': ''},
-      'multimodal': {'providerId': '', 'model': ''},
-      'tts': {'providerId': '', 'model': ''},
-      'stt': {'providerId': '', 'model': ''},
+      'text': <SlotCandidate>[],
+      'multimodal': <SlotCandidate>[],
+      'tts': <SlotCandidate>[],
+      'stt': <SlotCandidate>[],
     };
     _mcpClients = [];
   }
@@ -239,7 +320,9 @@ class AiConfigStore {
     try {
       final map = {
         'providers': _providers.map((p) => p.toJson()).toList(),
-        'defaultSlots': _slotBindings,
+        'defaultSlots': _slotBindings.map((key, candidates) =>
+          MapEntry(key, candidates.map((c) => c.toJson()).toList()),
+        ),
         'mcpServers': _mcpClients.map((m) => m.toJson()).toList(),
       };
       final jsonStr = const JsonEncoder.withIndent('  ').convert(map);
@@ -276,22 +359,69 @@ class AiConfigStore {
     }
     _providers.removeWhere((e) => e.id == providerId);
 
-    // 清理槽位引用
-    _slotBindings.forEach((slot, binding) {
-      if (binding['providerId'] == providerId) {
-        binding['providerId'] = '';
-        binding['model'] = '';
+    // 清理所有槽位中引用了被删除供应商的候选项
+    _slotBindings.forEach((slot, candidates) {
+      candidates.removeWhere((c) => c.providerId == providerId);
+      // 重新分配优先级
+      for (int i = 0; i < candidates.length; i++) {
+        candidates[i] = candidates[i].copyWith(priority: i);
       }
     });
 
     await _save();
   }
 
+  /// @deprecated 使用 addSlotCandidate / removeSlotCandidate / reorderSlotCandidates 替代
+  /// 保留向后兼容：将单一绑定设置为该槽位的唯一候选
   Future<void> setSlotBinding(String slotName, String providerId, String modelName) async {
-    _slotBindings[slotName] = {
-      'providerId': providerId,
-      'model': modelName,
-    };
+    if (providerId.isEmpty) {
+      _slotBindings[slotName] = <SlotCandidate>[];
+    } else {
+      _slotBindings[slotName] = [
+        SlotCandidate(providerId: providerId, model: modelName, priority: 0),
+      ];
+    }
+    await _save();
+  }
+
+  /// 向槽位候选列表末尾追加新候选
+  Future<void> addSlotCandidate(String slotName, String providerId, String model) async {
+    final candidates = _slotBindings[slotName] ?? <SlotCandidate>[];
+    final newPriority = candidates.length;
+    candidates.add(SlotCandidate(providerId: providerId, model: model, priority: newPriority));
+    _slotBindings[slotName] = candidates;
+    await _save();
+  }
+
+  /// 移除槽位中指定位置的候选
+  Future<void> removeSlotCandidate(String slotName, int index) async {
+    final candidates = _slotBindings[slotName];
+    if (candidates == null || index < 0 || index >= candidates.length) return;
+    candidates.removeAt(index);
+    // 重新分配优先级
+    for (int i = 0; i < candidates.length; i++) {
+      candidates[i] = candidates[i].copyWith(priority: i);
+    }
+    await _save();
+  }
+
+  /// 调整槽位候选的优先级顺序（拖拽排序）
+  Future<void> reorderSlotCandidates(String slotName, int oldIndex, int newIndex) async {
+    final candidates = _slotBindings[slotName];
+    if (candidates == null) return;
+    if (oldIndex < 0 || oldIndex >= candidates.length) return;
+
+    // Flutter ReorderableListView convention: adjust newIndex when moving down
+    if (newIndex > oldIndex) newIndex--;
+    if (newIndex < 0 || newIndex >= candidates.length) return;
+    if (oldIndex == newIndex) return;
+
+    final item = candidates.removeAt(oldIndex);
+    candidates.insert(newIndex, item);
+    // 重新分配优先级
+    for (int i = 0; i < candidates.length; i++) {
+      candidates[i] = candidates[i].copyWith(priority: i);
+    }
     await _save();
   }
 

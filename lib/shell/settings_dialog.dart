@@ -90,9 +90,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
               // Header
               Row(
                 children: [
-                  const Icon(Icons.settings, size: 18, color: AppTheme.accent),
-                  const SizedBox(width: AppTheme.space8),
-                  const Text('应用设置', style: AppTheme.fontTitle),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.asset(
+                      'assets/images/app_logo.png',
+                      width: 28,
+                      height: 28,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.settings, size: 20, color: AppTheme.accent),
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.space10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('V8 工作工具箱', style: AppTheme.fontTitle),
+                      Text('v0.1.0 • 现代开发者多维工作台', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+                    ],
+                  ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.close, size: 16),
@@ -107,6 +121,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               const SizedBox(height: AppTheme.space16),
               const Divider(height: 1, color: AppTheme.borderSubtle),
               const SizedBox(height: AppTheme.space16),
+
 
               // HotKey Section
               Text(

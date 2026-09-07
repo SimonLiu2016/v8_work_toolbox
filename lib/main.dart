@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'services/ai_config_store.dart';
 import 'services/launcher_service.dart';
 import 'services/settings_store.dart';
+import 'services/unattended_service.dart';
 import 'shell/app_shell.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
@@ -15,6 +16,9 @@ Future<void> main() async {
 
   // 初始化 AI 平台级配置存储
   await AiConfigStore.instance.init();
+
+  // 初始化无人值守服务状态与代理脚本
+  await UnattendedService.instance.init();
 
   // 注册全局快捷键
   final hotKey = SettingsStore.instance.getHotKeyConfig();

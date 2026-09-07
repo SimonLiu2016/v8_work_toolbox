@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/ai_config_store.dart';
 import '../../services/settings_store.dart';
 import '../../services/system_service.dart';
+import '../../shell/ai_log_dialog.dart';
 import '../../shell/app_shell.dart';
 import '../../theme/app_theme.dart';
 import 'ai_disk_diagnostics_service.dart';
@@ -64,7 +65,6 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       }
     }, onDone: () {
       _loadDiskSpace();
-      _autoBatchDiagnoseIfNeeded();
     });
   }
 
@@ -143,43 +143,6 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     }
   }
 
-  Future<void> _autoBatchDiagnoseIfNeeded() async {
-    final ambiguous = _items
-        .where((it) => !it.isAiAnalyzed && it.category == SlimmerCategory.orphanApp)
-        .take(5)
-        .toList();
-    if (ambiguous.isEmpty) return;
-
-    setState(() => _isBatchDiagnosing = true);
-
-    List<AiDiagnosticResult> results;
-    try {
-      results = await AiDiskDiagnosticsService.instance.diagnoseBatch(ambiguous);
-    } catch (e) {
-      // AI 服务未配置或调用失败，静默结束，不阻塞 UI
-      if (!mounted) return;
-      setState(() => _isBatchDiagnosing = false);
-      return;
-    }
-
-    if (!mounted) return;
-
-    setState(() {
-      _isBatchDiagnosing = false;
-      for (final res in results) {
-        final idx = _items.indexWhere((it) => it.id == res.itemId);
-        if (idx != -1) {
-          final old = _items[idx];
-          _items[idx] = old.copyWith(
-            aiAdvice: '【AI建议】${res.advice}',
-            safety: res.safety,
-            isSelected: res.canDelete,
-            isAiAnalyzed: true,
-          );
-        }
-      }
-    });
-  }
 
   bool _isAiConfigured() {
     return AiConfigStore.instance.providers.any((p) => p.enabled);
@@ -224,6 +187,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   }
 
   Future<void> _triggerManualBatchAi() async {
+    if (_isBatchDiagnosing) return;
     if (!_isAiConfigured()) {
       _showUnconfiguredAiDialog();
       return;
@@ -444,39 +408,135 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     if (confirmed != true) return;
 
     final paths = selected.map((it) => it.path).toList();
-    final ok = await SystemService.instance.recyclePaths(paths);
+    final result = await SystemService.instance.recyclePaths(paths);
 
-    if (ok) {
+    final successSet = result.successPaths.toSet();
+    final removedItems = selected.where((it) => successSet.contains(it.path)).toList();
+    final removedSize = removedItems.fold<int>(0, (sum, it) => sum + it.sizeBytes);
+    final removedSizeStr = _formatSize(removedSize);
+
+    if (successSet.isNotEmpty) {
       setState(() {
-        _items.removeWhere((it) => it.isSelected);
+        _items.removeWhere((it) => successSet.contains(it.path));
       });
       _loadDiskSpace();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已成功将 $sizeStr 文件移至废纸篓！'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
+    }
+
+    if (!mounted) return;
+
+    if (result.isAllSuccess) {
+      final successMsg = result.hasCleanedContainers
+          ? '已成功释放 $removedSizeStr 磁盘空间！（含沙盒容器数据深度清空）'
+          : '已成功将 $removedSizeStr 文件移至废纸篓！';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(successMsg),
+          backgroundColor: AppTheme.success,
+        ),
+      );
     } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              '清理失败：需要"完全磁盘访问权限"。\n'
-              '请前往 系统设置 → 隐私与安全性 → 完全磁盘访问权限，添加 V8WorkToolbox。',
-            ),
-            backgroundColor: AppTheme.error,
-            duration: const Duration(seconds: 6),
-            action: SnackBarAction(
-              label: '知道了',
-              textColor: Colors.white,
-              onPressed: () {},
+      final failedCount = result.failedPaths.length;
+      final isContainersRelated = result.failedPaths.any((p) => p.contains('/Library/Containers/'));
+
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.bgCard,
+          title: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
+              const SizedBox(width: AppTheme.space8),
+              Text(result.isPartialSuccess ? '部分项目清理失败' : '移入废纸篓失败'),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (result.isPartialSuccess) ...[
+                  Text(
+                    result.hasCleanedContainers
+                        ? '已成功清理 ${removedItems.length} 个项目 ($removedSizeStr，含已清空的沙盒容器数据)。'
+                        : '已成功移入 ${removedItems.length} 个项目 ($removedSizeStr)。',
+                    style: AppTheme.fontBody,
+                  ),
+                  const SizedBox(height: AppTheme.space8),
+                ],
+                Text(
+                  '有 $failedCount 个项目未能移入废纸篓，已保留在列表中：',
+                  style: AppTheme.fontBody.copyWith(color: AppTheme.error),
+                ),
+                const SizedBox(height: AppTheme.space8),
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 120),
+                  padding: const EdgeInsets.all(AppTheme.space8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.bgInput,
+                    borderRadius: AppTheme.borderRadiusSmall,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: result.failedPaths.map((p) {
+                        final name = p.split('/').where((s) => s.isNotEmpty).last;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Text(
+                            '• $name ($p)',
+                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppTheme.textSecondary),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppTheme.space12),
+                Container(
+                  padding: const EdgeInsets.all(AppTheme.space10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentSubtle,
+                    borderRadius: AppTheme.borderRadiusSmall,
+                    border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isContainersRelated
+                            ? '原因：包含受 macOS 沙盒保护的 Containers 目录，需要赋予应用「完全磁盘访问权限」。'
+                            : '原因：文件受系统保护或缺少访问权限。',
+                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: AppTheme.space4),
+                      Text(
+                        '前往「系统设置 → 隐私与安全性 → 完全磁盘访问权限」添加 V8WorkToolbox 即可支持直接清理。您也可以在访达中手动删除。',
+                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-        );
-      }
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('稍后处理'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+              icon: const Icon(Icons.security_rounded, size: 16),
+              label: const Text('打开系统设置'),
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                SystemService.instance.openFullDiskAccessSettings();
+              },
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -714,6 +774,11 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                     : const Icon(Icons.auto_awesome_rounded, size: 16),
                 label: const Text('🤖 AI 批量诊断'),
                 onPressed: _isBatchDiagnosing ? null : _triggerManualBatchAi,
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.receipt_long_rounded, size: 16),
+                label: const Text('AI 日志'),
+                onPressed: () => AiLogDialog.show(context),
               ),
               OutlinedButton.icon(
                 icon: const Icon(Icons.select_all_rounded, size: 16),

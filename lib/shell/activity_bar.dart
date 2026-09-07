@@ -35,6 +35,41 @@ class ActivityBar extends StatelessWidget {
           // 顶部预留 macOS 原生交通灯安全高度
           const SizedBox(height: 38),
 
+          // 品牌 Logo 按钮 (点击可回到全部首页或呼出关于)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppTheme.space12),
+            child: Tooltip(
+              message: 'V8 工作工具箱',
+              preferBelow: false,
+              waitDuration: const Duration(milliseconds: 300),
+              child: InkWell(
+                onTap: () => onViewSelected(ActivityViewType.all),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.borderSubtle, width: 0.5),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.asset(
+                      'assets/images/app_logo.png',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.construction_rounded,
+                        size: 20,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           // 全部工具 (网格/搜索首页)
           _buildActivityItem(
             icon: Icons.grid_view_rounded,
@@ -43,6 +78,7 @@ class ActivityBar extends StatelessWidget {
             onTap: () => onViewSelected(ActivityViewType.all),
           ),
           const SizedBox(height: AppTheme.space8),
+
 
           // 工具分类项目
           ...ToolCategory.values.map((cat) {
