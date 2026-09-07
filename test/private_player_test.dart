@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/privacy_security_service.dart';
 import 'package:V8WorkToolbox/tools/private_player/services/ai_subtitle_service.dart';
@@ -11,6 +12,9 @@ import 'package:V8WorkToolbox/tools/private_player/services/thumbnail_manager.da
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  try {
+    MediaKit.ensureInitialized();
+  } catch (_) {}
 
   group('PrivacySecurityService PIN Tests', () {
     test('hashPin produces deterministic SHA-256 hash with salt', () {
@@ -336,6 +340,39 @@ WEBVTT
 
       task.update(newThumbnailUrl: 'https://example.com/new_thumb.jpg');
       expect(task.thumbnailUrl, equals('https://example.com/new_thumb.jpg'));
+    });
+  });
+
+  group('PrivatePlayerController Fullscreen Tests', () {
+    test('isFullscreen toggles correctly with setFullscreen and toggleFullscreen', () async {
+      final ctrl = PrivatePlayerController();
+      try {
+        expect(ctrl.isFullscreen, isFalse);
+
+        ctrl.setFullscreen(true);
+        expect(ctrl.isFullscreen, isTrue);
+
+        ctrl.setFullscreen(false);
+        expect(ctrl.isFullscreen, isFalse);
+
+        bool hookCalled = false;
+        bool hookTarget = false;
+        ctrl.onFullscreenRequested = (enter) async {
+          hookCalled = true;
+          hookTarget = enter;
+        };
+
+        await ctrl.toggleFullscreen();
+        expect(hookCalled, isTrue);
+        expect(hookTarget, isTrue);
+
+        hookCalled = false;
+        await ctrl.toggleFullscreen(false);
+        expect(hookCalled, isTrue);
+        expect(hookTarget, isFalse);
+      } finally {
+        ctrl.dispose();
+      }
     });
   });
 }

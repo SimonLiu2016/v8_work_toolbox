@@ -22,8 +22,8 @@ The system SHALL provide intuitive controls including play/pause, seek scrub, vo
 - **THEN** player immediately adjusts audio pitch-compensated playback rate in real-time
 
 #### Scenario: Fullscreen presentation
-- **WHEN** user triggers the fullscreen action
-- **THEN** player expands to full display resolution with auto-hiding control overlays
+- **WHEN** user triggers the fullscreen action via control bar button, double-clicking video, or pressing `F` / `Enter`
+- **THEN** player expands to full display resolution with auto-hiding control overlays and coordinates with macOS native window fullscreen
 
 #### Scenario: Subtitle visibility default
 - **WHEN** a video or audio track is initially loaded
@@ -83,4 +83,23 @@ The system SHALL cache online poster thumbnails to private local storage, genera
 #### Scenario: Render visual thumbnails in media lists
 - **WHEN** user views Download Tasks, Playback History, or Favorites
 - **THEN** each item renders a 64x44 rounded thumbnail image with graceful fallback to a media icon when unavailable
+
+### Requirement: Fullscreen mouse and keyboard shortcuts
+The system SHALL support standard desktop keyboard and mouse shortcut interactions to manage playback and toggle fullscreen presentation.
+
+#### Scenario: Double-click to toggle fullscreen
+- **WHEN** user double-clicks anywhere on the active video viewport
+- **THEN** the system toggles between standard embedded mode and fullscreen mode
+
+#### Scenario: Keyboard shortcut fullscreen toggle
+- **WHEN** user presses `F` or `Enter` while focused on the video player
+- **THEN** the system toggles fullscreen presentation
+
+#### Scenario: Escape key to exit fullscreen
+- **WHEN** user presses `Escape` while the player is in fullscreen mode
+- **THEN** the player immediately exits fullscreen mode and restores the standard embedded view
+
+#### Scenario: Playback control shortcuts
+- **WHEN** user presses `Space` or arrow keys (`Left` / `Right`) while focused on the player
+- **THEN** `Space` toggles play/pause, and `Left`/`Right` jumps backward/forward 10 seconds without disrupting subtitle synchronization
 
