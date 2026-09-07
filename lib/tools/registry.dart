@@ -8,6 +8,7 @@ import '../clean_builds_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
+import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
 import 'tool_definition.dart';
@@ -184,6 +185,21 @@ class DocAudioReaderToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const DocAudioReaderPage();
 }
 
+class PrivateMediaPlayerToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'private-media-player';
+  @override
+  String get title => '私密影音播放器';
+  @override
+  String get subtitle => '支持多格式播放、主流在线解析下载、AI 实时与按需字幕生成';
+  @override
+  IconData get icon => Icons.play_circle_filled_rounded;
+  @override
+  ToolCategory get category => ToolCategory.privacy;
+  @override
+  Widget buildPage(BuildContext context) => const PrivateMediaPlayerPage();
+}
+
 /// ---------------------------------------------------------------------------
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
@@ -192,6 +208,8 @@ class ToolRegistry {
   ToolRegistry._();
 
   static final List<ToolDefinition> tools = <ToolDefinition>[
+    // 隐私空间
+    PrivateMediaPlayerToolDefinition(),
     // 文件处理
     DocAudioReaderToolDefinition(),
     BatchRenameToolDefinition(),
@@ -216,14 +234,18 @@ class ToolRegistry {
     }
   }
 
+  static List<ToolDefinition> get publicTools =>
+      tools.where((t) => t.category != ToolCategory.privacy).toList();
+
   static List<ToolDefinition> getByCategory(ToolCategory category) {
     return tools.where((t) => t.category == category).toList();
   }
 
-  static List<ToolDefinition> search(String query) {
+  static List<ToolDefinition> search(String query, {bool includePrivate = false}) {
+    final base = includePrivate ? tools : publicTools;
     final q = query.trim().toLowerCase();
-    if (q.isEmpty) return tools;
-    return tools.where((t) {
+    if (q.isEmpty) return base;
+    return base.where((t) {
       return t.title.toLowerCase().contains(q) ||
           t.subtitle.toLowerCase().contains(q);
     }).toList();

@@ -7,6 +7,7 @@ enum ActivityViewType {
   all,      // 全部/搜索
   category, // 按特定分类过滤
   ai,       // AI 能力配置
+  privacy,  // 隐私空间
 }
 
 class ActivityBar extends StatelessWidget {
@@ -79,9 +80,10 @@ class ActivityBar extends StatelessWidget {
           ),
           const SizedBox(height: AppTheme.space8),
 
-
-          // 工具分类项目
-          ...ToolCategory.values.map((cat) {
+          // 工具分类项目 (排除隐私空间)
+          ...ToolCategory.values
+              .where((cat) => cat != ToolCategory.privacy)
+              .map((cat) {
             final isSelected = currentView == ActivityViewType.category && currentCategory == cat;
             return Padding(
               padding: const EdgeInsets.only(bottom: AppTheme.space6),
@@ -96,6 +98,20 @@ class ActivityBar extends StatelessWidget {
               ),
             );
           }),
+
+          // 分隔线
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Divider(color: AppTheme.borderSubtle, height: 1),
+          ),
+
+          // 隐私空间专属栏目入口
+          _buildActivityItem(
+            icon: Icons.shield_outlined,
+            label: '隐私空间 (PIN 安全锁)',
+            isSelected: currentView == ActivityViewType.privacy,
+            onTap: () => onViewSelected(ActivityViewType.privacy),
+          ),
 
           const Spacer(),
 

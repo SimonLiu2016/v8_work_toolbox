@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 enum ToolCategory {
   file('文件处理', Icons.folder_outlined),
   build('包与构建', Icons.inventory_2_outlined),
-  system('系统与配置', Icons.tune_outlined);
+  system('系统与配置', Icons.tune_outlined),
+  privacy('隐私空间', Icons.shield_outlined);
 
   final String label;
   final IconData icon;

@@ -10,6 +10,7 @@ class ToolPanel extends StatefulWidget {
   final ValueChanged<String> onSelectTool;
   final bool isCollapsed;
   final VoidCallback onToggleCollapse;
+  final Widget? trailingAction;
 
   const ToolPanel({
     super.key,
@@ -19,6 +20,7 @@ class ToolPanel extends StatefulWidget {
     required this.onSelectTool,
     required this.isCollapsed,
     required this.onToggleCollapse,
+    this.trailingAction,
   });
 
   @override
@@ -138,7 +140,11 @@ class _ToolPanelState extends State<ToolPanel> {
                 ),
               ),
               AppBadge(label: '${widget.tools.length}'),
-              const SizedBox(width: AppTheme.space4),
+              if (widget.trailingAction != null) ...[
+                const SizedBox(width: AppTheme.space6),
+                widget.trailingAction!,
+              ],
+              const SizedBox(width: AppTheme.space6),
               IconButton(
                 icon: const Icon(Icons.chevron_left, size: 18),
                 color: AppTheme.textSecondary,
