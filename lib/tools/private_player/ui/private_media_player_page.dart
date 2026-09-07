@@ -5,6 +5,7 @@ import '../services/media_history_store.dart';
 import '../services/private_player_controller.dart';
 import '../services/private_storage_manager.dart';
 import 'ai_subtitles_dialog.dart';
+import 'media_thumbnail_widget.dart';
 import 'online_download_panel.dart';
 import 'private_player_view.dart';
 
@@ -206,18 +207,13 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                   final item = history[idx];
                   return ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    leading: Container(
-                      width: 44,
+                    leading: MediaThumbnailWidget(
+                      thumbnailPath: item.thumbnailUrl,
+                      videoPathOrUrl: item.urlOrPath,
+                      isOnline: item.isOnline,
+                      width: 64,
                       height: 44,
-                      decoration: BoxDecoration(
-                        color: AppTheme.bgCard,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        item.isOnline ? Icons.public_rounded : Icons.video_file_rounded,
-                        color: AppTheme.accent,
-                        size: 22,
-                      ),
+                      borderRadius: 6,
                     ),
                     title: Text(
                       item.title,
@@ -313,17 +309,17 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
             final item = favs[idx];
             return ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              leading: Container(
-                width: 44,
+              leading: MediaThumbnailWidget(
+                thumbnailPath: item.thumbnailUrl,
+                videoPathOrUrl: item.urlOrPath,
+                isOnline: item.isOnline,
+                width: 64,
                 height: 44,
-                decoration: BoxDecoration(
-                  color: AppTheme.bgCard,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.star_rounded,
-                  color: Colors.amber,
-                  size: 24,
+                borderRadius: 6,
+                overlay: const Positioned(
+                  top: 2,
+                  right: 2,
+                  child: Icon(Icons.star_rounded, color: Colors.amber, size: 14),
                 ),
               ),
               title: Text(

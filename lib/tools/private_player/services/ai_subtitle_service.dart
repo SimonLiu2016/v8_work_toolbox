@@ -6,7 +6,9 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import '../../../services/ai_config_store.dart';
 import '../../../services/ai_logger.dart';
+import '../../../services/ai_service.dart';
 import '../../../services/keychain_service.dart';
+import 'media_history_store.dart';
 import 'private_player_controller.dart';
 import 'private_storage_manager.dart';
 import 'ytdlp_video_parser.dart';
@@ -852,6 +854,148 @@ class AiSubtitleService {
         } catch (_) {}
       }
     }
+  }
+
+  /// 使用全局 text 模型槽位批量翻译字幕为中文（支持双语或纯中文）
+  Future<List<SubtitleSegment>> translateSubtitleSegments({
+    required List<SubtitleSegment> originalSegments,
+    bool bilingual = true,
+    void Function(String status, double? progress)? onProgress,
+  }) async {
+    if (originalSegments.isEmpty) return [];
+
+    const batchSize = 25;
+    final totalBatches = (originalSegments.length / batchSize).ceil();
+    final translatedSegments = <SubtitleSegment>[];
+
+    onProgress?.call('正在准备调用 AI 文本模型翻译字幕 (共 ${originalSegments.length} 句)...', 0.1);
+
+    for (int b = 0; b < totalBatches; b++) {
+      final startIdx = b * batchSize;
+      final endIdx = (startIdx + batchSize < originalSegments.length)
+          ? startIdx + batchSize
+          : originalSegments.length;
+      final currentBatch = originalSegments.sublist(startIdx, endIdx);
+
+      final pct = 0.1 + (b / totalBatches) * 0.85;
+      onProgress?.call('正在翻译第 ${b + 1}/$totalBatches 批字幕 (${startIdx + 1}~$endIdx 句)...', pct);
+
+      final itemsPayload = currentBatch.map((s) => {'id': s.id, 'text': s.text}).toList();
+      final prompt = '''
+请将以下字幕列表中的每一句严格翻译为流畅、地道、口语化的简体中文。
+要求：
+1. 保持原有的 id 编号不变，每个 id 必须对应一条翻译。
+2. 仅返回一个合法的 JSON 数组，严禁包含 markdown 标记、额外代码块、解释或前后缀说明。
+JSON 格式示例：
+[
+  {"id": 1, "text": "中文字幕"}
+]
+
+需要翻译的字幕数据如下：
+${jsonEncode(itemsPayload)}
+''';
+
+      try {
+        final chatRes = await AiService.instance.chat(
+          slot: 'text',
+          messages: [
+            {
+              'role': 'system',
+              'content': '你是一个顶级的专业影视与知识视频字幕翻译官。请输出严谨的 JSON 数组，翻译自然流畅。',
+            },
+            {
+              'role': 'user',
+              'content': prompt,
+            },
+          ],
+        );
+
+        final cleanText = chatRes.text.trim();
+        final jsonStart = cleanText.indexOf('[');
+        final jsonEnd = cleanText.lastIndexOf(']');
+        Map<int, String> translatedMap = {};
+
+        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd >= jsonStart) {
+          final jsonStr = cleanText.substring(jsonStart, jsonEnd + 1);
+          final decoded = jsonDecode(jsonStr);
+          if (decoded is List) {
+            for (final item in decoded) {
+              if (item is Map) {
+                final id = (item['id'] as num?)?.toInt();
+                final text = (item['text'] as String?)?.trim();
+                if (id != null && text != null && text.isNotEmpty) {
+                  translatedMap[id] = text;
+                }
+              }
+            }
+          }
+        }
+
+        for (final seg in currentBatch) {
+          final trans = translatedMap[seg.id];
+          final finalText = (trans != null && trans.isNotEmpty)
+              ? (bilingual ? '${seg.text}\n$trans' : trans)
+              : seg.text;
+          translatedSegments.add(SubtitleSegment(
+            id: seg.id,
+            start: seg.start,
+            end: seg.end,
+            text: finalText,
+          ));
+        }
+      } catch (e) {
+        debugPrint('第 ${b + 1} 批字幕翻译异常，降级保留原文: $e');
+        translatedSegments.addAll(currentBatch);
+      }
+    }
+
+    onProgress?.call('字幕翻译完成！', 1.0);
+    return translatedSegments;
+  }
+
+  /// 离线生成并翻译中文字幕（适用于本地已下载的视频）
+  Future<List<SubtitleSegment>> generateAndTranslateLocalSubtitles({
+    required String localVideoPath,
+    required String title,
+    bool bilingual = true,
+    void Function(String status, double? progress)? onProgress,
+  }) async {
+    // 1. 极速提取/生成基础字幕
+    onProgress?.call('正在为本地视频提取音频并转写字幕...', 0.1);
+    final baseSegments = await fastGenerateSubtitles(
+      videoPathOrUrl: localVideoPath,
+      title: title,
+      onProgress: (st, p) => onProgress?.call(st, p != null ? p * 0.5 : null),
+    );
+
+    if (baseSegments.isEmpty) {
+      throw Exception('未能在该视频中识别出有效语音字幕');
+    }
+
+    // 2. 调用全局 text 模型翻译字幕
+    onProgress?.call('正在调用 AI 文本模型全量翻译为中文字幕...', 0.5);
+    final translated = await translateSubtitleSegments(
+      originalSegments: baseSegments,
+      bilingual: bilingual,
+      onProgress: (st, p) => onProgress?.call(st, p != null ? 0.5 + p * 0.45 : null),
+    );
+
+    // 3. 保存专属中文字幕文件 (.zh.srt)
+    final safeTitle = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final zhFile = File(p.join(PrivateStorageManager.instance.subtitlesDir.path, '${safeTitle}_zh.srt'));
+    await saveSubtitleFile(
+      title: safeTitle,
+      segments: translated,
+      customPath: zhFile.path,
+    );
+
+    await MediaHistoryStore.instance.updateSubtitlePath(
+      urlOrPath: localVideoPath,
+      subtitlePath: zhFile.path,
+    );
+
+    onProgress?.call('中文字幕已就绪并保存！', 1.0);
+    return translated;
   }
 
   Future<List<SubtitleSegment>> _extractOnlineNativeSubtitles(String url) async {

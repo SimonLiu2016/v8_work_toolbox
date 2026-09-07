@@ -7,6 +7,7 @@ import 'package:V8WorkToolbox/tools/private_player/services/download_queue_manag
 import 'package:V8WorkToolbox/tools/private_player/services/media_history_store.dart';
 import 'package:V8WorkToolbox/tools/private_player/services/private_player_controller.dart';
 import 'package:V8WorkToolbox/tools/private_player/services/private_storage_manager.dart';
+import 'package:V8WorkToolbox/tools/private_player/services/thumbnail_manager.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -266,6 +267,75 @@ WEBVTT
       expect(AiSubtitleService.isSilenceOrFiller('欢迎观看本期视频'), isFalse);
       expect(AiSubtitleService.isSilenceOrFiller('Hello World'), isFalse);
       expect(AiSubtitleService.isSilenceOrFiller('嗯，这是非常重要的概念'), isFalse);
+    });
+  });
+
+  group('ThumbnailManager & Directory Tests', () {
+    test('getThumbnailFileName produces deterministic hash filename', () {
+      const url1 = 'https://example.com/video.mp4';
+      const url2 = 'https://example.com/video.mp4';
+      const path1 = '/Users/test/private/my_video.mkv';
+
+      final fn1 = ThumbnailManager.getThumbnailFileName(url1);
+      final fn2 = ThumbnailManager.getThumbnailFileName(url2);
+      final fn3 = ThumbnailManager.getThumbnailFileName(path1);
+
+      expect(fn1, equals(fn2));
+      expect(fn1.startsWith('thumb_'), isTrue);
+      expect(fn1.endsWith('.jpg'), isTrue);
+      expect(fn1, isNot(equals(fn3)));
+    });
+
+    test('buildFfmpegArgs builds valid screenshot extraction arguments', () {
+      final args = ThumbnailManager.buildFfmpegArgs(
+        '/Users/test/video.mp4',
+        '/Users/test/thumb.jpg',
+        atSecond: 2,
+      );
+
+      expect(args, contains('-y'));
+      expect(args, contains('-ss'));
+      expect(args, contains('00:00:02'));
+      expect(args, contains('-i'));
+      expect(args, contains('/Users/test/video.mp4'));
+      expect(args, contains('-vframes'));
+      expect(args, contains('1'));
+      expect(args.last, equals('/Users/test/thumb.jpg'));
+    });
+
+    test('buildFallbackFfmpegArgs builds fallback extraction arguments at 0.5s', () {
+      final args = ThumbnailManager.buildFallbackFfmpegArgs(
+        '/Users/test/short_clip.mp4',
+        '/Users/test/thumb.jpg',
+      );
+
+      expect(args, contains('-ss'));
+      expect(args, contains('00:00:00.5'));
+      expect(args.last, equals('/Users/test/thumb.jpg'));
+    });
+
+    test('thumbnailsDir is created during PrivateStorageManager init', () async {
+      final tempRoot = Directory.systemTemp.createTempSync('storage_thumb_test');
+      try {
+        await PrivateStorageManager.instance.init(customRoot: tempRoot);
+        expect(PrivateStorageManager.instance.thumbnailsDir.existsSync(), isTrue);
+      } finally {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    test('DownloadTask preserves and updates thumbnailUrl', () {
+      final task = DownloadTask(
+        id: 't_thumb',
+        url: 'https://example.com/video',
+        title: 'Video with Thumbnail',
+        thumbnailUrl: 'https://example.com/thumb.jpg',
+      );
+
+      expect(task.thumbnailUrl, equals('https://example.com/thumb.jpg'));
+
+      task.update(newThumbnailUrl: 'https://example.com/new_thumb.jpg');
+      expect(task.thumbnailUrl, equals('https://example.com/new_thumb.jpg'));
     });
   });
 }

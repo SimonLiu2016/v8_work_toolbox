@@ -30,6 +30,7 @@ class DownloadTask extends ChangeNotifier {
   String eta;
   String? outputPath;
   String? errorMessage;
+  String? thumbnailUrl;
   Process? _process;
 
   DownloadTask({
@@ -43,6 +44,7 @@ class DownloadTask extends ChangeNotifier {
     this.eta = '',
     this.outputPath,
     this.errorMessage,
+    this.thumbnailUrl,
   });
 
   void update({
@@ -53,6 +55,7 @@ class DownloadTask extends ChangeNotifier {
     String? newEta,
     String? newOutputPath,
     String? newError,
+    String? newThumbnailUrl,
   }) {
     if (newTitle != null) title = newTitle;
     if (newStatus != null) status = newStatus;
@@ -61,6 +64,7 @@ class DownloadTask extends ChangeNotifier {
     if (newEta != null) eta = newEta;
     if (newOutputPath != null) outputPath = newOutputPath;
     if (newError != null) errorMessage = newError;
+    if (newThumbnailUrl != null) thumbnailUrl = newThumbnailUrl;
     notifyListeners();
   }
 
@@ -93,6 +97,7 @@ class DownloadQueueManager extends ChangeNotifier {
     String url, {
     String? title,
     String? formatId,
+    String? thumbnailUrl,
   }) {
     final cleanUrl = url.trim();
     final existing = _tasks
@@ -102,6 +107,9 @@ class DownloadQueueManager extends ChangeNotifier {
                 t.status == DownloadStatus.downloading))
         .firstOrNull;
     if (existing != null) {
+      if (thumbnailUrl != null && existing.thumbnailUrl == null) {
+        existing.thumbnailUrl = thumbnailUrl;
+      }
       return existing;
     }
 
@@ -111,6 +119,7 @@ class DownloadQueueManager extends ChangeNotifier {
       url: cleanUrl,
       title: title ?? cleanUrl,
       formatId: formatId ?? 'bestvideo+bestaudio/best',
+      thumbnailUrl: thumbnailUrl,
     );
 
     _tasks.add(task);

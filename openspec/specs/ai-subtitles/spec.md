@@ -62,3 +62,18 @@ The system SHALL support Xiaomi MiMo's `mimo-v2.5-asr` model via the `/v1/chat/c
 - **WHEN** transcribing a full audio track with MiMo ASR
 - **THEN** system segments the audio into short time intervals with known start and end offsets, executes transcriptions using a concurrent worker pool, and stitches the resulting text into consecutive subtitle segments covering the entire timeline
 
+### Requirement: Offline local video subtitle generation and AI Chinese translation
+The system SHALL extract temporary audio from local downloaded videos, transcribe speech to text, and translate full subtitle files into Chinese using the global text LLM slot.
+
+#### Scenario: Offline local video audio extraction and ASR
+- **WHEN** user initiates subtitle generation on a local downloaded video
+- **THEN** system extracts lightweight temporary audio and transcribes it into timestamped subtitle segments
+
+#### Scenario: Full-track subtitle translation via text LLM
+- **WHEN** subtitle translation is requested or enabled
+- **THEN** system invokes the configured global text model slot in structured batches to translate subtitle segments into natural Chinese
+
+#### Scenario: Bilingual or pure Chinese subtitle persistence and mount
+- **WHEN** subtitle translation finishes
+- **THEN** system writes a standard .srt file into the private subtitles directory, updates media history, and mounts it to the player
+

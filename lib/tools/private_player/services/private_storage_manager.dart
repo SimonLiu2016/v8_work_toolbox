@@ -15,6 +15,7 @@ class PrivateStorageManager {
   Directory get downloadsDir => Directory(p.join(rootDir.path, 'downloads'));
   Directory get subtitlesDir => Directory(p.join(rootDir.path, 'subtitles'));
   Directory get tempAudioDir => Directory(p.join(rootDir.path, 'temp_audio'));
+  Directory get thumbnailsDir => Directory(p.join(rootDir.path, 'thumbnails'));
 
   File get _historyFile => File(p.join(rootDir.path, 'history.json'));
   File get _favoritesFile => File(p.join(rootDir.path, 'favorites.json'));
@@ -44,6 +45,9 @@ class PrivateStorageManager {
     }
     if (!tempAudioDir.existsSync()) {
       tempAudioDir.createSync(recursive: true);
+    }
+    if (!thumbnailsDir.existsSync()) {
+      thumbnailsDir.createSync(recursive: true);
     }
   }
 

@@ -1,9 +1,13 @@
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import '../../../services/ai_config_store.dart';
 import '../../../theme/app_theme.dart';
 import '../services/ai_subtitle_service.dart';
+import '../services/media_history_store.dart';
 import '../services/private_player_controller.dart';
+import '../services/private_storage_manager.dart';
 
 /// AI 语音转字幕操作与导出弹窗
 class AiSubtitlesDialog extends StatefulWidget {
@@ -35,6 +39,7 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
   String _errorText = '';
 
   int _selectedMode = 0; // 0: 按需区间 (前后10分钟), 1: 全量完整生成
+  bool _autoTranslateZh = true; // 是否同步调用文本大模型翻译为中文字幕
 
   @override
   Widget build(BuildContext context) {
@@ -163,6 +168,27 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
               ),
             ),
 
+            const SizedBox(height: 8),
+
+            // 是否调用大模型翻译为中文字幕
+            CheckboxListTile(
+              value: _autoTranslateZh,
+              onChanged: _isGenerating
+                  ? null
+                  : (val) => setState(() => _autoTranslateZh = val ?? true),
+              title: const Text(
+                '生成后调用 AI 文本模型翻译为中文字幕 (推荐)',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+              ),
+              subtitle: const Text(
+                '调用全局配置的 text 槽位大模型，将字幕分批全量翻译为中英双语字幕',
+                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+              ),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              activeColor: AppTheme.accent,
+            ),
+
             // 进度与状态反馈
             if (_isGenerating) ...[
               const SizedBox(height: AppTheme.space16),
@@ -260,7 +286,7 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
             if (mounted) {
               setState(() {
                 _statusText = st;
-                if (pct != null) _progressPct = pct;
+                if (pct != null) _progressPct = pct * (_autoTranslateZh ? 0.6 : 1.0);
               });
             }
           },
@@ -275,19 +301,51 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
         );
       }
 
+      if (_autoTranslateZh && segments.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _statusText = '正在调用 AI 文本大模型翻译为中文字幕...';
+            _progressPct = 0.65;
+          });
+        }
+        segments = await _subtitleService.translateSubtitleSegments(
+          originalSegments: segments,
+          bilingual: true,
+          onProgress: (st, pct) {
+            if (mounted) {
+              setState(() {
+                _statusText = st;
+                if (pct != null) _progressPct = 0.65 + pct * 0.34;
+              });
+            }
+          },
+        );
+      }
+
       ctrl.setSubtitles(segments);
       ctrl.toggleSubtitles(true); // 自动开启字幕
 
       // 自动异步保存至私密目录
+      final safeTitle = ctrl.currentTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final fileName = _autoTranslateZh ? '${safeTitle}_zh.srt' : '$safeTitle.srt';
+      final targetFile = File(p.join(PrivateStorageManager.instance.subtitlesDir.path, fileName));
       await _subtitleService.saveSubtitleFile(
-        title: ctrl.currentTitle,
+        title: safeTitle,
         segments: segments,
+        customPath: targetFile.path,
+      );
+
+      // 同步更新播放历史中关联的字幕路径
+      await MediaHistoryStore.instance.updateSubtitlePath(
+        urlOrPath: src,
+        subtitlePath: targetFile.path,
       );
 
       if (mounted) {
         setState(() {
           _isGenerating = false;
-          _statusText = '生成完毕，已自动加载至播放器';
+          _statusText = _autoTranslateZh ? '中文字幕已生成完毕并加载至播放器' : '字幕已生成完毕并加载至播放器';
+          _progressPct = 1.0;
         });
       }
     } catch (e) {

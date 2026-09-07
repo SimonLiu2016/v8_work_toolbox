@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import '../../../theme/app_theme.dart';
+import '../services/ai_subtitle_service.dart';
 import '../services/download_queue_manager.dart';
 import '../services/private_storage_manager.dart';
 import '../services/ytdlp_video_parser.dart';
+import 'media_thumbnail_widget.dart';
 
 /// 在线流媒体解析、批量下载与任务管理面板
 class OnlineDownloadPanel extends StatefulWidget {
@@ -375,6 +379,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                               info.originalUrl,
                               title: info.title,
                               formatId: _selectedFormat?.formatId ?? 'bestvideo+bestaudio/best',
+                              thumbnailUrl: info.thumbnailUrl,
                             );
                             _tabController.animateTo(2);
                           },
@@ -531,8 +536,31 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              // 状态图标
-              _buildStatusIcon(task.status),
+              // 视频缩略图与状态角标
+              Stack(
+                children: [
+                  MediaThumbnailWidget(
+                    thumbnailPath: task.thumbnailUrl,
+                    videoPathOrUrl: task.outputPath ?? task.url,
+                    isOnline: task.url.startsWith('http'),
+                    width: 64,
+                    height: 44,
+                    borderRadius: 6,
+                  ),
+                  Positioned(
+                    bottom: 2,
+                    right: 2,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: _buildStatusIcon(task.status),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(width: 14),
 
               // 标题与进度
@@ -608,14 +636,19 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
 
               const SizedBox(width: 16),
 
-              // 操作按钮 (播放 / 取消 / 重试)
+              // 操作按钮 (播放 / 离线生成中文字幕 / 访达 / 取消 / 重试)
               if (task.status == DownloadStatus.completed && task.outputPath != null) ...[
                 IconButton(
                   icon: const Icon(Icons.play_circle_fill_rounded, color: AppTheme.accent, size: 24),
                   tooltip: '在播放器中播放',
                   onPressed: () {
-                    widget.onPlayMedia(task.outputPath!, title: task.title);
+                    widget.onPlayMedia(task.outputPath!, title: task.title, thumbnail: task.thumbnailUrl);
                   },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
+                  tooltip: '离线生成并翻译中文字幕',
+                  onPressed: () => _handleGenerateChineseSubtitles(task),
                 ),
                 IconButton(
                   icon: const Icon(Icons.folder_open_rounded, color: AppTheme.textSecondary, size: 20),
@@ -644,28 +677,296 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
     );
   }
 
+  Future<void> _handleGenerateChineseSubtitles(DownloadTask task) async {
+    final path = task.outputPath;
+    if (path == null || !File(path).existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('本地视频文件不存在，无法生成字幕'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _OfflineSubtitleDialog(
+        videoPath: path,
+        title: task.title,
+        onPlayMedia: (urlOrPath, title) => widget.onPlayMedia(urlOrPath, title: title, thumbnail: task.thumbnailUrl),
+      ),
+    );
+  }
+
   Widget _buildStatusIcon(DownloadStatus status) {
     switch (status) {
       case DownloadStatus.completed:
-        return const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 20);
+        return const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 14);
       case DownloadStatus.downloading:
         return const SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.accent),
         );
       case DownloadStatus.merging:
         return const SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amber),
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.amber),
         );
       case DownloadStatus.failed:
-        return const Icon(Icons.error_outline_rounded, color: AppTheme.error, size: 20);
+        return const Icon(Icons.error_outline_rounded, color: AppTheme.error, size: 14);
       case DownloadStatus.cancelled:
-        return const Icon(Icons.cancel_outlined, color: Colors.white38, size: 20);
+        return const Icon(Icons.cancel_outlined, color: Colors.white38, size: 14);
       case DownloadStatus.queued:
-        return const Icon(Icons.hourglass_empty_rounded, color: Colors.white54, size: 20);
+        return const Icon(Icons.hourglass_empty_rounded, color: Colors.white54, size: 14);
     }
+  }
+}
+
+/// 离线生成并翻译中文字幕进度弹窗
+class _OfflineSubtitleDialog extends StatefulWidget {
+  final String videoPath;
+  final String title;
+  final void Function(String path, String title) onPlayMedia;
+
+  const _OfflineSubtitleDialog({
+    required this.videoPath,
+    required this.title,
+    required this.onPlayMedia,
+  });
+
+  @override
+  State<_OfflineSubtitleDialog> createState() => _OfflineSubtitleDialogState();
+}
+
+class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
+  bool _isProcessing = true;
+  String _statusText = '正在准备提取音频...';
+  double? _progress;
+  String _errorText = '';
+  String? _savedSubtitlePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _startOfflineSubtitles();
+  }
+
+  Future<void> _startOfflineSubtitles() async {
+    try {
+      final segments = await AiSubtitleService.instance.generateAndTranslateLocalSubtitles(
+        localVideoPath: widget.videoPath,
+        title: widget.title,
+        bilingual: true,
+        onProgress: (status, progress) {
+          if (mounted) {
+            setState(() {
+              _statusText = status;
+              _progress = progress;
+            });
+          }
+        },
+      );
+
+      final safeTitle = widget.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final zhPath = p.join(PrivateStorageManager.instance.subtitlesDir.path, '${safeTitle}_zh.srt');
+
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _savedSubtitlePath = zhPath;
+          _statusText = '字幕已成功生成并翻译完成！(共 ${segments.length} 句双语字幕)';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _errorText = e.toString().replaceAll('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.bgCard,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.borderSubtle),
+      ),
+      child: Container(
+        width: 480,
+        padding: const EdgeInsets.all(AppTheme.space24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '离线生成中文字幕',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      Text(
+                        widget.title,
+                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                if (!_isProcessing)
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20, color: AppTheme.textSecondary),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.space20),
+            if (_isProcessing) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _progress,
+                  backgroundColor: AppTheme.bgCard,
+                  valueColor: const AlwaysStoppedAnimation(Colors.amber),
+                  minHeight: 6,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _statusText,
+                style: const TextStyle(fontSize: 13, color: AppTheme.accent),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '全自动流水线：轻量音频切片 -> 并发语音转录 -> AI 文本大模型翻译为双语字幕',
+                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+              ),
+            ] else if (_errorText.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded, color: AppTheme.error, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _errorText,
+                        style: const TextStyle(fontSize: 12, color: AppTheme.error),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppTheme.space16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('关闭'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+                    onPressed: () {
+                      setState(() {
+                        _isProcessing = true;
+                        _errorText = '';
+                        _statusText = '准备重试...';
+                      });
+                      _startOfflineSubtitles();
+                    },
+                    child: const Text('重试', style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.success.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _statusText,
+                            style: const TextStyle(fontSize: 13, color: AppTheme.success, fontWeight: FontWeight.w500),
+                          ),
+                          if (_savedSubtitlePath != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '已保存至: ${p.basename(_savedSubtitlePath!)}',
+                              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppTheme.space20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('完成'),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.play_circle_fill_rounded, size: 18),
+                    label: const Text('立即播放'),
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      widget.onPlayMedia(widget.videoPath, widget.title);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
