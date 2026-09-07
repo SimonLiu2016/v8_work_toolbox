@@ -187,7 +187,12 @@ class EdgeTtsEngine implements TtsEngine {
 
 /// 2. OpenAI-Compatible 自定义 AI TTS 引擎 (接入商业大模型语音及 Chat Audio 规范)
 class OpenAiTtsEngine implements TtsEngine {
-  final http.Client _client = http.Client();
+  http.Client _client;
+  final http.Client Function()? _clientFactory;
+
+  OpenAiTtsEngine({http.Client? client, http.Client Function()? clientFactory})
+      : _clientFactory = clientFactory,
+        _client = client ?? (clientFactory != null ? clientFactory() : http.Client());
 
   @override
   Future<bool> isAvailable() async {
@@ -389,6 +394,7 @@ class OpenAiTtsEngine implements TtsEngine {
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
+      'Connection': 'close',
       if (apiKey.isNotEmpty) ...{
         'Authorization': 'Bearer $apiKey',
         'api-key': apiKey,
@@ -423,59 +429,98 @@ class OpenAiTtsEngine implements TtsEngine {
         },
       });
 
-      final stopwatch = Stopwatch()..start();
-      AiLogger.logRequest(
-        providerName: pName,
-        protocol: 'openai-chat-audio',
-        model: model,
-        endpoint: chatEndpoint,
-        promptSummary: 'TTS 合成 [音色: $voice, 语速: ${config.speed}x]: $text',
-      );
+      http.Response? response;
+      int retryCount = 0;
+      const maxRetries = 3;
 
-      http.Response response;
-      try {
-        response = await _client
-            .post(url, headers: headers, body: body)
-            .timeout(const Duration(seconds: 45));
-      } catch (e) {
-        AiLogger.logError('Chat Audio 请求网络异常: $e', providerName: pName);
-        rethrow;
-      }
+      while (true) {
+        final stopwatch = Stopwatch()..start();
+        AiLogger.logRequest(
+          providerName: pName,
+          protocol: 'openai-chat-audio',
+          model: model,
+          endpoint: chatEndpoint,
+          promptSummary: 'TTS 合成 [音色: $voice, 语速: ${config.speed}x]: $text',
+        );
 
-      if (response.statusCode == 200) {
-        final decodedJson = jsonDecode(utf8.decode(response.bodyBytes));
-        if (decodedJson is Map<String, dynamic>) {
-          final choices = decodedJson['choices'] as List?;
-          if (choices != null && choices.isNotEmpty) {
-            final firstChoice = choices.first as Map<String, dynamic>?;
-            final message = firstChoice?['message'] as Map<String, dynamic>?;
-            final audio = message?['audio'] as Map<String, dynamic>?;
-            final base64Data = audio?['data'] as String?;
-            if (base64Data != null && base64Data.isNotEmpty) {
-              final bytes = base64Decode(base64Data);
-              AiLogger.logResponse(
-                providerName: pName,
-                statusCode: 200,
-                durationMs: stopwatch.elapsedMilliseconds,
-                bodyPreview: '音频流解码成功, 大小: ${bytes.length} bytes (WAV)',
-              );
-              return bytes;
+        try {
+          response = await _client
+              .post(url, headers: headers, body: body)
+              .timeout(const Duration(seconds: 90));
+        } catch (e) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            AiLogger.logWarning(
+              '商用 TTS 网络连接波动 ($e)，重置连接并在 1.5s 后进行第 $retryCount 次重试...',
+              providerName: pName,
+            );
+            try {
+              _client.close();
+            } catch (_) {}
+            _client = _clientFactory != null ? _clientFactory!() : http.Client();
+            await Future.delayed(const Duration(milliseconds: 1500));
+            continue;
+          }
+          AiLogger.logError('Chat Audio 请求网络异常: $e', providerName: pName);
+          rethrow;
+        }
+
+        if (response.statusCode == 429 && retryCount < maxRetries) {
+          retryCount++;
+          const steppedDelays = [4000, 10000, 20000];
+          int delayMs = steppedDelays[retryCount - 1];
+          final retryAfterHeader = response.headers['retry-after'];
+          if (retryAfterHeader != null) {
+            final parsedSeconds = int.tryParse(retryAfterHeader.trim());
+            if (parsedSeconds != null && parsedSeconds > 0) {
+              final headerMs = parsedSeconds * 1000;
+              if (headerMs > delayMs) delayMs = headerMs;
             }
           }
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logWarning(
+            '商用 TTS 触发并发频率限制 (HTTP 429)，等待 ${delayMs ~/ 1000}s 后进行第 $retryCount 次自动重试... [响应: $errorMsg]',
+            providerName: pName,
+          );
+          await Future.delayed(Duration(milliseconds: delayMs));
+          continue;
         }
-        final err = 'Chat Audio 接口响应中未包含有效的音频数据: ${response.body}';
-        AiLogger.logError(err, providerName: pName);
-        throw Exception(err);
-      } else {
-        final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
-        AiLogger.logResponse(
-          providerName: pName,
-          statusCode: response.statusCode,
-          durationMs: stopwatch.elapsedMilliseconds,
-          bodyPreview: errorMsg,
-        );
-        AiLogger.logError('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
-        throw Exception('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
+
+        if (response.statusCode == 200) {
+          final decodedJson = jsonDecode(utf8.decode(response.bodyBytes));
+          if (decodedJson is Map<String, dynamic>) {
+            final choices = decodedJson['choices'] as List?;
+            if (choices != null && choices.isNotEmpty) {
+              final firstChoice = choices.first as Map<String, dynamic>?;
+              final message = firstChoice?['message'] as Map<String, dynamic>?;
+              final audio = message?['audio'] as Map<String, dynamic>?;
+              final base64Data = audio?['data'] as String?;
+              if (base64Data != null && base64Data.isNotEmpty) {
+                final bytes = base64Decode(base64Data);
+                AiLogger.logResponse(
+                  providerName: pName,
+                  statusCode: 200,
+                  durationMs: stopwatch.elapsedMilliseconds,
+                  bodyPreview: '音频流解码成功, 大小: ${bytes.length} bytes (WAV)',
+                );
+                return bytes;
+              }
+            }
+          }
+          final err = 'Chat Audio 接口响应中未包含有效的音频数据: ${response.body}';
+          AiLogger.logError(err, providerName: pName);
+          throw Exception(err);
+        } else {
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logResponse(
+            providerName: pName,
+            statusCode: response.statusCode,
+            durationMs: stopwatch.elapsedMilliseconds,
+            bodyPreview: errorMsg,
+          );
+          AiLogger.logError('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
+          throw Exception('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
+        }
       }
     } else {
       // 采用传统 OpenAI Audio Speech 规范 (POST /v1/audio/speech)
@@ -497,43 +542,82 @@ class OpenAiTtsEngine implements TtsEngine {
         'response_format': 'mp3',
       });
 
-      final stopwatch = Stopwatch()..start();
-      AiLogger.logRequest(
-        providerName: pName,
-        protocol: 'openai-speech',
-        model: model,
-        endpoint: speechEndpoint,
-        promptSummary: 'TTS 合成 [音色: $voice, 语速: ${config.speed}x]: $text',
-      );
+      http.Response? response;
+      int retryCount = 0;
+      const maxRetries = 3;
 
-      http.Response response;
-      try {
-        response = await _client
-            .post(url, headers: headers, body: body)
-            .timeout(const Duration(seconds: 45));
-      } catch (e) {
-        AiLogger.logError('OpenAI TTS 请求网络异常: $e', providerName: pName);
-        rethrow;
-      }
+      while (true) {
+        final stopwatch = Stopwatch()..start();
+        AiLogger.logRequest(
+          providerName: pName,
+          protocol: 'openai-speech',
+          model: model,
+          endpoint: speechEndpoint,
+          promptSummary: 'TTS 合成 [音色: $voice, 语速: ${config.speed}x]: $text',
+        );
 
-      if (response.statusCode == 200) {
-        AiLogger.logResponse(
-          providerName: pName,
-          statusCode: 200,
-          durationMs: stopwatch.elapsedMilliseconds,
-          bodyPreview: '音频流获取成功, 大小: ${response.bodyBytes.length} bytes',
-        );
-        return response.bodyBytes;
-      } else {
-        final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
-        AiLogger.logResponse(
-          providerName: pName,
-          statusCode: response.statusCode,
-          durationMs: stopwatch.elapsedMilliseconds,
-          bodyPreview: errorMsg,
-        );
-        AiLogger.logError('OpenAI TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
-        throw Exception('OpenAI TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
+        try {
+          response = await _client
+              .post(url, headers: headers, body: body)
+              .timeout(const Duration(seconds: 90));
+        } catch (e) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            AiLogger.logWarning(
+              '商用 TTS 网络连接波动 ($e)，重置连接并在 1.5s 后进行第 $retryCount 次重试...',
+              providerName: pName,
+            );
+            try {
+              _client.close();
+            } catch (_) {}
+            _client = _clientFactory != null ? _clientFactory!() : http.Client();
+            await Future.delayed(const Duration(milliseconds: 1500));
+            continue;
+          }
+          AiLogger.logError('OpenAI TTS 请求网络异常: $e', providerName: pName);
+          rethrow;
+        }
+
+        if (response.statusCode == 429 && retryCount < maxRetries) {
+          retryCount++;
+          const steppedDelays = [4000, 10000, 20000];
+          int delayMs = steppedDelays[retryCount - 1];
+          final retryAfterHeader = response.headers['retry-after'];
+          if (retryAfterHeader != null) {
+            final parsedSeconds = int.tryParse(retryAfterHeader.trim());
+            if (parsedSeconds != null && parsedSeconds > 0) {
+              final headerMs = parsedSeconds * 1000;
+              if (headerMs > delayMs) delayMs = headerMs;
+            }
+          }
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logWarning(
+            '商用 TTS 触发并发频率限制 (HTTP 429)，等待 ${delayMs ~/ 1000}s 后进行第 $retryCount 次自动重试... [响应: $errorMsg]',
+            providerName: pName,
+          );
+          await Future.delayed(Duration(milliseconds: delayMs));
+          continue;
+        }
+
+        if (response.statusCode == 200) {
+          AiLogger.logResponse(
+            providerName: pName,
+            statusCode: 200,
+            durationMs: stopwatch.elapsedMilliseconds,
+            bodyPreview: '音频流获取成功, 大小: ${response.bodyBytes.length} bytes',
+          );
+          return response.bodyBytes;
+        } else {
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logResponse(
+            providerName: pName,
+            statusCode: response.statusCode,
+            durationMs: stopwatch.elapsedMilliseconds,
+            bodyPreview: errorMsg,
+          );
+          AiLogger.logError('OpenAI TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
+          throw Exception('OpenAI TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
+        }
       }
     }
   }

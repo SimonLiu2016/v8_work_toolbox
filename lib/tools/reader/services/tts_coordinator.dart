@@ -61,16 +61,24 @@ class TtsSynthesisCoordinator extends ChangeNotifier {
     }
   }
 
+  void _safeNotifyListeners() {
+    if (!_isDisposed) {
+      notifyListeners();
+    }
+  }
+
   Future<String?> _doSynthesizeChunk(
     ReadingDocument document,
     ReadingChunk chunk,
   ) async {
+    if (_isDisposed) return null;
     chunk.status = ChunkSynthesisStatus.synthesizing;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final engine = TtsEngineFactory.createEngine(_config.mode);
       final audioBytes = await engine.synthesize(chunk.text, _config);
+      if (_isDisposed) return null;
 
       final file = await cacheManager.saveChunkAudio(
         document.id,
@@ -81,19 +89,50 @@ class TtsSynthesisCoordinator extends ChangeNotifier {
       chunk.audioCachePath = file.path;
       chunk.status = ChunkSynthesisStatus.cached;
       chunk.errorMessage = null;
-      notifyListeners();
+      _safeNotifyListeners();
       return file.path;
     } catch (e) {
+      if (_isDisposed) return null;
       chunk.status = ChunkSynthesisStatus.error;
       chunk.errorMessage = e.toString();
-      notifyListeners();
+      _safeNotifyListeners();
       return null;
     }
   }
 
+  int? _pendingCommercialIndex;
+  Future<void>? _sequentialPrefetchWorker;
+
   /// 滑动窗口超前预合成：确保当前播放段落之后的 N 段提前在后台合成
   void ensureAhead(ReadingDocument document, int currentIndex, {int lookahead = 2}) {
-    if (_isDisposed) return;
+    if (currentIndex >= document.chunks.length) return;
+
+    if (_config.mode == TtsMode.customAi) {
+      // 商用 AI 模式（如小米 MiMo）：严格单任务互斥串行预加载，杜绝并发打爆 429
+      _pendingCommercialIndex = currentIndex;
+      if (_sequentialPrefetchWorker != null) {
+        return;
+      }
+      _sequentialPrefetchWorker = () async {
+        try {
+          while (!_isDisposed && _pendingCommercialIndex != null) {
+            final target = _pendingCommercialIndex!;
+            _pendingCommercialIndex = null;
+            if (_isDisposed) break;
+            if (target < document.chunks.length) {
+              if (!cacheManager.isChunkCached(document.id, target) && !_inFlightTasks.containsKey(target)) {
+                await ensureChunkSynthesized(document, target);
+              }
+            }
+          }
+        } finally {
+          _sequentialPrefetchWorker = null;
+        }
+      }();
+      return;
+    }
+
+    // Edge-TTS 与 macOS 原生模式：支持并发滑动窗口预合成
     for (int i = currentIndex; i <= currentIndex + lookahead; i++) {
       if (i < document.chunks.length) {
         if (!cacheManager.isChunkCached(document.id, i) && !_inFlightTasks.containsKey(i)) {

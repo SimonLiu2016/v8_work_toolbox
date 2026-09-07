@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 /// 日志条目类型
 enum AiLogType {
@@ -51,6 +55,9 @@ class AiLogger {
   static const int maxEntries = 200;
 
   static final List<AiLogEntry> _entries = [];
+  static File? _logFile;
+  static bool _fileInitialized = false;
+  static Future<void> _writeQueue = Future.value();
 
   /// 供 UI 绑定的响应式通知器（每次变更抛出不可变列表副本）
   static final ValueNotifier<List<AiLogEntry>> notifier = ValueNotifier<List<AiLogEntry>>(const []);
@@ -64,7 +71,65 @@ class AiLogger {
     }
     _entries.add(entry);
     notifier.value = List.unmodifiable(_entries);
+    _appendToFile(entry);
   }
+
+  /// 异步串行写盘（带 5MB 自动文件轮转，安全静默防阻滞并杜绝多任务并发字节撕裂）
+  static void _appendToFile(AiLogEntry entry) {
+    _writeQueue = _writeQueue.then((_) async {
+      try {
+        if (!_fileInitialized) {
+          final home = Platform.environment['HOME'];
+          final baseDir = (Platform.isMacOS && home != null && home.isNotEmpty)
+              ? Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox', 'logs'))
+              : Directory(p.join(Directory.systemTemp.path, 'V8WorkToolbox', 'logs'));
+          if (!baseDir.existsSync()) {
+            baseDir.createSync(recursive: true);
+          }
+          _logFile = File(p.join(baseDir.path, 'ai.log'));
+          _fileInitialized = true;
+        }
+
+        if (_logFile != null) {
+          if (await _logFile!.exists()) {
+            final len = await _logFile!.length();
+            if (len > 5 * 1024 * 1024) {
+              final oldFile = File('${_logFile!.path}.old');
+              if (await oldFile.exists()) {
+                await oldFile.delete();
+              }
+              await _logFile!.rename(oldFile.path);
+            }
+          }
+
+          final buffer = StringBuffer();
+          buffer.write('[${entry.formattedTime}] [${entry.type.name.toUpperCase()}] Provider: ${entry.providerName}');
+          if (entry.protocol != null) buffer.write(' | Protocol: ${entry.protocol}');
+          if (entry.model != null) buffer.write(' | Model: ${entry.model}');
+          if (entry.statusCode != null) buffer.write(' | Status: ${entry.statusCode}');
+          if (entry.durationMs != null) buffer.write(' | ${entry.durationMs}ms');
+          buffer.writeln();
+          buffer.writeln('  Message: ${entry.message}');
+          if (entry.fullContent != null && entry.fullContent != entry.message) {
+            buffer.writeln('  Details: ${entry.fullContent}');
+          }
+          buffer.writeln('--------------------------------------------------');
+
+          await _logFile!.writeAsString(
+            buffer.toString(),
+            mode: FileMode.append,
+            encoding: utf8,
+            flush: false,
+          );
+        }
+      } catch (_) {
+        // 忽略后台写盘异常
+      }
+    });
+  }
+
+  /// 刷新等待所有进行中的日志写盘任务完成
+  static Future<void> flush() => _writeQueue;
 
   /// 清空所有内存日志
   static void clear() {

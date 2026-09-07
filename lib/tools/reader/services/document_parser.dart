@@ -8,80 +8,283 @@ import '../models/reader_models.dart';
 
 /// 智能段落与标点切片器
 class ParagraphChunker {
-  /// 单片最小建议字数与最大建议字数
-  static const int minChunkChars = 60;
-  static const int maxChunkChars = 260;
+  /// 单片最小建议字数与最大建议字数 (契合商用 TTS 最佳实践：300~600 字符)
+  static const int minChunkChars = 250;
+  static const int maxChunkChars = 600;
+  static const int hardMaxChars = 1000;
 
-  /// 将纯文本切分为适合 TTS 朗读与高亮对齐的切片列表
-  static List<ReadingChunk> chunkText(String fullText) {
-    if (fullText.trim().isEmpty) return [];
-
-    final rawParagraphs = fullText.split(RegExp(r'\r?\n\s*\r?\n|\r?\n'));
-    final chunks = <ReadingChunk>[];
-    int currentOffset = 0;
-    int chunkIndex = 0;
-
-    for (var para in rawParagraphs) {
-      final trimmed = para.trim();
-      if (trimmed.isEmpty) {
-        currentOffset += para.length + 1;
-        continue;
-      }
-
-      // 如果段落较短，直接作为一个独立切片
-      if (trimmed.length <= maxChunkChars) {
-        chunks.add(ReadingChunk(
-          index: chunkIndex++,
-          text: trimmed,
-          startChar: currentOffset,
-          endChar: currentOffset + trimmed.length,
-        ));
-        currentOffset += para.length + 1;
-      } else {
-        // 段落较长，按标点符号细切
-        final subChunks = _splitByPunctuation(trimmed, maxChunkChars);
-        int subOffset = currentOffset;
-        for (final sub in subChunks) {
-          if (sub.trim().isNotEmpty) {
-            chunks.add(ReadingChunk(
-              index: chunkIndex++,
-              text: sub.trim(),
-              startChar: subOffset,
-              endChar: subOffset + sub.length,
-            ));
-          }
-          subOffset += sub.length;
-        }
-        currentOffset += para.length + 1;
-      }
-    }
-
-    return chunks;
+  /// 判断字符是否属于 CJK 字符集（中日韩统一表意文字及符号标点）
+  static bool isCjk(int codeUnit) {
+    return (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) ||
+        (codeUnit >= 0x3400 && codeUnit <= 0x4DBF) ||
+        (codeUnit >= 0x20000 && codeUnit <= 0x2A6DF) ||
+        (codeUnit >= 0xF900 && codeUnit <= 0xFAFF) ||
+        (codeUnit >= 0x3000 && codeUnit <= 0x303F) ||
+        (codeUnit >= 0xFF00 && codeUnit <= 0xFFEF);
   }
 
-  /// 依据中英文句子标点断句
-  static List<String> _splitByPunctuation(String text, int maxChars) {
+  /// 判断字符是否为拉丁字母或数字
+  static bool isLatinOrDigit(int codeUnit) {
+    return (codeUnit >= 0x30 && codeUnit <= 0x39) ||
+        (codeUnit >= 0x41 && codeUnit <= 0x5A) ||
+        (codeUnit >= 0x61 && codeUnit <= 0x7A);
+  }
+
+  /// 判断文本行是否以标题、章节编号或列表项符号开头
+  static bool isHeadingOrListItem(String line) {
+    final trimmed = line.trimLeft();
+    if (trimmed.isEmpty) return false;
+    final listPattern = RegExp(
+      r'^(?:(?:\d+|[一二三四五六七八九十百]+)[\.、\)]|\((?:\d+|[一二三四五六七八九十百]+)\)|\[\d+\]|[-*•·]|\#{1,6}\s|【)',
+    );
+    return listPattern.hasMatch(trimmed);
+  }
+
+  /// 第一阶段：消解视觉硬回车软换行 (De-wrapping) 与段落规范化
+  static String dewrapText(String fullText) {
+    if (fullText.trim().isEmpty) return '';
+
+    // 1. 统一回车换行符
+    final normalized = fullText.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+    // 2. 双换行及以上视为显式独立段落
+    final rawBlocks = normalized.split(RegExp(r'\n\s*\n+'));
+    final cleanedBlocks = <String>[];
+
+    for (final rawBlock in rawBlocks) {
+      final lines = rawBlock.split('\n');
+      final buffer = StringBuffer();
+
+      for (int i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.isEmpty) continue;
+
+        if (buffer.isEmpty) {
+          buffer.write(line);
+          continue;
+        }
+
+        // 如果下一行是明确的列表项或小标题，保留换行
+        if (isHeadingOrListItem(line)) {
+          buffer.write('\n');
+          buffer.write(line);
+          continue;
+        }
+
+        final prevStr = buffer.toString();
+        final prevLastCode = prevStr.codeUnitAt(prevStr.length - 1);
+        final nextFirstCode = line.codeUnitAt(0);
+
+        // 如果上一行末尾是破折号或软连字符 '-'，直接拼合
+        if (prevLastCode == 0x2D) {
+          buffer.write(line);
+        } else if (isLatinOrDigit(prevLastCode) && isLatinOrDigit(nextFirstCode)) {
+          // 拉丁词汇之间保留单空格
+          buffer.write(' ');
+          buffer.write(line);
+        } else if (isCjk(prevLastCode) || isCjk(nextFirstCode)) {
+          // CJK 之间或 CJK 与英文之间直接无缝焊接，不插入空格
+          buffer.write(line);
+        } else {
+          // 符号或其他情况保留单个空格
+          buffer.write(' ');
+          buffer.write(line);
+        }
+      }
+
+      var blockText = buffer.toString().trim();
+      // 清洗目录或排版中的长串填充虚线 (如 .............. 1) 与下划线，避免语音逐字读出数十个点号
+      blockText = blockText
+          .replaceAll(RegExp(r'[\.·•]{3,}'), ' ')
+          .replaceAll(RegExp(r'…{2,}'), ' ')
+          .replaceAll(RegExp(r'_{3,}'), ' ')
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+      if (blockText.isNotEmpty) {
+        cleanedBlocks.add(blockText);
+      }
+    }
+
+    return cleanedBlocks.join('\n\n');
+  }
+
+  /// 将规范化文本按照中英文标点断句，保留完整句子及末尾标点
+  static List<String> extractSentences(String text) {
+    if (text.trim().isEmpty) return [];
+
+    final sentences = <String>[];
+    final buffer = StringBuffer();
+    final chars = text.runes.toList();
+
+    bool isTerminator(int r, int? nextR) {
+      if (r == 0x3002 /* 。 */ ||
+          r == 0xFF01 /* ！ */ ||
+          r == 0xFF1F /* ？ */ ||
+          r == 0xFF1B /* ； */) {
+        return true;
+      }
+      if (r == 0x0A /* \n */) {
+        return true;
+      }
+      if (r == 0x2E /* . */ ||
+          r == 0x21 /* ! */ ||
+          r == 0x3F /* ? */ ||
+          r == 0x3B /* ; */) {
+        if (nextR == null ||
+            nextR == 0x20 /* space */ ||
+            nextR == 0x0A /* \n */ ||
+            nextR == 0x22 /* " */ ||
+            nextR == 0x27 /* ' */ ||
+            nextR == 0x201D /* ” */ ||
+            nextR == 0x2019 /* ’ */ ||
+            nextR == 0xFF09 /* ） */ ||
+            nextR == 0x29 /* ) */) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool isClosingQuoteOrBracket(int r) {
+      return r == 0x201D /* ” */ ||
+          r == 0x2019 /* ’ */ ||
+          r == 0x0022 /* " */ ||
+          r == 0x0027 /* ' */ ||
+          r == 0xFF09 /* ） */ ||
+          r == 0x0029 /* ) */ ||
+          r == 0x300B /* 》 */ ||
+          r == 0x3011 /* 】 */;
+    }
+
+    int i = 0;
+    while (i < chars.length) {
+      final r = chars[i];
+      buffer.writeCharCode(r);
+
+      final nextR = (i + 1 < chars.length) ? chars[i + 1] : null;
+      if (isTerminator(r, nextR)) {
+        i++;
+        while (i < chars.length && isClosingQuoteOrBracket(chars[i])) {
+          buffer.writeCharCode(chars[i]);
+          i++;
+        }
+        final sentence = buffer.toString().trim();
+        if (sentence.isNotEmpty) {
+          sentences.add(sentence);
+        }
+        buffer.clear();
+        continue;
+      }
+      i++;
+    }
+
+    if (buffer.isNotEmpty) {
+      final remaining = buffer.toString().trim();
+      if (remaining.isNotEmpty) {
+        sentences.add(remaining);
+      }
+    }
+
+    return sentences;
+  }
+
+  /// 针对超长单句（> 600 字）按逗号等二级标点切分
+  static List<String> _splitLongSentence(String text, int maxChars) {
     final result = <String>[];
-    final sentenceReg = RegExp(r'[^。！？；\n\.!\?;]+[。！？；\n\.!\?;]?');
-    final matches = sentenceReg.allMatches(text);
+    final subRegex = RegExp(r'[^，,、：:\n]+[，,、：:\n]?');
+    final matches = subRegex.allMatches(text);
 
     final buffer = StringBuffer();
-    for (final match in matches) {
-      final sentence = match.group(0) ?? '';
-      if (buffer.length + sentence.length > maxChars && buffer.isNotEmpty) {
-        result.add(buffer.toString());
+    for (final m in matches) {
+      final part = m.group(0) ?? '';
+      if (buffer.length + part.length > maxChars && buffer.isNotEmpty) {
+        result.add(buffer.toString().trim());
         buffer.clear();
       }
-      buffer.write(sentence);
+      buffer.write(part);
     }
     if (buffer.isNotEmpty) {
-      result.add(buffer.toString());
+      result.add(buffer.toString().trim());
     }
-
     if (result.isEmpty && text.isNotEmpty) {
       result.add(text);
     }
     return result;
+  }
+
+  /// 将纯文本智能消解软换行并聚合切分为 300~600 字符的意群切片列表
+  static List<ReadingChunk> chunkText(
+    String fullText, {
+    int targetMinChars = minChunkChars,
+    int targetMaxChars = maxChunkChars,
+  }) {
+    if (fullText.trim().isEmpty) return [];
+
+    final dewrapped = dewrapText(fullText);
+    if (dewrapped.isEmpty) return [];
+
+    final sentences = extractSentences(dewrapped);
+    if (sentences.isEmpty) return [];
+
+    final chunks = <ReadingChunk>[];
+    final buffer = StringBuffer();
+    int chunkIndex = 0;
+    int currentOffset = 0;
+
+    void flushBuffer() {
+      final chunkStr = buffer.toString().trim();
+      if (chunkStr.isNotEmpty) {
+        chunks.add(ReadingChunk(
+          index: chunkIndex++,
+          text: chunkStr,
+          startChar: currentOffset,
+          endChar: currentOffset + chunkStr.length,
+        ));
+        currentOffset += chunkStr.length + 1;
+        buffer.clear();
+      }
+    }
+
+    for (final s in sentences) {
+      if (s.isEmpty) continue;
+
+      if (s.length > targetMaxChars) {
+        final subs = _splitLongSentence(s, targetMaxChars);
+        for (final sub in subs) {
+          if (buffer.length + sub.length > targetMaxChars && buffer.length >= targetMinChars) {
+            flushBuffer();
+          }
+          if (buffer.isNotEmpty) {
+            final prevCode = buffer.toString().codeUnitAt(buffer.length - 1);
+            final nextCode = sub.codeUnitAt(0);
+            if (isLatinOrDigit(prevCode) && isLatinOrDigit(nextCode)) {
+              buffer.write(' ');
+            }
+          }
+          buffer.write(sub);
+        }
+        continue;
+      }
+
+      if (buffer.length + s.length > targetMaxChars && buffer.length >= targetMinChars) {
+        flushBuffer();
+      }
+
+      if (buffer.isNotEmpty) {
+        final prevCode = buffer.toString().codeUnitAt(buffer.length - 1);
+        final nextCode = s.codeUnitAt(0);
+        if (isLatinOrDigit(prevCode) && isLatinOrDigit(nextCode)) {
+          buffer.write(' ');
+        }
+      }
+      buffer.write(s);
+    }
+
+    if (buffer.isNotEmpty) {
+      flushBuffer();
+    }
+
+    return chunks;
   }
 }
 
@@ -240,25 +443,19 @@ class DocumentParser {
   static Future<ReadingDocument> _parsePdf(File file, String title, String path) async {
     String extractedText = '';
 
-    // 在 macOS 上使用 PDFKit 进行原生解析 (支持所有标准 PDF 文本层)
+    // 在 macOS 上使用 PDFKit 进行原生解析 (通过 JXA 脚本执行原生 Objective-C PDFDocument 运行时)
     if (Platform.isMacOS) {
       try {
-        final script = '''
-import PDFKit
-import Foundation
-
-let url = URL(fileURLWithPath: "${path.replaceAll('"', '\\"')}")
-if let doc = PDFDocument(url: url) {
-    var text = ""
-    for i in 0..<doc.pageCount {
-        if let page = doc.page(at: i), let pageText = page.string {
-            text += pageText + "\\n\\n"
-        }
-    }
-    print(text)
+        const jxaScript = '''
+function run(argv) {
+  ObjC.import("PDFKit");
+  ObjC.import("Foundation");
+  var url = \$.NSURL.fileURLWithPath(argv[0]);
+  var doc = \$.PDFDocument.alloc.initWithURL(url);
+  return (doc && doc.string) ? doc.string.js : "";
 }
 ''';
-        final proc = await Process.run('swift', ['-e', script]);
+        final proc = await Process.run('osascript', ['-l', 'JavaScript', '-e', jxaScript, path]);
         if (proc.exitCode == 0 && proc.stdout is String) {
           extractedText = (proc.stdout as String).trim();
         }

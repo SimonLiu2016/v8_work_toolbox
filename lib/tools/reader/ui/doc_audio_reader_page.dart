@@ -5,10 +5,12 @@ import '../services/audio_cache_manager.dart';
 import '../services/audio_reader_controller.dart';
 import '../services/document_parser.dart';
 import '../services/mp3_export_service.dart';
+import '../services/reader_config_store.dart';
 import '../services/tts_coordinator.dart';
 import '../services/tts_engine.dart';
 import '../../../../services/ai_config_store.dart';
 import '../../../../shell/ai_config_page.dart';
+import '../../../../shell/ai_log_dialog.dart';
 
 /// 文档与网页 AI 语音朗读助手页面
 class DocAudioReaderPage extends StatefulWidget {
@@ -24,6 +26,7 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
   late final AudioReaderController _controller;
   late final Mp3ExportService _exportService;
   final ScrollController _scrollController = ScrollController();
+  int? _lastScrolledChunkIndex;
 
   bool _isLoading = false;
   String _loadingMessage = '';
@@ -33,11 +36,23 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
   void initState() {
     super.initState();
     _cacheManager = AudioCacheManager();
-    _coordinator = TtsSynthesisCoordinator(cacheManager: _cacheManager);
+    _coordinator = TtsSynthesisCoordinator(
+      cacheManager: _cacheManager,
+      config: ReaderConfigStore.instance.config,
+    );
     _controller = AudioReaderController(coordinator: _coordinator);
     _exportService = Mp3ExportService(coordinator: _coordinator);
 
     _controller.addListener(_onControllerUpdate);
+    _loadPersistedConfig();
+  }
+
+  Future<void> _loadPersistedConfig() async {
+    final cfg = await ReaderConfigStore.instance.loadConfig();
+    if (mounted) {
+      _coordinator.updateConfig(cfg);
+      setState(() {});
+    }
   }
 
   void _onControllerUpdate() {
@@ -61,7 +76,11 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
         );
       }
       setState(() {});
-      _scrollToActiveChunk();
+      // 仅当正在朗读的段落索引发生切换时才触发自动滚动，杜绝 200ms 音频播放进度 tick 强行拉回并锁死手动滑动
+      if (_controller.currentChunkIndex != _lastScrolledChunkIndex) {
+        _lastScrolledChunkIndex = _controller.currentChunkIndex;
+        _scrollToActiveChunk();
+      }
     }
   }
 
@@ -256,6 +275,7 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
         initialConfig: _coordinator.config,
         onConfigChanged: (newConfig) {
           _coordinator.updateConfig(newConfig);
+          ReaderConfigStore.instance.saveConfig(newConfig);
           setState(() {});
         },
       ),
@@ -313,6 +333,11 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
             label: const Text('导出 MP3'),
           ),
           const SizedBox(width: 8),
+          IconButton(
+            onPressed: () => AiLogDialog.show(context),
+            icon: const Icon(Icons.receipt_long_rounded),
+            tooltip: 'AI 实时调用日志',
+          ),
           IconButton(
             onPressed: _showSettingsModal,
             icon: const Icon(Icons.tune_rounded),
@@ -706,6 +731,41 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
             hasDoc ? '${currentIdx + 1} / $total 段' : '未就绪',
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           ),
+          if (isBuffering) ...[
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade500.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.amber.shade600.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 10,
+                    height: 10,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: Colors.amber.shade700,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _coordinator.config.mode == TtsMode.customAi
+                        ? 'AI 语音生成中 (长段落约需十数秒)...'
+                        : '语音缓冲中...',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.amber.shade300 : Colors.amber.shade800,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const Spacer(),
           // 当前音色标签
           ActionChip(

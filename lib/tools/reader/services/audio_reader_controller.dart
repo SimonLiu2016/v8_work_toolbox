@@ -92,17 +92,16 @@ class AudioReaderController extends ChangeNotifier {
     });
   }
 
-  /// 载入新文档并预取前序切片
+  /// 载入新文档
   Future<void> loadDocument(ReadingDocument doc) async {
-    await stop();
+    if (_playbackState != ReaderPlaybackState.stopped) {
+      await stop();
+    }
     _document = doc;
     _currentChunkIndex = 0;
     _currentPosition = Duration.zero;
     _chunkDuration = Duration.zero;
     notifyListeners();
-
-    // 预加载前两段
-    coordinator.ensureAhead(doc, 0, lookahead: 2);
   }
 
   /// 开始或恢复播放当前段落
@@ -182,9 +181,7 @@ class AudioReaderController extends ChangeNotifier {
     _playbackState = ReaderPlaybackState.buffering;
     notifyListeners();
 
-    // 触发超前合成当前段后方的切片
-    coordinator.ensureAhead(_document!, index, lookahead: 2);
-
+    // 优先确保当前段落最高优先级合成（不与后台预取并发竞争）
     final audioPath = await coordinator.ensureChunkSynthesized(_document!, index);
 
     if (audioPath == null || audioPath.isEmpty) {
@@ -206,6 +203,11 @@ class AudioReaderController extends ChangeNotifier {
       await _player.play(DeviceFileSource(audioPath));
       _playbackState = ReaderPlaybackState.playing;
       notifyListeners();
+
+      // 当前段已顺利开播，安全触发下一段（index + 1）后台串行预取，绝无并发打爆
+      if (index + 1 < _document!.chunks.length) {
+        coordinator.ensureAhead(_document!, index + 1, lookahead: 1);
+      }
     } catch (e) {
       _playbackState = ReaderPlaybackState.stopped;
       _lastErrorMessage = '音频播放失败: $e';

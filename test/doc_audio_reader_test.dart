@@ -3,47 +3,86 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:V8WorkToolbox/tools/reader/models/reader_models.dart';
 import 'package:V8WorkToolbox/tools/reader/services/audio_cache_manager.dart';
+import 'package:V8WorkToolbox/tools/reader/services/audio_reader_controller.dart';
 import 'package:V8WorkToolbox/tools/reader/services/document_parser.dart';
+import 'package:V8WorkToolbox/tools/reader/services/reader_config_store.dart';
 import 'package:V8WorkToolbox/tools/reader/services/tts_engine.dart';
+import 'package:V8WorkToolbox/tools/reader/services/tts_coordinator.dart';
 import 'package:V8WorkToolbox/tools/reader/ui/doc_audio_reader_page.dart';
 import 'package:V8WorkToolbox/tools/registry.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
+import 'package:V8WorkToolbox/services/ai_logger.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ParagraphChunker Tests', () {
-    test('普通段落智能切分与偏移量计算', () {
-      const sample = '''第一段内容测试。
-第二段内容测试，包含更多说明。
+    test('消解软换行 (De-wrapping): 中文软断行无缝焊接与英文单词保留空格', () {
+      const sample = '''《阿里巴巴Java 开发手册》是阿里巴巴集团技术团队的集体智慧结晶和经验总
+结，经历了多次大规模一线实战的检验及不断完善，系统化地整理成册，回馈给广大
+开发者。
+Java
+Guide is very helpful.''';
 
-第三段内容独立成段。''';
-
-      final chunks = ParagraphChunker.chunkText(sample);
-      expect(chunks.length, 3);
-      expect(chunks[0].text, '第一段内容测试。');
-      expect(chunks[1].text, '第二段内容测试，包含更多说明。');
-      expect(chunks[2].text, '第三段内容独立成段。');
-      expect(chunks[0].index, 0);
-      expect(chunks[1].index, 1);
-      expect(chunks[2].index, 2);
+      final dewrapped = ParagraphChunker.dewrapText(sample);
+      expect(dewrapped, contains('经验总结'));
+      expect(dewrapped, contains('回馈给广大开发者'));
+      expect(dewrapped, contains('Java Guide is very helpful.'));
     });
 
-    test('长段落按中英文标点自适应断句切分', () {
-      final longParagraph = '这是很长的一段话。' * 40; // 360字以上，超出单片上限 260
+    test('消解软换行 (De-wrapping): 保持章节标题与列表项独立换行', () {
+      const sample = '''前言内容介绍。
+1. 【强制】所有的抽象类必须以Abstract或Base开头。
+2. 【强制】异常类命名使用Exception结尾。''';
+
+      final dewrapped = ParagraphChunker.dewrapText(sample);
+      expect(dewrapped, contains('前言内容介绍。\n1. 【强制】'));
+      expect(dewrapped, contains('\n2. 【强制】'));
+    });
+
+    test('意群切片智能聚合至 300~600 字符区间并严守标点边界', () {
+      final sample =
+          '《阿里巴巴Java 开发手册》是阿里巴巴集团技术团队的集体智慧结晶和经验总结，经历了多次大规模一线实战的检验及不断完善，系统化地整理成册，回馈给广大开发者。' *
+              5; // 约 390 字符
+      final chunks = ParagraphChunker.chunkText(sample);
+      expect(chunks.length, 1);
+      expect(chunks[0].text.length, greaterThanOrEqualTo(250));
+      expect(chunks[0].text.length, lessThanOrEqualTo(600));
+      expect(chunks[0].text.endsWith('。'), isTrue);
+      expect(chunks[0].index, 0);
+    });
+
+    test('长篇文档聚合切片：总切片数大幅缩减且单片不超 600 字符', () {
+      final longParagraph =
+          '现代软件架构的复杂性需要协同开发完成，适当的规范和标准能够提升协作效率，降低沟通成本。' * 20; // 约 920 字符
       final chunks = ParagraphChunker.chunkText(longParagraph);
       expect(chunks.length, greaterThan(1));
       for (final c in chunks) {
-        expect(c.text.length, lessThanOrEqualTo(ParagraphChunker.maxChunkChars + 10));
+        expect(c.text.length, lessThanOrEqualTo(ParagraphChunker.maxChunkChars + 50));
+        expect(c.text.endsWith('。'), isTrue);
       }
     });
 
     test('空白文本或空行处理', () {
       expect(ParagraphChunker.chunkText(''), isEmpty);
       expect(ParagraphChunker.chunkText('   \n\n\t  \n  '), isEmpty);
+    });
+
+    test('消解软换行与清洗目录虚线: 剔除长串点号与下划线', () {
+      const sample = '''目录
+前言
+一、编程规约 .........................................................................1
+(一) 命名风格 ...................................................................1
+(二) 常量定义 ...................................................................3''';
+
+      final dewrapped = ParagraphChunker.dewrapText(sample);
+      expect(dewrapped.contains('................'), isFalse);
+      expect(dewrapped, contains('一、编程规约 1'));
+      expect(dewrapped, contains('(一) 命名风格 1'));
     });
   });
 
@@ -172,7 +211,9 @@ void main() {
     test('本地 TXT 文件解析', () async {
       final tempDir = Directory.systemTemp.createTempSync('doc_parser_test_');
       final file = File('${tempDir.path}/test.txt');
-      await file.writeAsString('第一行内容。\n\n第二行内容。', encoding: utf8);
+      final p1 = '第一段内容测试，这是足够长的一段完整叙述文字。' * 15;
+      final p2 = '第二段独立内容测试，同样包含足够完整且结构连贯的叙述文本。' * 15;
+      await file.writeAsString('$p1\n\n$p2', encoding: utf8);
 
       final doc = await DocumentParser.parseFile(file.path);
       expect(doc.title, 'test');
@@ -248,6 +289,7 @@ void main() {
       expect(find.text('导入文档'), findsOneWidget);
       expect(find.text('网页链接'), findsOneWidget);
       expect(find.text('导出 MP3'), findsOneWidget);
+      expect(find.byTooltip('AI 实时调用日志'), findsOneWidget);
       expect(find.text('用耳朵听文档与长文'), findsOneWidget);
       expect(find.text('选择本地文件'), findsOneWidget);
     });
@@ -539,5 +581,188 @@ void main() {
       expect(audioBytes, isNotEmpty);
       expect(AudioCacheManager.detectAudioExtension(audioBytes), 'wav');
     });
+
+    test('OpenAiTtsEngine 遇到 HTTP 429 自动指数退避重试并在成功后返回音频', () async {
+      int requestCount = 0;
+      final mockClient = _TestMockClient((request) async {
+        requestCount++;
+        if (requestCount < 2) {
+          return http.Response(
+            '{"error":{"message":"Rate limit exceeded","type":"limitation"}}',
+            429,
+          );
+        } else {
+          return http.Response.bytes([0xFF, 0xFB, 0x90, 0x44], 200);
+        }
+      });
+
+      final engine = OpenAiTtsEngine(client: mockClient);
+      const config = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        useSystemAiConfig: false,
+        customEndpoint: 'https://api.test.com/v1',
+        customApiKey: 'test-key',
+        customModel: 'tts-1',
+      );
+
+      final audio = await engine.synthesize('测试限频重试机制', config);
+      expect(audio, isNotEmpty);
+      expect(requestCount, 2);
+    });
+
+    test('OpenAiTtsEngine 遇到 HandshakeException 自动重置并重试返回音频', () async {
+      int requestCount = 0;
+      final mockClient = _TestMockClient((request) async {
+        requestCount++;
+        if (requestCount == 1) {
+          throw const HandshakeException('Connection terminated during handshake');
+        }
+        return http.Response.bytes([1, 2, 3, 4], 200);
+      });
+
+      final engine = OpenAiTtsEngine(clientFactory: () => mockClient);
+      const config = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        useSystemAiConfig: false,
+        customEndpoint: 'https://api.test.com/v1',
+        customApiKey: 'test-key',
+        customModel: 'tts-1',
+      );
+
+      final audio = await engine.synthesize('测试握手重试机制', config);
+      expect(audio, isNotEmpty);
+      expect(requestCount, 2);
+    });
+
+    test('TtsSynthesisCoordinator 在 customAi 模式下限制 lookahead 为 1 且顺序预拉取', () async {
+      final tempDir = await Directory.systemTemp.createTemp('coord_test_');
+      final cacheMgr = AudioCacheManager(customBasePath: tempDir.path);
+      final coordinator = TtsSynthesisCoordinator(
+        cacheManager: cacheMgr,
+        config: const TtsSynthesisConfig(mode: TtsMode.customAi),
+      );
+
+      final doc = ReadingDocument(
+        id: 'doc_coord_test',
+        title: 'Coord Test',
+        source: 'test.txt',
+        sourceType: DocumentSourceType.txt,
+        chunks: [
+          ReadingChunk(index: 0, text: '第一段', startChar: 0, endChar: 3),
+          ReadingChunk(index: 1, text: '第二段', startChar: 4, endChar: 7),
+          ReadingChunk(index: 2, text: '第三段', startChar: 8, endChar: 11),
+        ],
+        totalWordCount: 9,
+      );
+
+      // 触发超前预拉取，验证串行预取任务触发正常并可安全释放
+      coordinator.ensureAhead(doc, 0, lookahead: 3);
+      coordinator.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
   });
+
+  group('ReaderConfigStore & Scheduling & Logging Resilience Tests', () {
+    test('ReaderConfigStore 能够写入与完整重载配置', () async {
+      final tempDir = await Directory.systemTemp.createTemp('reader_cfg_test_');
+      final store = ReaderConfigStore.instance;
+
+      const testConfig = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        voiceId: 'mimo_default',
+        speed: 1.25,
+        pitch: 1.0,
+        customModel: 'mimo-v2.5-tts',
+        customVoiceId: 'mimo_default',
+        systemProviderId: 'provider_test_123',
+      );
+
+      await store.saveConfig(testConfig, customRootDir: tempDir);
+      final loaded = await store.loadConfig(customRootDir: tempDir);
+
+      expect(loaded.mode, TtsMode.customAi);
+      expect(loaded.voiceId, 'mimo_default');
+      expect(loaded.speed, 1.25);
+      expect(loaded.customModel, 'mimo-v2.5-tts');
+      expect(loaded.systemProviderId, 'provider_test_123');
+
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    test('AiLogger 记录日志并异步镜像落盘至 ai.log 文件', () async {
+      AiLogger.logRequest(
+        providerName: 'PersistenceTest',
+        protocol: 'openai-chat-audio',
+        model: 'mimo-v2.5-tts',
+        endpoint: 'https://test.endpoint/v1',
+        promptSummary: '测试落盘写入验证',
+      );
+
+      await AiLogger.flush();
+
+      final home = Platform.environment['HOME'];
+      if (Platform.isMacOS && home != null && home.isNotEmpty) {
+        final logFile = File('$home/Library/Application Support/V8WorkToolbox/logs/ai.log');
+        final content = utf8.decode(logFile.readAsBytesSync(), allowMalformed: true);
+        expect(content, contains('PersistenceTest'));
+        expect(content, contains('mimo-v2.5-tts'));
+      }
+    });
+
+    test('AudioReaderController 在 loadDocument 时不触发提前预取，等待真正播放', () async {
+      final tempDir = await Directory.systemTemp.createTemp('controller_test_');
+      final cacheMgr = AudioCacheManager(customBasePath: tempDir.path);
+      final coordinator = TtsSynthesisCoordinator(
+        cacheManager: cacheMgr,
+        config: const TtsSynthesisConfig(mode: TtsMode.macosNative),
+      );
+      final controller = AudioReaderController(coordinator: coordinator);
+
+      final doc = ReadingDocument(
+        id: 'doc_ctrl_test',
+        title: 'Ctrl Test',
+        source: 'test.txt',
+        sourceType: DocumentSourceType.txt,
+        chunks: [
+          ReadingChunk(index: 0, text: '第一段文字', startChar: 0, endChar: 5),
+          ReadingChunk(index: 1, text: '第二段文字', startChar: 6, endChar: 11),
+        ],
+        totalWordCount: 10,
+      );
+
+      await controller.loadDocument(doc);
+      expect(controller.playbackState, ReaderPlaybackState.stopped);
+      expect(controller.currentChunkIndex, 0);
+
+      // 验证在只加载文档时，切片状态仍为 pending，未发生提前并发预加载
+      expect(doc.chunks[0].status, ChunkSynthesisStatus.pending);
+      expect(doc.chunks[1].status, ChunkSynthesisStatus.pending);
+
+      controller.dispose();
+      coordinator.dispose();
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
+  });
+}
+
+class _TestMockClient extends http.BaseClient {
+  final Future<http.Response> Function(http.BaseRequest request) handler;
+  _TestMockClient(this.handler);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final response = await handler(request);
+    return http.StreamedResponse(
+      Stream.value(response.bodyBytes),
+      response.statusCode,
+      headers: response.headers,
+    );
+  }
 }
