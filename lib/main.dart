@@ -4,6 +4,7 @@ import 'package:media_kit/media_kit.dart';
 import 'services/ai_config_store.dart';
 import 'services/launcher_service.dart';
 import 'services/privacy_security_service.dart';
+import 'services/scheduled_news_service.dart';
 import 'services/settings_store.dart';
 import 'tools/private_player/services/media_history_store.dart';
 import 'tools/private_player/services/private_storage_manager.dart';
@@ -21,6 +22,9 @@ Future<void> main() async {
 
   // 初始化 AI 平台级配置存储
   await AiConfigStore.instance.init();
+
+  // 初始化定时资讯检索与通知调度
+  await ScheduledNewsService.instance.init();
 
   // 初始化无人值守服务状态与代理脚本
   await UnattendedService.instance.init();

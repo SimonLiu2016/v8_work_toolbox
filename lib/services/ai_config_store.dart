@@ -168,6 +168,7 @@ class McpClientConfig {
   final Map<String, String> env;
   final Map<String, String> headers;
   final bool enabled;
+  final int timeoutSeconds;
 
   const McpClientConfig({
     required this.id,
@@ -178,7 +179,54 @@ class McpClientConfig {
     this.env = const {},
     this.headers = const {},
     this.enabled = true,
+    this.timeoutSeconds = 60,
   });
+
+  McpClientConfig copyWith({
+    String? id,
+    String? name,
+    String? transport,
+    String? endpointOrCommand,
+    List<String>? args,
+    Map<String, String>? env,
+    Map<String, String>? headers,
+    bool? enabled,
+    int? timeoutSeconds,
+  }) {
+    return McpClientConfig(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      transport: transport ?? this.transport,
+      endpointOrCommand: endpointOrCommand ?? this.endpointOrCommand,
+      args: args ?? this.args,
+      env: env ?? this.env,
+      headers: headers ?? this.headers,
+      enabled: enabled ?? this.enabled,
+      timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
+    );
+  }
+
+  static McpClientConfig firecrawlPreset({
+    String id = 'mcp_firecrawl',
+    String name = 'Firecrawl 爬虫与搜索',
+    String apiUrl = 'https://43-133-77-38.nip.io',
+    String apiKey = '9f3a39789003582170a952660dc66bba31190da43e4875591916caafef6d818c',
+    bool enabled = true,
+  }) {
+    return McpClientConfig(
+      id: id,
+      name: name,
+      transport: 'stdio',
+      endpointOrCommand: 'npx',
+      args: const ['-y', 'firecrawl-mcp'],
+      env: {
+        'FIRECRAWL_API_URL': apiUrl,
+        'FIRECRAWL_API_KEY': apiKey,
+      },
+      timeoutSeconds: 120,
+      enabled: enabled,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -189,6 +237,7 @@ class McpClientConfig {
     'env': env,
     'headers': headers,
     'enabled': enabled,
+    'timeoutSeconds': timeoutSeconds,
   };
 
   factory McpClientConfig.fromJson(Map<String, dynamic> json) {
@@ -201,6 +250,7 @@ class McpClientConfig {
       env: Map<String, String>.from(json['env'] ?? {}),
       headers: Map<String, String>.from(json['headers'] ?? {}),
       enabled: json['enabled'] as bool? ?? true,
+      timeoutSeconds: json['timeoutSeconds'] as int? ?? 60,
     );
   }
 }
@@ -292,6 +342,10 @@ class AiConfigStore {
 
       final mcps = (json['mcpServers'] as List<dynamic>?) ?? [];
       _mcpClients = mcps.map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>)).toList();
+      if (_mcpClients.isEmpty) {
+        _mcpClients.add(McpClientConfig.firecrawlPreset());
+        await _save();
+      }
 
       // 旧格式检测到后立即重新保存为新格式
       if (needsMigration) {
@@ -312,7 +366,9 @@ class AiConfigStore {
       'tts': <SlotCandidate>[],
       'stt': <SlotCandidate>[],
     };
-    _mcpClients = [];
+    _mcpClients = [
+      McpClientConfig.firecrawlPreset(),
+    ];
   }
 
   Future<void> _save() async {

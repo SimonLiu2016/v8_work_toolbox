@@ -8,6 +8,7 @@ import '../clean_builds_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
+import 'ai_assistant/ui/ai_assistant_page.dart';
 import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
@@ -200,6 +201,21 @@ class PrivateMediaPlayerToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const PrivateMediaPlayerPage();
 }
 
+class AiAssistantToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'ai-assistant';
+  @override
+  String get title => 'AI资讯与检索';
+  @override
+  String get subtitle => '全网实时爬虫检索与对话，定时追踪最新资讯';
+  @override
+  IconData get icon => Icons.assistant_outlined;
+  @override
+  ToolCategory get category => ToolCategory.system;
+  @override
+  Widget buildPage(BuildContext context) => const AiAssistantPage();
+}
+
 /// ---------------------------------------------------------------------------
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
@@ -219,6 +235,7 @@ class ToolRegistry {
     KmaPackageToolDefinition(),
     CleanBuildsToolDefinition(),
     // 系统与配置
+    AiAssistantToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),

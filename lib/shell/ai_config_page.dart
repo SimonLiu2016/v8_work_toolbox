@@ -4,6 +4,7 @@ import '../components/app_components.dart';
 import '../services/ai_config_store.dart';
 import '../services/ai_service.dart';
 import '../services/keychain_service.dart';
+import '../services/mcp_service.dart';
 import '../theme/app_theme.dart';
 import 'ai_log_dialog.dart';
 
@@ -18,6 +19,8 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   late TabController _tabController;
   final store = AiConfigStore.instance;
   Timer? _healthRefreshTimer;
+  final Map<String, bool> _mcpTesting = {};
+  final Map<String, McpServerStatus?> _mcpTestResults = {};
 
   @override
   void initState() {
@@ -505,7 +508,7 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
-                    value: selectedProviderId,
+                    initialValue: selectedProviderId,
                     decoration: const InputDecoration(labelText: '选择供应商'),
                     items: providers.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
                     onChanged: (val) {
@@ -517,7 +520,7 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   ),
                   const SizedBox(height: AppTheme.space12),
                   DropdownButtonFormField<String>(
-                    value: selectedModel,
+                    initialValue: selectedModel,
                     decoration: const InputDecoration(labelText: '选择模型'),
                     items: availableModels.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
                     onChanged: (val) {
@@ -559,10 +562,40 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('外部第三方 MCP 服务 (${clients.length})', style: AppTheme.fontTitle),
-            AppButton.primary(
-              label: '添加 MCP 服务',
-              icon: Icons.add,
-              onPressed: () => _showAddOrEditMcpDialog(),
+            Row(
+              children: [
+                AppButton.secondary(
+                  label: '一键添加 Firecrawl 预置',
+                  icon: Icons.auto_awesome,
+                  onPressed: () async {
+                    final exists = clients.any((c) => c.id == 'mcp_firecrawl');
+                    if (!exists) {
+                      await store.saveMcpClient(McpClientConfig.firecrawlPreset());
+                      setState(() {});
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('已添加 Firecrawl 官方 MCP 预置，建议点击“测试连接”验证。'),
+                            backgroundColor: AppTheme.success,
+                          ),
+                        );
+                      }
+                    } else {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Firecrawl 预置已存在，无需重复添加。')),
+                        );
+                      }
+                    }
+                  },
+                ),
+                const SizedBox(width: AppTheme.space12),
+                AppButton.primary(
+                  label: '添加 MCP 服务',
+                  icon: Icons.add,
+                  onPressed: () => _showAddOrEditMcpDialog(),
+                ),
+              ],
             ),
           ],
         ),
@@ -585,39 +618,146 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             ),
           )
         else
-          ...clients.map((c) => Padding(
-            padding: const EdgeInsets.only(bottom: AppTheme.space12),
-            child: AppCard(
-              child: Padding(
-                padding: const EdgeInsets.all(AppTheme.space16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.settings_input_component_outlined, size: 20, color: AppTheme.accentLight),
-                    const SizedBox(width: AppTheme.space8),
-                    Text(c.name, style: AppTheme.fontTitle),
-                    const SizedBox(width: AppTheme.space8),
-                    AppBadge(label: c.transport.toUpperCase()),
-                    const SizedBox(width: AppTheme.space16),
-                    Expanded(
-                      child: Text(
-                        c.endpointOrCommand,
-                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+          ...clients.map((c) {
+            final isTesting = _mcpTesting[c.id] ?? false;
+            final testResult = _mcpTestResults[c.id];
+            final fullCmd = [c.endpointOrCommand, ...c.args].join(' ');
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: AppTheme.space12),
+              child: AppCard(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppTheme.space16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.settings_input_component_outlined,
+                            size: 20,
+                            color: c.enabled ? AppTheme.accentLight : AppTheme.textTertiary,
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          Text(c.name, style: AppTheme.fontTitle),
+                          const SizedBox(width: AppTheme.space8),
+                          AppBadge(label: c.transport.toUpperCase()),
+                          const SizedBox(width: AppTheme.space8),
+                          if (testResult != null)
+                            AppBadge(
+                              label: testResult.isHealthy
+                                  ? '已连通 (${testResult.toolCount} 工具)'
+                                  : '连通异常',
+                              color: testResult.isHealthy ? AppTheme.success : AppTheme.error,
+                            ),
+                          const Spacer(),
+                          Text(c.enabled ? '已启用' : '已停用', style: AppTheme.fontCaption),
+                          Switch(
+                            value: c.enabled,
+                            activeThumbColor: AppTheme.accentLight,
+                            onChanged: (val) async {
+                              await store.saveMcpClient(c.copyWith(enabled: val));
+                              setState(() {});
+                            },
+                          ),
+                        ],
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 16, color: AppTheme.error),
-                      onPressed: () async {
-                        await store.deleteMcpClient(c.id);
-                        setState(() {});
-                      },
-                    ),
-                  ],
+                      const SizedBox(height: AppTheme.space8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: AppTheme.bgContent.withAlpha(128),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
+                            const SizedBox(width: AppTheme.space6),
+                            Expanded(
+                              child: Text(
+                                fullCmd,
+                                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.textSecondary),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (c.env.isNotEmpty) ...[
+                        const SizedBox(height: AppTheme.space6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: c.env.keys.map((k) {
+                            return Chip(
+                              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: AppTheme.bgContent,
+                              side: BorderSide.none,
+                              label: Text(
+                                '$k=***',
+                                style: const TextStyle(fontFamily: 'monospace', fontSize: 10, color: AppTheme.textTertiary),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      if (testResult != null && !testResult.isHealthy && testResult.lastError != null) ...[
+                        const SizedBox(height: AppTheme.space8),
+                        Container(
+                          padding: const EdgeInsets.all(AppTheme.space8),
+                          decoration: BoxDecoration(
+                            color: AppTheme.error.withAlpha(25),
+                            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                            border: Border.all(color: AppTheme.error.withAlpha(60)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, size: 16, color: AppTheme.error),
+                              const SizedBox(width: AppTheme.space8),
+                              Expanded(
+                                child: Text(
+                                  testResult.lastError!,
+                                  style: AppTheme.fontCaption.copyWith(color: AppTheme.error),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: AppTheme.space12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          AppButton.secondary(
+                            label: isTesting ? '正在探测...' : '测试连接与探测工具',
+                            icon: isTesting ? Icons.hourglass_top : Icons.bolt_outlined,
+                            onPressed: isTesting ? null : () => _testMcpClient(c),
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          AppButton.ghost(
+                            label: '编辑',
+                            icon: Icons.edit_outlined,
+                            onPressed: () => _showAddOrEditMcpDialog(client: c),
+                          ),
+                          const SizedBox(width: AppTheme.space8),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 16, color: AppTheme.error),
+                            tooltip: '删除 MCP 服务',
+                            onPressed: () async {
+                              await store.deleteMcpClient(c.id);
+                              setState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          )),
+            );
+          }),
       ],
     );
   }
@@ -867,38 +1007,99 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     );
   }
 
-  void _showAddOrEditMcpDialog() {
-    final nameCtrl = TextEditingController();
-    final endCtrl = TextEditingController();
-    String transport = 'stdio';
+  void _showAddOrEditMcpDialog({McpClientConfig? client}) {
+    final isEditing = client != null;
+    final nameCtrl = TextEditingController(text: client?.name ?? '');
+    final cmdCtrl = TextEditingController(text: client?.endpointOrCommand ?? '');
+    final argsCtrl = TextEditingController(text: client?.args.join(' ') ?? '');
+    final timeoutCtrl = TextEditingController(text: (client?.timeoutSeconds ?? 60).toString());
+
+    final envSb = StringBuffer();
+    if (client != null) {
+      client.env.forEach((k, v) => envSb.writeln('$k=$v'));
+    }
+    final envCtrl = TextEditingController(text: envSb.toString().trim());
+    String transport = client?.transport ?? 'stdio';
+
+    void fillFirecrawlPreset(void Function(void Function()) setDialogState) {
+      setDialogState(() {
+        final preset = McpClientConfig.firecrawlPreset();
+        nameCtrl.text = preset.name;
+        transport = preset.transport;
+        cmdCtrl.text = preset.endpointOrCommand;
+        argsCtrl.text = preset.args.join(' ');
+        timeoutCtrl.text = preset.timeoutSeconds.toString();
+        final sb = StringBuffer();
+        preset.env.forEach((k, v) => sb.writeln('$k=$v'));
+        envCtrl.text = sb.toString().trim();
+      });
+    }
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: AppTheme.bgCard,
-          title: const Text('添加外部 MCP 客户端', style: AppTheme.fontTitle),
+          title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(isEditing ? '编辑外部 MCP 客户端' : '添加外部 MCP 客户端', style: AppTheme.fontTitle),
+              TextButton.icon(
+                icon: const Icon(Icons.auto_awesome, size: 14, color: AppTheme.accentLight),
+                label: const Text('填入 Firecrawl 模板', style: TextStyle(color: AppTheme.accentLight, fontSize: 12)),
+                onPressed: () => fillFirecrawlPreset(setDialogState),
+              ),
+            ],
+          ),
           content: SizedBox(
-            width: 440,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppTextField(controller: nameCtrl, label: '服务名称', hintText: '如 Filesystem / Memory'),
-                const SizedBox(height: AppTheme.space12),
-                DropdownButtonFormField<String>(
-                  initialValue: transport,
-                  decoration: const InputDecoration(labelText: '通信方式'),
-                  items: const [
-                    DropdownMenuItem(value: 'stdio', child: Text('标准输入输出 (stdio)')),
-                    DropdownMenuItem(value: 'sse', child: Text('Server-Sent Events (SSE / HTTP)')),
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppTextField(controller: nameCtrl, label: '服务名称', hintText: '如 Firecrawl 爬虫与搜索 / Filesystem'),
+                  const SizedBox(height: AppTheme.space12),
+                  DropdownButtonFormField<String>(
+                    initialValue: transport,
+                    decoration: const InputDecoration(labelText: '通信方式'),
+                    items: const [
+                      DropdownMenuItem(value: 'stdio', child: Text('标准输入输出 (stdio)')),
+                      DropdownMenuItem(value: 'sse', child: Text('Server-Sent Events (SSE / HTTP)')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) setDialogState(() => transport = val);
+                    },
+                  ),
+                  const SizedBox(height: AppTheme.space12),
+                  AppTextField(
+                    controller: cmdCtrl,
+                    label: transport == 'stdio' ? '启动命令 / 可执行程序' : '服务 URL',
+                    hintText: transport == 'stdio' ? 'npx' : 'http://localhost:8000/sse',
+                  ),
+                  if (transport == 'stdio') ...[
+                    const SizedBox(height: AppTheme.space12),
+                    AppTextField(
+                      controller: argsCtrl,
+                      label: '命令行参数 (以空格或逗号分隔)',
+                      hintText: '-y firecrawl-mcp',
+                    ),
+                    const SizedBox(height: AppTheme.space12),
+                    AppTextField(
+                      controller: envCtrl,
+                      label: '环境变量 (每行一个 KEY=VALUE)',
+                      hintText: 'FIRECRAWL_API_URL=https://43-133-77-38.nip.io\nFIRECRAWL_API_KEY=your_token',
+                      maxLines: 4,
+                    ),
                   ],
-                  onChanged: (val) {
-                    if (val != null) setDialogState(() => transport = val);
-                  },
-                ),
-                const SizedBox(height: AppTheme.space12),
-                AppTextField(controller: endCtrl, label: transport == 'stdio' ? '启动命令 / 脚本' : '服务 URL', hintText: transport == 'stdio' ? 'npx -y @mcp/server-filesystem' : 'http://localhost:8000/sse'),
-              ],
+                  const SizedBox(height: AppTheme.space12),
+                  AppTextField(
+                    controller: timeoutCtrl,
+                    label: '超时时间 (秒)',
+                    hintText: '60',
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -906,14 +1107,42 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             AppButton.primary(
               label: '保存',
               onPressed: () async {
-                final id = 'mcp_${DateTime.now().millisecondsSinceEpoch}';
-                final client = McpClientConfig(
+                // 解析 args
+                final rawArgs = argsCtrl.text.trim();
+                final List<String> parsedArgs = [];
+                if (rawArgs.isNotEmpty) {
+                  final parts = rawArgs.contains(',')
+                      ? rawArgs.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList()
+                      : rawArgs.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+                  parsedArgs.addAll(parts);
+                }
+
+                // 解析 env
+                final Map<String, String> parsedEnv = {};
+                for (final line in envCtrl.text.split('\n')) {
+                  final trimmed = line.trim();
+                  if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+                  final eqIdx = trimmed.indexOf('=');
+                  if (eqIdx > 0) {
+                    final k = trimmed.substring(0, eqIdx).trim();
+                    final v = trimmed.substring(eqIdx + 1).trim();
+                    if (k.isNotEmpty) parsedEnv[k] = v;
+                  }
+                }
+
+                final id = client?.id ?? 'mcp_${DateTime.now().millisecondsSinceEpoch}';
+                final newClient = McpClientConfig(
                   id: id,
-                  name: nameCtrl.text.trim().isEmpty ? '未命名服务' : nameCtrl.text.trim(),
+                  name: nameCtrl.text.trim().isEmpty ? '未命名 MCP 服务' : nameCtrl.text.trim(),
                   transport: transport,
-                  endpointOrCommand: endCtrl.text.trim(),
+                  endpointOrCommand: cmdCtrl.text.trim(),
+                  args: parsedArgs,
+                  env: parsedEnv,
+                  timeoutSeconds: int.tryParse(timeoutCtrl.text.trim()) ?? 60,
+                  enabled: client?.enabled ?? true,
                 );
-                await store.saveMcpClient(client);
+
+                await store.saveMcpClient(newClient);
                 if (ctx.mounted) Navigator.pop(ctx);
                 setState(() {});
               },
@@ -922,6 +1151,43 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
         ),
       ),
     );
+  }
+
+  void _testMcpClient(McpClientConfig c) async {
+    setState(() => _mcpTesting[c.id] = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(SnackBar(content: Text('正在与 MCP 服务 [${c.name}] 握手并探测工具...')));
+    try {
+      final res = await McpService.instance.testConnection(c);
+      setState(() {
+        _mcpTestResults[c.id] = res;
+        _mcpTesting[c.id] = false;
+      });
+      messenger.clearSnackBars();
+      if (res.isHealthy) {
+        final toolNames = res.tools.take(5).map((t) => t.name).join(', ');
+        final more = res.tools.length > 5 ? ' 等 ${res.tools.length} 个工具' : '';
+        messenger.showSnackBar(SnackBar(
+          content: Text('✓ MCP [${c.name}] 握手成功！探测到 ${res.toolCount} 个工具: $toolNames$more'),
+          backgroundColor: AppTheme.success,
+          duration: const Duration(seconds: 6),
+        ));
+      } else {
+        messenger.showSnackBar(SnackBar(
+          content: Text('✕ MCP [${c.name}] 连接失败: ${res.lastError}'),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 8),
+        ));
+      }
+    } catch (e) {
+      setState(() => _mcpTesting[c.id] = false);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(SnackBar(
+        content: Text('✕ 测试异常: $e'),
+        backgroundColor: AppTheme.error,
+        duration: const Duration(seconds: 8),
+      ));
+    }
   }
 
   void _testProvider(AiProviderConfig p) async {
