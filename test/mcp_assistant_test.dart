@@ -128,6 +128,52 @@ void main() {
       final path = env['PATH']!;
       expect(path.contains('/usr/bin') || path.contains('/bin'), isTrue);
     });
+
+    test('getDiscoveredPath resolves valid system PATH with directories', () {
+      final path = McpStdioSession.getDiscoveredPath();
+      expect(path.isNotEmpty, isTrue);
+      expect(path.contains('/usr/bin') || path.contains('/bin'), isTrue);
+    });
+
+    test('resolveExecutable locates binary in path or preserves explicit path', () {
+      final path = McpStdioSession.getDiscoveredPath();
+      // 'sh' is guaranteed to exist on macOS/Linux
+      final resolvedSh = McpStdioSession.resolveExecutable('sh', path);
+      expect(resolvedSh.endsWith('/sh') || resolvedSh == 'sh', isTrue);
+
+      // Explicit path is preserved
+      final explicit = McpStdioSession.resolveExecutable('/bin/non_existent', path);
+      expect(explicit, equals('/bin/non_existent'));
+    });
+
+    test('testConnection captures stderr and non-zero exit code on failure', () async {
+      final failingConfig = McpClientConfig(
+        id: 'failing_mcp',
+        name: 'Failing MCP Server',
+        transport: 'stdio',
+        endpointOrCommand: 'sh',
+        args: ['-c', 'echo "FATAL: custom stderr failure" >&2; exit 127'],
+        timeoutSeconds: 5,
+      );
+
+      final status = await McpService.instance.testConnection(failingConfig);
+      expect(status.isHealthy, isFalse);
+      expect(status.lastError, isNotNull);
+      expect(
+        status.lastError!.contains('FATAL: custom stderr failure') ||
+            status.lastError!.contains('127') ||
+            status.lastError!.contains('MCP 进程已退出'),
+        isTrue,
+      );
+    });
+
+    test('testConnection successfully handshakes and discovers tools with Firecrawl preset', () async {
+      final config = McpClientConfig.firecrawlPreset().copyWith(timeoutSeconds: 30);
+      final status = await McpService.instance.testConnection(config);
+      expect(status.isHealthy, isTrue);
+      expect(status.toolCount, greaterThan(0));
+      expect(status.tools.any((t) => t.name.contains('firecrawl')), isTrue);
+    }, timeout: const Timeout(Duration(seconds: 45)));
   });
 
   group('ScheduledNewsService Models & Persistence Tests', () {

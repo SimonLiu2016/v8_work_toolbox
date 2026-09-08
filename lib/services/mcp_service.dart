@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'ai_config_store.dart';
 
 /// MCP 工具定义
@@ -107,33 +108,138 @@ class McpStdioSession {
   StreamSubscription<String>? _stdoutSub;
   StreamSubscription<String>? _stderrSub;
 
+  final List<String> _recentStderr = [];
+  int? _exitCode;
+  String? _exitError;
+
   McpStdioSession(this.config);
 
   List<McpToolDefinition> get tools => List.unmodifiable(_tools);
   bool get isRunning => _process != null && _isInitialized;
+  List<String> get recentStderr => List.unmodifiable(_recentStderr);
+  int? get exitCode => _exitCode;
+  String? get exitError => _exitError;
 
-  /// 构建安全的 macOS 环境变量，补充 GUI 启动时缺失的 Node/Brew PATH
-  static Map<String, String> buildSanitizedEnv(Map<String, String> customEnv) {
-    final env = Map<String, String>.from(Platform.environment);
-    // 补充常规 PATH 保证在桌面 App 环境中能正常执行 npx / node
-    final currentPath = env['PATH'] ?? '';
-    const extraPaths = [
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-    ];
-    final pathSegments = currentPath.split(':').where((s) => s.isNotEmpty).toList();
-    for (final p in extraPaths) {
-      if (!pathSegments.contains(p) && Directory(p).existsSync()) {
-        pathSegments.add(p);
+  static String? _cachedDiscoveredPath;
+
+  /// 解析并获取桌面应用完整的 PATH（融合登录 Shell 与主流环境管理器，如 NVM、fnm、asdf、brew 等）
+  static String getDiscoveredPath() {
+    if (_cachedDiscoveredPath != null && _cachedDiscoveredPath!.isNotEmpty) {
+      return _cachedDiscoveredPath!;
+    }
+
+    final pathSegments = <String>[];
+
+    void addPath(String dir) {
+      if (dir.isEmpty) return;
+      final d = Directory(dir);
+      if (d.existsSync() && !pathSegments.contains(dir)) {
+        pathSegments.add(dir);
       }
     }
-    env['PATH'] = pathSegments.join(':');
+
+    // 1. 先加入系统当前已有 PATH
+    final currentEnvPath = Platform.environment['PATH'] ?? '';
+    for (final seg in currentEnvPath.split(':')) {
+      if (seg.isNotEmpty && !pathSegments.contains(seg)) {
+        pathSegments.add(seg);
+      }
+    }
+
+    // 2. 在 macOS / Linux 上尝试通过用户登录 Shell 嗅探完整 PATH
+    if (Platform.isMacOS || Platform.isLinux) {
+      try {
+        final shell = Platform.environment['SHELL'] ?? '/bin/zsh';
+        final shellResult = Process.runSync(
+          shell,
+          ['-l', '-c', 'echo -n "\$PATH"'],
+          runInShell: false,
+        );
+        if (shellResult.exitCode == 0) {
+          final shellPathStr = (shellResult.stdout as String).trim();
+          for (final seg in shellPathStr.split(':')) {
+            addPath(seg);
+          }
+        }
+      } catch (e) {
+        debugPrint('登录 Shell PATH 嗅探跳过: $e');
+      }
+
+      // 3. 主流版本管理器启发式扫描兜底（即便未在登录 Shell 中配置）
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        // NVM: ~/.nvm/versions/node/*/bin (优先最新版本)
+        final nvmNodeDir = Directory(p.join(home, '.nvm', 'versions', 'node'));
+        if (nvmNodeDir.existsSync()) {
+          try {
+            final versions = nvmNodeDir.listSync().whereType<Directory>().toList();
+            versions.sort((a, b) => b.path.compareTo(a.path));
+            for (final v in versions) {
+              addPath(p.join(v.path, 'bin'));
+            }
+          } catch (_) {}
+        }
+
+        // FNM: ~/.fnm/current/bin
+        addPath(p.join(home, '.fnm', 'current', 'bin'));
+        // ASDF: ~/.asdf/shims, ~/.asdf/bin
+        addPath(p.join(home, '.asdf', 'shims'));
+        addPath(p.join(home, '.asdf', 'bin'));
+        // Volta: ~/.volta/bin
+        addPath(p.join(home, '.volta', 'bin'));
+        // Bun: ~/.bun/bin
+        addPath(p.join(home, '.bun', 'bin'));
+        // Cargo / Rust: ~/.cargo/bin
+        addPath(p.join(home, '.cargo', 'bin'));
+        // Local bin: ~/.local/bin, ~/bin
+        addPath(p.join(home, '.local', 'bin'));
+        addPath(p.join(home, 'bin'));
+      }
+
+      // 4. macOS / Linux 核心系统与 Homebrew 目录
+      addPath('/opt/homebrew/bin');
+      addPath('/opt/homebrew/sbin');
+      addPath('/usr/local/bin');
+      addPath('/usr/local/sbin');
+      addPath('/usr/bin');
+      addPath('/bin');
+      addPath('/usr/sbin');
+      addPath('/sbin');
+    }
+
+    _cachedDiscoveredPath = pathSegments.join(':');
+    return _cachedDiscoveredPath!;
+  }
+
+  /// 构建安全的系统环境变量，补充 GUI 启动时缺失的 Node/Brew/NVM PATH
+  static Map<String, String> buildSanitizedEnv(Map<String, String> customEnv) {
+    final env = Map<String, String>.from(Platform.environment);
+    final discoveredPath = getDiscoveredPath();
+    final customPath = customEnv['PATH'];
+
+    if (customPath != null && customPath.isNotEmpty) {
+      env['PATH'] = '$customPath:$discoveredPath';
+    } else {
+      env['PATH'] = discoveredPath;
+    }
+
     env.addAll(customEnv);
     return env;
+  }
+
+  /// 解析命令真实可执行文件路径（若命令为相对名称如 'npx'，在 PATH 中检索真实可执行文件）
+  static String resolveExecutable(String command, String pathEnv) {
+    if (command.contains('/') || command.contains(Platform.pathSeparator)) {
+      return command;
+    }
+    for (final dir in pathEnv.split(':')) {
+      if (dir.isEmpty) continue;
+      final file = File(p.join(dir, command));
+      if (file.existsSync()) {
+        return file.path;
+      }
+    }
+    return command;
   }
 
   /// 启动子进程并完成 MCP 协议握手
@@ -141,15 +247,17 @@ class McpStdioSession {
     if (_process != null) return;
 
     final env = buildSanitizedEnv(config.env);
+    final executable = resolveExecutable(config.endpointOrCommand, env['PATH'] ?? '');
+
     try {
       _process = await Process.start(
-        config.endpointOrCommand,
+        executable,
         config.args,
         environment: env,
         runInShell: true,
       );
     } catch (e) {
-      throw Exception('无法启动 MCP 进程 [${config.endpointOrCommand}]: $e');
+      throw Exception('无法启动 MCP 进程 [$executable]: $e');
     }
 
     // 监听 stdout
@@ -160,21 +268,42 @@ class McpStdioSession {
       debugPrint('MCP [${config.name}] stdout error: $err');
     });
 
-    // 监听 stderr
+    // 监听 stderr 并保留滚动日志
     _stderrSub = _process!.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) {
       debugPrint('MCP [${config.name}] stderr: $line');
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty) {
+        if (_recentStderr.length >= 20) {
+          _recentStderr.removeAt(0);
+        }
+        _recentStderr.add(trimmed);
+      }
     });
 
     _process!.exitCode.then((code) {
+      _exitCode = code;
       debugPrint('MCP [${config.name}] 进程退出: $code');
-      _cleanup();
+      String errDetail = 'MCP 进程已退出 (exitCode: $code)';
+      if (_recentStderr.isNotEmpty) {
+        errDetail += ': ${_recentStderr.join('; ')}';
+      }
+      _exitError = errDetail;
+      _cleanup(errDetail);
     });
 
     // 协议握手
-    await _handshake();
+    try {
+      await _handshake();
+    } catch (e) {
+      String extra = '';
+      if (_recentStderr.isNotEmpty && !e.toString().contains(_recentStderr.first)) {
+        extra = ' (stderr: ${_recentStderr.join('; ')})';
+      }
+      throw Exception('$e$extra');
+    }
   }
 
   void _handleStdoutLine(String line) {
@@ -214,7 +343,11 @@ class McpStdioSession {
     final timeout = Duration(seconds: config.timeoutSeconds > 0 ? config.timeoutSeconds : 60);
     return completer.future.timeout(timeout, onTimeout: () {
       _pendingRequests.remove(id);
-      throw TimeoutException('MCP 请求超时 ($method, ${timeout.inSeconds}s)');
+      String extra = '';
+      if (_recentStderr.isNotEmpty) {
+        extra = ' (stderr: ${_recentStderr.join('; ')})';
+      }
+      throw TimeoutException('MCP 请求超时 ($method, ${timeout.inSeconds}s)$extra');
     });
   }
 
@@ -298,11 +431,12 @@ class McpStdioSession {
     );
   }
 
-  void _cleanup() {
+  void _cleanup([String? errorReason]) {
     _isInitialized = false;
+    final reason = errorReason ?? _exitError ?? 'MCP 进程已中断';
     for (final c in _pendingRequests.values) {
       if (!c.isCompleted) {
-        c.completeError(Exception('MCP 进程已中断'));
+        c.completeError(Exception(reason));
       }
     }
     _pendingRequests.clear();
@@ -342,12 +476,16 @@ class McpService {
         tools: tools,
       );
     } catch (e) {
+      String err = e.toString();
+      if (session.recentStderr.isNotEmpty && !err.contains(session.recentStderr.first)) {
+        err += ' (stderr: ${session.recentStderr.join('; ')})';
+      }
       return McpServerStatus(
         serverId: config.id,
         serverName: config.name,
         isHealthy: false,
         toolCount: 0,
-        lastError: e.toString(),
+        lastError: err,
       );
     } finally {
       await session.dispose();

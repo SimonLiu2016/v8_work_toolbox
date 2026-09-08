@@ -4,7 +4,7 @@
 Provides the runtime routing engine that resolves AI capability slot requests to healthy provider candidates, automatically falling back through an ordered candidate chain when the preferred provider is unavailable, and reporting transparent routing decisions to callers.
 ## Requirements
 ### Requirement: Multi-candidate slot resolution
-The routing engine SHALL resolve each capability slot (text / multimodal / tts / stt) by iterating through the slot's ordered candidate list in priority order, selecting the first candidate whose provider is currently marked healthy.
+The routing engine SHALL resolve each capability slot (text / multimodal / tts / stt) by iterating through the slot's ordered candidate list in priority order, selecting the first candidate whose provider is currently marked healthy, with support for caller-specified execution timeouts to accommodate deep reasoning models.
 
 #### Scenario: Primary candidate is healthy
 - **WHEN** a business tool requests AI completion for the "text" slot and the highest-priority candidate's provider is healthy
@@ -17,6 +17,14 @@ The routing engine SHALL resolve each capability slot (text / multimodal / tts /
 #### Scenario: All candidates exhausted
 - **WHEN** all candidates in a slot's ordered list are marked unhealthy or have failed during the current request cycle
 - **THEN** the engine SHALL raise a `SlotUnavailableException` containing the slot name, the number of candidates attempted, and the last error from each candidate
+
+#### Scenario: Chat completion with extended timeout
+- **WHEN** a business tool or agent dialog issues a chat completion request to a slot with a configured or custom timeout (e.g. 90 seconds)
+- **THEN** each candidate attempt is granted the specified duration, preventing premature abortion while reasoning models formulate thought chains and multi-paragraph analyses.
+
+#### Scenario: Primary candidate times out after extended window
+- **WHEN** the primary candidate fails to complete within the extended timeout window
+- **THEN** the request fails over to the next configured candidate in priority order, recording the latency and timeout error in the routing trace.
 
 ### Requirement: Provider health state tracking
 The routing engine SHALL maintain a per-provider health state cache that records the most recent success or failure timestamp and enforces a configurable cooldown window (default: 60 seconds) during which a failed provider is skipped without issuing a network request.

@@ -236,13 +236,14 @@ $toolDescs
     while (iterations < maxIterations) {
       iterations++;
 
-      // 调用当前配置的 text 槽位模型
+      // 调用当前配置的 text 槽位模型（设置 90 秒超时以支持思考链深度推理模型）
       final chatResult = await AiService.instance.chat(
         slot: 'text',
         messages: [
           {'role': 'system', 'content': systemPrompt},
           {'role': 'user', 'content': currentPrompt},
         ],
+        timeout: const Duration(seconds: 90),
       );
 
       final reply = chatResult.text.trim();

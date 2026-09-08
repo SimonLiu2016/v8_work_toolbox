@@ -68,7 +68,7 @@ The application SHALL allow discovering available models via authentic provider 
 - **THEN** each legacy binding is automatically migrated to a single-element candidate list, and the config is re-saved in the new format without data loss
 
 ### Requirement: External MCP client configuration
-The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing.
+The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting.
 
 #### Scenario: Registering external MCP server
 - **WHEN** user provides MCP server identifier, display name, transport type (stdio or SSE), launch command, argument list, and environment variable key-value pairs (such as `FIRECRAWL_API_URL` and `FIRECRAWL_API_KEY`)
@@ -81,6 +81,14 @@ The application SHALL allow configuring connection parameters for external third
 #### Scenario: Pre-populating Firecrawl MCP template
 - **WHEN** user chooses to add the Firecrawl MCP server from the preset templates or configuration manual
 - **THEN** the form pre-fills `npx` with args `["-y", "firecrawl-mcp"]` and prompts for `FIRECRAWL_API_URL` and `FIRECRAWL_API_KEY`, allowing one-click verification.
+
+#### Scenario: Automatic desktop environment PATH resolution for stdio MCP processes
+- **WHEN** launching a stdio MCP client process from the desktop application bundle
+- **THEN** the system automatically inspects and resolves the user's full shell PATH (including NVM, fnm, asdf, volta, Homebrew, and local bin paths), prepending and merging them into the process environment so commands like `npx` and `node` resolve reliably.
+
+#### Scenario: Detailed process failure diagnostics
+- **WHEN** a stdio MCP process fails to start, exits with non-zero status code, or writes fatal messages to stderr
+- **THEN** the system captures the stderr messages and exit code and surfaces them in the failure notification and `McpServerStatus.lastError` instead of generic interruption errors.
 
 ### Requirement: Slot health status visualization
 The AI configuration UI SHALL display a real-time health indicator (green / yellow / red) for each capability slot, reflecting the aggregate health of its candidates, and SHALL show the currently active provider and most recent degradation event if any.

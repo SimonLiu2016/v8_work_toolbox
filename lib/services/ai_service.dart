@@ -117,6 +117,12 @@ class AiService {
   AiService._();
   static final AiService instance = AiService._();
 
+  /// 默认对话请求超时时间（放宽至 90 秒，完美适配带思维链与长文本的推理大模型）
+  static const Duration defaultChatTimeout = Duration(seconds: 90);
+
+  /// 默认轻量探测请求超时时间（15 秒）
+  static const Duration defaultProbeTimeout = Duration(seconds: 15);
+
   http.Client _client = http.Client();
 
   /// 供应商健康状态缓存（仅内存，应用重启后清空）
@@ -384,6 +390,7 @@ class AiService {
     String? explicitProviderId,
     String? explicitModel,
     required List<Map<String, String>> messages,
+    Duration? timeout,
   }) async {
     final store = AiConfigStore.instance;
 
@@ -396,7 +403,7 @@ class AiService {
       final modelName = explicitModel ?? '';
       final sw = Stopwatch()..start();
       try {
-        final text = await _chatWithProvider(provider, modelName, messages);
+        final text = await _chatWithProvider(provider, modelName, messages, timeout: timeout);
         sw.stop();
         _markProviderHealthy(provider.id);
         return ChatResult(
@@ -466,7 +473,7 @@ class AiService {
 
       final sw = Stopwatch()..start();
       try {
-        final text = await _chatWithProvider(provider, candidate.model, messages);
+        final text = await _chatWithProvider(provider, candidate.model, messages, timeout: timeout);
         sw.stop();
         _markProviderHealthy(provider.id);
         routingTrace.add(RouteAttempt(
@@ -509,17 +516,18 @@ class AiService {
   Future<String> _chatWithProvider(
     AiProviderConfig provider,
     String modelName,
-    List<Map<String, String>> messages,
-  ) async {
+    List<Map<String, String>> messages, {
+    Duration? timeout,
+  }) async {
     final key = await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
 
     switch (provider.protocol) {
       case AiProtocolType.openai:
-        return _chatOpenAi(provider, key, modelName, messages);
+        return _chatOpenAi(provider, key, modelName, messages, timeout: timeout);
       case AiProtocolType.anthropic:
-        return _chatAnthropic(provider, key, modelName, messages);
+        return _chatAnthropic(provider, key, modelName, messages, timeout: timeout);
       case AiProtocolType.gemini:
-        return _chatGemini(provider.baseUrl, key, modelName, messages);
+        return _chatGemini(provider.baseUrl, key, modelName, messages, timeout: timeout);
     }
   }
 
@@ -529,7 +537,9 @@ class AiService {
     String model,
     List<Map<String, String>> messages, {
     int? maxTokens,
+    Duration? timeout,
   }) async {
+    final effTimeout = timeout ?? defaultChatTimeout;
     var urlStr = provider.baseUrl.trim().isEmpty ? 'https://api.openai.com/v1' : provider.baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
@@ -578,13 +588,13 @@ class AiService {
       );
 
       final sw = Stopwatch()..start();
-      var resp = await _client.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+      var resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
 
       // 429 速率限制退避重试 1 次
       if (resp.statusCode == 429) {
-        AiLogger.logWarning('OpenAI 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2000ms 后自动重试...');
-        await Future.delayed(const Duration(milliseconds: 2000));
-        resp = await _client.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+        AiLogger.logWarning('OpenAI 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...');
+        await Future.delayed(const Duration(milliseconds: 2500));
+        resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
       }
 
       sw.stop();
@@ -621,7 +631,9 @@ class AiService {
     String model,
     List<Map<String, String>> messages, {
     int? maxTokens,
+    Duration? timeout,
   }) async {
+    final effTimeout = timeout ?? defaultChatTimeout;
     var urlStr = provider.baseUrl.trim().isEmpty ? 'https://api.anthropic.com' : provider.baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
@@ -694,13 +706,13 @@ class AiService {
       );
 
       final sw = Stopwatch()..start();
-      var resp = await _client.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+      var resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
 
       // 429 速率限制退避重试 1 次
       if (resp.statusCode == 429) {
-        AiLogger.logWarning('Anthropic 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2000ms 后自动重试...');
-        await Future.delayed(const Duration(milliseconds: 2000));
-        resp = await _client.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+        AiLogger.logWarning('Anthropic 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...');
+        await Future.delayed(const Duration(milliseconds: 2500));
+        resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
       }
 
       sw.stop();
@@ -738,8 +750,10 @@ class AiService {
     String baseUrl,
     String apiKey,
     String model,
-    List<Map<String, String>> messages,
-  ) async {
+    List<Map<String, String>> messages, {
+    Duration? timeout,
+  }) async {
+    final effTimeout = timeout ?? defaultChatTimeout;
     var urlStr = baseUrl.trim().isEmpty ? 'https://generativelanguage.googleapis.com' : baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
@@ -780,7 +794,7 @@ class AiService {
     );
 
     final sw = Stopwatch()..start();
-    final resp = await _client.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+    final resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
     sw.stop();
 
     AiLogger.logResponse(

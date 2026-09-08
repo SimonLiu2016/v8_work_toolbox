@@ -288,5 +288,27 @@ void main() {
       expect(result.routingTrace[1].outcome, 'success');
       expect(result.routingTrace[1].providerId, 'healthy');
     });
+
+    test('chat supports custom timeout without throwing syntax or execution errors', () async {
+      final service = AiService.instance;
+      final mockClient = MockClient((request) async {
+        return http.Response(jsonEncode({
+          'choices': [
+            {'message': {'role': 'assistant', 'content': 'custom timeout OK'}}
+          ]
+        }), 200);
+      });
+      service.setMockHttpClient(mockClient);
+
+      final result = await service.chat(
+        slot: 'text',
+        messages: [{'role': 'user', 'content': 'Test timeout'}],
+        timeout: const Duration(seconds: 90),
+      );
+
+      expect(result.text, 'custom timeout OK');
+      expect(AiService.defaultChatTimeout, const Duration(seconds: 90));
+      expect(AiService.defaultProbeTimeout, const Duration(seconds: 15));
+    });
   });
 }
