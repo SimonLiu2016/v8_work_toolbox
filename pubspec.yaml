@@ -28,6 +28,7 @@ dependencies:
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_macos_video: ^1.1.4
+  flutter_markdown: ^0.7.7+1
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 

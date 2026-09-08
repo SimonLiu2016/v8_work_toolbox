@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../services/ai_config_store.dart';
 import '../../services/settings_store.dart';
 import '../../services/system_service.dart';
@@ -369,7 +370,40 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             content: SizedBox(
               width: 540,
               child: SingleChildScrollView(
-                child: SelectableText(report, style: AppTheme.fontBody),
+                child: MarkdownBody(
+                  data: report,
+                  selectable: true,
+                  styleSheet: MarkdownStyleSheet(
+                    h1: AppTheme.fontTitle.copyWith(fontSize: 20, fontWeight: FontWeight.w700),
+                    h2: AppTheme.fontTitle.copyWith(fontSize: 17, fontWeight: FontWeight.w700),
+                    h3: AppTheme.fontBody.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+                    p: AppTheme.fontBody,
+                    pPadding: const EdgeInsets.only(bottom: AppTheme.space8),
+                    strong: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w700),
+                    em: AppTheme.fontBody.copyWith(fontStyle: FontStyle.italic),
+                    code: AppTheme.fontBody.copyWith(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      backgroundColor: AppTheme.bgCardHover,
+                    ),
+                    codeblockDecoration: BoxDecoration(
+                      color: AppTheme.bgCardHover,
+                      borderRadius: AppTheme.borderRadiusSmall,
+                      border: Border.all(color: AppTheme.borderSubtle),
+                    ),
+                    codeblockPadding: const EdgeInsets.all(AppTheme.space8),
+                    listBullet: AppTheme.fontBody.copyWith(color: AppTheme.accent),
+                    listBulletPadding: const EdgeInsets.only(right: AppTheme.space8),
+                    listIndent: AppTheme.space16,
+                    blockquote: AppTheme.fontBodySecondary,
+                    blockquoteDecoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(color: AppTheme.accent.withValues(alpha: 0.5), width: 3),
+                      ),
+                    ),
+                    blockquotePadding: const EdgeInsets.only(left: AppTheme.space12),
+                  ),
+                ),
               ),
             ),
             actions: [
