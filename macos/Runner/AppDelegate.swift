@@ -77,8 +77,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
   // MARK: - Window Delegate
   func windowShouldClose(_ sender: NSWindow) -> Bool {
-    // 点击红叉只隐藏窗口，不退出进程
-    sender.orderOut(nil)
+    // 点击红叉隐藏窗口，同时隐藏程序坞图标
+    hideMainWindow()
     return false
   }
 
@@ -186,7 +186,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   func toggleMainWindow() {
     guard let window = self.mainFlutterWindow else { return }
     if window.isVisible && NSApp.isActive {
-      window.orderOut(nil)
+      hideMainWindow()
     } else {
       showMainWindow()
     }
@@ -194,12 +194,14 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
   func showMainWindow() {
     guard let window = self.mainFlutterWindow else { return }
+    NSApp.setActivationPolicy(.regular)
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
   func hideMainWindow() {
     mainFlutterWindow?.orderOut(nil)
+    NSApp.setActivationPolicy(.accessory)
   }
 
   // MARK: - Carbon HotKey
