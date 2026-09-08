@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:V8WorkToolbox/tools/slimmer/ai_disk_diagnostics_service.dart';
 import 'package:V8WorkToolbox/tools/slimmer/slimmer_models.dart';
 
 void main() {
@@ -98,6 +99,102 @@ void main() {
       final jsonStr = rawAiResponse.substring(start, end + 1);
       expect(jsonStr.startsWith('['), true);
       expect(jsonStr.endsWith(']'), true);
+    });
+  });
+
+  group('SlimerBatchConfig Tests', () {
+    test('默认值: concurrency=1, maxRetries=10', () {
+      const config = SlimerBatchConfig();
+      expect(config.concurrency, 1);
+      expect(config.maxRetries, 10);
+    });
+
+    test('fromJson 解析正常值', () {
+      final config = SlimerBatchConfig.fromJson({
+        'batchConcurrency': 3,
+        'batchMaxRetries': 5,
+      });
+      expect(config.concurrency, 3);
+      expect(config.maxRetries, 5);
+    });
+
+    test('fromJson 缺失字段回退默认值', () {
+      final config = SlimerBatchConfig.fromJson({});
+      expect(config.concurrency, 1);
+      expect(config.maxRetries, 10);
+    });
+
+    test('fromJson 值越界时 clamp 到合法范围', () {
+      final tooHigh = SlimerBatchConfig.fromJson({
+        'batchConcurrency': 99,
+        'batchMaxRetries': 100,
+      });
+      expect(tooHigh.concurrency, 5);
+      expect(tooHigh.maxRetries, 10);
+
+      final tooLow = SlimerBatchConfig.fromJson({
+        'batchConcurrency': 0,
+        'batchMaxRetries': -1,
+      });
+      expect(tooLow.concurrency, 1);
+      expect(tooLow.maxRetries, 1);
+    });
+
+    test('toJson 输出正确', () {
+      const config = SlimerBatchConfig(concurrency: 2, maxRetries: 5);
+      final json = config.toJson();
+      expect(json['batchConcurrency'], 2);
+      expect(json['batchMaxRetries'], 5);
+    });
+
+    test('fromJson -> toJson 往返一致', () {
+      final original = {'batchConcurrency': 3, 'batchMaxRetries': 5};
+      final config = SlimerBatchConfig.fromJson(original);
+      expect(config.toJson(), original);
+    });
+  });
+
+  group('AiDiskDiagnosticsService.isRetryable Tests', () {
+    test('429 错误可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 429 Too Many Requests')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('status code 429')), true);
+    });
+
+    test('too many requests 可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('Too Many Requests')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('too many requests')), true);
+    });
+
+    test('超时错误可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('Connection timed out')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('Request timeout')), true);
+    });
+
+    test('网络连接错误可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('Connection refused')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('connection reset')), true);
+    });
+
+    test('5xx 服务器错误可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 502')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 503')), true);
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('520 Web Server Error')), true);
+    });
+
+    test('401 不可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 401 Unauthorized')), false);
+    });
+
+    test('403 不可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 403 Forbidden')), false);
+    });
+
+    test('JSON 解析错误不可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(FormatException('Unexpected character')), false);
+    });
+
+    test('400 Bad Request 不可重试', () {
+      expect(AiDiskDiagnosticsService.isRetryable(Exception('HTTP 400 Bad Request')), false);
     });
   });
 }

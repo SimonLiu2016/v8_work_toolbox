@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'launcher_service.dart';
+import '../tools/slimmer/slimmer_models.dart';
 
 /// 旧配置文件迁移项定义
 class MigrationEntry {
@@ -321,5 +322,18 @@ class SettingsStore {
       _lastError = '保存 slimmer-keep-list.json 失败: $e';
       debugPrint(_lastError);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 磁盘瘦身 AI 批量诊断配置 (config/smart-disk-slimmer.json)
+  // ---------------------------------------------------------------------------
+
+  Future<SlimerBatchConfig> getSlimerBatchConfig() async {
+    final json = await readToolConfig('smart-disk-slimmer');
+    return SlimerBatchConfig.fromJson(json);
+  }
+
+  Future<void> saveSlimerBatchConfig(SlimerBatchConfig config) async {
+    await writeToolConfig('smart-disk-slimmer', config.toJson());
   }
 }

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
+import '../../services/ai_logger.dart';
 import '../../services/ai_service.dart';
 import 'slimmer_models.dart';
 
@@ -21,9 +23,9 @@ class AiDiagnosticResult {
 }
 
 /// AI 诊断进度回调
-/// [current] 当前正在分析第几个 (1-based)
+/// [current] 串行模式: 当前第几个 (1-based); 并发模式: 已完成数
 /// [total] 总数
-/// [itemName] 当前条目名称
+/// [itemName] 当前条目名称 (并发模式下为最后完成的条目)
 /// [completed] 已完成的结果列表
 typedef AiProgressCallback = void Function(int current, int total, String itemName, List<AiDiagnosticResult> completed);
 
@@ -34,49 +36,127 @@ class AiDiskDiagnosticsService {
 
   String? lastError;
 
-  /// 批量诊断条目间的步频间隔（避免触发服务商 QPS 限流）
-  Duration pacingDuration = const Duration(milliseconds: 800);
+  /// 批量诊断条目间的步频间隔（串行模式下避免触发服务商 QPS 限流）
+  static const _pacingDuration = Duration(milliseconds: 800);
 
-  /// 逐条研判，带进度回调
+  /// 指数退避基础延迟
+  static const _baseRetryDelay = Duration(seconds: 3);
+
+  /// 指数退避最大延迟
+  static const _maxRetryDelay = Duration(seconds: 60);
+
+  /// 批量诊断，支持可配置并发与重试
   Future<List<AiDiagnosticResult>> diagnoseBatch(
     List<SlimCandidateItem> items, {
     AiProgressCallback? onProgress,
+    int concurrency = 1,
+    int maxRetries = 10,
   }) async {
     if (items.isEmpty) return [];
 
     lastError = null;
-    final results = <AiDiagnosticResult>[];
     final home = Platform.environment['HOME'] ?? '';
+    final isParallel = concurrency > 1;
 
-    for (int i = 0; i < items.length; i++) {
-      final item = items[i];
-      onProgress?.call(i + 1, items.length, item.title, List.unmodifiable(results));
+    // 结果数组，按输入顺序索引赋值，保证顺序一致
+    final results = List<AiDiagnosticResult?>.filled(items.length, null);
+    int completedCount = 0;
+    int nextIndex = 0;
 
-      try {
-        final result = await _diagnoseOne(item, home);
-        if (result != null) {
-          results.add(result);
-        } else {
-          lastError ??= '条目 "${item.title}" AI 解析结果为空或格式不匹配';
+    Future<void> worker() async {
+      while (true) {
+        final i = nextIndex++;
+        if (i >= items.length) return;
+
+        final item = items[i];
+
+        // 串行模式: 逐条报告当前条目名
+        if (!isParallel) {
+          onProgress?.call(i + 1, items.length, item.title, List.unmodifiable(results.whereType<AiDiagnosticResult>()));
         }
-      } on SlotUnavailableException catch (e) {
-        lastError = e.toString();
-        debugPrint('AI 槽位不可用，终止批量诊断: $e');
-        break; // 槽位级别错误，无需继续逐条重试
-      } catch (e) {
-        lastError = e.toString();
-        debugPrint('AI 研判 "${item.title}" 失败: $e');
-        // 单条失败继续下一条
-      }
 
-      // 步频控制：非最后一项时等待缓冲间隔，避免密集请求触发 429
-      if (i < items.length - 1 && pacingDuration > Duration.zero) {
-        await Future.delayed(pacingDuration);
+        results[i] = await _diagnoseWithRetry(item, home, maxRetries: maxRetries);
+
+        completedCount++;
+
+        // 并发模式: 报告已完成数
+        if (isParallel) {
+          onProgress?.call(completedCount, items.length, item.title, List.unmodifiable(results.whereType<AiDiagnosticResult>()));
+        }
+
+        // 串行步频控制
+        if (!isParallel && i < items.length - 1 && _pacingDuration > Duration.zero) {
+          await Future.delayed(_pacingDuration);
+        }
       }
     }
 
-    onProgress?.call(items.length, items.length, '', List.unmodifiable(results));
-    return results;
+    final poolSize = math.min(concurrency, items.length);
+    final workers = List.generate(poolSize, (_) => worker());
+    await Future.wait(workers);
+
+    final finalResults = results.whereType<AiDiagnosticResult>().toList();
+    onProgress?.call(items.length, items.length, '', List.unmodifiable(finalResults));
+    return finalResults;
+  }
+
+  /// 带指数退避的重试包装
+  Future<AiDiagnosticResult?> _diagnoseWithRetry(
+    SlimCandidateItem item,
+    String home, {
+    required int maxRetries,
+  }) async {
+    for (int attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        final result = await _diagnoseOne(item, home);
+        if (result != null) return result;
+        // 解析结果为空，非网络错误，不重试
+        lastError ??= '条目 "${item.title}" AI 解析结果为空或格式不匹配';
+        return null;
+      } on SlotUnavailableException catch (e) {
+        // 槽位级别错误，不重试
+        lastError = e.toString();
+        debugPrint('AI 槽位不可用，终止该条目诊断: $e');
+        return null;
+      } catch (e) {
+        if (!isRetryable(e) || attempt == maxRetries - 1) {
+          lastError = e.toString();
+          debugPrint('AI 研判 "${item.title}" 失败 (attempt ${attempt + 1}/$maxRetries): $e');
+          return null;
+        }
+        // 指数退避: 3s, 6s, 12s, 24s, 48s, 60s, 60s, ...
+        final delayMs = math.min(
+          _baseRetryDelay.inMilliseconds * (1 << attempt),
+          _maxRetryDelay.inMilliseconds,
+        );
+        final delay = Duration(milliseconds: delayMs);
+        AiLogger.logWarning(
+          'AI 研判 "${item.title}" 遇到可重试错误 (attempt ${attempt + 1}/$maxRetries): '
+          '${e.toString().substring(0, math.min(80, e.toString().length))}... '
+          '等待 ${delay.inSeconds}s 后重试',
+          providerName: 'disk-diagnostics',
+        );
+        await Future.delayed(delay);
+      }
+    }
+    return null;
+  }
+
+  /// 判断错误是否值得重试 (429, 超时, 网络错误, 5xx)
+  @visibleForTesting
+  static bool isRetryable(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('429') ||
+        msg.contains('too many requests') ||
+        msg.contains('timeout') ||
+        msg.contains('connection') ||
+        msg.contains('502') ||
+        msg.contains('503') ||
+        msg.contains('520') ||
+        msg.contains('521') ||
+        msg.contains('522') ||
+        msg.contains('523') ||
+        msg.contains('524');
   }
 
   /// 单条研判
@@ -194,4 +274,3 @@ class AiDiskDiagnosticsService {
     return null;
   }
 }
-

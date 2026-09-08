@@ -128,8 +128,7 @@ void main() {
       await AiConfigStore.instance.addSlotCandidate('text', provider.id, 'gpt-4o');
 
       final diagService = AiDiskDiagnosticsService.instance;
-      // 设置测试用步频 100ms
-      diagService.pacingDuration = const Duration(milliseconds: 100);
+      // 串行模式下条目间存在默认步频延迟（800ms），此处以最小阈值断言其行为存在
 
       final items = [
         const SlimCandidateItem(

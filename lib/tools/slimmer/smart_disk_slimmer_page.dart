@@ -28,11 +28,26 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   String _aiDiagnosingStatus = ''; // AI 研判进度文本
   bool _hasScanned = false;
 
+  // AI 批量诊断可配置参数
+  int _batchConcurrency = 1;
+  int _batchMaxRetries = 10;
+
   @override
   void initState() {
     super.initState();
     _loadDiskSpace();
+    _loadBatchConfig();
     // 移除自动扫描，由用户主动点击按钮触发
+  }
+
+  Future<void> _loadBatchConfig() async {
+    final config = await SettingsStore.instance.getSlimerBatchConfig();
+    if (mounted) {
+      setState(() {
+        _batchConcurrency = config.concurrency;
+        _batchMaxRetries = config.maxRetries;
+      });
+    }
   }
 
   Future<void> _loadDiskSpace() async {
@@ -186,6 +201,25 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     );
   }
 
+  void _showBatchSettingsMenu() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _BatchSettingsDialog(
+        concurrency: _batchConcurrency,
+        maxRetries: _batchMaxRetries,
+        onChanged: (concurrency, maxRetries) {
+          setState(() {
+            _batchConcurrency = concurrency;
+            _batchMaxRetries = maxRetries;
+          });
+          SettingsStore.instance.saveSlimerBatchConfig(
+            SlimerBatchConfig(concurrency: concurrency, maxRetries: maxRetries),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _triggerManualBatchAi() async {
     if (_isBatchDiagnosing) return;
     if (!_isAiConfigured()) {
@@ -194,10 +228,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     }
 
     // 优先分析用户显式勾选的条目；若无勾选，则分析未研判的条目
-    final selected = _items.where((it) => it.isSelected).take(8).toList();
+    final selected = _items.where((it) => it.isSelected).toList();
     final targets = selected.isNotEmpty
         ? selected
-        : _items.where((it) => !it.isAiAnalyzed).take(8).toList();
+        : _items.where((it) => !it.isAiAnalyzed).toList();
 
     if (targets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -211,14 +245,22 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       _aiDiagnosingStatus = '准备开始分析 ${targets.length} 个条目...';
     });
 
+    final isParallel = _batchConcurrency > 1;
+
     List<AiDiagnosticResult> results;
     try {
       results = await AiDiskDiagnosticsService.instance.diagnoseBatch(
         targets,
+        concurrency: _batchConcurrency,
+        maxRetries: _batchMaxRetries,
         onProgress: (current, total, itemName, completed) {
           if (mounted) {
             setState(() {
-              _aiDiagnosingStatus = '正在分析 ($current/$total): $itemName';
+              if (isParallel) {
+                _aiDiagnosingStatus = '已完成 $current/$total';
+              } else {
+                _aiDiagnosingStatus = '正在分析 ($current/$total): $itemName';
+              }
             });
           }
         },
@@ -775,6 +817,11 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 label: const Text('🤖 AI 批量诊断'),
                 onPressed: _isBatchDiagnosing ? null : _triggerManualBatchAi,
               ),
+              IconButton(
+                icon: const Icon(Icons.settings_rounded, size: 18),
+                tooltip: 'AI 批量诊断设置',
+                onPressed: _isBatchDiagnosing ? null : _showBatchSettingsMenu,
+              ),
               OutlinedButton.icon(
                 icon: const Icon(Icons.receipt_long_rounded, size: 16),
                 label: const Text('AI 日志'),
@@ -1076,6 +1123,134 @@ class _FeatureBadge extends StatelessWidget {
         Icon(icon, size: 16, color: AppTheme.accent),
         const SizedBox(width: AppTheme.space6),
         Text(title, style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+      ],
+    );
+  }
+}
+
+/// AI 批量诊断设置弹窗
+class _BatchSettingsDialog extends StatefulWidget {
+  final int concurrency;
+  final int maxRetries;
+  final void Function(int concurrency, int maxRetries) onChanged;
+
+  const _BatchSettingsDialog({
+    required this.concurrency,
+    required this.maxRetries,
+    required this.onChanged,
+  });
+
+  @override
+  State<_BatchSettingsDialog> createState() => _BatchSettingsDialogState();
+}
+
+class _BatchSettingsDialogState extends State<_BatchSettingsDialog> {
+  late int _concurrency;
+  late int _maxRetries;
+
+  static const _concurrencyOptions = [1, 2, 3, 5];
+  static const _retryOptions = [3, 5, 10];
+
+  @override
+  void initState() {
+    super.initState();
+    _concurrency = widget.concurrency;
+    _maxRetries = widget.maxRetries;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      title: const Row(
+        children: [
+          Icon(Icons.settings_rounded, color: AppTheme.accent),
+          SizedBox(width: AppTheme.space8),
+          Text('AI 批量诊断设置', style: AppTheme.fontTitle),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('并发数', style: AppTheme.fontBody),
+          const SizedBox(height: AppTheme.space4),
+          Text('同时分析的条目数量', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+          const SizedBox(height: AppTheme.space8),
+          Wrap(
+            spacing: AppTheme.space8,
+            children: _concurrencyOptions.map((v) {
+              return ChoiceChip(
+                label: Text('$v'),
+                selected: _concurrency == v,
+                selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+                labelStyle: TextStyle(
+                  color: _concurrency == v ? AppTheme.accent : AppTheme.textSecondary,
+                  fontWeight: _concurrency == v ? FontWeight.w600 : FontWeight.normal,
+                ),
+                onSelected: (_) => setState(() => _concurrency = v),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: AppTheme.space16),
+          const Text('最大重试次数', style: AppTheme.fontBody),
+          const SizedBox(height: AppTheme.space4),
+          Text('遇到限流时自动重试的最大次数', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+          const SizedBox(height: AppTheme.space8),
+          Wrap(
+            spacing: AppTheme.space8,
+            children: _retryOptions.map((v) {
+              return ChoiceChip(
+                label: Text('$v'),
+                selected: _maxRetries == v,
+                selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+                labelStyle: TextStyle(
+                  color: _maxRetries == v ? AppTheme.accent : AppTheme.textSecondary,
+                  fontWeight: _maxRetries == v ? FontWeight.w600 : FontWeight.normal,
+                ),
+                onSelected: (_) => setState(() => _maxRetries = v),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: AppTheme.space12),
+          if (_concurrency > 1)
+            Container(
+              padding: const EdgeInsets.all(AppTheme.space8),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withValues(alpha: 0.1),
+                borderRadius: AppTheme.borderRadiusSmall,
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded, size: 16, color: AppTheme.warning),
+                  const SizedBox(width: AppTheme.space8),
+                  Expanded(
+                    child: Text(
+                      '并发过高可能触发服务商限流',
+                      style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.accent,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () {
+            widget.onChanged(_concurrency, _maxRetries);
+            Navigator.of(context).pop();
+          },
+          child: const Text('确定'),
+        ),
       ],
     );
   }

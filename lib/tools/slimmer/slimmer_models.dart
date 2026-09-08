@@ -99,3 +99,29 @@ class SlimCandidateItem {
     return '${(sizeBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }
+
+/// AI 批量诊断的可配置参数
+class SlimerBatchConfig {
+  /// 并发数 (1 = 串行)
+  final int concurrency;
+
+  /// 最大重试次数
+  final int maxRetries;
+
+  const SlimerBatchConfig({
+    this.concurrency = 1,
+    this.maxRetries = 10,
+  });
+
+  factory SlimerBatchConfig.fromJson(Map<String, dynamic> json) {
+    return SlimerBatchConfig(
+      concurrency: (json['batchConcurrency'] as num?)?.toInt().clamp(1, 5) ?? 1,
+      maxRetries: (json['batchMaxRetries'] as num?)?.toInt().clamp(1, 10) ?? 10,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'batchConcurrency': concurrency,
+    'batchMaxRetries': maxRetries,
+  };
+}
