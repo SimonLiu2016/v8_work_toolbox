@@ -9,6 +9,7 @@ import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
 import 'ai_assistant/ui/ai_assistant_page.dart';
+import 'notebook/ui/notebook_page.dart';
 import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
@@ -216,6 +217,21 @@ class AiAssistantToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const AiAssistantPage();
 }
 
+class NotebookToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'notebook';
+  @override
+  String get title => '笔记本';
+  @override
+  String get subtitle => '富文本笔记管理与印象笔记导入';
+  @override
+  IconData get icon => Icons.note_alt_outlined;
+  @override
+  ToolCategory get category => ToolCategory.system;
+  @override
+  Widget buildPage(BuildContext context) => const NotebookPage();
+}
+
 /// ---------------------------------------------------------------------------
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
@@ -237,6 +253,7 @@ class ToolRegistry {
     // 系统与配置
     AiAssistantToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
+    NotebookToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),
     BcConfigShellToolDefinition(),

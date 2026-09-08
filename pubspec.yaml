@@ -29,6 +29,11 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_macos_video: ^1.1.4
   flutter_markdown: ^0.7.7+1
+  flutter_quill: ^11.5.0
+  delta_to_html: ^0.2.2
+  quill_markdown: ^0.1.0
+  uuid: ^4.6.0
+  drift_sqflite: ^2.0.1
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 
@@ -36,6 +41,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  drift: ^2.31.0
+  drift_dev: ^2.31.0
+  build_runner: ^2.15.1
 
 flutter:
   uses-material-design: true
