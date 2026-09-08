@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../components/app_components.dart';
+import '../../../components/markdown_view.dart';
 import '../../../services/scheduled_news_service.dart';
 import '../../../theme/app_theme.dart';
 
@@ -296,9 +297,9 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
                         ],
                       ),
                       const SizedBox(height: AppTheme.space8),
-                      SelectableText(
-                        b.content,
-                        style: const TextStyle(fontSize: 13, height: 1.5, color: AppTheme.textPrimary),
+                      AppMarkdownView(
+                        data: b.content,
+                        baseStyle: const TextStyle(fontSize: 13, height: 1.5, color: AppTheme.textPrimary),
                       ),
                     ],
                   ),

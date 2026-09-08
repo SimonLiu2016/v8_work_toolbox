@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../components/app_components.dart';
+import '../../../components/markdown_view.dart';
 import '../../../services/mcp_service.dart';
 import '../../../theme/app_theme.dart';
 import '../services/ai_assistant_service.dart';
@@ -335,9 +336,11 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SelectableText(
-                        msg.content,
-                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14, height: 1.6),
+                      AppMarkdownView(
+                        data: msg.content,
+                        baseStyle: const TextStyle(color: AppTheme.textPrimary, fontSize: 14, height: 1.6),
+                        // 超长回答在气泡内部滚动，避免顶高整个对话列表、淹没输入栏
+                        maxHeight: MediaQuery.of(context).size.height * 0.6,
                       ),
                       const SizedBox(height: AppTheme.space8),
                       Row(
