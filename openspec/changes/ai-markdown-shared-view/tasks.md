@@ -16,5 +16,5 @@
 - [x] 3.2 新增 `test/markdown_view_test.dart`：13 个测试覆盖标题/加粗/列表/code 渲染、`selectable` 透传、`baseStyle` 派生、标题字号锚定、`codeBlockColor` 生效、`maxHeight` 滚动容器 → 全部通过
 - [x] 3.3 修复 `test/ai_rate_limiting_test.dart:132` 的 pre-existing 编译错误（引用了 `slimmer-batch-retry` 已移除的 `pacingDuration` setter），改为断言串行默认步频延迟 → 该文件 3 个测试通过
 - [x] 3.4 全量 `flutter test`：181 passed / 1 failed。唯一失败为 `disk_slimmer_hardening_verify_test.dart:92`（`v8-video-downloader` 被判 `SafetyRating.danger`），属本机真实磁盘状态驱动的测试，断言的是孤立应用模糊匹配逻辑，本次未改动任何扫描相关文件（`git diff --name-only` 已确认）
-- [ ] 3.5 手动验证：发送含表格/列表/代码块的问题，确认渲染正确且代码块与气泡背景可区分；打开资讯快报确认视觉一致；在用户输入气泡输入 `**hello**` 与 `` `code` `` 确认原样显示；在 AI 回答与快报中确认可框选复制
-- [x] 3.6 确认 `flutter_markdown ^0.7.7+1` 保留于 `pubspec.yaml`（本变更未移除该依赖）；`slimmer-ai-markdown-render` 尚未归档 —— 归档属跨变更决定，需你确认后执行 `openspec archive slimmer-ai-markdown-render`
+- [x] 3.5 手动验证（用户确认完成）：AI 对话含表格/列表/代码块渲染正确、代码块与气泡背景可区分；资讯快报视觉一致；用户输入气泡中 `**hello**` 与 `` `code` `` 原样显示未被解析；AI 回答与快报中可框选复制
+- [x] 3.6 确认 `flutter_markdown ^0.7.7+1` 保留于 `pubspec.yaml`（本变更未移除该依赖）；`slimmer-ai-markdown-render` 已归档至 `openspec/changes/archive/2026-09-08-slimmer-ai-markdown-render/`（该变更无 `specs/` delta，归档未改动 `openspec/specs/`）

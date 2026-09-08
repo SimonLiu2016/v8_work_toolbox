@@ -31,6 +31,14 @@ The system SHALL collect metadata for disk candidate items and query `AiService`
 - **WHEN** batch diagnosis runs with concurrency greater than 1
 - **THEN** the progress indicator shows "completed N/M" without naming individual items, since multiple items are processed simultaneously.
 
+#### Scenario: Rate-limited serial execution with pacing delay
+- **WHEN** batch diagnosis runs with concurrency 1 (the default serial mode)
+- **THEN** the system waits for each request to finish before dispatching the next, and introduces a minimum pacing pause (e.g. 800ms) between requests to prevent triggering provider QPS limits.
+
+#### Scenario: Transient backoff on HTTP 429 without slot freezing
+- **WHEN** an AI provider returns an HTTP 429 (Too Many Requests) response during diagnosis
+- **THEN** the system retries that item with exponential backoff rather than failing it immediately, and does not mark the entire provider unhealthy or trigger a 60-second cooldown lockdown.
+
 #### Scenario: Transparent logging of AI transactions
 - **WHEN** any AI request is dispatched or a response is received
 - **THEN** structured log events containing the target endpoint, provider, model, prompt summary, HTTP status code, duration, and response preview are printed to the console; retry attempts are logged with attempt number and delay duration.

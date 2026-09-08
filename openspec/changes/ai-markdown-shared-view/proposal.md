@@ -38,6 +38,11 @@ AI 生成的内容在多处 UI 中以 `SelectableText` 渲染，markdown 语法�
 - `lib/tools/slimmer/smart_disk_slimmer_page.dart` — 移除内联样式，改为接入共享组件
 - `flutter_markdown` 依赖已由 `slimmer-ai-markdown-render` 引入（`pubspec.yaml:31`，`^0.7.7+1`），本变更不新增依赖
 
-## 与 slimmer-ai-markdown-render 的关系
+## 与 slimmer-ai-markdown-render 的关系（实施记录）
 
-两个变更均在工作区中处于未提交状态。`slimmer-ai-markdown-render` 解决的是"一处内联"，本变更将其泛化为共享组件并覆盖另外两处。落地时以本变更为准：`smart_disk_slimmer_page.dart` 的内联样式会被删除，`flutter_markdown` 依赖保留。建议将 `slimmer-ai-markdown-render` 归档为已被取代（superseded），不单独合并。
+原计划是"落地时以本变更为准，前置变更归档为已被取代、不单独合并"。实际落地顺序不同，如实记录如下：
+
+- `slimmer-ai-markdown-render` 先单独合并（4eeab46）：引入 `flutter_markdown` 依赖，并在 slimmer 弹窗内联 `MarkdownStyleSheet` 完成 markdown 渲染，经人工验证。
+- 本变更随后合并（bab08c6）：将该内联样式收敛为共享组件 `AppMarkdownView`，并覆盖 AI 对话与资讯快报两处；`smart_disk_slimmer_page.dart` 的内联样式删除，`flutter_markdown` 依赖保留。
+- 因此二者是直接祖先关系，而非并行替代。前置变更的产出未被回退，仍存在于提交历史中。
+- 归档：`openspec/changes/archive/2026-09-08-slimmer-ai-markdown-render/`。归档动作只移动目录（该变更无 `specs/` delta），未改动 `openspec/specs/`。
