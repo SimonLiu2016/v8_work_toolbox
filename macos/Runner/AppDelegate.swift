@@ -17,6 +17,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   private var hotKeyRef: EventHotKeyRef?
   private var hotKeyHandlerInstalled = false
   private var launcherChannel: FlutterMethodChannel?
+  private var isTrulyQuitting = false
 
   override func applicationDidFinishLaunching(_ aNotification: Notification) {
     // 注意：不要调用 super.applicationDidFinishLaunching(aNotification)
@@ -39,6 +40,15 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     // 关闭窗口不退出应用，转入后台驻留
     return false
+  }
+
+  override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if isTrulyQuitting {
+      return .terminateNow
+    }
+    // 程序坞右键"退出"或 ⌘Q → 仅隐藏窗口，不退出进程（托盘驻留）
+    hideMainWindow()
+    return .terminateCancel
   }
 
   override func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -161,6 +171,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   }
 
   @objc private func quitApp() {
+    isTrulyQuitting = true
     NSApp.terminate(nil)
   }
 
