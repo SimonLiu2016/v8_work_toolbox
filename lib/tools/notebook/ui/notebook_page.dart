@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../theme/app_theme.dart';
+import '../evernote_import_service.dart';
 import '../export_service.dart';
 import '../markdown_converter.dart';
 import '../note_database.dart';
@@ -138,6 +139,173 @@ class _NotebookPageState extends State<NotebookPage> {
         SnackBar(content: Text('Imported: $title')),
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Evernote Import
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showEvernoteImportDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_download_outlined, color: AppTheme.accent),
+            SizedBox(width: AppTheme.space8),
+            Text('Import from Evernote', style: AppTheme.fontTitle),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Import notes from Evernote (印象笔记). Choose import method:',
+              style: AppTheme.fontBody,
+            ),
+            const SizedBox(height: AppTheme.space16),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined, color: AppTheme.accent),
+              title: const Text('API Import (Recommended)'),
+              subtitle: const Text('Decrypt notes via Evernote API. Requires logged-in Evernote client.'),
+              onTap: () => Navigator.pop(ctx, 'api'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Import .notes File'),
+              subtitle: const Text('Parse .notes file metadata and attachments. Encrypted content will be skipped.'),
+              onTap: () => Navigator.pop(ctx, 'notes'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    if (result == 'api') {
+      await _importFromEvernoteApi();
+    } else if (result == 'notes') {
+      await _importFromNotesFile();
+    }
+  }
+
+  Future<void> _importFromEvernoteApi() async {
+    // Show progress dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const _ImportProgressDialog(),
+    );
+
+    try {
+      final importResult = await EvernoteImportService.instance.importFromApi(
+        onProgress: (current, total, title) {
+          debugPrint('[Import] $current/$total: $title');
+        },
+      );
+
+      if (mounted) {
+        Navigator.pop(context); // Close progress dialog
+        await _refresh();
+        _showImportResult(importResult);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close progress dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e'), backgroundColor: AppTheme.error),
+        );
+      }
+    }
+  }
+
+  Future<void> _importFromNotesFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['notes'],
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const _ImportProgressDialog(),
+    );
+
+    try {
+      final importResult = await EvernoteImportService.instance.importFromNotesFile(
+        filePath: result.files.first.path!,
+        onProgress: (current, total, title) {
+          debugPrint('[Import] $current/$total: $title');
+        },
+      );
+
+      if (mounted) {
+        Navigator.pop(context); // Close progress dialog
+        await _refresh();
+        _showImportResult(importResult);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close progress dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e'), backgroundColor: AppTheme.error),
+        );
+      }
+    }
+  }
+
+  void _showImportResult(ImportResult result) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Text('Import Complete', style: AppTheme.fontTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total: ${result.total} notes'),
+            Text('Imported: ${result.imported}', style: const TextStyle(color: AppTheme.success)),
+            if (result.failed > 0)
+              Text('Failed: ${result.failed}', style: const TextStyle(color: AppTheme.error)),
+            if (result.errors.isNotEmpty) ...[
+              const SizedBox(height: AppTheme.space8),
+              const Text('Errors:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(
+                height: 120,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: result.errors.take(20).map((e) => Text(
+                      '• $e',
+                      style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                    )).toList(),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -506,6 +674,13 @@ class _NotebookPageState extends State<NotebookPage> {
                   constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 ),
                 IconButton(
+                  icon: const Icon(Icons.cloud_download_outlined, size: 18, color: AppTheme.accent),
+                  onPressed: _showEvernoteImportDialog,
+                  tooltip: 'Import from Evernote',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                ),
+                IconButton(
                   icon: const Icon(Icons.delete_outline, size: 18, color: AppTheme.textTertiary),
                   onPressed: () => _deleteNote(_selectedNote!.id),
                   tooltip: 'Delete Note',
@@ -571,5 +746,31 @@ class _NotebookPageState extends State<NotebookPage> {
     } catch (_) {
       return '';
     }
+  }
+}
+
+/// Import progress dialog (shown during Evernote import)
+class _ImportProgressDialog extends StatelessWidget {
+  const _ImportProgressDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(color: AppTheme.accent),
+          const SizedBox(height: AppTheme.space16),
+          const Text('Importing notes from Evernote...', style: AppTheme.fontTitle),
+          const SizedBox(height: AppTheme.space8),
+          Text(
+            'This may take a while for large note collections.\nPlease do not close the app.',
+            style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -1,8 +1,5 @@
-import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift_sqflite/drift_sqflite.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 part 'note_database.g.dart';
 
@@ -256,8 +253,6 @@ class NoteDatabase extends _$NoteDatabase {
 
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    final dir = await getApplicationSupportDirectory();
-    final dbPath = p.join(dir.path, 'notebook.db');
     return SqfliteQueryExecutor.inDatabaseFolder(path: 'notebook.db');
   });
 }
