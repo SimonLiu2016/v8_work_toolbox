@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
 import '../../../theme/app_theme.dart';
@@ -121,7 +122,6 @@ class _NoteEditorState extends State<NoteEditor> {
     final store = NoteStore.instance;
 
     try {
-      // Save to attachments directory
       final localPath = await store.saveAttachment(
         noteId: widget.note!.id,
         sourceFile: file,
@@ -129,7 +129,6 @@ class _NoteEditorState extends State<NoteEditor> {
         mime: _getMimeType(result.files.first.extension),
       );
 
-      // Insert image into editor
       final index = _quillCtrl!.selection.baseOffset;
       _quillCtrl!.document.insert(index, BlockEmbed.image(localPath));
       _quillCtrl!.updateSelection(
@@ -242,17 +241,34 @@ class _NoteEditorState extends State<NoteEditor> {
           ),
         ),
 
-        // Editor
+        // Editor with markdown paste support
         Expanded(
           child: Container(
             color: AppTheme.bgContent,
             padding: const EdgeInsets.all(AppTheme.space16),
             child: QuillEditor.basic(
               controller: _quillCtrl!,
-              config: const QuillEditorConfig(
+              config: QuillEditorConfig(
                 padding: EdgeInsets.zero,
                 autoFocus: false,
                 expands: true,
+                customStyles: DefaultStyles(
+                  code: DefaultTextBlockStyle(
+                    const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      color: Color(0xFFD4D4D4),
+                    ),
+                    const HorizontalSpacing(0, 0),
+                    const VerticalSpacing(8, 0),
+                    const VerticalSpacing(0, 0),
+                    BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppTheme.borderSubtle),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),

@@ -11,45 +11,158 @@ class MarkdownConverter {
     try {
       final ops = jsonDecode(deltaJson) as List<dynamic>;
       final buffer = StringBuffer();
-      int i = 0;
 
-      while (i < ops.length) {
-        final op = ops[i] as Map<String, dynamic>;
+      // Pre-process: group ops into logical blocks
+      // Each block is either: text with inline attrs, or a newline with block attrs
+      final blocks = <_DeltaBlock>[];
+      String pendingText = '';
+      Map<String, dynamic>? pendingInlineAttrs;
+
+      for (final rawOp in ops) {
+        final op = rawOp as Map<String, dynamic>;
         final insert = op['insert'];
         final attrs = (op['attributes'] as Map?)?.cast<String, dynamic>();
 
         if (insert is! String) {
-          // Embed (image, video, etc.)
-          if (insert is Map) {
-            buffer.write(_handleEmbed(insert.cast<String, dynamic>()));
+          // Embed
+          if (pendingText.isNotEmpty) {
+            blocks.add(_DeltaBlock.text(pendingText, pendingInlineAttrs));
+            pendingText = '';
+            pendingInlineAttrs = null;
           }
-          i++;
+          if (insert is Map) {
+            blocks.add(_DeltaBlock.embed(insert.cast<String, dynamic>()));
+          }
           continue;
         }
 
-        // Split by newlines to handle block-level formatting
-        final lines = insert.split('\n');
-        for (int j = 0; j < lines.length; j++) {
-          final line = lines[j];
-          if (j > 0) buffer.write('\n');
-
-          if (line.isEmpty && j < lines.length - 1) {
-            // Empty line between blocks
-            continue;
+        // Split by newlines
+        final parts = insert.split('\n');
+        for (int j = 0; j < parts.length; j++) {
+          if (j > 0) {
+            // This is a newline boundary
+            // The block attrs on the newline apply to the preceding text line
+            // We need to tag the pending text with these block attrs
+            if (pendingText.isNotEmpty) {
+              blocks.add(_DeltaBlock.text(pendingText, pendingInlineAttrs, blockAttrs: attrs));
+              pendingText = '';
+              pendingInlineAttrs = null;
+            } else {
+              // No pending text - still need to record the newline for empty lines
+              blocks.add(_DeltaBlock.newline(attrs));
+            }
           }
 
-          if (line.isNotEmpty) {
-            buffer.write(_applyInlineFormatting(line, attrs));
+          if (parts[j].isNotEmpty) {
+            // Accumulate text
+            if (pendingInlineAttrs != null && _attrsEqual(pendingInlineAttrs, attrs)) {
+              pendingText += parts[j];
+            } else {
+              if (pendingText.isNotEmpty) {
+                blocks.add(_DeltaBlock.text(pendingText, pendingInlineAttrs));
+              }
+              pendingText = parts[j];
+              pendingInlineAttrs = attrs;
+            }
           }
         }
+      }
 
-        i++;
+      // Flush remaining text
+      if (pendingText.isNotEmpty) {
+        blocks.add(_DeltaBlock.text(pendingText, pendingInlineAttrs));
+      }
+
+      // Convert blocks to markdown
+      bool inCodeBlock = false;
+      for (int i = 0; i < blocks.length; i++) {
+        final block = blocks[i];
+
+        if (block.isEmbed) {
+          buffer.write(_handleEmbed(block.embed!));
+          continue;
+        }
+
+        if (block.isNewline) {
+          final attrs = block.attrs;
+          if (attrs != null) {
+            // Block-level formatting on newline
+            if (attrs.containsKey('list')) {
+              // List prefix is already applied to the preceding text block
+              // Just add a newline
+              buffer.write('\n');
+            } else if (attrs.containsKey('header')) {
+              // Header prefix is already applied to the preceding text block
+              buffer.write('\n');
+            } else if (attrs.containsKey('blockquote')) {
+              // Blockquote prefix is already applied to the preceding text block
+              buffer.write('\n');
+            } else if (attrs.containsKey('code-block')) {
+              if (!inCodeBlock) {
+                buffer.write('```\n');
+                inCodeBlock = true;
+              } else {
+                buffer.write('\n```');
+                inCodeBlock = false;
+              }
+            } else if (attrs.containsKey('divider')) {
+              buffer.write('\n---\n');
+            } else {
+              buffer.write('\n');
+            }
+          } else {
+            buffer.write('\n');
+          }
+          continue;
+        }
+
+        // Text with inline formatting
+        if (block.text != null) {
+          // Apply block-level prefixes (list, header, blockquote)
+          // These can come from either blockAttrs (from newline) or attrs (on text)
+          final effectiveBlockAttrs = block.blockAttrs ?? block.attrs;
+          if (effectiveBlockAttrs != null) {
+            // Check if these are block-level attrs (not inline)
+            final isBlockAttr = effectiveBlockAttrs.containsKey('list') ||
+                effectiveBlockAttrs.containsKey('header') ||
+                effectiveBlockAttrs.containsKey('blockquote');
+
+            if (isBlockAttr) {
+              if (effectiveBlockAttrs.containsKey('list')) {
+                final listType = effectiveBlockAttrs['list'];
+                final indent = (effectiveBlockAttrs['indent'] as int?) ?? 0;
+                final prefix = '  ' * indent;
+                if (listType == 'bullet') {
+                  buffer.write('$prefix- ');
+                } else if (listType == 'ordered') {
+                  buffer.write('${prefix}1. ');
+                }
+              } else if (effectiveBlockAttrs.containsKey('header')) {
+                final level = effectiveBlockAttrs['header'] as int;
+                buffer.write('${'#' * level} ');
+              } else if (effectiveBlockAttrs.containsKey('blockquote')) {
+                buffer.write('> ');
+              }
+            }
+          }
+          buffer.write(_applyInlineFormatting(block.text!, block.attrs));
+        }
       }
 
       return buffer.toString().trimRight();
     } catch (_) {
       return deltaJson;
     }
+  }
+
+  static bool _attrsEqual(Map<String, dynamic>? a, Map<String, dynamic>? b) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (a[key] != b[key]) return false;
+    }
+    return true;
   }
 
   static String _applyInlineFormatting(String text, Map<String, dynamic>? attrs) {
@@ -199,7 +312,6 @@ class MarkdownConverter {
       final imgMatch = RegExp(r'^!\[([^\]]*)\]\(([^)]+)\)$').firstMatch(line);
       if (imgMatch != null) {
         ops.add({'insert': '\n', 'attributes': {}});
-        // Image will be handled as embed
         ops.add({'insert': '\n'});
         i++;
         continue;
@@ -266,4 +378,31 @@ class MarkdownConverter {
       ops.add({'insert': text});
     }
   }
+}
+
+/// Internal block representation for delta-to-markdown conversion
+class _DeltaBlock {
+  final String? text;
+  final Map<String, dynamic>? embed;
+  final Map<String, dynamic>? attrs;
+  final Map<String, dynamic>? blockAttrs; // Block-level attrs from newline
+  final bool isNewline;
+
+  _DeltaBlock.text(this.text, this.attrs, {this.blockAttrs})
+      : embed = null,
+        isNewline = false;
+
+  _DeltaBlock.newline(this.attrs)
+      : text = null,
+        embed = null,
+        blockAttrs = null,
+        isNewline = true;
+
+  _DeltaBlock.embed(this.embed)
+      : text = null,
+        attrs = null,
+        blockAttrs = null,
+        isNewline = false;
+
+  bool get isEmbed => embed != null;
 }

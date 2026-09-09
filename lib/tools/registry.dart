@@ -1,3 +1,4 @@
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 
 import '../app_shortcut_tool.dart';
@@ -228,6 +229,18 @@ class NotebookToolDefinition extends ToolDefinition {
   IconData get icon => Icons.note_alt_outlined;
   @override
   ToolCategory get category => ToolCategory.system;
+
+  @override
+  bool get openInNewWindow => true;
+
+  @override
+  Future<void> openNewWindow() async {
+    final configuration = WindowConfiguration(
+      arguments: 'notebook',
+    );
+    await WindowController.create(configuration);
+  }
+
   @override
   Widget buildPage(BuildContext context) => const NotebookPage();
 }

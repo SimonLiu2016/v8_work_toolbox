@@ -79,6 +79,13 @@ class AppShellState extends State<AppShell> {
   void selectTool(String toolId) {
     final tool = ToolRegistry.findById(toolId);
     if (tool == null) return;
+
+    // If tool opens in a new window, do that instead of embedding
+    if (tool.openInNewWindow) {
+      tool.openNewWindow();
+      return;
+    }
+
     final idx = ToolRegistry.tools.indexWhere((t) => t.id == toolId);
     setState(() {
       _selectedToolId = toolId;

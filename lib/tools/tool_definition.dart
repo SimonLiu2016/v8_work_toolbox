@@ -32,4 +32,10 @@ abstract class ToolDefinition {
 
   /// 构建工具页面 Widget
   Widget buildPage(BuildContext context);
+
+  /// 是否在独立窗口中打开（默认 false）
+  bool get openInNewWindow => false;
+
+  /// 打开独立窗口（仅当 openInNewWindow 为 true 时调用）
+  Future<void> openNewWindow() async {}
 }
