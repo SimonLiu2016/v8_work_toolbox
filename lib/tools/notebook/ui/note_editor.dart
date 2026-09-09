@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
@@ -103,6 +105,55 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   // ---------------------------------------------------------------------------
+  // Image insertion
+  // ---------------------------------------------------------------------------
+
+  Future<void> _insertImage() async {
+    if (widget.note == null) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = File(result.files.first.path!);
+    final store = NoteStore.instance;
+
+    try {
+      // Save to attachments directory
+      final localPath = await store.saveAttachment(
+        noteId: widget.note!.id,
+        sourceFile: file,
+        filename: result.files.first.name,
+        mime: _getMimeType(result.files.first.extension),
+      );
+
+      // Insert image into editor
+      final index = _quillCtrl!.selection.baseOffset;
+      _quillCtrl!.document.insert(index, BlockEmbed.image(localPath));
+      _quillCtrl!.updateSelection(
+        TextSelection.collapsed(offset: index + 1),
+        ChangeSource.local,
+      );
+    } catch (e) {
+      debugPrint('Image insert error: $e');
+    }
+  }
+
+  String _getMimeType(String? ext) {
+    switch (ext?.toLowerCase()) {
+      case 'png': return 'image/png';
+      case 'jpg':
+      case 'jpeg': return 'image/jpeg';
+      case 'gif': return 'image/gif';
+      case 'webp': return 'image/webp';
+      case 'svg': return 'image/svg+xml';
+      default: return 'application/octet-stream';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
 
@@ -152,26 +203,42 @@ class _NoteEditorState extends State<NoteEditor> {
           ),
         ),
 
-        // Quill toolbar
-        QuillSimpleToolbar(
-          controller: _quillCtrl!,
-          config: const QuillSimpleToolbarConfig(
-            showBoldButton: true,
-            showItalicButton: true,
-            showUnderLineButton: true,
-            showStrikeThrough: true,
-            showHeaderStyle: true,
-            showListNumbers: true,
-            showListBullets: true,
-            showCodeBlock: true,
-            showQuote: true,
-            showLink: true,
-            showColorButton: false,
-            showBackgroundColorButton: false,
-            showSearchButton: false,
-            showAlignmentButtons: false,
-            showDirection: false,
-            showIndent: false,
+        // Quill toolbar + image button
+        Container(
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppTheme.borderSubtle)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: QuillSimpleToolbar(
+                  controller: _quillCtrl!,
+                  config: const QuillSimpleToolbarConfig(
+                    showBoldButton: true,
+                    showItalicButton: true,
+                    showUnderLineButton: true,
+                    showStrikeThrough: true,
+                    showHeaderStyle: true,
+                    showListNumbers: true,
+                    showListBullets: true,
+                    showCodeBlock: true,
+                    showQuote: true,
+                    showLink: true,
+                    showColorButton: false,
+                    showBackgroundColorButton: false,
+                    showSearchButton: false,
+                    showAlignmentButtons: false,
+                    showDirection: false,
+                    showIndent: false,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.image_outlined, size: 20),
+                onPressed: _insertImage,
+                tooltip: 'Insert Image',
+              ),
+            ],
           ),
         ),
 

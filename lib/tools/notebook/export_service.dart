@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:delta_to_html/delta_to_html.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 import 'markdown_converter.dart';
 import 'note_database.dart';
@@ -46,12 +48,105 @@ class ExportService {
     required ExportFormat format,
     required String outputDir,
   }) async {
-    final content = await exportNote(note, format);
     final filename = '${_sanitizeFilename(note.title)}${format.extension}';
     final filePath = p.join(outputDir, filename);
     final file = File(filePath);
-    await file.writeAsString(content, encoding: utf8);
+
+    if (format == ExportFormat.pdf) {
+      await _exportToPdf(note, file);
+    } else {
+      final content = await exportNote(note, format);
+      await file.writeAsString(content, encoding: utf8);
+    }
+
     return file;
+  }
+
+  /// 导出为 PDF 文件
+  Future<void> _exportToPdf(Note note, File file) async {
+    final pdf = pw.Document();
+    final markdown = _toMarkdown(note);
+
+    // Split markdown into paragraphs and render
+    final lines = markdown.split('\n');
+    final widgets = <pw.Widget>[];
+
+    for (final line in lines) {
+      if (line.trim().isEmpty) {
+        widgets.add(pw.SizedBox(height: 8));
+        continue;
+      }
+
+      // Heading
+      if (line.startsWith('# ')) {
+        widgets.add(pw.Header(
+          level: 0,
+          child: pw.Text(line.substring(2), style: pw.TextStyle(
+            fontSize: 24, fontWeight: pw.FontWeight.bold,
+          )),
+        ));
+        continue;
+      }
+      if (line.startsWith('## ')) {
+        widgets.add(pw.Header(
+          level: 1,
+          child: pw.Text(line.substring(3), style: pw.TextStyle(
+            fontSize: 20, fontWeight: pw.FontWeight.bold,
+          )),
+        ));
+        continue;
+      }
+      if (line.startsWith('### ')) {
+        widgets.add(pw.Header(
+          level: 2,
+          child: pw.Text(line.substring(4), style: pw.TextStyle(
+            fontSize: 16, fontWeight: pw.FontWeight.bold,
+          )),
+        ));
+        continue;
+      }
+
+      // Code block
+      if (line.startsWith('```')) {
+        continue; // Skip code block markers
+      }
+
+      // List item
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        widgets.add(pw.Bullet(text: line.substring(2)));
+        continue;
+      }
+
+      // Regular paragraph
+      widgets.add(pw.Paragraph(
+        text: line,
+        style: pw.TextStyle(fontSize: 12),
+      ));
+    }
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        header: (context) => pw.Container(
+          alignment: pw.Alignment.centerLeft,
+          margin: const pw.EdgeInsets.only(bottom: 20),
+          child: pw.Text(note.title, style: pw.TextStyle(
+            fontSize: 28, fontWeight: pw.FontWeight.bold,
+          )),
+        ),
+        footer: (context) => pw.Container(
+          alignment: pw.Alignment.centerRight,
+          margin: const pw.EdgeInsets.only(top: 10),
+          child: pw.Text(
+            'Page ${context.pageNumber} of ${context.pagesCount}',
+            style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+          ),
+        ),
+        build: (context) => widgets,
+      ),
+    );
+
+    await file.writeAsBytes(await pdf.save());
   }
 
   String _toMarkdown(Note note) {
