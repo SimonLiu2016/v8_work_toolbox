@@ -48,8 +48,19 @@ class AppShellState extends State<AppShell> {
     super.initState();
     PrivacySecurityService.instance.isUnlockedNotifier.addListener(_onUnlockStateChanged);
     _recentToolIds = List<String>.from(widget.initialRecentToolIds);
-    if (_recentToolIds.isNotEmpty && ToolRegistry.findById(_recentToolIds.first) != null) {
-      _selectedToolId = _recentToolIds.first;
+
+    // Find the first recent tool that doesn't open in a new window
+    String? initialToolId;
+    for (final id in _recentToolIds) {
+      final tool = ToolRegistry.findById(id);
+      if (tool != null && !tool.openInNewWindow) {
+        initialToolId = id;
+        break;
+      }
+    }
+
+    if (initialToolId != null) {
+      _selectedToolId = initialToolId;
     } else {
       _selectedToolId = ToolRegistry.publicTools.first.id;
     }
@@ -113,13 +124,16 @@ class AppShellState extends State<AppShell> {
   }
 
   List<ToolDefinition> _getToolsForCurrentView() {
+    List<ToolDefinition> tools;
     if (_currentView == ActivityViewType.privacy) {
-      return ToolRegistry.getByCategory(ToolCategory.privacy);
+      tools = ToolRegistry.getByCategory(ToolCategory.privacy);
+    } else if (_currentView == ActivityViewType.category && _currentCategory != null) {
+      tools = ToolRegistry.getByCategory(_currentCategory!);
+    } else {
+      tools = ToolRegistry.publicTools;
     }
-    if (_currentView == ActivityViewType.category && _currentCategory != null) {
-      return ToolRegistry.getByCategory(_currentCategory!);
-    }
-    return ToolRegistry.publicTools;
+    // Filter out tools that open in their own window
+    return tools.where((t) => !t.openInNewWindow).toList();
   }
 
   String _getPanelTitle() {
@@ -223,11 +237,16 @@ class AppShellState extends State<AppShell> {
                   });
                 },
                 onSelectTool: (id) {
+                  final tool = ToolRegistry.findById(id);
+                  // If tool opens in a new window, do that instead of embedding
+                  if (tool?.openInNewWindow == true) {
+                    tool!.openNewWindow();
+                    return;
+                  }
                   final idx = ToolRegistry.tools.indexWhere((t) => t.id == id);
                   setState(() {
                     _selectedToolId = id;
                     if (idx >= 0) _activatedToolIndices.add(idx);
-                    final tool = ToolRegistry.findById(id);
                     if (tool?.category != ToolCategory.privacy) {
                       _recordUsage(id);
                     }
@@ -248,6 +267,10 @@ class AppShellState extends State<AppShell> {
                         children: allTools.asMap().entries.map((entry) {
                           final idx = entry.key;
                           final tool = entry.value;
+                          // Skip tools that open in their own window
+                          if (tool.openInNewWindow) {
+                            return const SizedBox.shrink();
+                          }
                           if (_activatedToolIndices.contains(idx)) {
                             return tool.buildPage(context);
                           }
