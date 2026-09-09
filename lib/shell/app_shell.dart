@@ -124,16 +124,13 @@ class AppShellState extends State<AppShell> {
   }
 
   List<ToolDefinition> _getToolsForCurrentView() {
-    List<ToolDefinition> tools;
     if (_currentView == ActivityViewType.privacy) {
-      tools = ToolRegistry.getByCategory(ToolCategory.privacy);
-    } else if (_currentView == ActivityViewType.category && _currentCategory != null) {
-      tools = ToolRegistry.getByCategory(_currentCategory!);
-    } else {
-      tools = ToolRegistry.publicTools;
+      return ToolRegistry.getByCategory(ToolCategory.privacy);
     }
-    // Filter out tools that open in their own window
-    return tools.where((t) => !t.openInNewWindow).toList();
+    if (_currentView == ActivityViewType.category && _currentCategory != null) {
+      return ToolRegistry.getByCategory(_currentCategory!);
+    }
+    return ToolRegistry.publicTools;
   }
 
   String _getPanelTitle() {
