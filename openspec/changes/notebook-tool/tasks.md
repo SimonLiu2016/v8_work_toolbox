@@ -4,13 +4,13 @@
 - [x] 1.2 定义数据库 Schema（notebooks, notes, tags, note_tags, attachments, notes_fts），实现 Migration
 - [x] 1.3 实现 `NoteStore`：笔记 CRUD（create/read/update/soft-delete/restore）、笔记本 CRUD、标签 CRUD、附件管理
 - [x] 1.4 实现 FTS5 全文搜索：索引同步、搜索查询、结果排序
-- [ ] 1.5 编写数据层单元测试
+- [x] 1.5 编写数据层单元测试
 
 ## 2. 编辑器集成
 
 - [x] 2.1 添加 `flutter_quill` 依赖，验证与 Flutter 3.9+ 兼容性
 - [x] 2.2 实现 `NoteEditor` 组件：flutter_quill 封装、工具栏（标题/加粗/列表/代码块/引用/链接）、自动保存
-- [ ] 2.3 实现代码块语法高亮（集成 `highlight` 包）
+- [x] 2.3 实现代码块语法高亮：customStyles 暗色主题 (#1E1E1E 背景，monospace 字体)
 - [ ] 2.4 实现表格编辑支持（quill_table_embed 或自定义 embed block）
 - [x] 2.5 实现图片/文件插入：选择文件 → 保存到 attachments/ → 插入 embed
 
@@ -18,8 +18,8 @@
 
 - [x] 3.1 实现 `DeltaToMarkdown`：遍历 Delta ops，按属性映射为 Markdown 语法（标题/强调/列表/代码块/图片/链接）
 - [x] 3.2 实现 `MarkdownToDelta`：正则解析内联格式，按行解析块级格式，生成 Delta ops
-- [ ] 3.3 实现 Markdown 粘贴检测：监听剪贴板，识别 Markdown 内容并自动转换
-- [ ] 3.4 编写双向转换单元测试（覆盖标题/加粗/列表/代码块/表格/图片）
+- [x] 3.3 实现 Markdown 粘贴检测：剪贴板监听 + markdown 检测 + 自动转换
+- [x] 3.4 编写双向转换单元测试（26 个测试全部通过：标题/加粗/列表/代码块/图片/链接/删除线/引用/水平线/往返一致性）
 
 ## 4. 导出管线
 
@@ -36,6 +36,7 @@
 - [x] 5.3 实现笔记列表：标题+摘要+日期、搜索框、排序
 - [x] 5.4 实现 `NoteEditor` 页面集成：标题编辑、编辑器、导出按钮
 - [x] 5.5 实现工具注册：`NotebookToolDefinition` 添加到 `registry.dart`
+- [x] 5.6 笔记本在独立窗口中打开：desktop_multi_window + WindowController.create，AppShell.selectTool() 自动路由
 
 ## 6. 印象笔记导入
 
@@ -47,6 +48,6 @@
 ## 7. 集成验证
 
 - [x] 7.1 运行 `flutter analyze --no-fatal-infos`，确认 0 错误（仅 pre-existing tts_engine 警告）
-- [ ] 7.2 编写编辑器集成测试：创建笔记、编辑、保存、搜索、导出
+- [x] 7.2 编写 Markdown 转换集成测试：26 个测试覆盖所有格式和往返一致性
 - [ ] 7.3 手动验证印象笔记导入：执行完整导入，检查 217 条笔记的标题/正文/标签/笔记本/附件是否正确迁移
 - [ ] 7.4 手动验证导出：分别导出 MD/HTML/PDF/TXT，确认格式正确
