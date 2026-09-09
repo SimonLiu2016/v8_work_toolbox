@@ -1,3 +1,4 @@
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -18,19 +19,17 @@ import 'theme/app_theme.dart';
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Check if this is a sub-window
-  if (args.firstOrNull == 'multi_window') {
-    // Sub-window mode
-    final windowId = int.parse(args[1]);
-    final argument = args.length > 2 ? args[2] : '';
+  // Get window controller to check if this is a sub-window
+  final windowController = await WindowController.fromCurrentEngine();
+  final arguments = windowController.arguments;
 
-    if (argument == 'notebook') {
-      // Initialize notebook store
-      await NoteStore.instance.init();
+  // Check if this is a sub-window with notebook argument
+  if (arguments == 'notebook') {
+    // Initialize notebook store
+    await NoteStore.instance.init();
 
-      runApp(_NotebookWindowApp(windowId: windowId));
-      return;
-    }
+    runApp(_NotebookWindowApp(windowId: int.tryParse(windowController.windowId) ?? 0));
+    return;
   }
 
   // Main window mode
