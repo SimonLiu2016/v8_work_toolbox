@@ -39,6 +39,7 @@ dependencies:
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
   desktop_multi_window: ^0.3.1
+  window_manager: ^0.5.2
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 

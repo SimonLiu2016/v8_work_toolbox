@@ -1,6 +1,6 @@
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'services/ai_config_store.dart';
 import 'services/launcher_service.dart';
@@ -19,16 +19,32 @@ import 'theme/app_theme.dart';
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Get window controller to check if this is a sub-window
-  final windowController = await WindowController.fromCurrentEngine();
-  final arguments = windowController.arguments;
+  // Check if this is a sub-window by looking at args
+  // desktop_multi_window passes ["multi_window", windowId, arguments] for sub-windows
+  final isSubWindow = args.isNotEmpty && args.first == 'multi_window';
+  final subWindowArgument = isSubWindow && args.length > 2 ? args[2] : '';
 
-  // Check if this is a sub-window with notebook argument
-  if (arguments == 'notebook') {
-    // Initialize notebook store
+  if (isSubWindow && subWindowArgument == 'notebook') {
+    // Sub-window mode for notebook
     await NoteStore.instance.init();
 
-    runApp(_NotebookWindowApp(windowId: int.tryParse(windowController.windowId) ?? 0));
+    // Use window_manager to properly initialize and show the window
+    await windowManager.ensureInitialized();
+
+    final windowOptions = WindowOptions(
+      size: const Size(1200, 800),
+      center: true,
+      backgroundColor: AppTheme.bgContent,
+      titleBarStyle: TitleBarStyle.normal,
+      title: '笔记本 - V8 工作工具箱',
+    );
+
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+
+    runApp(const _NotebookWindowApp());
     return;
   }
 
@@ -88,9 +104,7 @@ class V8WorkToolboxApp extends StatelessWidget {
 
 /// Notebook sub-window app
 class _NotebookWindowApp extends StatelessWidget {
-  final int windowId;
-
-  const _NotebookWindowApp({required this.windowId});
+  const _NotebookWindowApp();
 
   @override
   Widget build(BuildContext context) {
