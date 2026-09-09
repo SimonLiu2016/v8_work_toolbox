@@ -37,7 +37,9 @@
 - [x] 5.4 实现 `NoteEditor` 页面集成：标题编辑、编辑器、导出按钮
 - [x] 5.5 实现工具注册：`NotebookToolDefinition` 添加到 `registry.dart`
 - [x] 5.6 笔记本在独立窗口中打开：desktop_multi_window + WindowController.create，AppShell.selectTool() 自动路由
-- [x] 5.7 笔记本不在主窗口中嵌入：过滤 openInNewWindow 工具不出现在侧边栏和 IndexedStack 中
+- [x] 5.7 笔记本不在主窗口中嵌入：过滤 openInNewWindow 工具不出现在 IndexedStack 中
+- [x] 5.8 笔记本入口保留在侧边栏：_getToolsForCurrentView 不过滤 openInNewWindow，点击时路由到新窗口
+- [x] 5.9 修复独立窗口不打开：使用 WindowController.fromCurrentEngine() 检测子窗口，设置 hiddenAtLaunch: false
 
 ## 6. 印象笔记导入
 
