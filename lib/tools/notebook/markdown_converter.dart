@@ -98,23 +98,49 @@ class MarkdownConverter {
               // Blockquote prefix is already applied to the preceding text block
               buffer.write('\n');
             } else if (attrs.containsKey('code-block')) {
-              if (!inCodeBlock) {
-                buffer.write('```\n');
-                inCodeBlock = true;
-              } else {
-                buffer.write('\n```');
+              // Check if next newline is also code-block
+              bool nextIsCode = false;
+              for (int k = i + 1; k < blocks.length; k++) {
+                if (blocks[k].isNewline) {
+                  nextIsCode = blocks[k].attrs?.containsKey('code-block') == true;
+                  break;
+                } else if (blocks[k].text != null) {
+                  final eff = blocks[k].blockAttrs ?? blocks[k].attrs;
+                  if (eff?.containsKey('code-block') == true) {
+                    nextIsCode = true;
+                    break;
+                  }
+                }
+              }
+              if (!nextIsCode) {
+                buffer.write('\n```\n');
                 inCodeBlock = false;
+              } else {
+                buffer.write('\n');
               }
             } else if (attrs.containsKey('divider')) {
+              if (inCodeBlock) {
+                buffer.write('\n```\n');
+                inCodeBlock = false;
+              }
               buffer.write('\n---\n');
             } else {
+              if (inCodeBlock) {
+                buffer.write('\n```\n');
+                inCodeBlock = false;
+              }
               buffer.write('\n');
             }
           } else {
+            if (inCodeBlock) {
+              buffer.write('\n```\n');
+              inCodeBlock = false;
+            }
             buffer.write('\n');
           }
           continue;
         }
+
 
         // Text with inline formatting
         if (block.text != null) {
@@ -127,7 +153,14 @@ class MarkdownConverter {
                 effectiveBlockAttrs.containsKey('header') ||
                 effectiveBlockAttrs.containsKey('blockquote');
 
-            if (isBlockAttr) {
+            if (effectiveBlockAttrs.containsKey('code-block')) {
+              if (!inCodeBlock) {
+                final lang = effectiveBlockAttrs['code-block'];
+                final langStr = (lang is String && lang.isNotEmpty && lang != 'true') ? lang : '';
+                buffer.write('```$langStr\n');
+                inCodeBlock = true;
+              }
+            } else if (isBlockAttr) {
               if (effectiveBlockAttrs.containsKey('list')) {
                 final listType = effectiveBlockAttrs['list'];
                 final indent = (effectiveBlockAttrs['indent'] as int?) ?? 0;
@@ -144,6 +177,7 @@ class MarkdownConverter {
                 buffer.write('> ');
               }
             }
+
           }
           buffer.write(_applyInlineFormatting(block.text!, block.attrs));
         }

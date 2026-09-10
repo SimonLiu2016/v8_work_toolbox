@@ -36,28 +36,145 @@ if not hasattr(inspect, 'getargspec'):
 
 import hashlib
 import html
+from html.parser import HTMLParser
 import re
 
 COREDATA_EPOCH_OFFSET = 978307200  # 2001-01-01 00:00:00 UTC in Unix seconds
 
 
+class ENMLToMarkdownParser(HTMLParser):
+    """纯 Python 标准库 ENML / HTML 转 Markdown 解析器（零第三方依赖）"""
+    def __init__(self):
+        super().__init__()
+        self.output = []
+        self.tag_stack = []
+        self.in_link = False
+        self.link_url = ''
+        self.link_text = []
+        self.list_stack = []  # ('ul' | 'ol', item_count)
+
+    def _ensure_newline(self, count=1):
+        current = ''.join(self.output)
+        newlines = 0
+        for ch in reversed(current):
+            if ch == '\n':
+                newlines += 1
+            else:
+                break
+        if newlines < count:
+            self.output.append('\n' * (count - newlines))
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        tag = tag.lower()
+        self.tag_stack.append((tag, attrs_dict))
+
+        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+            level = int(tag[1])
+            self._ensure_newline(2)
+            self.output.append('#' * level + ' ')
+        elif tag in ('p', 'div'):
+            self._ensure_newline(1)
+        elif tag == 'br':
+            self.output.append('\n')
+        elif tag == 'hr':
+            self._ensure_newline(2)
+            self.output.append('---\n\n')
+        elif tag == 'ul':
+            self.list_stack.append(('ul', 0))
+            self._ensure_newline(1)
+        elif tag == 'ol':
+            self.list_stack.append(('ol', 0))
+            self._ensure_newline(1)
+        elif tag == 'li':
+            self._ensure_newline(1)
+            indent = '  ' * max(0, len(self.list_stack) - 1)
+            if self.list_stack and self.list_stack[-1][0] == 'ol':
+                count = self.list_stack[-1][1] + 1
+                self.list_stack[-1] = ('ol', count)
+                self.output.append(f'{indent}{count}. ')
+            else:
+                self.output.append(f'{indent}- ')
+        elif tag == 'blockquote':
+            self._ensure_newline(1)
+            self.output.append('> ')
+        elif tag == 'a':
+            self.in_link = True
+            self.link_url = attrs_dict.get('href', '').strip()
+            self.link_text = []
+        elif tag in ('b', 'strong'):
+            self.output.append('**')
+        elif tag in ('i', 'em'):
+            self.output.append('*')
+        elif tag in ('s', 'strike', 'del'):
+            self.output.append('~~')
+        elif tag == 'u':
+            self.output.append('<u>')
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+            self._ensure_newline(2)
+        elif tag in ('p', 'div'):
+            self._ensure_newline(1)
+        elif tag in ('ul', 'ol'):
+            if self.list_stack:
+                self.list_stack.pop()
+            self._ensure_newline(1)
+        elif tag == 'a':
+            self.in_link = False
+            text = ''.join(self.link_text).strip()
+            if self.link_url:
+                display = text if text else self.link_url
+                self.output.append(f'[{display}]({self.link_url})')
+            else:
+                self.output.append(text)
+        elif tag in ('b', 'strong'):
+            self.output.append('**')
+        elif tag in ('i', 'em'):
+            self.output.append('*')
+        elif tag in ('s', 'strike', 'del'):
+            self.output.append('~~')
+        elif tag == 'u':
+            self.output.append('</u>')
+
+        if self.tag_stack and self.tag_stack[-1][0] == tag:
+            self.tag_stack.pop()
+
+    def handle_data(self, data):
+        if self.in_link:
+            self.link_text.append(data)
+        else:
+            self.output.append(data)
+
+    def get_markdown(self):
+        text = ''.join(self.output)
+        text = re.sub(r'[ \t]+\n', '\n', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
+
+
 def convert_enml_to_markdown(enml_content):
-    """将 Evernote ENML / HTML 转换为整洁的 Markdown"""
+    """将 Evernote ENML / HTML 转换为整洁的 Markdown（原生零外部依赖）"""
     if not enml_content:
         return ""
+
+    codeblocks = []
+
+    def store_code(raw_code, lang=''):
+        code = re.sub(r'<br\s*/?>', '\n', raw_code, flags=re.I)
+        code = re.sub(r'</div>\s*<div[^>]*>', '\n', code, flags=re.I)
+        code = re.sub(r'</p>\s*<p[^>]*>', '\n', code, flags=re.I)
+        code = re.sub(r'<[^>]+>', '', code)
+        code = html.unescape(code)
+        idx = len(codeblocks)
+        clean_lang = lang.strip().lower()
+        if clean_lang == 'plain text':
+            clean_lang = 'plaintext'
+        codeblocks.append((code.strip('\r\n'), clean_lang))
+        return f"\n\n__EVERNOTE_CODEBLOCK_{idx}__\n\n"
+
     try:
-        codeblocks = []
-
-        def store_code(raw_code):
-            code = re.sub(r'<br\s*/?>', '\n', raw_code, flags=re.I)
-            code = re.sub(r'</div>\s*<div[^>]*>', '\n', code, flags=re.I)
-            code = re.sub(r'</p>\s*<p[^>]*>', '\n', code, flags=re.I)
-            code = re.sub(r'<[^>]+>', '', code)
-            code = html.unescape(code)
-            idx = len(codeblocks)
-            codeblocks.append(code.strip('\r\n'))
-            return f"\n\n__EVERNOTE_CODEBLOCK_{idx}__\n\n"
-
         # 0. 预处理思维导图（提取 SVG 矢量图与结构树 JSON）
         mindmap_match = re.search(r'<img[^>]*src=["\'](data:image/svg\+xml;charset=utf-8,([^"\']+))["\'][^>]*>', enml_content)
         mindmap_json_match = re.search(r'<center[^>]*style=["\'][^"\']*display:\s*none[^"\']*["\'][^>]*>(\{.*?\})</center>', enml_content, re.DOTALL)
@@ -107,8 +224,8 @@ def convert_enml_to_markdown(enml_content):
             flags=re.I
         )
 
-        # 1.3 状态感知提取所有 -en-codeblock 或 --en-codeblock 的 div 代码块（支持多层 div 嵌套）
-        pattern = re.compile(r'<div\s+[^>]*style=[\'\"][^\'\"]*-{1,2}en-codeblock:true[^\'\"]*[\'\"][^>]*>', re.I)
+        # 1.3 状态感知提取所有 -en-codeblock 或 --en-codeblock 的 div 代码块（提取语言元数据，支持多层 div 嵌套）
+        pattern = re.compile(r'<div\s+([^>]*style=[\'\"][^\'\"]*-{1,2}en-codeblock:true[^\'\"]*[\'\"][^>]*)>', re.I)
         pos = 0
         chunks = []
         while pos < len(enml):
@@ -118,7 +235,21 @@ def convert_enml_to_markdown(enml_content):
                 break
 
             chunks.append(enml[pos:m.start()])
+            open_tag = m.group(1)
             start_idx = m.end()
+
+            # 从 open_tag 中提取 --en-meta 语言元数据
+            code_lang = ''
+            meta_m = re.search(r'--en-meta:(\{.*?\})', open_tag)
+            if meta_m:
+                try:
+                    meta_raw = meta_m.group(1).replace('&quot;', '"')
+                    meta_json = json.loads(meta_raw)
+                    raw_lang = meta_json.get('lang', '')
+                    if raw_lang:
+                        code_lang = raw_lang.strip().lower()
+                except Exception:
+                    pass
 
             # 寻找配对闭合的 </div>
             depth = 1
@@ -139,7 +270,7 @@ def convert_enml_to_markdown(enml_content):
 
             if depth == 0:
                 block_content = enml[start_idx:curr - 6]
-                placeholder = store_code(block_content)
+                placeholder = store_code(block_content, lang=code_lang)
                 chunks.append(placeholder)
                 pos = curr
             else:
@@ -155,21 +286,31 @@ def convert_enml_to_markdown(enml_content):
         # 3. 预处理媒体资源
         enml = re.sub(r'<en-media[^>]*hash=[\'"]([a-f0-9]+)[\'"][^>]*>(?:</en-media>)?', r'\n\n![image](en-media://\1)\n\n', enml, flags=re.I)
 
-        import html2text
-        h = html2text.HTML2Text()
-        h.ignore_links = False
-        h.ignore_images = False
-        h.body_width = 0
-        h.unicode_snob = True
-        md = h.handle(enml)
+        # 4. 使用原生 HTMLParser 进行解析转换（零第三方依赖）
+        parser = ENMLToMarkdownParser()
+        parser.feed(enml)
+        md = parser.get_markdown()
 
-        # 4. 还原代码块为标准的 Markdown 围栏代码块
-        for idx, code in enumerate(codeblocks):
-            md = md.replace(f"__EVERNOTE_CODEBLOCK_{idx}__", f"```\n{code}\n```")
+        # 5. 还原代码块为标准的 Markdown 围栏代码块（保留语言标记）
+        for idx, (code, lang) in enumerate(codeblocks):
+            fence = f"```{lang}\n{code}\n```" if lang else f"```\n{code}\n```"
+            md = md.replace(f"__EVERNOTE_CODEBLOCK_{idx}__", fence)
 
         return md.strip()
     except Exception as e:
-        return enml_content
+        # 安全兜底：坚决剥离所有 XML/HTML 标签，绝不向用户泄漏 raw <!DOCTYPE en-note ...> 标签
+        try:
+            fallback = re.sub(r'<!DOCTYPE[^>]*>', '', enml_content, flags=re.I)
+            fallback = re.sub(r'<[^>]+>', '\n', fallback)
+            fallback = html.unescape(fallback)
+            fallback = re.sub(r'\n{3,}', '\n\n', fallback)
+            for idx, (code, lang) in enumerate(codeblocks):
+                fence = f"```{lang}\n{code}\n```" if lang else f"```\n{code}\n```"
+                fallback = fallback.replace(f"__EVERNOTE_CODEBLOCK_{idx}__", fence)
+            return fallback.strip()
+        except Exception:
+            return ""
+
 
 
 def find_local_evernote():

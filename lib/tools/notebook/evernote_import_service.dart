@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import 'note_database.dart';
 import 'note_store.dart';
 
 /// 导入进度回调
@@ -65,6 +66,21 @@ class EvernoteImportService {
     return null;
   }
 
+  Future<String> _resolvePythonPath() async {
+    final candidates = [
+      '/usr/local/Caskroom/miniconda/base/bin/python3',
+      '/opt/homebrew/bin/python3',
+      '/usr/local/bin/python3',
+      '/usr/bin/python3',
+    ];
+    for (final c in candidates) {
+      if (await File(c).exists()) {
+        return c;
+      }
+    }
+    return 'python3';
+  }
+
   /// 探测本机是否有安装并使用印象笔记/Evernote 客户端
   Future<LocalEvernoteInfo> detectLocalEvernote() async {
     final scriptPath = await _resolveScriptPath();
@@ -72,7 +88,8 @@ class EvernoteImportService {
       return const LocalEvernoteInfo(detected: false);
     }
     try {
-      final result = await Process.run('python3', [scriptPath, 'detect_local']);
+      final py = await _resolvePythonPath();
+      final result = await Process.run(py, [scriptPath, 'detect_local']);
       if (result.exitCode == 0) {
         final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
         if (data['detected'] == true) {
@@ -109,8 +126,9 @@ class EvernoteImportService {
 
     final tmpFile = p.join(Directory.systemTemp.path, 'evernote_local_import_${DateTime.now().millisecondsSinceEpoch}.json');
     try {
+      final py = await _resolvePythonPath();
       final result = await Process.run(
-        'python3', [scriptPath, 'import_local', '--output', tmpFile],
+        py, [scriptPath, 'import_local', '--output', tmpFile],
       );
 
       if (result.exitCode != 0 || !await File(tmpFile).exists()) {
@@ -154,8 +172,9 @@ class EvernoteImportService {
 
     final tmpFile = p.join(Directory.systemTemp.path, 'evernote_notes_parse_${DateTime.now().millisecondsSinceEpoch}.json');
     try {
+      final py = await _resolvePythonPath();
       final result = await Process.run(
-        'python3', [scriptPath, 'parse_notes', '--file', filePath, '--output', tmpFile],
+        py, [scriptPath, 'parse_notes', '--file', filePath, '--output', tmpFile],
       );
 
       if (result.exitCode != 0 || !await File(tmpFile).exists()) {
@@ -199,8 +218,9 @@ class EvernoteImportService {
 
     final tmpFile = p.join(Directory.systemTemp.path, 'evernote_api_export_${DateTime.now().millisecondsSinceEpoch}.json');
     try {
+      final py = await _resolvePythonPath();
       final result = await Process.run(
-        'python3', [scriptPath, 'export_all', '--output', tmpFile],
+        py, [scriptPath, 'export_all', '--output', tmpFile],
       );
 
       if (result.exitCode != 0 || !await File(tmpFile).exists()) {
@@ -321,7 +341,13 @@ class EvernoteImportService {
           }
         }
 
-        final noteId = const Uuid().v4();
+        // 查找是否已存在同名笔记（避免重复导入时生成冗余副本）
+        Note? existingNote;
+        if (nbId != null) {
+          final nbNotes = await store.notesForNotebook(nbId);
+          existingNote = nbNotes.where((n) => n.title == title).firstOrNull;
+        }
+        final noteId = existingNote?.id ?? const Uuid().v4();
 
         // 优先保存附件资源并建立哈希与文件名映射，供正文图片回填定位
         final attachmentMap = <String, String>{};
@@ -368,14 +394,24 @@ class EvernoteImportService {
         final createdAt = createdStr != null ? DateTime.tryParse(createdStr) : null;
         final updatedAt = updatedStr != null ? DateTime.tryParse(updatedStr) : null;
 
-        await store.createNote(
-          id: noteId,
-          title: title,
-          deltaJson: deltaJson,
-          notebookId: nbId,
-          createdAt: createdAt,
-          updatedAt: updatedAt,
-        );
+        if (existingNote != null) {
+          await store.updateNote(
+            id: noteId,
+            title: title,
+            deltaJson: deltaJson,
+            notebookId: nbId,
+          );
+        } else {
+          await store.createNote(
+            id: noteId,
+            title: title,
+            deltaJson: deltaJson,
+            notebookId: nbId,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          );
+        }
+
 
         // 标签关联
         final noteTagIds = <String>[];

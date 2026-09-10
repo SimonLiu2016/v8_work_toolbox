@@ -111,55 +111,141 @@ class _NoteEditorState extends State<NoteEditor> {
 
   List<dynamic> _sanitizeDeltaList(List deltaList) {
     final result = <dynamic>[];
+    var currentLineOps = <Map<String, dynamic>>[];
+    final codeBlockLines = <String>[];
+    String? codeBlockLang;
+
+    void flushCodeBlock() {
+      if (codeBlockLines.isEmpty) return;
+      final fullCode = codeBlockLines.join('\n');
+      codeBlockLines.clear();
+      if (fullCode.trim().isNotEmpty) {
+        result.add({
+          'insert': {
+            'code_block': jsonEncode({
+              'code': fullCode,
+              'language': codeBlockLang ?? 'plaintext',
+            }),
+          },
+        });
+        result.add({'insert': '\n'});
+      }
+      codeBlockLang = null;
+    }
+
+    void flushCurrentLine() {
+      result.addAll(currentLineOps);
+      currentLineOps = [];
+    }
+
     for (int i = 0; i < deltaList.length; i++) {
-      final op = deltaList[i];
-      if (op is Map<String, dynamic>) {
-        final insert = op['insert'];
-        // 自动识别思维导图纯 JSON 字符串并转为 embed
-        if (insert is String && insert.trimLeft().startsWith('{') && insert.contains('"mode":"mindmap"')) {
-          result.add({
-            'insert': {'mindmap': insert.trim()},
-          });
-          continue;
-        }
-        // 自动将旧版 code-block 连续行聚合为代码块嵌入组件
-        final attrs = op['attributes'];
-        if (attrs is Map && attrs['code-block'] == true) {
-          final codeLines = <String>[];
-          if (insert is String && insert != '\n') {
-            codeLines.add(insert);
-          }
-          while (i + 1 < deltaList.length) {
-            final nextOp = deltaList[i + 1];
-            if (nextOp is Map<String, dynamic> &&
-                nextOp['attributes'] is Map &&
-                nextOp['attributes']['code-block'] == true) {
-              final nextIns = nextOp['insert'];
-              if (nextIns is String && nextIns != '\n') {
-                codeLines.add(nextIns);
+      final rawOp = deltaList[i];
+      if (rawOp is! Map) {
+        if (codeBlockLines.isNotEmpty) flushCodeBlock();
+        result.add(rawOp);
+        continue;
+      }
+      final op = Map<String, dynamic>.from(rawOp);
+      final insert = op['insert'];
+
+      // 1. 自动识别思维导图纯 JSON 字符串并转为 embed
+      if (insert is String && insert.trimLeft().startsWith('{') && insert.contains('"mode":"mindmap"')) {
+        if (codeBlockLines.isNotEmpty) flushCodeBlock();
+        flushCurrentLine();
+        result.add({
+          'insert': {'mindmap': insert.trim()},
+        });
+        continue;
+      }
+
+      // 2. 嵌入对象：清理此前受损生成的空代码块卡片
+      if (insert is Map) {
+        if (insert.containsKey('code_block')) {
+          try {
+            final raw = insert['code_block'];
+            final map = raw is Map ? raw : jsonDecode(raw.toString());
+            final code = map['code']?.toString() ?? '';
+            if (code.trim().isEmpty) {
+              if (i + 1 < deltaList.length) {
+                final nextOp = deltaList[i + 1];
+                if (nextOp is Map && nextOp['insert'] == '\n' && (nextOp['attributes'] == null || (nextOp['attributes'] as Map).isEmpty)) {
+                  i++; // 跳过空代码块后的冗余空行
+                }
               }
-              i++;
-            } else {
-              break;
+              continue;
+            }
+          } catch (_) {}
+        }
+        if (codeBlockLines.isNotEmpty) flushCodeBlock();
+        currentLineOps.add(op);
+        continue;
+      }
+
+      // 3. 文本行流式聚合：正确识别挂载在换行符 '\n' 上的 code-block 属性
+      if (insert is String) {
+        final attrs = op['attributes'];
+        final isCodeBlockNewline = (attrs is Map && attrs.containsKey('code-block'));
+
+        if (insert == '\n') {
+          if (isCodeBlockNewline) {
+            final lineBuffer = StringBuffer();
+            for (final lineOp in currentLineOps) {
+              final ins = lineOp['insert'];
+              if (ins is String) {
+                lineBuffer.write(ins);
+              }
+            }
+            currentLineOps.clear();
+            codeBlockLines.add(lineBuffer.toString());
+            final langAttr = attrs['code-block'];
+            if (langAttr is String && langAttr.isNotEmpty && langAttr != 'true') {
+              codeBlockLang = langAttr;
+            }
+            continue;
+          } else {
+            if (codeBlockLines.isNotEmpty) {
+              flushCodeBlock();
+            }
+            currentLineOps.add(op);
+            flushCurrentLine();
+            continue;
+          }
+        }
+
+        if (insert.contains('\n')) {
+          if (codeBlockLines.isNotEmpty) {
+            flushCodeBlock();
+          }
+          final parts = insert.split('\n');
+          for (int p = 0; p < parts.length; p++) {
+            if (parts[p].isNotEmpty) {
+              currentLineOps.add({
+                'insert': parts[p],
+                if (attrs != null) 'attributes': attrs,
+              });
+            }
+            if (p < parts.length - 1) {
+              currentLineOps.add({'insert': '\n', if (attrs != null) 'attributes': attrs});
+              flushCurrentLine();
             }
           }
-          final fullCode = codeLines.join('\n');
-          result.add({
-            'insert': {
-              'code_block': jsonEncode({
-                'code': fullCode,
-                'language': 'plaintext',
-              }),
-            },
-          });
-          result.add({'insert': '\n'});
           continue;
         }
+
+        currentLineOps.add(op);
+      } else {
+        if (codeBlockLines.isNotEmpty) flushCodeBlock();
+        currentLineOps.add(op);
       }
-      result.add(op);
     }
+
+    if (codeBlockLines.isNotEmpty) {
+      flushCodeBlock();
+    }
+    flushCurrentLine();
     return result;
   }
+
 
   Future<void> _loadMetadata() async {
     if (widget.note == null) return;
