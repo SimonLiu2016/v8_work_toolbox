@@ -29,10 +29,14 @@ class MainFlutterWindow: NSWindow {
       DispatchQueue.main.async {
         if let window = controller.view.window {
           window.minSize = NSSize(width: 960, height: 640)
-          var frame = window.frame
-          frame.size = NSSize(width: 1200, height: 750)
-          window.setFrame(frame, display: true)
-          window.center()
+          if let screen = NSScreen.main {
+            window.setFrame(screen.visibleFrame, display: true)
+          } else {
+            var frame = window.frame
+            frame.size = NSSize(width: 1200, height: 750)
+            window.setFrame(frame, display: true)
+            window.center()
+          }
 
           // 沉浸式透明标题栏与全尺寸内容视图（与主窗口完全一致）
           window.titlebarAppearsTransparent = true

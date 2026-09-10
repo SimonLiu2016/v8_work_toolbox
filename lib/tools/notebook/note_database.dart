@@ -10,6 +10,7 @@ part 'note_database.g.dart';
 class Notebooks extends Table {
   TextColumn get id => text()();
   TextColumn get name => text().withLength(min: 1, max: 200)();
+  TextColumn get stack => text().nullable()();
   TextColumn get icon => text().withDefault(const Constant('📓'))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime()();
@@ -71,7 +72,7 @@ class NoteDatabase extends _$NoteDatabase {
   NoteDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -83,6 +84,20 @@ class NoteDatabase extends _$NoteDatabase {
         "title, content, note_id UNINDEXED"
         ")",
       );
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        try {
+          await m.addColumn(notebooks, notebooks.stack);
+        } catch (_) {}
+      }
+    },
+    beforeOpen: (details) async {
+      try {
+        await customStatement('ALTER TABLE notebooks ADD COLUMN stack TEXT;');
+      } catch (_) {
+        // Column already exists, ignore safely
+      }
     },
   );
 
@@ -102,6 +117,11 @@ class NoteDatabase extends _$NoteDatabase {
   Future<void> updateNotebook(String id, NotebooksCompanion entry) =>
       (update(notebooks)..where((t) => t.id.equals(id))).write(entry);
 
+  Future<void> updateNotebookStack(String id, String? stack) =>
+      (update(notebooks)..where((t) => t.id.equals(id))).write(
+        NotebooksCompanion(stack: Value(stack), updatedAt: Value(DateTime.now())),
+      );
+
   Future<void> deleteNotebook(String id) =>
       (delete(notebooks)..where((t) => t.id.equals(id))).go();
 
@@ -116,6 +136,21 @@ class NoteDatabase extends _$NoteDatabase {
     }
     if (notebookId != null) {
       query.where((t) => t.notebookId.equals(notebookId));
+    }
+    query.orderBy([
+      (t) => OrderingTerm.desc(t.isPinned),
+      (t) => OrderingTerm.desc(t.updatedAt),
+    ]);
+    return query.get();
+  }
+
+  Future<List<Note>> notesForNotebookIds(List<String> notebookIds, {bool includeDeleted = false}) {
+    final query = select(notes);
+    if (!includeDeleted) {
+      query.where((t) => t.isDeleted.equals(false));
+    }
+    if (notebookIds.isNotEmpty) {
+      query.where((t) => t.notebookId.isIn(notebookIds));
     }
     query.orderBy([
       (t) => OrderingTerm.desc(t.isPinned),

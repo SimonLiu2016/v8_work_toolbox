@@ -27,6 +27,9 @@ class NoteStore {
     _attachmentsDir = p.join(dir.path, 'notebook_attachments');
     await Directory(_attachmentsDir!).create(recursive: true);
     _initialized = true;
+
+    // 自动为已有但缺少 stack 的笔记本补充印象笔记层级组
+    await autoBackfillNotebookStacksFromEvernote();
   }
 
   NoteDatabase get db {
@@ -45,18 +48,50 @@ class NoteStore {
 
   Future<List<Notebook>> allNotebooks() => _db.allNotebooks();
 
-  Future<String> createNotebook(String name, {String icon = '📓'}) async {
+  /// 获取按 Stack 分组的笔记本结构：
+  /// - stacks: `Map<String, List<Notebook>>` (Stack 名称 -> 该组下的笔记本列表)
+  /// - unstacked: `List<Notebook>` (未归入任何组的独立笔记本)
+  Future<({Map<String, List<Notebook>> stacks, List<Notebook> unstacked})> groupedNotebooks() async {
+    final all = await _db.allNotebooks();
+    final Map<String, List<Notebook>> stacks = {};
+    final List<Notebook> unstacked = [];
+
+    for (final nb in all) {
+      final s = nb.stack?.trim();
+      if (s != null && s.isNotEmpty) {
+        stacks.putIfAbsent(s, () => []).add(nb);
+      } else {
+        unstacked.add(nb);
+      }
+    }
+    return (stacks: stacks, unstacked: unstacked);
+  }
+
+  Future<String> createNotebook(String name, {String icon = '📓', String? stack}) async {
     final id = _uuid.v4();
     final now = DateTime.now();
     await _db.insertNotebook(NotebooksCompanion(
       id: Value(id),
       name: Value(name),
+      stack: Value(stack),
       icon: Value(icon),
       createdAt: Value(now),
       updatedAt: Value(now),
     ));
     return id;
   }
+
+  Future<void> updateNotebook(String id, {String? name, String? icon, String? stack}) async {
+    await _db.updateNotebook(id, NotebooksCompanion(
+      name: name != null ? Value(name) : const Value.absent(),
+      icon: icon != null ? Value(icon) : const Value.absent(),
+      stack: stack != null ? Value(stack) : const Value.absent(),
+      updatedAt: Value(DateTime.now()),
+    ));
+  }
+
+  Future<void> updateNotebookStack(String id, String? stack) =>
+      _db.updateNotebookStack(id, stack);
 
   Future<void> renameNotebook(String id, String newName) async {
     await _db.updateNotebook(id, NotebooksCompanion(
@@ -67,12 +102,82 @@ class NoteStore {
 
   Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
 
+  /// 从本地印象笔记 SQLite 数据库自动为现有笔记本补全 stack 分组
+  Future<void> autoBackfillNotebookStacksFromEvernote() async {
+    try {
+      final notebooks = await _db.allNotebooks();
+      final needBackfill = notebooks.where((nb) => nb.stack == null || nb.stack!.isEmpty).toList();
+      if (needBackfill.isEmpty) return;
+
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isEmpty) return;
+
+      final candidateRoots = [
+        p.join(home, 'Library/Containers/com.yinxiang.Mac/Data/Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com'),
+        p.join(home, 'Library/Containers/com.evernote.Evernote/Data/Library/Application Support/com.evernote.Evernote/accounts/www.evernote.com'),
+        p.join(home, 'Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com'),
+        p.join(home, 'Library/Application Support/Evernote/accounts/www.evernote.com'),
+      ];
+
+      String? targetDb;
+      for (final root in candidateRoots) {
+        final dir = Directory(root);
+        if (!dir.existsSync()) continue;
+        try {
+          final accounts = dir.listSync().whereType<Directory>();
+          for (final acct in accounts) {
+            final dbFile = File(p.join(acct.path, 'localNoteStore', 'LocalNoteStore.sqlite'));
+            if (dbFile.existsSync()) {
+              targetDb = dbFile.path;
+              break;
+            }
+          }
+        } catch (_) {}
+        if (targetDb != null) break;
+      }
+
+      if (targetDb == null) return;
+
+      final res = await Process.run('sqlite3', [
+        targetDb,
+        'SELECT ZNAME, ZSTACK FROM ZENNOTEBOOK WHERE ZSTACK IS NOT NULL;'
+      ]);
+      if (res.exitCode != 0) return;
+
+      final lines = (res.stdout as String).split('\n');
+      final stackMap = <String, String>{};
+      for (final line in lines) {
+        final parts = line.split('|');
+        if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+          stackMap[parts[0].trim()] = parts[1].trim();
+        }
+      }
+
+      for (final nb in needBackfill) {
+        final stack = stackMap[nb.name];
+        if (stack != null && stack.isNotEmpty) {
+          await updateNotebookStack(nb.id, stack);
+          debugPrint('[NoteStore] 自动补全笔记本层级组: "${nb.name}" -> "$stack"');
+        }
+      }
+    } catch (e) {
+      debugPrint('[NoteStore] autoBackfillNotebookStacksFromEvernote error: $e');
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Note operations
   // ---------------------------------------------------------------------------
 
   Future<List<Note>> notesForNotebook(String? notebookId) =>
       _db.notesForNotebook(notebookId);
+
+  Future<List<Note>> notesForStack(String stack) async {
+    final nbs = await _db.allNotebooks();
+    final matchingIds = nbs.where((nb) => nb.stack == stack).map((nb) => nb.id).toList();
+    if (matchingIds.isEmpty) return [];
+    return _db.notesForNotebookIds(matchingIds);
+  }
 
   Future<List<Note>> notesForTag(String tagId) => _db.notesForTag(tagId);
 

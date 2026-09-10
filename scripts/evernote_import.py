@@ -26,6 +26,7 @@ import plistlib
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
 import xml.etree.ElementTree as ET
 
 # Monkey-patch for Python 3.13+ compatibility
@@ -56,6 +57,37 @@ def convert_enml_to_markdown(enml_content):
             idx = len(codeblocks)
             codeblocks.append(code.strip('\r\n'))
             return f"\n\n__EVERNOTE_CODEBLOCK_{idx}__\n\n"
+
+        # 0. 预处理思维导图（提取 SVG 矢量图与结构树 JSON）
+        mindmap_match = re.search(r'<img[^>]*src=["\'](data:image/svg\+xml;charset=utf-8,([^"\']+))["\'][^>]*>', enml_content)
+        mindmap_json_match = re.search(r'<center[^>]*style=["\'][^"\']*display:\s*none[^"\']*["\'][^>]*>(\{.*?\})</center>', enml_content, re.DOTALL)
+        if mindmap_match or mindmap_json_match:
+            svg_data = ''
+            svg_hash = ''
+            if mindmap_match:
+                svg_data = urllib.parse.unquote(mindmap_match.group(2))
+                svg_hash = hashlib.md5(svg_data.encode('utf-8')).hexdigest()
+            tree_data = {}
+            if mindmap_json_match:
+                try:
+                    tree_str = mindmap_json_match.group(1)
+                    tree_str_fixed = re.sub(r'\\([^"\\/bfnrtu])', r'\1', tree_str)
+                    tree_data = json.loads(tree_str_fixed, strict=False)
+                except Exception:
+                    pass
+            mindmap_payload = {
+                'type': 'mindmap',
+                'hash': svg_hash,
+                'tree': tree_data,
+            }
+            placeholder = f"\n\n```mindmap\n{json.dumps(mindmap_payload, ensure_ascii=False)}\n```\n\n"
+            if mindmap_match:
+                enml_content = enml_content.replace(mindmap_match.group(0), placeholder)
+            if mindmap_json_match:
+                if not mindmap_match:
+                    enml_content = enml_content.replace(mindmap_json_match.group(0), placeholder)
+                else:
+                    enml_content = enml_content.replace(mindmap_json_match.group(0), '')
 
         # 1.1 预处理标准 HTML pre/code 代码块
         def replace_pre_code(m):
@@ -196,10 +228,12 @@ def import_local_client(output_file=None):
 
     conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
 
-    # 1. 笔记本映射 (Z_PK -> ZNAME)
+    # 1. 笔记本映射 (Z_PK -> ZNAME, ZSTACK)
     notebooks = {}
-    for row in conn.execute('SELECT Z_PK, ZNAME FROM ZENNOTEBOOK').fetchall():
+    notebook_stacks = {}
+    for row in conn.execute('SELECT Z_PK, ZNAME, ZSTACK FROM ZENNOTEBOOK').fetchall():
         notebooks[row[0]] = row[1] or '默认笔记本'
+        notebook_stacks[row[0]] = row[2]
 
     # 2. 标签映射 (Z_PK -> ZNAME)
     tags = {}
@@ -321,10 +355,25 @@ def import_local_client(output_file=None):
                     except Exception:
                         pass
 
+            # 提取思维导图的 SVG 矢量图资源
+            if raw_enml and 'data:image/svg+xml' in raw_enml:
+                svg_m = re.search(r'src=["\'](data:image/svg\+xml;charset=utf-8,([^"\']+))["\']', raw_enml)
+                if svg_m:
+                    svg_decoded = urllib.parse.unquote(svg_m.group(2))
+                    svg_bytes = svg_decoded.encode('utf-8')
+                    svg_hash = hashlib.md5(svg_bytes).hexdigest()
+                    resources.append({
+                        'filename': f'mindmap_{svg_hash[:8]}.svg',
+                        'mime': 'image/svg+xml',
+                        'base64': base64.b64encode(svg_bytes).decode('ascii'),
+                        'hash': svg_hash,
+                    })
+
         notes_result.append({
             'guid': guid,
             'title': title,
             'notebook': nb_name,
+            'stack': notebook_stacks.get(nb_pk),
             'tags': note_tags,
             'markdown': markdown,
             'created': created_iso,
@@ -336,11 +385,16 @@ def import_local_client(output_file=None):
 
     conn.close()
 
+    notebooks_payload = [
+        {'name': name, 'stack': notebook_stacks.get(pk)}
+        for pk, name in notebooks.items()
+    ]
+
     result = {
         'account': local['account'],
         'app': local['app'],
         'total': len(notes_result),
-        'notebooks': list(notebooks.values()),
+        'notebooks': notebooks_payload,
         'tags': list(tags.values()),
         'notes': notes_result,
     }
@@ -447,6 +501,25 @@ def parse_notes_file(file_path):
                                 })
                             except Exception:
                                 pass
+
+        # 提取思维导图的 SVG 矢量图资源
+        if markdown and '```mindmap' in markdown:
+            m_payload = re.search(r'```mindmap\s*(\{.*?\})\s*```', markdown, re.DOTALL)
+            if m_payload:
+                try:
+                    p_data = json.loads(m_payload.group(1))
+                    s_data = p_data.get('svg', '')
+                    s_hash = p_data.get('hash', '')
+                    if s_data and s_hash:
+                        s_bytes = s_data.encode('utf-8')
+                        resources.append({
+                            'filename': f'mindmap_{s_hash[:8]}.svg',
+                            'mime': 'image/svg+xml',
+                            'base64': base64.b64encode(s_bytes).decode('ascii'),
+                            'hash': s_hash,
+                        })
+                except Exception:
+                    pass
 
         notes.append({
             'title': title,

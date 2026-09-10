@@ -31,6 +31,15 @@ class $NotebooksTable extends Notebooks
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _stackMeta = const VerificationMeta('stack');
+  @override
+  late final GeneratedColumn<String> stack = GeneratedColumn<String>(
+    'stack',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _iconMeta = const VerificationMeta('icon');
   @override
   late final GeneratedColumn<String> icon = GeneratedColumn<String>(
@@ -79,6 +88,7 @@ class $NotebooksTable extends Notebooks
   List<GeneratedColumn> get $columns => [
     id,
     name,
+    stack,
     icon,
     sortOrder,
     createdAt,
@@ -108,6 +118,12 @@ class $NotebooksTable extends Notebooks
       );
     } else if (isInserting) {
       context.missing(_nameMeta);
+    }
+    if (data.containsKey('stack')) {
+      context.handle(
+        _stackMeta,
+        stack.isAcceptableOrUnknown(data['stack']!, _stackMeta),
+      );
     }
     if (data.containsKey('icon')) {
       context.handle(
@@ -154,6 +170,10 @@ class $NotebooksTable extends Notebooks
         DriftSqlType.string,
         data['${effectivePrefix}name'],
       )!,
+      stack: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stack'],
+      ),
       icon: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}icon'],
@@ -182,6 +202,7 @@ class $NotebooksTable extends Notebooks
 class Notebook extends DataClass implements Insertable<Notebook> {
   final String id;
   final String name;
+  final String? stack;
   final String icon;
   final int sortOrder;
   final DateTime createdAt;
@@ -189,6 +210,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
   const Notebook({
     required this.id,
     required this.name,
+    this.stack,
     required this.icon,
     required this.sortOrder,
     required this.createdAt,
@@ -199,6 +221,9 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
     map['name'] = Variable<String>(name);
+    if (!nullToAbsent || stack != null) {
+      map['stack'] = Variable<String>(stack);
+    }
     map['icon'] = Variable<String>(icon);
     map['sort_order'] = Variable<int>(sortOrder);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -210,6 +235,9 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     return NotebooksCompanion(
       id: Value(id),
       name: Value(name),
+      stack: stack == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stack),
       icon: Value(icon),
       sortOrder: Value(sortOrder),
       createdAt: Value(createdAt),
@@ -225,6 +253,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     return Notebook(
       id: serializer.fromJson<String>(json['id']),
       name: serializer.fromJson<String>(json['name']),
+      stack: serializer.fromJson<String?>(json['stack']),
       icon: serializer.fromJson<String>(json['icon']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
@@ -237,6 +266,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     return <String, dynamic>{
       'id': serializer.toJson<String>(id),
       'name': serializer.toJson<String>(name),
+      'stack': serializer.toJson<String?>(stack),
       'icon': serializer.toJson<String>(icon),
       'sortOrder': serializer.toJson<int>(sortOrder),
       'createdAt': serializer.toJson<DateTime>(createdAt),
@@ -247,6 +277,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
   Notebook copyWith({
     String? id,
     String? name,
+    Value<String?> stack = const Value.absent(),
     String? icon,
     int? sortOrder,
     DateTime? createdAt,
@@ -254,6 +285,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
   }) => Notebook(
     id: id ?? this.id,
     name: name ?? this.name,
+    stack: stack.present ? stack.value : this.stack,
     icon: icon ?? this.icon,
     sortOrder: sortOrder ?? this.sortOrder,
     createdAt: createdAt ?? this.createdAt,
@@ -263,6 +295,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     return Notebook(
       id: data.id.present ? data.id.value : this.id,
       name: data.name.present ? data.name.value : this.name,
+      stack: data.stack.present ? data.stack.value : this.stack,
       icon: data.icon.present ? data.icon.value : this.icon,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -275,6 +308,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     return (StringBuffer('Notebook(')
           ..write('id: $id, ')
           ..write('name: $name, ')
+          ..write('stack: $stack, ')
           ..write('icon: $icon, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('createdAt: $createdAt, ')
@@ -285,13 +319,14 @@ class Notebook extends DataClass implements Insertable<Notebook> {
 
   @override
   int get hashCode =>
-      Object.hash(id, name, icon, sortOrder, createdAt, updatedAt);
+      Object.hash(id, name, stack, icon, sortOrder, createdAt, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is Notebook &&
           other.id == this.id &&
           other.name == this.name &&
+          other.stack == this.stack &&
           other.icon == this.icon &&
           other.sortOrder == this.sortOrder &&
           other.createdAt == this.createdAt &&
@@ -301,6 +336,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
 class NotebooksCompanion extends UpdateCompanion<Notebook> {
   final Value<String> id;
   final Value<String> name;
+  final Value<String?> stack;
   final Value<String> icon;
   final Value<int> sortOrder;
   final Value<DateTime> createdAt;
@@ -309,6 +345,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
   const NotebooksCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
+    this.stack = const Value.absent(),
     this.icon = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.createdAt = const Value.absent(),
@@ -318,6 +355,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
   NotebooksCompanion.insert({
     required String id,
     required String name,
+    this.stack = const Value.absent(),
     this.icon = const Value.absent(),
     this.sortOrder = const Value.absent(),
     required DateTime createdAt,
@@ -330,6 +368,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
   static Insertable<Notebook> custom({
     Expression<String>? id,
     Expression<String>? name,
+    Expression<String>? stack,
     Expression<String>? icon,
     Expression<int>? sortOrder,
     Expression<DateTime>? createdAt,
@@ -339,6 +378,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (name != null) 'name': name,
+      if (stack != null) 'stack': stack,
       if (icon != null) 'icon': icon,
       if (sortOrder != null) 'sort_order': sortOrder,
       if (createdAt != null) 'created_at': createdAt,
@@ -350,6 +390,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
   NotebooksCompanion copyWith({
     Value<String>? id,
     Value<String>? name,
+    Value<String?>? stack,
     Value<String>? icon,
     Value<int>? sortOrder,
     Value<DateTime>? createdAt,
@@ -359,6 +400,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     return NotebooksCompanion(
       id: id ?? this.id,
       name: name ?? this.name,
+      stack: stack ?? this.stack,
       icon: icon ?? this.icon,
       sortOrder: sortOrder ?? this.sortOrder,
       createdAt: createdAt ?? this.createdAt,
@@ -375,6 +417,9 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     }
     if (name.present) {
       map['name'] = Variable<String>(name.value);
+    }
+    if (stack.present) {
+      map['stack'] = Variable<String>(stack.value);
     }
     if (icon.present) {
       map['icon'] = Variable<String>(icon.value);
@@ -399,6 +444,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     return (StringBuffer('NotebooksCompanion(')
           ..write('id: $id, ')
           ..write('name: $name, ')
+          ..write('stack: $stack, ')
           ..write('icon: $icon, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('createdAt: $createdAt, ')
@@ -1862,6 +1908,7 @@ typedef $$NotebooksTableCreateCompanionBuilder =
     NotebooksCompanion Function({
       required String id,
       required String name,
+      Value<String?> stack,
       Value<String> icon,
       Value<int> sortOrder,
       required DateTime createdAt,
@@ -1872,6 +1919,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder =
     NotebooksCompanion Function({
       Value<String> id,
       Value<String> name,
+      Value<String?> stack,
       Value<String> icon,
       Value<int> sortOrder,
       Value<DateTime> createdAt,
@@ -1919,6 +1967,11 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get name => $composableBuilder(
     column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stack => $composableBuilder(
+    column: $table.stack,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1987,6 +2040,11 @@ class $$NotebooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get stack => $composableBuilder(
+    column: $table.stack,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get icon => $composableBuilder(
     column: $table.icon,
     builder: (column) => ColumnOrderings(column),
@@ -2022,6 +2080,9 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<String> get name =>
       $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get stack =>
+      $composableBuilder(column: $table.stack, builder: (column) => column);
 
   GeneratedColumn<String> get icon =>
       $composableBuilder(column: $table.icon, builder: (column) => column);
@@ -2091,6 +2152,7 @@ class $$NotebooksTableTableManager
               ({
                 Value<String> id = const Value.absent(),
                 Value<String> name = const Value.absent(),
+                Value<String?> stack = const Value.absent(),
                 Value<String> icon = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
@@ -2099,6 +2161,7 @@ class $$NotebooksTableTableManager
               }) => NotebooksCompanion(
                 id: id,
                 name: name,
+                stack: stack,
                 icon: icon,
                 sortOrder: sortOrder,
                 createdAt: createdAt,
@@ -2109,6 +2172,7 @@ class $$NotebooksTableTableManager
               ({
                 required String id,
                 required String name,
+                Value<String?> stack = const Value.absent(),
                 Value<String> icon = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 required DateTime createdAt,
@@ -2117,6 +2181,7 @@ class $$NotebooksTableTableManager
               }) => NotebooksCompanion.insert(
                 id: id,
                 name: name,
+                stack: stack,
                 icon: icon,
                 sortOrder: sortOrder,
                 createdAt: createdAt,

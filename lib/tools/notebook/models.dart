@@ -6,6 +6,7 @@ import 'dart:convert';
 class NotebookModel {
   final String id;
   final String name;
+  final String? stack;
   final String icon;
   final int sortOrder;
   final DateTime createdAt;
@@ -14,6 +15,7 @@ class NotebookModel {
   const NotebookModel({
     required this.id,
     required this.name,
+    this.stack,
     this.icon = '📓',
     this.sortOrder = 0,
     required this.createdAt,

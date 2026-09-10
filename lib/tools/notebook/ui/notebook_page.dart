@@ -23,7 +23,10 @@ class NotebookPage extends StatefulWidget {
 class _NotebookPageState extends State<NotebookPage> {
   final NoteStore _store = NoteStore.instance;
 
-  List<Notebook> _notebooks = [];
+  Map<String, List<Notebook>> _stacks = {};
+  List<Notebook> _unstackedNotebooks = [];
+  final Set<String> _collapsedStacks = {};
+  String? _selectedStack;
   List<Tag> _tags = [];
   List<Note> _notes = [];
   Note? _selectedNote;
@@ -51,7 +54,9 @@ class _NotebookPageState extends State<NotebookPage> {
   Future<void> _refresh({bool silent = false}) async {
     if (!silent) setState(() => _isLoading = true);
     try {
-      _notebooks = await _store.allNotebooks();
+      final grouped = await _store.groupedNotebooks();
+      _stacks = grouped.stacks;
+      _unstackedNotebooks = grouped.unstacked;
       _tags = await _store.allTags();
 
       if (_isTrashSelected) {
@@ -60,6 +65,8 @@ class _NotebookPageState extends State<NotebookPage> {
         _notes = await _store.searchNotes(_searchQuery);
       } else if (_selectedTagId != null) {
         _notes = await _store.notesForTag(_selectedTagId!);
+      } else if (_selectedStack != null && _selectedNotebookId == null) {
+        _notes = await _store.notesForStack(_selectedStack!);
       } else {
         _notes = await _store.notesForNotebook(_selectedNotebookId);
       }
@@ -161,10 +168,12 @@ class _NotebookPageState extends State<NotebookPage> {
   // Notebook actions
   // ---------------------------------------------------------------------------
 
-  Future<void> _createNotebook() async {
-    final name = await _showInputDialog('新建笔记本', '请输入笔记本名称');
+  Future<void> _createNotebook({String? stack}) async {
+    final targetStack = stack ?? _selectedStack;
+    final title = targetStack != null ? '在 "$targetStack" 下新建笔记本' : '新建笔记本';
+    final name = await _showInputDialog(title, '请输入笔记本名称');
     if (name == null || name.trim().isEmpty) return;
-    await _store.createNotebook(name.trim());
+    await _store.createNotebook(name.trim(), stack: targetStack);
     await _refresh(silent: true);
   }
 
@@ -194,10 +203,19 @@ class _NotebookPageState extends State<NotebookPage> {
     _isTrashSelected = false;
     _isBatchMode = false;
     _selectedNoteIds.clear();
+
+    String? targetNbId = _selectedNotebookId;
+    if (targetNbId == null && _selectedStack != null) {
+      final stackNbs = _stacks[_selectedStack];
+      if (stackNbs != null && stackNbs.isNotEmpty) {
+        targetNbId = stackNbs.first.id;
+      }
+    }
+
     final id = await _store.createNote(
       title: '无标题笔记',
       deltaJson: '[{"insert":"\\n"}]',
-      notebookId: _selectedNotebookId,
+      notebookId: targetNbId,
     );
     await _refresh(silent: true);
     final note = await _store.noteById(id);
@@ -572,17 +590,23 @@ class _NotebookPageState extends State<NotebookPage> {
       backgroundColor: const Color(0xFFF5F6F8),
       body: Row(
         children: [
-          // Left: Notebook tree + tags + 常驻导入 (深色导航列)
-          _buildLeftPanel(),
+          // Left: Notebook tree + tags + 常驻导入 (固定 240px)
+          SizedBox(
+            width: 240,
+            child: _buildLeftPanel(),
+          ),
 
           const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
 
-          // Center: Note list (经典浅灰列表列)
-          _buildCenterPanel(),
+          // Center: Note list (固定 320px)
+          SizedBox(
+            width: 320,
+            child: _buildCenterPanel(),
+          ),
 
           const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
 
-          // Right: Editor (纯白纸质编辑器列)
+          // Right: Editor (纯白纸质编辑器列，自适应撑满剩余宽度)
           Expanded(child: _buildRightPanel()),
         ],
       ),
@@ -591,17 +615,17 @@ class _NotebookPageState extends State<NotebookPage> {
 
   Widget _buildLeftPanel() {
     return Container(
-      width: 220,
       color: AppTheme.bgSidebar,
       child: Column(
         children: [
-          // macOS 沉浸式无边框窗口顶部预留拖拽与标头
+          // macOS 沉浸式无边框窗口顶部预留红绿灯避让与标头
           Container(
-            height: 48,
-            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12),
+            height: 68,
+            padding: const EdgeInsets.only(top: 28, left: 16, right: 12, bottom: 8),
             decoration: const BoxDecoration(
               border: Border(bottom: BorderSide(color: AppTheme.borderSubtle)),
             ),
+            alignment: Alignment.bottomLeft,
             child: Row(
               children: [
                 const Icon(Icons.menu_book_rounded, size: 20, color: AppTheme.accent),
@@ -616,10 +640,11 @@ class _NotebookPageState extends State<NotebookPage> {
             dense: true,
             leading: const Icon(Icons.all_inbox_rounded, size: 18),
             title: const Text('全部笔记'),
-            selected: !_isTrashSelected && _selectedNotebookId == null && _selectedTagId == null,
+            selected: !_isTrashSelected && _selectedStack == null && _selectedNotebookId == null && _selectedTagId == null,
             onTap: () {
               setState(() {
                 _isTrashSelected = false;
+                _selectedStack = null;
                 _selectedNotebookId = null;
                 _selectedTagId = null;
                 _isBatchMode = false;
@@ -636,6 +661,7 @@ class _NotebookPageState extends State<NotebookPage> {
             onTap: () {
               setState(() {
                 _isTrashSelected = true;
+                _selectedStack = null;
                 _selectedNotebookId = null;
                 _selectedTagId = null;
                 _isBatchMode = false;
@@ -659,7 +685,7 @@ class _NotebookPageState extends State<NotebookPage> {
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.add_rounded, size: 16),
-                  onPressed: _createNotebook,
+                  onPressed: () => _createNotebook(),
                   tooltip: '新建笔记本',
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
@@ -668,47 +694,10 @@ class _NotebookPageState extends State<NotebookPage> {
             ),
           ),
 
-          // Notebooks list
+          // Notebooks tree with stacks and notebooks
           Expanded(
             flex: 3,
-            child: ListView.builder(
-              itemCount: _notebooks.length,
-              itemBuilder: (ctx, i) {
-                final nb = _notebooks[i];
-                final isSelected = !_isTrashSelected && _selectedNotebookId == nb.id;
-                return ListTile(
-                  dense: true,
-                  leading: Text(nb.icon, style: const TextStyle(fontSize: 16)),
-                  title: Text(nb.name, style: AppTheme.fontBody, overflow: TextOverflow.ellipsis),
-                  selected: isSelected,
-                  onTap: () {
-                    setState(() {
-                      _isTrashSelected = false;
-                      _selectedNotebookId = nb.id;
-                      _selectedTagId = null;
-                      _isBatchMode = false;
-                      _selectedNoteIds.clear();
-                    });
-                    _refresh(silent: true);
-                  },
-                  trailing: PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 14, color: AppTheme.textTertiary),
-                    padding: EdgeInsets.zero,
-                    onSelected: (v) {
-                      if (v == 'rename') {
-                        _renameNotebook(nb);
-                      } else if (v == 'delete') {
-                        _deleteNotebook(nb.id);
-                      }
-                    },
-                    itemBuilder: (ctx) => [
-                      const PopupMenuItem(value: 'rename', child: Text('重命名')),
-                      const PopupMenuItem(value: 'delete', child: Text('删除笔记本', style: TextStyle(color: AppTheme.error))),
-                    ],
-                  ),
-                );
-              },
-            ),
+            child: _buildNotebookTree(),
           ),
 
           // Tags section
@@ -789,6 +778,195 @@ class _NotebookPageState extends State<NotebookPage> {
     );
   }
 
+  Widget _buildNotebookTree() {
+    final sortedStacks = _stacks.keys.toList()..sort();
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      children: [
+        for (final stack in sortedStacks)
+          _buildStackItem(stack, _stacks[stack] ?? []),
+        if (_unstackedNotebooks.isNotEmpty) ...[
+          if (sortedStacks.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 14, top: 8, bottom: 4),
+              child: Text(
+                '未分类笔记本',
+                style: AppTheme.fontCaption.copyWith(
+                  color: AppTheme.textTertiary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          for (final nb in _unstackedNotebooks)
+            _buildNotebookTile(nb, indent: false),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStackItem(String stack, List<Notebook> notebooks) {
+    final isCollapsed = _collapsedStacks.contains(stack);
+    final isStackSelected = !_isTrashSelected && _selectedStack == stack && _selectedNotebookId == null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () {
+            setState(() {
+              _isTrashSelected = false;
+              _selectedStack = stack;
+              _selectedNotebookId = null;
+              _selectedTagId = null;
+              _isBatchMode = false;
+              _selectedNoteIds.clear();
+              // 点击组名自动展开
+              _collapsedStacks.remove(stack);
+            });
+            _refresh(silent: true);
+          },
+          child: Container(
+            height: 34,
+            padding: const EdgeInsets.only(left: 6, right: 6),
+            color: isStackSelected ? AppTheme.accent.withAlpha(25) : Colors.transparent,
+            child: Row(
+              children: [
+                // 折叠/展开箭头
+                InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: () {
+                    setState(() {
+                      if (isCollapsed) {
+                        _collapsedStacks.remove(stack);
+                      } else {
+                        _collapsedStacks.add(stack);
+                      }
+                    });
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      isCollapsed ? Icons.keyboard_arrow_right_rounded : Icons.keyboard_arrow_down_rounded,
+                      size: 16,
+                      color: AppTheme.textTertiary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  isCollapsed ? Icons.folder_outlined : Icons.folder_open_rounded,
+                  size: 16,
+                  color: isStackSelected ? AppTheme.accent : const Color(0xFF64748B),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    stack,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: isStackSelected ? AppTheme.accent : AppTheme.textPrimary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE2E8F0),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${notebooks.length}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: Color(0xFF475569),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_horiz, size: 14, color: AppTheme.textTertiary),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                  splashRadius: 12,
+                  onSelected: (v) {
+                    if (v == 'new_nb') {
+                      _createNotebook(stack: stack);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(value: 'new_nb', child: Text('在此组新建笔记本')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (!isCollapsed)
+          for (final nb in notebooks)
+            _buildNotebookTile(nb, indent: true),
+      ],
+    );
+  }
+
+  Widget _buildNotebookTile(Notebook nb, {required bool indent}) {
+    final isSelected = !_isTrashSelected && _selectedNotebookId == nb.id;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _isTrashSelected = false;
+          _selectedNotebookId = nb.id;
+          _selectedStack = nb.stack;
+          _selectedTagId = null;
+          _isBatchMode = false;
+          _selectedNoteIds.clear();
+        });
+        _refresh(silent: true);
+      },
+      child: Container(
+        height: 32,
+        padding: EdgeInsets.only(left: indent ? 28.0 : 12.0, right: 6.0),
+        color: isSelected ? AppTheme.accent.withAlpha(20) : Colors.transparent,
+        child: Row(
+          children: [
+            Text(nb.icon, style: const TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                nb.name,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: isSelected ? AppTheme.accent : AppTheme.textPrimary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, size: 13, color: AppTheme.textTertiary),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+              splashRadius: 12,
+              onSelected: (v) {
+                if (v == 'rename') {
+                  _renameNotebook(nb);
+                } else if (v == 'delete') {
+                  _deleteNotebook(nb.id);
+                }
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(value: 'rename', child: Text('重命名')),
+                const PopupMenuItem(value: 'delete', child: Text('删除笔记本', style: TextStyle(color: AppTheme.error))),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCenterPanel() {
     return Container(
       width: 320,
@@ -863,7 +1041,11 @@ class _NotebookPageState extends State<NotebookPage> {
                 border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
               ),
               child: Text(
-                _isTrashSelected ? '废纸篓：${_notes.length} 项' : '共 ${_notes.length} 篇笔记',
+                _isTrashSelected
+                    ? '废纸篓：${_notes.length} 项'
+                    : _selectedStack != null && _selectedNotebookId == null
+                        ? '$_selectedStack：${_notes.length} 篇笔记'
+                        : '共 ${_notes.length} 篇笔记',
                 style: const TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
               ),
             )

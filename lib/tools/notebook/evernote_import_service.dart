@@ -242,15 +242,26 @@ class EvernoteImportService {
 
     // 1. 预先解析并创建所有笔记本，缓存映射
     final notebookCache = <String, String>{};
-    final rawNotebooks = (data['notebooks'] as List<dynamic>?)?.cast<String>() ?? [];
-    for (final name in rawNotebooks) {
-      if (name.trim().isEmpty) continue;
+    final rawNotebooks = (data['notebooks'] as List<dynamic>?) ?? [];
+    for (final item in rawNotebooks) {
+      String name;
+      String? stack;
+      if (item is Map) {
+        name = (item['name'] as String? ?? '').trim();
+        stack = item['stack'] as String?;
+      } else {
+        name = item.toString().trim();
+      }
+      if (name.isEmpty) continue;
       final existing = await store.allNotebooks();
       final match = existing.where((nb) => nb.name == name).firstOrNull;
       if (match != null) {
         notebookCache[name] = match.id;
+        if (stack != null && (match.stack == null || match.stack != stack)) {
+          await store.updateNotebook(match.id, stack: stack);
+        }
       } else {
-        notebookCache[name] = await store.createNotebook(name);
+        notebookCache[name] = await store.createNotebook(name, stack: stack);
       }
     }
 
@@ -277,6 +288,7 @@ class EvernoteImportService {
       final notebookName = (rawNotebookName != null && rawNotebookName.isNotEmpty)
           ? rawNotebookName
           : fallbackNotebook;
+      final noteStack = note['stack'] as String?;
       final tags = (note['tags'] as List<dynamic>?)?.cast<String>() ?? [];
       final markdown = note['markdown'] as String?;
 
@@ -287,13 +299,23 @@ class EvernoteImportService {
         if (notebookName != null && notebookName.isNotEmpty) {
           if (notebookCache.containsKey(notebookName)) {
             nbId = notebookCache[notebookName];
+            if (noteStack != null) {
+              final existing = await store.allNotebooks();
+              final match = existing.where((nb) => nb.id == nbId).firstOrNull;
+              if (match != null && (match.stack == null || match.stack != noteStack)) {
+                await store.updateNotebook(match.id, stack: noteStack);
+              }
+            }
           } else {
             final existing = await store.allNotebooks();
             final match = existing.where((nb) => nb.name == notebookName).firstOrNull;
             if (match != null) {
               nbId = match.id;
+              if (noteStack != null && (match.stack == null || match.stack != noteStack)) {
+                await store.updateNotebook(match.id, stack: noteStack);
+              }
             } else {
-              nbId = await store.createNotebook(notebookName);
+              nbId = await store.createNotebook(notebookName, stack: noteStack);
             }
             notebookCache[notebookName] = nbId;
           }
@@ -398,23 +420,52 @@ class EvernoteImportService {
     final lines = markdown.split('\n');
     final ops = <Map<String, dynamic>>[];
     final usedImagePaths = <String>{};
-    bool inCodeBlock = false;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
 
-      // 代码块围栏判定
-      if (line.trimLeft().startsWith('```')) {
-        inCodeBlock = !inCodeBlock;
+      // 思维导图块判定 ```mindmap
+      if (line.trimLeft().startsWith('```mindmap')) {
+        final buffer = StringBuffer();
+        i++;
+        while (i < lines.length && !lines[i].trimLeft().startsWith('```')) {
+          buffer.write(lines[i]);
+          i++;
+        }
+        final rawData = buffer.toString();
+        String finalData = rawData;
+        try {
+          final parsed = jsonDecode(rawData) as Map<String, dynamic>;
+          final hash = parsed['hash'] as String?;
+          if (hash != null && attachmentMap.containsKey(hash.toLowerCase())) {
+            parsed['svg_path'] = attachmentMap[hash.toLowerCase()];
+            finalData = jsonEncode(parsed);
+          }
+        } catch (_) {}
+        ops.add({'insert': {'mindmap': finalData}});
+        ops.add({'insert': '\n'});
         continue;
       }
 
-      if (inCodeBlock) {
-        ops.add({'insert': line});
+      // 代码块围栏判定与嵌入式渲染
+      if (line.trimLeft().startsWith('```')) {
+        final lang = line.trimLeft().substring(3).trim();
+        final codeBuffer = StringBuffer();
+        i++;
+        while (i < lines.length && !lines[i].trimLeft().startsWith('```')) {
+          if (codeBuffer.isNotEmpty) codeBuffer.write('\n');
+          codeBuffer.write(lines[i]);
+          i++;
+        }
         ops.add({
-          'insert': '\n',
-          'attributes': {'code-block': true},
+          'insert': {
+            'code_block': jsonEncode({
+              'code': codeBuffer.toString(),
+              'language': lang.isEmpty ? 'plaintext' : lang,
+            }),
+          },
         });
+        ops.add({'insert': '\n'});
         continue;
       }
 
@@ -613,6 +664,6 @@ class EvernoteImportService {
 
   static bool _isImageFilePath(String filePath) {
     final ext = p.extension(filePath).toLowerCase();
-    return const {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}.contains(ext);
+    return const {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'}.contains(ext);
   }
 }

@@ -52,7 +52,7 @@ def hello_world():
     };
 
     final deltaStr = EvernoteImportService.instance.markdownToDelta(md, attachmentMap);
-    expect(deltaStr, contains('"code-block":true'));
+    expect(deltaStr.contains('"code_block"') || deltaStr.contains('"code-block"'), isTrue);
     expect(deltaStr, contains('def hello_world():'));
     expect(deltaStr, contains('"list":"unchecked"'));
     expect(deltaStr, contains('"list":"checked"'));

@@ -208,6 +208,26 @@ class MarkdownConverter {
       final url = embed['image'].toString();
       return '![]($url)';
     }
+    if (embed.containsKey('code_block')) {
+      try {
+        final raw = embed['code_block'];
+        final map = raw is Map ? raw : jsonDecode(raw.toString());
+        final code = map['code'] ?? '';
+        final lang = map['language'] ?? '';
+        return '\n```$lang\n$code\n```\n';
+      } catch (_) {
+        return '\n```\n${embed['code_block']}\n```\n';
+      }
+    }
+    if (embed.containsKey('mindmap')) {
+      try {
+        final raw = embed['mindmap'];
+        final map = raw is Map ? raw : jsonDecode(raw.toString());
+        return '\n```mindmap\n${jsonEncode(map)}\n```\n';
+      } catch (_) {
+        return '\n```mindmap\n${embed['mindmap']}\n```\n';
+      }
+    }
     if (embed.containsKey('video')) {
       final url = embed['video'].toString();
       return '[Video]($url)';
@@ -225,12 +245,40 @@ class MarkdownConverter {
 
   /// 将 Markdown 字符串转换为 Quill Delta JSON
   static String markdownToDelta(String markdown) {
+    final trimmed = markdown.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}') && trimmed.contains('"mode":"mindmap"')) {
+      try {
+        return jsonEncode([
+          {'insert': {'mindmap': trimmed}},
+          {'insert': '\n'},
+        ]);
+      } catch (_) {}
+    }
+
     final lines = markdown.split('\n');
     final ops = <Map<String, dynamic>>[];
 
     int i = 0;
     while (i < lines.length) {
       final line = lines[i];
+
+      // Mind map block
+      if (line.trimLeft().startsWith('```mindmap')) {
+        final buffer = StringBuffer();
+        i++;
+        while (i < lines.length && !lines[i].trimLeft().startsWith('```')) {
+          buffer.write(lines[i]);
+          i++;
+        }
+        ops.add({
+          'insert': {
+            'mindmap': buffer.toString(),
+          },
+        });
+        ops.add({'insert': '\n'});
+        if (i < lines.length) i++; // skip closing ```
+        continue;
+      }
 
       // Code block
       if (line.trimLeft().startsWith('```')) {
@@ -243,11 +291,15 @@ class MarkdownConverter {
           i++;
         }
         ops.add({
-          'insert': codeBuffer.toString(),
-          'attributes': {'code-block': true, if (lang.isNotEmpty) 'language': lang},
+          'insert': {
+            'code_block': jsonEncode({
+              'code': codeBuffer.toString(),
+              'language': lang.isEmpty ? 'plaintext' : lang,
+            }),
+          },
         });
         ops.add({'insert': '\n'});
-        i++; // skip closing ```
+        if (i < lines.length) i++; // skip closing ```
         continue;
       }
 
