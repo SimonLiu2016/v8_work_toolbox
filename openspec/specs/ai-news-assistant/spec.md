@@ -10,6 +10,12 @@ The application SHALL provide an interactive AI chat interface capable of conver
 - **WHEN** user asks a question in the AI assistant dialog that requires current web data (e.g. searching news or scraping a specific webpage)
 - **THEN** the system calls the registered MCP tool (`firecrawl_search` or `firecrawl_scrape`), displays an in-progress tool execution badge, receives structured results, and synthesizes a formatted Markdown response with source links.
 
+#### Scenario: Assistant answer markdown is visually rendered
+- **WHEN** an AI assistant reply contains markdown constructs such as headings (`##`), bold or italic emphasis, bullet or numbered lists, inline or fenced code, and blockquotes
+- **THEN** the assistant message bubble renders these constructs with distinct visual formatting, and no literal markdown syntax characters are exposed as plain text to the user.
+- **AND** the rendered content supports text selection and copying.
+- **AND** user-authored messages are rendered as plain text and SHALL NOT be parsed as markdown, so that literal syntax characters typed by the user are preserved exactly as entered.
+
 #### Scenario: User queries standard conversational questions
 - **WHEN** user sends general questions or instructions not requiring web search
 - **THEN** the AI assistant responds directly via the configured AI text completion slot without invoking external MCP tools.
@@ -32,4 +38,8 @@ The application SHALL support configuring scheduled information retrieval tasks 
 #### Scenario: User notification on fresh news
 - **WHEN** a scheduled retrieval task finishes and detects newly discovered items
 - **THEN** the application increments the unread notification badge on the AI assistant tab, displays an in-app alert banner, and sends a macOS system notification with the brief summary.
+
+#### Scenario: Scheduled briefing markdown is visually rendered
+- **WHEN** a scheduled retrieval task's summarized digest contains markdown constructs such as headings, emphasis, lists, or inline code
+- **THEN** the briefing entry is rendered with the same markdown visual formatting as assistant chat replies, using a single shared rendering component so both surfaces stay visually consistent.
 
