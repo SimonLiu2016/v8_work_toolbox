@@ -85,7 +85,7 @@ The notebook system SHALL display Evernote mind map notes with vector fidelity a
 - **THEN** the editor renders the visual vector mind map without distortion and provides access to its structured outline tree.
 
 ### Requirement: Professional Code Block Rendering and Tools
-The notebook editor SHALL render code snippets with syntax highlighting, language selection, line numbers, one-click copy, formatting capabilities, and continuous multi-line stream aggregation.
+The notebook editor SHALL render code snippets with syntax highlighting, language selection, line numbers, one-click copy, formatting capabilities, continuous multi-line stream aggregation, smart selection wrapping, and click-to-edit focus isolation.
 
 #### Scenario: Syntax highlighting and language switching
 - **WHEN** a code block is rendered or edited
@@ -106,6 +106,18 @@ The notebook editor SHALL render code snippets with syntax highlighting, languag
 #### Scenario: Healing notes with corrupted empty code embeds
 - **WHEN** loading a note with empty code block embeds or initializing the notebook store
 - **THEN** the editor and storage service automatically clean up empty code embeds and preserve legitimate code and text content.
+
+#### Scenario: Smart selection wrapping from toolbar
+- **WHEN** a user selects text in the note editor and clicks the Code Block toolbar button
+- **THEN** the selected text is replaced with a new rich code block embed containing the selected text, and when no text is selected, an empty code block is inserted and immediately focused for editing.
+
+#### Scenario: Click-to-edit inline activation
+- **WHEN** a user clicks anywhere on the code display area of a code block
+- **THEN** the code block seamlessly switches to an in-place editing state with an active text cursor and keyboard input focus, while the outer document editor cursor is hidden.
+
+#### Scenario: Focus isolation and blur auto-save
+- **WHEN** a user edits code inside the code block and subsequently clicks outside the code block or presses Escape
+- **THEN** the edited code is committed to the note document embed and the block switches back to syntax-highlighted display mode without emitting stray characters to the surrounding document.
 
 ### Requirement: Zero-Dependency Evernote ENML Parsing
 The Evernote import pipeline SHALL convert ENML documents into clean Markdown using standard library components without requiring external pip dependencies such as `html2text`, and SHALL extract code block language metadata.
