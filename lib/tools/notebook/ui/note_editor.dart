@@ -1631,25 +1631,8 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     final displayLines = (_isEditing ? _textCtrl.text : _code).split('\n');
     final lineCount = displayLines.isEmpty ? 1 : displayLines.length;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque, // 拦截并消费点击，防止冒泡到外层 _focusEditor
-      onTap: () {
-        if (!_isEditing) {
-          _enterEditMode();
-        } else {
-          widget.quillController?.updateSelection(
-            const TextSelection.collapsed(offset: -1),
-            ChangeSource.local,
-          );
-          widget.editorFocusNode?.canRequestFocus = false;
-          widget.editorFocusNode?.unfocus();
-          if (!_codeFocusNode.hasFocus) {
-            _codeFocusNode.requestFocus();
-          }
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
           color: const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
@@ -1770,91 +1753,30 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
 
             // Content Area
             if (_isEditing)
-              CallbackShortcuts(
-                bindings: {
-                  const SingleActivator(LogicalKeyboardKey.escape): () {
-                    _finishEditMode();
-                  },
-                  const SingleActivator(LogicalKeyboardKey.tab): () {
-                    _insertTab();
-                  },
-                  // 拦截粘贴快捷键，防止外层 _handlePaste 截获并操作 QuillController
-                  const SingleActivator(LogicalKeyboardKey.keyV, meta: true): () {
-                    _handleCodePaste();
-                  },
-                  const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
-                    _handleCodePaste();
-                  },
-                },
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Gutter line numbers in edit mode
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
-                          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                        ),
-                        child: ValueListenableBuilder<TextEditingValue>(
-                          valueListenable: _textCtrl,
-                          builder: (context, value, _) {
-                            final currentLines = value.text.split('\n');
-                            final count = currentLines.isEmpty ? 1 : currentLines.length;
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: List.generate(
-                                count,
-                                (index) => Text(
-                                  '${index + 1}',
-                                  style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 13,
-                                    height: 1.5,
-                                    color: Color(0xFF94A3B8),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Gutter line numbers in edit mode
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
+                        border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
                       ),
-                      // Edit TextField with Focus key event guard
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                          child: Focus(
-                            onKeyEvent: (node, event) {
-                              if (event is KeyDownEvent || event is KeyRepeatEvent) {
-                                // 安全绝缘防护：仅拦截 Backspace（向前删），不拦截 Delete（向后删）
-                                // 当光标在代码块最首部且选区折叠时，Backspace 会冒泡到 Quill 误删上方正文
-                                if (event.logicalKey == LogicalKeyboardKey.backspace) {
-                                  if (_textCtrl.selection.isCollapsed && _textCtrl.selection.baseOffset <= 0) {
-                                    return KeyEventResult.handled;
-                                  }
-                                }
-                              }
-                              return KeyEventResult.ignored;
-                            },
-                            child: TextField(
-                              controller: _textCtrl,
-                              focusNode: _codeFocusNode,
-                              maxLines: null,
-                              keyboardType: TextInputType.multiline,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                                height: 1.5,
-                                color: Color(0xFF0F172A),
-                              ),
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.zero,
-                                hintText: '在此输入或粘贴代码...',
-                                hintStyle: TextStyle(
+                      child: ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: _textCtrl,
+                        builder: (context, value, _) {
+                          final currentLines = value.text.split('\n');
+                          final count = currentLines.isEmpty ? 1 : currentLines.length;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: List.generate(
+                              count,
+                              (index) => Text(
+                                '${index + 1}',
+                                style: const TextStyle(
                                   fontFamily: 'monospace',
                                   fontSize: 13,
                                   height: 1.5,
@@ -1862,35 +1784,70 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
                                 ),
                               ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              MouseRegion(
-                cursor: SystemMouseCursors.text,
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Line numbers
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
-                          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: List.generate(
-                            lineCount,
-                            (index) => Text(
-                              '${index + 1}',
-                              style: const TextStyle(
+                    ),
+                    // Edit TextField with fully isolated key event firewall
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                        child: Focus(
+                          onKeyEvent: (node, event) {
+                            if (event is KeyDownEvent || event is KeyRepeatEvent) {
+                              // 1. Esc 键：完成并退出编辑模式
+                              if (event.logicalKey == LogicalKeyboardKey.escape) {
+                                _finishEditMode();
+                                return KeyEventResult.handled;
+                              }
+
+                              // 2. Tab 键：插入 2 空格缩进
+                              if (event.logicalKey == LogicalKeyboardKey.tab) {
+                                _insertTab();
+                                return KeyEventResult.handled;
+                              }
+
+                              // 3. 粘贴键 (Cmd+V / Ctrl+V)：直接在代码块内粘贴
+                              final isPaste = (event.logicalKey == LogicalKeyboardKey.keyV) &&
+                                  (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed);
+                              if (isPaste) {
+                                _handleCodePaste();
+                                return KeyEventResult.handled;
+                              }
+
+                              // 4. Backspace (向前删除) 边界防护：
+                              // 如果光标在代码块最首部(offset <= 0)且无选区，EditableText 无字符可删会忽略，
+                              // 若不拦截会冒泡到 Quill 误删代码块上方正文。此处吞掉事件绝不误删。
+                              if (event.logicalKey == LogicalKeyboardKey.backspace) {
+                                if (_textCtrl.selection.isCollapsed && _textCtrl.selection.baseOffset <= 0) {
+                                  return KeyEventResult.handled;
+                                }
+                              }
+                            }
+
+                            // 5. 核心防火墙绝缘：
+                            // 对代码块 TextField 内的其他所有按键事件，必须返回 skipRemainingHandlers！
+                            // 含义：停止向外层(Quill / CallbackShortcuts)冒泡，杜绝 Quill 偷吃 Backspace / Delete / 箭头等，
+                            // 同时允许底层的 TextInput 平台通道与 EditableText 正常执行删除和输入！
+                            return KeyEventResult.skipRemainingHandlers;
+                          },
+                          child: TextField(
+                            controller: _textCtrl,
+                            focusNode: _codeFocusNode,
+                            maxLines: null,
+                            keyboardType: TextInputType.multiline,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                              height: 1.5,
+                              color: Color(0xFF0F172A),
+                            ),
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.zero,
+                              hintText: '在此输入或粘贴代码...',
+                              hintStyle: TextStyle(
                                 fontFamily: 'monospace',
                                 fontSize: 13,
                                 height: 1.5,
@@ -1900,31 +1857,69 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
                           ),
                         ),
                       ),
-                      // Syntax highlight view
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: HighlightView(
-                            _code.isEmpty ? '// 暂无代码内容 (点击直接编辑)' : _code,
-                            language: _language,
-                            theme: githubTheme,
-                            padding: const EdgeInsets.all(12),
-                            textStyle: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              height: 1.5,
+                    ),
+                  ],
+                ),
+              )
+            else
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _enterEditMode,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.text,
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Line numbers
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
+                            border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: List.generate(
+                              lineCount,
+                              (index) => Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                  height: 1.5,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        // Syntax highlight view
+                        Expanded(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: HighlightView(
+                              _code.isEmpty ? '// 暂无代码内容 (点击直接编辑)' : _code,
+                              language: _language,
+                              theme: githubTheme,
+                              padding: const EdgeInsets.all(12),
+                              textStyle: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 
