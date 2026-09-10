@@ -44,6 +44,7 @@ class _NoteEditorState extends State<NoteEditor> {
   late final ScrollController _editorScrollController;
   QuillController? _quillCtrl;
   bool _isSaving = false;
+  bool _isCodeBlockEditing = false;
   Timer? _titleDebounce;
   Timer? _bodyDebounce;
 
@@ -74,10 +75,12 @@ class _NoteEditorState extends State<NoteEditor> {
 
   void _focusEditor() {
     if (!mounted) return;
+    // 当代码块处于编辑模式时，完全跳过焦点与选区操作，避免 Quill 偷焦点导致长光标
+    if (_isCodeBlockEditing) return;
     if (_editorFocusNode.canRequestFocus) {
       _editorFocusNode.requestFocus();
     }
-    if (_quillCtrl != null) {
+    if (_quillCtrl != null && (!_quillCtrl!.selection.isValid || _quillCtrl!.selection.baseOffset < 0)) {
       final len = _quillCtrl!.document.length;
       final targetOffset = len > 0 ? len - 1 : 0;
       _quillCtrl!.updateSelection(
@@ -481,18 +484,44 @@ class _NoteEditorState extends State<NoteEditor> {
     }
   }
 
-  void _insertCodeBlock() {
+  void _toggleOrInsertCodeBlock() {
     if (widget.note == null || _quillCtrl == null) return;
-    final index = _quillCtrl!.selection.baseOffset;
-    final data = jsonEncode({
-      'code': '// 请在此处输入代码\n',
-      'language': 'dart',
-    });
-    _quillCtrl!.document.insert(index, BlockEmbed('code_block', data));
-    _quillCtrl!.updateSelection(
-      TextSelection.collapsed(offset: index + 1),
-      ChangeSource.local,
-    );
+    final selection = _quillCtrl!.selection;
+    if (!selection.isCollapsed && selection.isValid) {
+      final start = selection.start;
+      final end = selection.end;
+      final len = end - start;
+      final selectedText = _quillCtrl!.document.getPlainText(start, len);
+      final cleanText = selectedText.trimRight();
+
+      // 替换当前选区为高级代码块卡片
+      _quillCtrl!.document.replace(
+        start,
+        len,
+        BlockEmbed('code_block', jsonEncode({
+          'code': cleanText,
+          'language': 'plaintext',
+        })),
+      );
+      _quillCtrl!.updateSelection(
+        TextSelection.collapsed(offset: start + 1),
+        ChangeSource.local,
+      );
+    } else {
+      final index = (selection.isValid && selection.baseOffset >= 0)
+          ? selection.baseOffset
+          : _quillCtrl!.document.length;
+      final data = jsonEncode({
+        'code': '',
+        'language': 'plaintext',
+        'autoEdit': true, // 标记新插入，立即进入编辑状态并获取光标
+      });
+      _quillCtrl!.document.insert(index, BlockEmbed('code_block', data));
+      _quillCtrl!.updateSelection(
+        const TextSelection.collapsed(offset: -1),
+        ChangeSource.local,
+      );
+    }
     _scheduleBodySave();
   }
 
@@ -846,7 +875,7 @@ class _NoteEditorState extends State<NoteEditor> {
                     showListCheck: true,        // 开启待办事项 Checkbox
                     showListNumbers: true,
                     showListBullets: true,
-                    showCodeBlock: true,
+                    showCodeBlock: false,        // 禁用原生灰色单调代码行，统一使用高阶代码块卡片
                     showQuote: true,
                     showLink: true,
                     showColorButton: false,
@@ -875,8 +904,8 @@ class _NoteEditorState extends State<NoteEditor> {
               const VerticalDivider(width: 1, indent: 8, endIndent: 8, color: Color(0xFFE5E7EB)),
               IconButton(
                 icon: const Icon(Icons.code_rounded, size: 18, color: Color(0xFF4B5563)),
-                onPressed: _insertCodeBlock,
-                tooltip: '插入代码块',
+                onPressed: _toggleOrInsertCodeBlock,
+                tooltip: '代码块 (包裹选中代码或插入新块)',
                 splashRadius: 16,
                 padding: const EdgeInsets.symmetric(horizontal: 8),
               ),
@@ -923,6 +952,10 @@ class _NoteEditorState extends State<NoteEditor> {
                       NoteCodeBlockEmbedBuilder(
                         quillController: _quillCtrl,
                         onSave: _scheduleBodySave,
+                        editorFocusNode: _editorFocusNode,
+                        onEditingChanged: (editing) {
+                          _isCodeBlockEditing = editing;
+                        },
                       ),
                       NoteMindMapEmbedBuilder(
                         quillController: _quillCtrl,
@@ -1326,13 +1359,18 @@ class _NoteImageWidgetState extends State<_NoteImageWidget> {
 }
 
 /// 2. 业界标准代码块嵌入组件（语言选择、语法高亮、自动格式化、行号显示与一键复制）
+/// 2. 业界标准代码块嵌入组件（语言选择、语法高亮、自动格式化、行号显示、一键复制、行内单击即时编辑与焦点隔离）
 class NoteCodeBlockEmbedBuilder extends EmbedBuilder {
   final QuillController? quillController;
   final VoidCallback? onSave;
+  final FocusNode? editorFocusNode;
+  final ValueChanged<bool>? onEditingChanged;
 
   const NoteCodeBlockEmbedBuilder({
     this.quillController,
     this.onSave,
+    this.editorFocusNode,
+    this.onEditingChanged,
   });
 
   @override
@@ -1344,6 +1382,8 @@ class NoteCodeBlockEmbedBuilder extends EmbedBuilder {
       embedContext: embedContext,
       quillController: quillController,
       onSave: onSave,
+      editorFocusNode: editorFocusNode,
+      onEditingChanged: onEditingChanged,
     );
   }
 }
@@ -1352,11 +1392,15 @@ class _NoteCodeBlockWidget extends StatefulWidget {
   final EmbedContext embedContext;
   final QuillController? quillController;
   final VoidCallback? onSave;
+  final FocusNode? editorFocusNode;
+  final ValueChanged<bool>? onEditingChanged;
 
   const _NoteCodeBlockWidget({
     required this.embedContext,
     this.quillController,
     this.onSave,
+    this.editorFocusNode,
+    this.onEditingChanged,
   });
 
   @override
@@ -1368,7 +1412,9 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
   late String _language;
   bool _isEditing = false;
   bool _copied = false;
+  bool _autoEdit = false;
   late TextEditingController _textCtrl;
+  late FocusNode _codeFocusNode;
 
   static const List<String> _languages = [
     'plaintext', 'dart', 'python', 'javascript', 'typescript',
@@ -1381,6 +1427,41 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     super.initState();
     _parseData();
     _textCtrl = TextEditingController(text: _code);
+    _codeFocusNode = FocusNode(debugLabel: 'CodeBlockEditorFocus');
+    _codeFocusNode.addListener(_handleFocusChange);
+
+    if (_autoEdit) {
+      _isEditing = true;
+      widget.quillController?.updateSelection(
+        const TextSelection.collapsed(offset: -1),
+        ChangeSource.local,
+      );
+      widget.editorFocusNode?.canRequestFocus = false;
+      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          widget.quillController?.updateSelection(
+            const TextSelection.collapsed(offset: -1),
+            ChangeSource.local,
+          );
+          widget.editorFocusNode?.canRequestFocus = false;
+          widget.editorFocusNode?.unfocus();
+          _codeFocusNode.requestFocus();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_isEditing) {
+      widget.onEditingChanged?.call(false);
+    }
+    widget.editorFocusNode?.canRequestFocus = true;
+    _codeFocusNode.removeListener(_handleFocusChange);
+    _codeFocusNode.dispose();
+    _textCtrl.dispose();
+    super.dispose();
   }
 
   void _parseData() {
@@ -1390,6 +1471,7 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
         final parsed = jsonDecode(raw) as Map<String, dynamic>;
         _code = parsed['code'] as String? ?? '';
         _language = parsed['language'] as String? ?? 'plaintext';
+        _autoEdit = parsed['autoEdit'] as bool? ?? false;
       } catch (_) {
         _code = raw;
         _language = 'plaintext';
@@ -1397,10 +1479,56 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     } else if (raw is Map) {
       _code = raw['code']?.toString() ?? '';
       _language = raw['language']?.toString() ?? 'plaintext';
+      _autoEdit = raw['autoEdit'] == true;
     } else {
       _code = '';
       _language = 'plaintext';
     }
+  }
+
+  void _handleFocusChange() {
+    if (!_codeFocusNode.hasFocus && _isEditing) {
+      _finishEditMode();
+    }
+  }
+
+  void _enterEditMode() {
+    if (_isEditing) return;
+    widget.onEditingChanged?.call(true);
+    widget.quillController?.updateSelection(
+      const TextSelection.collapsed(offset: -1),
+      ChangeSource.local,
+    );
+    widget.editorFocusNode?.canRequestFocus = false;
+    widget.editorFocusNode?.unfocus();
+    setState(() {
+      _textCtrl.text = _code;
+      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
+      _isEditing = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        widget.quillController?.updateSelection(
+          const TextSelection.collapsed(offset: -1),
+          ChangeSource.local,
+        );
+        widget.editorFocusNode?.canRequestFocus = false;
+        widget.editorFocusNode?.unfocus();
+        _codeFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _finishEditMode() {
+    if (!_isEditing) return;
+    widget.onEditingChanged?.call(false);
+    widget.editorFocusNode?.canRequestFocus = true;
+    final newCode = _textCtrl.text;
+    setState(() {
+      _code = newCode;
+      _isEditing = false;
+    });
+    _persist();
   }
 
   void _persist() {
@@ -1414,7 +1542,8 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
   }
 
   void _copyCode() {
-    Clipboard.setData(ClipboardData(text: _code));
+    final codeToCopy = _isEditing ? _textCtrl.text : _code;
+    Clipboard.setData(ClipboardData(text: codeToCopy));
     setState(() => _copied = true);
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _copied = false);
@@ -1422,15 +1551,18 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
   }
 
   void _formatCode() {
+    final currentCode = _isEditing ? _textCtrl.text : _code;
     if (_language == 'json') {
       try {
-        final parsed = jsonDecode(_code);
+        final parsed = jsonDecode(currentCode);
         final pretty = const JsonEncoder.withIndent('  ').convert(parsed);
         setState(() {
           _code = pretty;
           _textCtrl.text = pretty;
         });
-        _persist();
+        if (!_isEditing) {
+          _persist();
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('JSON 格式化成功'), duration: Duration(seconds: 1)),
         );
@@ -1440,15 +1572,51 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
         );
       }
     } else {
-      final lines = _code.split('\n').map((l) => l.trimRight()).toList();
+      final lines = currentCode.split('\n').map((l) => l.trimRight()).toList();
+      final formatted = lines.join('\n').trim();
       setState(() {
-        _code = lines.join('\n').trim();
-        _textCtrl.text = _code;
+        _code = formatted;
+        _textCtrl.text = formatted;
       });
-      _persist();
+      if (!_isEditing) {
+        _persist();
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已清除行尾空白字符'), duration: Duration(seconds: 1)),
       );
+    }
+  }
+
+  void _insertTab() {
+    final val = _textCtrl.value;
+    final text = val.text;
+    final sel = val.selection;
+    const tabStr = '  '; // 2 spaces
+    if (sel.isValid) {
+      final newText = text.replaceRange(sel.start, sel.end, tabStr);
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: sel.start + tabStr.length),
+      );
+    } else {
+      _textCtrl.text += tabStr;
+    }
+  }
+
+  Future<void> _handleCodePaste() async {
+    final clipData = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = clipData?.text;
+    if (text == null || text.isEmpty) return;
+    final val = _textCtrl.value;
+    final sel = val.selection;
+    if (sel.isValid) {
+      final newText = val.text.replaceRange(sel.start, sel.end, text);
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: sel.start + text.length),
+      );
+    } else {
+      _textCtrl.text += text;
     }
   }
 
@@ -1460,185 +1628,301 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = _code.split('\n');
-    final lineCount = lines.isEmpty ? 1 : lines.length;
+    final displayLines = (_isEditing ? _textCtrl.text : _code).split('\n');
+    final lineCount = displayLines.isEmpty ? 1 : displayLines.length;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 代码块顶部工具栏
-          Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
-              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-            ),
-            child: Row(
-              children: [
-                // 语言切换下拉菜单
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _languages.contains(_language) ? _language : 'plaintext',
-                    icon: const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _language = val);
-                        _persist();
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque, // 拦截并消费点击，防止冒泡到外层 _focusEditor
+      onTap: () {
+        if (!_isEditing) {
+          _enterEditMode();
+        } else {
+          widget.quillController?.updateSelection(
+            const TextSelection.collapsed(offset: -1),
+            ChangeSource.local,
+          );
+          widget.editorFocusNode?.canRequestFocus = false;
+          widget.editorFocusNode?.unfocus();
+          if (!_codeFocusNode.hasFocus) {
+            _codeFocusNode.requestFocus();
+          }
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: _isEditing ? const Color(0xFF3B82F6) : const Color(0xFFE2E8F0),
+            width: _isEditing ? 1.5 : 1.0,
+          ),
+          boxShadow: _isEditing
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  )
+                ]
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header
+            Container(
+              height: 36,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: _isEditing ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                border: Border(
+                  bottom: BorderSide(
+                    color: _isEditing ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  // Language selector
+                  DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _languages.contains(_language) ? _language : 'plaintext',
+                      icon: const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _language = val);
+                          if (!_isEditing) {
+                            _persist();
+                          }
+                        }
+                      },
+                      items: _languages.map((lang) => DropdownMenuItem(
+                        value: lang,
+                        child: Text(lang.toUpperCase()),
+                      )).toList(),
+                    ),
+                  ),
+
+                  const Spacer(),
+
+                  // Format button
+                  TextButton.icon(
+                    onPressed: _formatCode,
+                    icon: const Icon(Icons.auto_fix_high_rounded, size: 14, color: Color(0xFF475569)),
+                    label: const Text('格式化', style: TextStyle(fontSize: 12, color: Color(0xFF475569))),
+                    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
+                  ),
+
+                  // Copy button
+                  if (!_isEditing)
+                    TextButton.icon(
+                      onPressed: _copyCode,
+                      icon: Icon(
+                        _copied ? Icons.check_rounded : Icons.copy_rounded,
+                        size: 14,
+                        color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
+                      ),
+                      label: Text(
+                        _copied ? '已复制' : '复制',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
+                        ),
+                      ),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
+                    ),
+
+                  // Edit / Done toggle button
+                  IconButton(
+                    icon: Icon(
+                      _isEditing ? Icons.check_circle_rounded : Icons.edit_outlined,
+                      size: 16,
+                      color: _isEditing ? const Color(0xFF16A34A) : AppTheme.accent,
+                    ),
+                    tooltip: _isEditing ? '完成编辑 (Esc)' : '直接编辑代码',
+                    splashRadius: 14,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                    onPressed: () {
+                      if (_isEditing) {
+                        _finishEditMode();
+                      } else {
+                        _enterEditMode();
                       }
                     },
-                    items: _languages.map((lang) => DropdownMenuItem(
-                      value: lang,
-                      child: Text(lang.toUpperCase()),
-                    )).toList(),
-                  ),
-                ),
-
-                const Spacer(),
-
-                // 格式化按钮
-                TextButton.icon(
-                  onPressed: _formatCode,
-                  icon: const Icon(Icons.auto_fix_high_rounded, size: 14, color: Color(0xFF475569)),
-                  label: const Text('格式化', style: TextStyle(fontSize: 12, color: Color(0xFF475569))),
-                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
-                ),
-
-                // 复制按钮
-                TextButton.icon(
-                  onPressed: _copyCode,
-                  icon: Icon(
-                    _copied ? Icons.check_rounded : Icons.copy_rounded,
-                    size: 14,
-                    color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
-                  ),
-                  label: Text(
-                    _copied ? '已复制' : '复制',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
-                    ),
-                  ),
-                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
-                ),
-
-                // 编辑/完成切换按钮
-                IconButton(
-                  icon: Icon(_isEditing ? Icons.check_circle_outline : Icons.edit_outlined, size: 16, color: AppTheme.accent),
-                  tooltip: _isEditing ? '完成编辑' : '直接编辑代码',
-                  splashRadius: 14,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                  onPressed: () {
-                    if (_isEditing) {
-                      setState(() {
-                        _code = _textCtrl.text;
-                        _isEditing = false;
-                      });
-                      _persist();
-                    } else {
-                      setState(() {
-                        _textCtrl.text = _code;
-                        _isEditing = true;
-                      });
-                    }
-                  },
-                ),
-
-                // 删除按钮
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF94A3B8)),
-                  tooltip: '删除代码块',
-                  splashRadius: 14,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                  onPressed: _deleteBlock,
-                ),
-              ],
-            ),
-          ),
-
-          // 代码区域：编辑模式 vs 高亮展示模式
-          if (_isEditing)
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: TextField(
-                controller: _textCtrl,
-                maxLines: null,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  height: 1.5,
-                  color: Color(0xFF0F172A),
-                ),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  hintText: '在此输入或粘贴代码...',
-                ),
-                autofocus: true,
-              ),
-            )
-          else
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // 行号栏
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
-                      border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: List.generate(
-                        lineCount,
-                        (index) => Text(
-                          '${index + 1}',
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 13,
-                            height: 1.5,
-                            color: Color(0xFF94A3B8),
-                          ),
-                        ),
-                      ),
-                    ),
                   ),
 
-                  // 语法高亮展示区
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: HighlightView(
-                        _code.isEmpty ? '// 暂无代码内容' : _code,
-                        language: _language,
-                        theme: githubTheme,
-                        padding: const EdgeInsets.all(12),
-                        textStyle: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 13,
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
+                  // Delete button
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF94A3B8)),
+                    tooltip: '删除代码块',
+                    splashRadius: 14,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                    onPressed: _deleteBlock,
                   ),
                 ],
               ),
             ),
-        ],
+
+            // Content Area
+            if (_isEditing)
+              CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.escape): () {
+                    _finishEditMode();
+                  },
+                  const SingleActivator(LogicalKeyboardKey.tab): () {
+                    _insertTab();
+                  },
+                  // 拦截粘贴快捷键，防止外层 _handlePaste 截获并操作 QuillController
+                  const SingleActivator(LogicalKeyboardKey.keyV, meta: true): () {
+                    _handleCodePaste();
+                  },
+                  const SingleActivator(LogicalKeyboardKey.keyV, control: true): () {
+                    _handleCodePaste();
+                  },
+                },
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Gutter line numbers in edit mode
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
+                          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
+                        ),
+                        child: ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _textCtrl,
+                          builder: (context, value, _) {
+                            final currentLines = value.text.split('\n');
+                            final count = currentLines.isEmpty ? 1 : currentLines.length;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: List.generate(
+                                count,
+                                (index) => Text(
+                                  '${index + 1}',
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 13,
+                                    height: 1.5,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      // Edit TextField with Focus key event guard
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                          child: Focus(
+                            onKeyEvent: (node, event) {
+                              if (event is KeyDownEvent || event is KeyRepeatEvent) {
+                                // 安全绝缘防护：仅拦截 Backspace（向前删），不拦截 Delete（向后删）
+                                // 当光标在代码块最首部且选区折叠时，Backspace 会冒泡到 Quill 误删上方正文
+                                if (event.logicalKey == LogicalKeyboardKey.backspace) {
+                                  if (_textCtrl.selection.isCollapsed && _textCtrl.selection.baseOffset <= 0) {
+                                    return KeyEventResult.handled;
+                                  }
+                                }
+                              }
+                              return KeyEventResult.ignored;
+                            },
+                            child: TextField(
+                              controller: _textCtrl,
+                              focusNode: _codeFocusNode,
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                height: 1.5,
+                                color: Color(0xFF0F172A),
+                              ),
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                                hintText: '在此输入或粘贴代码...',
+                                hintStyle: TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                  height: 1.5,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              MouseRegion(
+                cursor: SystemMouseCursors.text,
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Line numbers
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
+                          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: List.generate(
+                            lineCount,
+                            (index) => Text(
+                              '${index + 1}',
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                height: 1.5,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Syntax highlight view
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: HighlightView(
+                            _code.isEmpty ? '// 暂无代码内容 (点击直接编辑)' : _code,
+                            language: _language,
+                            theme: githubTheme,
+                            padding: const EdgeInsets.all(12),
+                            textStyle: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
