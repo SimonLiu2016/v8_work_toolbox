@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:window_manager/window_manager.dart';
 
 import 'services/ai_config_store.dart';
 import 'services/launcher_service.dart';
@@ -25,25 +26,12 @@ Future<void> main(List<String> args) async {
   final subWindowArgument = isSubWindow && args.length > 2 ? args[2] : '';
 
   if (isSubWindow && subWindowArgument == 'notebook') {
-    // Sub-window mode for notebook
-    await NoteStore.instance.init();
-
-    // Use window_manager to properly initialize and show the window
-    await windowManager.ensureInitialized();
-
-    final windowOptions = WindowOptions(
-      size: const Size(1200, 800),
-      center: true,
-      backgroundColor: AppTheme.bgContent,
-      titleBarStyle: TitleBarStyle.normal,
-      title: '笔记本 - V8 工作工具箱',
-    );
-
-    await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
-      await windowManager.focus();
-    });
-
+    // Sub-window mode for notebook.
+    try {
+      await NoteStore.instance.init();
+    } catch (e, stack) {
+      debugPrint('Failed to initialize NoteStore in sub-window: $e\n$stack');
+    }
     runApp(const _NotebookWindowApp());
     return;
   }
@@ -85,6 +73,16 @@ class V8WorkToolboxApp extends StatelessWidget {
       title: 'V8 工作工具箱',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
       home: Builder(
         builder: (context) {
           return AppShell(
@@ -112,6 +110,16 @@ class _NotebookWindowApp extends StatelessWidget {
       title: '笔记本 - V8 工作工具箱',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
       home: const Scaffold(
         body: NotebookPage(),
       ),

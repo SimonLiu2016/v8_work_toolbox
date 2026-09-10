@@ -457,7 +457,7 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory != null ? _clientFactory!() : http.Client();
+            _client = _clientFactory?.call() ?? http.Client();
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }
@@ -570,7 +570,7 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory != null ? _clientFactory!() : http.Client();
+            _client = _clientFactory?.call() ?? http.Client();
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }

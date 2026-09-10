@@ -105,4 +105,6 @@ Icon?
 
 # Local agent / tooling config (do not commit)
 .agent/
-.claude/
+.claude/__pycache__/
+*.pyc
+.claude/settings.local.json

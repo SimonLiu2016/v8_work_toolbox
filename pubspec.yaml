@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   file_picker: ^8.0.0+1
   yaml: ^3.1.0
   csv: ^6.0.0

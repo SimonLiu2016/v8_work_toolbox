@@ -40,7 +40,7 @@
 - [x] 5.7 笔记本不在主窗口中嵌入：过滤 openInNewWindow 工具不出现在 IndexedStack 中
 - [x] 5.8 笔记本入口保留在侧边栏：_getToolsForCurrentView 不过滤 openInNewWindow，点击时路由到新窗口
 - [x] 5.9 修复独立窗口不打开：使用 WindowController.fromCurrentEngine() 检测子窗口，设置 hiddenAtLaunch: false
-- [x] 5.10 修复黑窗口问题：使用 window_manager 确保 Flutter 引擎初始化完成后再显示窗口
+- [x] 5.10 修复黑窗口问题：在 MainFlutterWindow.swift 中配置 FlutterMultiWindowPlugin.setOnWindowCreatedCallback 为子窗口注册全部插件，并在 main.dart 中为 NoteStore.init 提供异常防守
 
 ## 6. 印象笔记导入
 

@@ -150,13 +150,38 @@ class NoteDatabase extends _$NoteDatabase {
         NotesCompanion(isDeleted: const Value(true), updatedAt: Value(DateTime.now())),
       );
 
+  Future<void> batchSoftDeleteNotes(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await (update(notes)..where((t) => t.id.isIn(ids))).write(
+      NotesCompanion(isDeleted: const Value(true), updatedAt: Value(DateTime.now())),
+    );
+  }
+
   Future<void> restoreNote(String id) =>
       (update(notes)..where((t) => t.id.equals(id))).write(
         NotesCompanion(isDeleted: const Value(false), updatedAt: Value(DateTime.now())),
       );
 
+  Future<void> batchRestoreNotes(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await (update(notes)..where((t) => t.id.isIn(ids))).write(
+      NotesCompanion(isDeleted: const Value(false), updatedAt: Value(DateTime.now())),
+    );
+  }
+
   Future<void> permanentlyDeleteNote(String id) =>
       (delete(notes)..where((t) => t.id.equals(id))).go();
+
+  Future<void> batchPermanentlyDeleteNotes(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await (delete(notes)..where((t) => t.id.isIn(ids))).go();
+  }
+
+  Future<List<Note>> deletedNotes() {
+    final query = select(notes)..where((t) => t.isDeleted.equals(true));
+    query.orderBy([(t) => OrderingTerm.desc(t.updatedAt)]);
+    return query.get();
+  }
 
   // ---------------------------------------------------------------------------
   // Tag CRUD

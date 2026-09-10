@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import desktop_multi_window
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
@@ -20,6 +21,27 @@ class MainFlutterWindow: NSWindow {
     self.isMovableByWindowBackground = true
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+
+    // 为 desktop_multi_window 创建的每个子窗口引擎注册全部 Flutter 插件并配置沉浸式窗口
+    FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
+      RegisterGeneratedPlugins(registry: controller)
+
+      DispatchQueue.main.async {
+        if let window = controller.view.window {
+          window.minSize = NSSize(width: 960, height: 640)
+          var frame = window.frame
+          frame.size = NSSize(width: 1200, height: 750)
+          window.setFrame(frame, display: true)
+          window.center()
+
+          // 沉浸式透明标题栏与全尺寸内容视图（与主窗口完全一致）
+          window.titlebarAppearsTransparent = true
+          window.titleVisibility = .hidden
+          window.styleMask.insert(.fullSizeContentView)
+          window.isMovableByWindowBackground = true
+        }
+      }
+    }
 
     super.awakeFromNib()
   }

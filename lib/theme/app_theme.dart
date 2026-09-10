@@ -140,6 +140,11 @@ class AppTheme {
         error: error,
         onError: Colors.white,
       ),
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: accent,
+        selectionColor: Color(0x666366F1),
+        selectionHandleColor: accent,
+      ),
       textTheme: const TextTheme(
         headlineMedium: fontHeadline,
         titleMedium: fontTitle,

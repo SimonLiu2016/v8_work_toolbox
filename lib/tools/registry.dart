@@ -236,11 +236,19 @@ class NotebookToolDefinition extends ToolDefinition {
   @override
   Future<void> openNewWindow() async {
     try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == 'notebook') {
+          await window.show();
+          return;
+        }
+      }
       final configuration = WindowConfiguration(
         arguments: 'notebook',
         hiddenAtLaunch: false,
       );
-      await WindowController.create(configuration);
+      final controller = await WindowController.create(configuration);
+      await controller.show();
     } catch (e) {
       debugPrint('Failed to open notebook window: $e');
     }

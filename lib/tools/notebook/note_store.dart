@@ -76,26 +76,31 @@ class NoteStore {
 
   Future<List<Note>> notesForTag(String tagId) => _db.notesForTag(tagId);
 
+  Future<List<Note>> deletedNotes() => _db.deletedNotes();
+
   Future<Note?> noteById(String id) => _db.noteById(id);
 
   Future<String> createNote({
+    String? id,
     required String title,
     required String deltaJson,
     String? notebookId,
+    DateTime? createdAt,
+    DateTime? updatedAt,
   }) async {
-    final id = _uuid.v4();
+    final noteId = id ?? _uuid.v4();
     final now = DateTime.now();
     await _db.insertNote(NotesCompanion(
-      id: Value(id),
+      id: Value(noteId),
       title: Value(title),
       deltaJson: Value(deltaJson),
       notebookId: Value(notebookId),
-      createdAt: Value(now),
-      updatedAt: Value(now),
+      createdAt: Value(createdAt ?? now),
+      updatedAt: Value(updatedAt ?? now),
     ));
     // Index for FTS
-    await _indexNote(id, title, deltaJson);
-    return id;
+    await _indexNote(noteId, title, deltaJson);
+    return noteId;
   }
 
   Future<void> updateNote({
@@ -125,7 +130,13 @@ class NoteStore {
 
   Future<void> softDeleteNote(String id) => _db.softDeleteNote(id);
 
+  Future<void> batchSoftDeleteNotes(List<String> ids) =>
+      _db.batchSoftDeleteNotes(ids);
+
   Future<void> restoreNote(String id) => _db.restoreNote(id);
+
+  Future<void> batchRestoreNotes(List<String> ids) =>
+      _db.batchRestoreNotes(ids);
 
   Future<void> permanentlyDeleteNote(String id) async {
     // Delete associated attachments from disk
@@ -137,6 +148,20 @@ class NoteStore {
       }
     }
     await _db.permanentlyDeleteNote(id);
+  }
+
+  Future<void> batchPermanentlyDeleteNotes(List<String> ids) async {
+    if (ids.isEmpty) return;
+    for (final id in ids) {
+      final attachments = await _db.attachmentsForNote(id);
+      for (final att in attachments) {
+        final file = File(att.localPath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+    }
+    await _db.batchPermanentlyDeleteNotes(ids);
   }
 
   // ---------------------------------------------------------------------------
