@@ -91,7 +91,10 @@ void main() {
     expect(codeTextFieldFinder, findsOneWidget);
     final TextField codeTextField = tester.widget(codeTextFieldFinder);
     expect(codeTextField.focusNode?.hasFocus, isTrue);
-    print('✅ [测试阶段 2] 点击代码块确认：进入编辑态，代码块 TextField 获得独占焦点');
+    // 验证 QuillEditor 的 showCursor 必须为 false，杜绝代码块最前端出现长竖线光标！
+    final QuillEditor editorWidgetDuringEdit = tester.widget(find.byType(QuillEditor));
+    expect(editorWidgetDuringEdit.config.showCursor, isFalse);
+    print('✅ [测试阶段 2.1] 代码块编辑态确认：Quill showCursor 为 false，彻底无长竖线光标');
 
     // 3. 验证键盘删除响应：
     final controller = codeTextField.controller!;
@@ -122,18 +125,20 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.delete);
     await tester.pumpAndSettle();
     print('Delete 按下后代码内容: "${controller.text}"');
-    print('Delete 是否删除了后面的 "l": ${!controller.text.contains("first line")}');
+    expect(!controller.text.contains("first line"), isTrue);
+    print('✅ [测试阶段 3.2] Delete 键成功向后删除字符');
 
-    // 4. 测试点击外部其他元素（如点击标题框）：触发代码块失焦并自动保存恢复只读展示状态
-    final titleFinder = find.widgetWithText(TextField, '代码块交互测试');
-    expect(titleFinder, findsOneWidget);
-    await tester.tap(titleFinder);
+    // 4. 测试点击外部正文区域（点击 QuillEditor 外部正文）：触发代码块完成编辑并自动保存恢复展示状态
+    await tester.tap(find.byType(QuillEditor));
     await tester.pumpAndSettle();
 
     final remainingTextFields = find.byType(TextField).evaluate().length;
-    print('点击外部标题后 TextField 数量: $remainingTextFields (应为 1，即仅剩标题框)');
+    print('点击外部正文后 TextField 数量: $remainingTextFields (应为 1，即仅剩标题框)');
     expect(remainingTextFields, equals(1));
     expect(find.byType(HighlightView), findsOneWidget);
-    print('✅ [测试阶段 4] 失焦后代码块成功自动保存并恢复为只读展示态！');
+
+    final QuillEditor editorWidgetAfterBlur = tester.widget(find.byType(QuillEditor));
+    expect(editorWidgetAfterBlur.config.showCursor, isTrue);
+    print('✅ [测试阶段 4] 点击外部正文确认：代码块无需手动点击完成即可自动落盘恢复，正文光标与编辑态顺利接管！');
   });
 }

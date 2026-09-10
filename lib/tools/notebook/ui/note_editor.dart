@@ -75,8 +75,13 @@ class _NoteEditorState extends State<NoteEditor> {
 
   void _focusEditor() {
     if (!mounted) return;
-    // 当代码块处于编辑模式时，完全跳过焦点与选区操作，避免 Quill 偷焦点导致长光标
-    if (_isCodeBlockEditing) return;
+    if (_isCodeBlockEditing) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      _quillCtrl?.readOnly = false;
+      setState(() {
+        _isCodeBlockEditing = false;
+      });
+    }
     if (_editorFocusNode.canRequestFocus) {
       _editorFocusNode.requestFocus();
     }
@@ -934,7 +939,7 @@ class _NoteEditorState extends State<NoteEditor> {
             ),
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
-              onTap: _isCodeBlockEditing ? null : _focusEditor,
+              onTap: _focusEditor,
               child: Container(
                 color: const Color(0xFFFFFFFF),
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -946,6 +951,7 @@ class _NoteEditorState extends State<NoteEditor> {
                     padding: EdgeInsets.zero,
                     autoFocus: false,
                     expands: true,
+                    showCursor: !_isCodeBlockEditing,
                     embedBuilders: [
                       NoteImageEmbedBuilder(
                         quillController: _quillCtrl,
@@ -1700,7 +1706,7 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     final displayLines = (_isEditing ? _textCtrl.text : _code).split('\n');
     final lineCount = displayLines.isEmpty ? 1 : displayLines.length;
 
-    return Container(
+    final blockWidget = Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
           color: const Color(0xFFF8FAFC),
@@ -1949,6 +1955,17 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
           ],
         ),
       );
+
+    if (_isEditing) {
+      return TapRegion(
+        onTapOutside: (event) {
+          _finishEditMode();
+        },
+        child: blockWidget,
+      );
+    }
+
+    return blockWidget;
   }
 }
 
