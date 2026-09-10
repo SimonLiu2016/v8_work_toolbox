@@ -630,10 +630,12 @@ class _NoteEditorState extends State<NoteEditor> {
     final currentNotebook = _notebooks.where((nb) => nb.id == widget.note!.notebookId).firstOrNull;
 
     return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _handlePaste,
-        const SingleActivator(LogicalKeyboardKey.keyV, control: true): _handlePaste,
-      },
+      bindings: _isCodeBlockEditing
+          ? {}
+          : {
+              const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _handlePaste,
+              const SingleActivator(LogicalKeyboardKey.keyV, control: true): _handlePaste,
+            },
       child: Theme(
       data: ThemeData.light().copyWith(
         canvasColor: const Color(0xFFFAFAFA),
@@ -932,7 +934,7 @@ class _NoteEditorState extends State<NoteEditor> {
             ),
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
-              onTap: _focusEditor,
+              onTap: _isCodeBlockEditing ? null : _focusEditor,
               child: Container(
                 color: const Color(0xFFFFFFFF),
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -954,7 +956,12 @@ class _NoteEditorState extends State<NoteEditor> {
                         onSave: _scheduleBodySave,
                         editorFocusNode: _editorFocusNode,
                         onEditingChanged: (editing) {
-                          _isCodeBlockEditing = editing;
+                          _quillCtrl?.readOnly = editing;
+                          if (_isCodeBlockEditing != editing) {
+                            setState(() {
+                              _isCodeBlockEditing = editing;
+                            });
+                          }
                         },
                       ),
                       NoteMindMapEmbedBuilder(
@@ -1427,24 +1434,50 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     super.initState();
     _parseData();
     _textCtrl = TextEditingController(text: _code);
-    _codeFocusNode = FocusNode(debugLabel: 'CodeBlockEditorFocus');
+    _codeFocusNode = FocusNode(
+      debugLabel: 'CodeBlockEditorFocus',
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent || event is KeyRepeatEvent) {
+          // 1. Esc 键退出
+          if (event.logicalKey == LogicalKeyboardKey.escape) {
+            _finishEditMode();
+            return KeyEventResult.handled;
+          }
+          // 2. Tab 插入两空格
+          if (event.logicalKey == LogicalKeyboardKey.tab) {
+            _insertTab();
+            return KeyEventResult.handled;
+          }
+          // 3. 粘贴快捷键
+          final isPaste = (event.logicalKey == LogicalKeyboardKey.keyV) &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed);
+          if (isPaste) {
+            _handleCodePaste();
+            return KeyEventResult.handled;
+          }
+          // 4. Backspace 键：自主确定性向前删除
+          if (event.logicalKey == LogicalKeyboardKey.backspace) {
+            _handleBackspace();
+            return KeyEventResult.handled;
+          }
+
+          // 5. Delete 键：自主确定性向后删除
+          if (event.logicalKey == LogicalKeyboardKey.delete) {
+            _handleForwardDelete();
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+    );
     _codeFocusNode.addListener(_handleFocusChange);
 
     if (_autoEdit) {
       _isEditing = true;
-      widget.quillController?.updateSelection(
-        const TextSelection.collapsed(offset: -1),
-        ChangeSource.local,
-      );
-      widget.editorFocusNode?.canRequestFocus = false;
+      widget.editorFocusNode?.unfocus();
       _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          widget.quillController?.updateSelection(
-            const TextSelection.collapsed(offset: -1),
-            ChangeSource.local,
-          );
-          widget.editorFocusNode?.canRequestFocus = false;
           widget.editorFocusNode?.unfocus();
           _codeFocusNode.requestFocus();
         }
@@ -1494,12 +1527,8 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
 
   void _enterEditMode() {
     if (_isEditing) return;
+    widget.quillController?.readOnly = true;
     widget.onEditingChanged?.call(true);
-    widget.quillController?.updateSelection(
-      const TextSelection.collapsed(offset: -1),
-      ChangeSource.local,
-    );
-    widget.editorFocusNode?.canRequestFocus = false;
     widget.editorFocusNode?.unfocus();
     setState(() {
       _textCtrl.text = _code;
@@ -1508,11 +1537,6 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        widget.quillController?.updateSelection(
-          const TextSelection.collapsed(offset: -1),
-          ChangeSource.local,
-        );
-        widget.editorFocusNode?.canRequestFocus = false;
         widget.editorFocusNode?.unfocus();
         _codeFocusNode.requestFocus();
       }
@@ -1521,6 +1545,7 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
 
   void _finishEditMode() {
     if (!_isEditing) return;
+    widget.quillController?.readOnly = false;
     widget.onEditingChanged?.call(false);
     widget.editorFocusNode?.canRequestFocus = true;
     final newCode = _textCtrl.text;
@@ -1600,6 +1625,50 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
       );
     } else {
       _textCtrl.text += tabStr;
+    }
+  }
+
+  void _handleBackspace() {
+    final val = _textCtrl.value;
+    final sel = val.selection;
+    if (!sel.isValid) return;
+    if (!sel.isCollapsed) {
+      final start = sel.start;
+      final end = sel.end;
+      final newText = val.text.replaceRange(start, end, '');
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: start),
+      );
+    } else if (sel.baseOffset > 0) {
+      final pos = sel.baseOffset;
+      final newText = val.text.replaceRange(pos - 1, pos, '');
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: pos - 1),
+      );
+    }
+  }
+
+  void _handleForwardDelete() {
+    final val = _textCtrl.value;
+    final sel = val.selection;
+    if (!sel.isValid) return;
+    if (!sel.isCollapsed) {
+      final start = sel.start;
+      final end = sel.end;
+      final newText = val.text.replaceRange(start, end, '');
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: start),
+      );
+    } else if (sel.baseOffset < val.text.length) {
+      final pos = sel.baseOffset;
+      final newText = val.text.replaceRange(pos, pos + 1, '');
+      _textCtrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: pos),
+      );
     }
   }
 
@@ -1792,67 +1861,27 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
                     Expanded(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                        child: Focus(
-                          onKeyEvent: (node, event) {
-                            if (event is KeyDownEvent || event is KeyRepeatEvent) {
-                              // 1. Esc 键：完成并退出编辑模式
-                              if (event.logicalKey == LogicalKeyboardKey.escape) {
-                                _finishEditMode();
-                                return KeyEventResult.handled;
-                              }
-
-                              // 2. Tab 键：插入 2 空格缩进
-                              if (event.logicalKey == LogicalKeyboardKey.tab) {
-                                _insertTab();
-                                return KeyEventResult.handled;
-                              }
-
-                              // 3. 粘贴键 (Cmd+V / Ctrl+V)：直接在代码块内粘贴
-                              final isPaste = (event.logicalKey == LogicalKeyboardKey.keyV) &&
-                                  (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed);
-                              if (isPaste) {
-                                _handleCodePaste();
-                                return KeyEventResult.handled;
-                              }
-
-                              // 4. Backspace (向前删除) 边界防护：
-                              // 如果光标在代码块最首部(offset <= 0)且无选区，EditableText 无字符可删会忽略，
-                              // 若不拦截会冒泡到 Quill 误删代码块上方正文。此处吞掉事件绝不误删。
-                              if (event.logicalKey == LogicalKeyboardKey.backspace) {
-                                if (_textCtrl.selection.isCollapsed && _textCtrl.selection.baseOffset <= 0) {
-                                  return KeyEventResult.handled;
-                                }
-                              }
-                            }
-
-                            // 5. 核心防火墙绝缘：
-                            // 对代码块 TextField 内的其他所有按键事件，必须返回 skipRemainingHandlers！
-                            // 含义：停止向外层(Quill / CallbackShortcuts)冒泡，杜绝 Quill 偷吃 Backspace / Delete / 箭头等，
-                            // 同时允许底层的 TextInput 平台通道与 EditableText 正常执行删除和输入！
-                            return KeyEventResult.skipRemainingHandlers;
-                          },
-                          child: TextField(
-                            controller: _textCtrl,
-                            focusNode: _codeFocusNode,
-                            maxLines: null,
-                            keyboardType: TextInputType.multiline,
-                            style: const TextStyle(
+                        child: TextField(
+                          controller: _textCtrl,
+                          focusNode: _codeFocusNode,
+                          maxLines: null,
+                          keyboardType: TextInputType.multiline,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                            height: 1.5,
+                            color: Color(0xFF0F172A),
+                          ),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                            hintText: '在此输入或粘贴代码...',
+                            hintStyle: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 13,
                               height: 1.5,
-                              color: Color(0xFF0F172A),
-                            ),
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.zero,
-                              hintText: '在此输入或粘贴代码...',
-                              hintStyle: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                                height: 1.5,
-                                color: Color(0xFF94A3B8),
-                              ),
+                              color: Color(0xFF94A3B8),
                             ),
                           ),
                         ),
