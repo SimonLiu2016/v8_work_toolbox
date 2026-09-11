@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../theme/app_theme.dart';
 import '../evernote_import_service.dart';
@@ -18,6 +20,37 @@ class NotebookPage extends StatefulWidget {
 
   @override
   State<NotebookPage> createState() => _NotebookPageState();
+}
+
+/// 窗口焦点桥接：让 `main.dart` 里的窗口焦点监听能触达本页面刷新。
+///
+/// 主窗口重新获得焦点时刷新中间列，感知子窗口中的编辑（设计决策 3）。
+/// 使用回调注册表而非全局事件总线，作用域限于本页面。
+class NotebookFocusBridge {
+  NotebookFocusBridge._();
+
+  static final NotebookFocusBridge instance = NotebookFocusBridge._();
+
+  final Set<VoidCallback> _listeners = {};
+
+  void register(VoidCallback callback) {
+    _listeners.add(callback);
+  }
+
+  void unregister(VoidCallback callback) {
+    _listeners.remove(callback);
+  }
+
+  /// 窗口获得焦点时调用。
+  void notifyWindowFocused() {
+    for (final callback in _listeners.toList()) {
+      try {
+        callback();
+      } catch (e) {
+        debugPrint('NotebookFocusBridge listener error: $e');
+      }
+    }
+  }
 }
 
 class _NotebookPageState extends State<NotebookPage> {
@@ -40,10 +73,23 @@ class _NotebookPageState extends State<NotebookPage> {
   bool _isBatchMode = false;
   final Set<String> _selectedNoteIds = {};
 
+  // 窗口焦点刷新回调（子窗口中的编辑感知）
+  late VoidCallback _windowFocusCallback;
+
   @override
   void initState() {
     super.initState();
+    _windowFocusCallback = () {
+      if (mounted) _refresh(silent: true);
+    };
+    NotebookFocusBridge.instance.register(_windowFocusCallback);
     _init();
+  }
+
+  @override
+  void dispose() {
+    NotebookFocusBridge.instance.unregister(_windowFocusCallback);
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -505,8 +551,9 @@ class _NotebookPageState extends State<NotebookPage> {
   // Export
   // ---------------------------------------------------------------------------
 
-  Future<void> _exportNote(ExportFormat format) async {
-    if (_selectedNote == null) return;
+  Future<void> _exportNote(ExportFormat format, {Note? note}) async {
+    final target = note ?? _selectedNote;
+    if (target == null) return;
 
     final outputDir = await FilePicker.platform.getDirectoryPath(
       dialogTitle: '选择导出目录',
@@ -515,7 +562,7 @@ class _NotebookPageState extends State<NotebookPage> {
 
     try {
       final file = await ExportService.instance.exportToFile(
-        note: _selectedNote!,
+        note: target,
         format: format,
         outputDir: outputDir,
       );
@@ -560,6 +607,410 @@ class _NotebookPageState extends State<NotebookPage> {
       ),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // 右键上下文菜单（10 项）
+  // ---------------------------------------------------------------------------
+
+  /// 在笔记卡片上触发右键菜单。
+  ///
+  /// 中间列卡片是纯展示的 [InkWell]，不含输入控件或手势竞技场，
+  /// 因此直接在其上监听 `onSecondaryTapDown` 不会影响右列编辑器的焦点。
+  Future<void> _showNoteContextMenu(Note note, Offset position) async {
+    final viewportSize = MediaQuery.of(context).size;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & viewportSize,
+        Offset.zero & viewportSize,
+      ),
+      elevation: 6,
+      shadowColor: const Color(0x40000000),
+      items: _noteMenuItems(note),
+    );
+    if (choice == null) return;
+    await _runNoteMenuAction(choice, note);
+  }
+
+  List<PopupMenuEntry<String>> _noteMenuItems(Note note) {
+    final trash = _isTrashSelected;
+    return <PopupMenuEntry<String>>[
+      _menuEntry('new', '新建笔记', Icons.note_add),
+      _menuEntry('standalone', '在新窗口中打开笔记', Icons.open_in_new),
+      _menuDivider(),
+      _menuEntry(
+        note.isPinned ? 'unpin' : 'pin',
+        note.isPinned ? '从快捷方式中移除' : '添加笔记到快捷方式',
+        Icons.push_pin_outlined,
+      ),
+      _menuEntry('task', '创建任务', Icons.check_box_outline_blank_rounded),
+      _menuDivider(),
+      _menuEntry('share', '共享笔记…', Icons.share_outlined),
+      _menuEntry('export', '导出笔记…', Icons.file_download_outlined),
+      _menuEntry('save-attachments', '将附件保存到文件夹…', Icons.folder_open),
+      _menuDivider(),
+      _menuEntry('copy-link', '复制笔记链接', Icons.link_outlined),
+      _menuEntry('move', '移动笔记到…', Icons.drive_file_move_outlined),
+      _menuDivider(),
+      _menuEntry(
+        'delete',
+        trash ? '粉碎笔记' : '删除笔记',
+        trash ? Icons.delete_forever_outlined : Icons.delete_outline,
+        labelColor: trash ? AppTheme.error : null,
+        iconColor: trash ? AppTheme.error : null,
+      ),
+    ];
+  }
+
+  PopupMenuItem<String> _menuEntry(
+    String key,
+    String label,
+    IconData icon, {
+    Color? labelColor,
+    Color? iconColor,
+  }) {
+    return PopupMenuItem<String>(
+      value: key,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: iconColor ?? AppTheme.textPrimary),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12.5, color: labelColor ?? AppTheme.textPrimary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuDivider _menuDivider() => const PopupMenuDivider(height: 6);
+
+  /// 执行右键菜单动作。各动作自行负责刷新与提示。
+  Future<void> _runNoteMenuAction(String key, Note note) async {
+    switch (key) {
+      case 'new':
+        await _createNote();
+        return;
+      case 'standalone':
+        await _openNoteInSubWindow(note);
+        return;
+      case 'pin':
+      case 'unpin':
+        await _togglePin(note);
+        return;
+      case 'task':
+        await _appendTaskItem(note);
+        return;
+      case 'share':
+        await _showShareNoteDialog(note);
+        return;
+      case 'export':
+        await _showExportDialog(note);
+        return;
+      case 'save-attachments':
+        await _saveAttachmentsToFolder(note);
+        return;
+      case 'copy-link':
+        await _copyNoteLink(note);
+        return;
+      case 'move':
+        final target = await _showNotebookPicker(note: note);
+        if (target == null) return;
+        await _store.updateNote(id: note.id, notebookId: target);
+        _showToast('已移动到「${_notebookName(target)}」');
+        return;
+      case 'delete':
+        if (_isTrashSelected) {
+          await _permanentlyDeleteNote(note.id);
+        } else {
+          await _deleteNoteWithUndo(note);
+        }
+        return;
+    }
+  }
+
+  String _notebookName(String id) {
+    for (final stack in _stacks.values) {
+      for (final nb in stack) {
+        if (nb.id == id) return nb.name;
+      }
+    }
+    for (final nb in _unstackedNotebooks) {
+      if (nb.id == id) return nb.name;
+    }
+    return '未知笔记本';
+  }
+
+
+  Future<void> _togglePin(Note note) async {
+    await _store.updateNote(id: note.id, isPinned: !note.isPinned);
+    _showToast(note.isPinned ? '已移除快捷方式' : '已添加到快捷方式');
+    await _refresh(silent: true);
+  }
+
+  /// 在笔记末尾追加一条未勾选的待办项。
+  Future<void> _appendTaskItem(Note note) async {
+    await _store.updateNote(
+      id: note.id,
+      deltaJson: NoteStore.appendTodoTask(note.deltaJson),
+    );
+    _showToast('已添加任务');
+    await _refresh(silent: true);
+  }
+
+  Future<void> _copyNoteLink(Note note) async {
+    final deepLink = 'v8work://notebook/note/${note.id}';
+    final title = note.title.isEmpty ? '无标题笔记' : note.title;
+    final markdownLink = '[$title]($deepLink)';
+    await Clipboard.setData(ClipboardData(text: '$deepLink\n$markdownLink'));
+    _showToast('已复制笔记链接');
+  }
+
+  /// 软删除并支持撤销。
+  Future<void> _deleteNoteWithUndo(Note note) async {
+    final id = note.id;
+    final title = note.title.isEmpty ? '无标题笔记' : note.title;
+    await _store.softDeleteNote(id);
+    if (mounted && _selectedNote?.id == id) setState(() => _selectedNote = null);
+    await _refresh(silent: true);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已删除「$title」'),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            await _store.restoreNote(id);
+            await _refresh(silent: true);
+            _showToast('已撤销删除');
+          },
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右键菜单：单篇笔记子窗口
+  // ---------------------------------------------------------------------------
+
+  /// 在独立桌面窗口中打开单篇笔记；已打开则前置。
+  Future<void> _openNoteInSubWindow(Note note) async {
+    final arg = 'note:${note.id}';
+    try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == arg) {
+          await window.show();
+          return;
+        }
+      }
+      final controller = await WindowController.create(
+        WindowConfiguration(arguments: arg),
+      );
+      await controller.show();
+    } catch (e) {
+      _showToast('打开子窗口失败: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右键菜单：笔记本选择器
+  // ---------------------------------------------------------------------------
+
+  Future<String?> _showNotebookPicker({Note? note}) async {
+    final allNotebooks = [
+      ..._unstackedNotebooks,
+      for (final stack in _stacks.values) ...stack,
+    ];
+    if (allNotebooks.isEmpty) {
+      _showToast('没有可选择的笔记本');
+      return null;
+    }
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: Text('移动笔记到…', style: AppTheme.fontTitle),
+        content: SizedBox(
+          width: 340,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: allNotebooks.length,
+            itemBuilder: (c, i) {
+              final nb = allNotebooks[i];
+              final isCurrent = note?.notebookId == nb.id;
+              return ListTile(
+                enabled: !isCurrent,
+                selected: isCurrent,
+                leading: Text(nb.icon),
+                title: Text(nb.name),
+                subtitle: nb.stack != null ? Text(nb.stack!) : null,
+                trailing: isCurrent ? const Text('当前', style: TextStyle(color: AppTheme.textTertiary)) : null,
+                onTap: () => Navigator.pop(ctx, isCurrent ? null : nb.id),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右键菜单：共享笔记
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showShareNoteDialog(Note note) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: Text('共享笔记', style: AppTheme.fontTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _shareOption(
+              Icons.code_rounded,
+              '复制 Markdown',
+              '复制笔记正文的 Markdown 文本到剪贴板',
+              () async {
+                final md = await ExportService.instance.exportNote(note, ExportFormat.markdown);
+                await Clipboard.setData(ClipboardData(text: md));
+                if (!ctx.mounted) return;
+                _showToast('已复制 Markdown', at: ctx);
+                Navigator.pop(ctx);
+              },
+            ),
+            _shareOption(
+              Icons.notes_rounded,
+              '复制纯文本',
+              '复制笔记正文的纯文本到剪贴板',
+              () async {
+                final txt = await ExportService.instance.exportNote(note, ExportFormat.plainText);
+                await Clipboard.setData(ClipboardData(text: txt));
+                if (!ctx.mounted) return;
+                _showToast('已复制纯文本', at: ctx);
+                Navigator.pop(ctx);
+              },
+            ),
+            _shareOption(
+              Icons.save_alt_rounded,
+              '另存为离线 HTML',
+              '生成单文件 HTML 网页，可在浏览器离线查看',
+              () async {
+                final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: '选择保存目录');
+                if (dir == null) return;
+                try {
+                  final file = await ExportService.instance.exportToFile(
+                    note: note,
+                    format: ExportFormat.html,
+                    outputDir: dir,
+                  );
+                  if (!ctx.mounted) return;
+                  _showToast('已保存 HTML: ${file.path}', at: ctx);
+                } catch (e) {
+                  if (ctx.mounted) _showToast('保存失败: $e', at: ctx);
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareOption(IconData icon, String title, String subtitle, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon, size: 20, color: AppTheme.accent),
+      title: Text(title),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+      dense: true,
+      onTap: onTap,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右键菜单：导出
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showExportDialog(Note note) async {
+    final format = await showDialog<ExportFormat>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: Text('导出笔记', style: AppTheme.fontTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final f in ExportFormat.values)
+              ListTile(
+                leading: const SizedBox(width: 0),
+                title: Text(f.label),
+                dense: true,
+                onTap: () => Navigator.pop(ctx, f),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    );
+    if (format == null) return;
+    await _exportNote(format, note: note);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 右键菜单：附件另存
+  // ---------------------------------------------------------------------------
+
+  Future<void> _saveAttachmentsToFolder(Note note) async {
+    final attachments = await _store.attachmentsForNote(note.id);
+    if (attachments.isEmpty) {
+      _showToast('该笔记没有附件');
+      return;
+    }
+
+    final outputDir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择附件保存目录',
+    );
+    if (outputDir == null) return;
+
+    final (copied, failed) = await _store.exportAttachments(
+      noteId: note.id,
+      outputDir: outputDir,
+    );
+
+    var message = '已保存 $copied 个附件';
+    if (failed > 0) message += '，$failed 个失败';
+    _showToast('$message → $outputDir');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 通用提示
+  // ---------------------------------------------------------------------------
+
+  void _showToast(String message, {SnackBarAction? action, BuildContext? at}) {
+    if (at != null) {
+      // 来自弹窗回调：页面可能已重建，改用 maybeOf 避免跨 async gap 使用旧 context。
+      final messenger = ScaffoldMessenger.maybeOf(at);
+      messenger?.showSnackBar(SnackBar(content: Text(message), action: action));
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), action: action));
+  }
+
 
   Future<bool?> _showConfirmDialog(String title, String message) async {
     return showDialog<bool>(
@@ -1140,6 +1591,9 @@ class _NotebookPageState extends State<NotebookPage> {
                               } else {
                                 setState(() => _selectedNote = note);
                               }
+                            },
+                            onSecondaryTapDown: (details) {
+                              _showNoteContextMenu(note, details.globalPosition);
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(

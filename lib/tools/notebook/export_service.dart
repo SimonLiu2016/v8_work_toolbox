@@ -27,6 +27,59 @@ class ExportService {
   ExportService._();
   static final ExportService instance = ExportService._();
 
+  /// macOS 系统 CJK 字体候选路径（按优先级排列）。
+  /// 注意：`package:pdf` 的 `TtfWriter` 会按实际使用的字符子集化字体，
+  /// 因此 22MB 的完整字体文件不会进入产物，PDF 体积由字符集决定。
+  static const List<String> _kCjkFontPaths = [
+    '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+    '/System/Library/Fonts/Supplemental/Arial Unicode MS.ttf',
+    '/System/Library/Fonts/Hiragino Sans GB.ttc',
+    '/System/Library/Fonts/Supplemental/Songti.ttc',
+  ];
+
+  /// 缓存的 CJK 字体；`null` 表示未找到系统字体，走内置字体回退。
+  pw.Font? _cachedCjkFont;
+
+  /// 是否已完成一次字体解析（避免失败后每次导出都重复读盘）。
+  bool _cjkFontResolved = false;
+
+  /// 是否已加载到系统 CJK 字体
+  bool get hasCjkFont => _cachedCjkFont != null;
+
+  /// 加载离线 CJK 字体，结果按单例缓存。
+  /// 找不到系统字体时回退内置 Helvetica，全程不发起任何网络请求。
+  ///
+  /// [paths] 仅用于测试注入，生产环境始终使用系统候选路径。
+  Future<pw.Font> loadCjkFont({List<String>? paths}) async {
+    if (_cjkFontResolved) {
+      return _cachedCjkFont ?? pw.Font.helvetica();
+    }
+    _cjkFontResolved = true;
+
+    for (final path in (paths ?? _kCjkFontPaths)) {
+      try {
+        final file = File(path);
+        if (!file.existsSync()) continue;
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
+        _cachedCjkFont = pw.Font.ttf(bytes.buffer.asByteData());
+        debugPrint('ExportService: CJK font loaded from $path');
+        return _cachedCjkFont!;
+      } catch (e) {
+        debugPrint('ExportService: failed to load $path: $e');
+      }
+    }
+
+    debugPrint('ExportService: no system CJK font found, using built-in fallback');
+    return pw.Font.helvetica();
+  }
+
+  /// 重置字体缓存（测试用）。
+  void resetCjkFontCache() {
+    _cachedCjkFont = null;
+    _cjkFontResolved = false;
+  }
+
   /// 导出单条笔记为指定格式的文件内容
   Future<String> exportNote(Note note, ExportFormat format) async {
     switch (format) {
@@ -64,7 +117,12 @@ class ExportService {
 
   /// 导出为 PDF 文件
   Future<void> _exportToPdf(Note note, File file) async {
-    final pdf = pw.Document();
+    final cjkFont = await loadCjkFont();
+
+    // 主题只影响未带 inline 样式的文字；下面每处 inline 样式都需单独补字体。
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(base: cjkFont, bold: cjkFont),
+    );
     final markdown = _toMarkdown(note);
 
     // Split markdown into paragraphs and render
@@ -81,27 +139,21 @@ class ExportService {
       if (line.startsWith('# ')) {
         widgets.add(pw.Header(
           level: 0,
-          child: pw.Text(line.substring(2), style: pw.TextStyle(
-            fontSize: 24, fontWeight: pw.FontWeight.bold,
-          )),
+          child: pw.Text(line.substring(2), style: _withCjk(cjkFont, 24, bold: true)),
         ));
         continue;
       }
       if (line.startsWith('## ')) {
         widgets.add(pw.Header(
           level: 1,
-          child: pw.Text(line.substring(3), style: pw.TextStyle(
-            fontSize: 20, fontWeight: pw.FontWeight.bold,
-          )),
+          child: pw.Text(line.substring(3), style: _withCjk(cjkFont, 20, bold: true)),
         ));
         continue;
       }
       if (line.startsWith('### ')) {
         widgets.add(pw.Header(
           level: 2,
-          child: pw.Text(line.substring(4), style: pw.TextStyle(
-            fontSize: 16, fontWeight: pw.FontWeight.bold,
-          )),
+          child: pw.Text(line.substring(4), style: _withCjk(cjkFont, 16, bold: true)),
         ));
         continue;
       }
@@ -118,10 +170,7 @@ class ExportService {
       }
 
       // Regular paragraph
-      widgets.add(pw.Paragraph(
-        text: line,
-        style: pw.TextStyle(fontSize: 12),
-      ));
+      widgets.add(pw.Paragraph(text: line, style: _withCjk(cjkFont, 12)));
     }
 
     pdf.addPage(
@@ -130,16 +179,14 @@ class ExportService {
         header: (context) => pw.Container(
           alignment: pw.Alignment.centerLeft,
           margin: const pw.EdgeInsets.only(bottom: 20),
-          child: pw.Text(note.title, style: pw.TextStyle(
-            fontSize: 28, fontWeight: pw.FontWeight.bold,
-          )),
+          child: pw.Text(note.title, style: _withCjk(cjkFont, 28, bold: true)),
         ),
         footer: (context) => pw.Container(
           alignment: pw.Alignment.centerRight,
           margin: const pw.EdgeInsets.only(top: 10),
           child: pw.Text(
             'Page ${context.pageNumber} of ${context.pagesCount}',
-            style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey),
+            style: _withCjk(cjkFont, 10, color: PdfColors.grey),
           ),
         ),
         build: (context) => widgets,
@@ -147,6 +194,25 @@ class ExportService {
     );
 
     await file.writeAsBytes(await pdf.save());
+  }
+
+  /// 构造带 CJK 字体的 inline 样式。
+  ///
+  /// `package:pdf` 的主题合并（`TextStyle.merge`）不会把 theme base 的字体灌进
+  /// inline 样式，而渲染时 `Text._preProcessSpans` 使用 `style.font!`（非空断言）。
+  /// 因此仅注入 `pw.Document(theme: pw.ThemeData.withFont(...))` 不会生效，
+  /// 每处手写 inline 样式都必须自带字体，否则中文渲染为空白占位块。
+  pw.TextStyle _withCjk(pw.Font font, double fontSize, {bool bold = false, PdfColor? color}) {
+    return pw.TextStyle(
+      font: font,
+      fontNormal: font,
+      fontBold: font,
+      fontItalic: font,
+      fontBoldItalic: font,
+      fontSize: fontSize,
+      fontWeight: bold ? pw.FontWeight.bold : null,
+      color: color,
+    );
   }
 
   String _toMarkdown(Note note) {

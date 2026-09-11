@@ -43,7 +43,7 @@
 
 ### 决策 4：PDF 导出 CJK 字体加载与生效范围
 - **选择**：在 macOS 上优先加载系统自带 `/System/Library/Fonts/Supplemental/Arial Unicode.ttf`（读取约 30ms），若不存在或异常则回退至 `package:pdf` 内置字体并**不发起任何网络请求**。
-- **关键修正——inline 样式优先**：`_exportToPdf` 当前为每个 widget 手写 inline `TextStyle`（如 `pw.Text(..., style: pw.TextStyle(fontSize: 24, fontWeight: bold))`）。在 `package:pdf` 中 inline 样式优先于 `pw.ThemeData.withFont` 注入的 base，因此**仅注入主题不会生效，中文仍是方块**。必须给每处 inline 样式补充 `fontFamily`（或抽取为统一的 `pw.FontStyle` 常量复用）。
+- **关键修正——inline 样式必须自带字体**：`_exportToPdf` 为每个 widget 手写 inline `TextStyle`（如 `pw.Text(..., style: pw.TextStyle(fontSize: 24, fontWeight: bold))`）。`package:pdf` 3.12 的 `TextStyle.merge` 是"inline 覆盖 base"，**没有覆盖的字段会从 base 继承**；但渲染端 `Text._preProcessSpans` 用 `style.font!` 非空断言取字体，因此 inline 样式一旦未显式设置 `font`，继承到 base 之前就可能触发断言、中文字形直接丢失。修复必须两处都做：`pw.Document(theme: pw.ThemeData.withFont(base: cjkFont))` + 每处 inline 样式补 `font:`（经 `_withCjk()` 统一构造）。
 - **缓存**：在 `ExportService` 中维护单例 `pw.Font? _cachedCjkFont`，首次加载后常驻内存。
 - **备选方案**：`PdfGoogleFonts.notoSansSC` 在线兜底。弃用原因：与 Non-Goals 的"100% 本地离线"冲突，且离线场景下必然失败。
 
@@ -56,8 +56,8 @@
 
 ## Risks / Trade-offs
 
-- **[PDF 输出体积显著膨胀]** → `Arial Unicode.ttf` 约 22MB，`pw.Font` 会将其嵌入每个导出的 PDF，产物体积从数百 KB 增至约 10MB+。这是离线保真的直接代价，无法通过分包避免（`package:pdf` 不支持增量字体子集）。取舍是明确的：优先保真，接受体积。
+- **[字体加载占用内存，非输出体积]** → `Arial Unicode.ttf` 约 22MB，首次加载时读入内存并常驻缓存；但 `package:pdf` 的 `TtfWriter` 会**按实际使用的字符集子集化**字体，因此产物不会接近 22MB——实测中文笔记导出约 9KB。代价是首次导出多一次 22MB 读盘（约 30ms）与常驻内存占用，而非文件体积。已用任务 1.3 的体积断言（< 1MB）锁定子集化行为不被破坏。
 - **[子窗口与主窗口同时编辑同一篇笔记]** → 无冲突解决机制。后保存者覆盖先保存者，且不提示。已在决策 3 中限定为已知且可接受的边界。
-- **[inline 样式修正遗漏]** → 若只注入主题而未补 `fontFamily`，会得到"测试通过但中文仍是方块"的假修复。因此任务 1.3 的测试必须断言字体实际嵌入 PDF，而非仅断言导出成功。
+- **[inline 样式修正遗漏]** → 若只注入主题而未给每处 inline 样式补 `font:`，会得到"导出成功但中文缺失"的假修复。因此任务 1.3 的测试必须断言 PDF 字节实际包含 `/FontFile2` 与 `/Type0`（CID 字体），而非仅断言导出成功。
 - **[测试环境字体不可用]** → CI 或非 macOS 环境可能缺少 `Arial Unicode.ttf`。测试需覆盖"无系统字体"路径，确保回退不崩溃。
 - **[焦点监听未覆盖全部入口]** → 若子窗口不是通过焦点切换回到主窗口（例如主窗口始终在前台但子窗口在另一台显示器），中间列不会刷新。属于边缘场景，不额外处理。

@@ -292,12 +292,92 @@ class NoteStore {
   Future<void> setNoteTags(String noteId, List<String> tagIds) =>
       _db.setNoteTags(noteId, tagIds);
 
+  /// 在 Delta 末尾追加一条未勾选的待办项，返回新的 Delta JSON。
+  ///
+  /// 纯函数：不依赖数据库连接，便于单元测试。
+  /// 若原文末尾不是换行，先补一个换行使新任务独立成行。
+  static String appendTodoTask(String deltaJson) {
+    final ops = <Map<String, dynamic>>[];
+    try {
+      final decoded = jsonDecode(deltaJson);
+      if (decoded is List) {
+        for (final entry in decoded) {
+          if (entry is Map) ops.add(Map<String, dynamic>.from(entry));
+        }
+      }
+    } catch (_) {
+      // 无法解析时按空文档处理，保留原值不会被写入。
+    }
+
+    if (ops.isNotEmpty) {
+      final last = ops.last['insert'];
+      if (last is String && last.isNotEmpty && !last.endsWith('\n')) {
+        ops.add({'insert': '\n'});
+      }
+    }
+
+    ops.addAll([
+      {'insert': '任务：'},
+      {'insert': '\n', 'attributes': {'list': 'unchecked'}},
+    ]);
+    return jsonEncode(ops);
+  }
+
   // ---------------------------------------------------------------------------
   // Attachment operations
   // ---------------------------------------------------------------------------
 
   Future<List<Attachment>> attachmentsForNote(String noteId) =>
       _db.attachmentsForNote(noteId);
+
+  /// 将笔记的全部附件按原始文件名另存到 [outputDir]。
+  ///
+  /// 内部存储使用 `<id><ext>` 命名，对用户无意义；导出时还原为
+  /// [Attachment.filename]，重名追加 `_1`、`_2` 序号。
+  /// 返回 `(成功数, 失败数)`。
+  Future<(int, int)> exportAttachments({
+    required String noteId,
+    required String outputDir,
+  }) async {
+    final attachments = await attachmentsForNote(noteId);
+    var copied = 0;
+    var failed = 0;
+
+    for (final att in attachments) {
+      try {
+        final src = File(att.localPath);
+        if (!src.existsSync()) {
+          failed += 1;
+          continue;
+        }
+        final name = (att.filename ?? '').trim().isEmpty
+            ? '附件_${att.id}'
+            : att.filename!;
+        await src.copy(uniqueExportPath(outputDir, name));
+        copied += 1;
+      } catch (e) {
+        debugPrint('NoteStore: export attachment ${att.id} failed: $e');
+        failed += 1;
+      }
+    }
+    return (copied, failed);
+  }
+
+  /// 目标目录下重名时追加序号。
+  ///
+  /// 公开为静态方法以便单元测试，不依赖数据库连接。
+  static String uniqueExportPath(String dir, String filename) {
+    final dot = filename.lastIndexOf('.');
+    final base = dot > 0 ? filename.substring(0, dot) : filename;
+    final ext = dot > 0 ? filename.substring(dot) : '';
+    var candidate = p.join(dir, filename);
+    var n = 1;
+    while (File(candidate).existsSync()) {
+      candidate = p.join(dir, '${base}_$n$ext');
+      n += 1;
+    }
+    return candidate;
+  }
 
   /// 保存文件到附件目录并创建数据库记录
   Future<String> saveAttachment({
