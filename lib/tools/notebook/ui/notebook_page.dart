@@ -617,15 +617,22 @@ class _NotebookPageState extends State<NotebookPage> {
   /// 中间列卡片是纯展示的 [InkWell]，不含输入控件或手势竞技场，
   /// 因此直接在其上监听 `onSecondaryTapDown` 不会影响右列编辑器的焦点。
   Future<void> _showNoteContextMenu(Note note, Offset position) async {
-    final viewportSize = MediaQuery.of(context).size;
+    // 使用窗口物理尺寸计算菜单锚点，而非 MediaQuery.of(context).size：
+    // context 在 widget 树里嵌套在 Container(320) 内，返回 320px 宽度，
+    // 而 globalPosition 是整个窗口的坐标，坐标系不对齐会导致菜单偏移到右侧。
+    final view = View.of(context);
+    final windowSize = view.physicalSize / view.devicePixelRatio;
+
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
-        position & viewportSize,
-        Offset.zero & viewportSize,
+        position & windowSize,
+        Offset.zero & windowSize,
       ),
       elevation: 6,
       shadowColor: const Color(0x40000000),
+      color: const Color(0xFFFFFFFF), // 中间列是浅色背景，菜单底色也用白色
+      surfaceTintColor: Colors.transparent, // 禁用 Material3 的 elevation 着色
       items: _noteMenuItems(note),
     );
     if (choice == null) return;
@@ -674,11 +681,11 @@ class _NotebookPageState extends State<NotebookPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: iconColor ?? AppTheme.textPrimary),
+          Icon(icon, size: 14, color: iconColor ?? const Color(0xFF1E293B)),
           const SizedBox(width: 10),
           Text(
             label,
-            style: TextStyle(fontSize: 12.5, color: labelColor ?? AppTheme.textPrimary),
+            style: TextStyle(fontSize: 12.5, color: labelColor ?? const Color(0xFF1E293B)),
           ),
         ],
       ),
