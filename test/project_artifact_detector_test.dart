@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:V8WorkToolbox/services/settings_store.dart';
 import 'package:V8WorkToolbox/tools/registry.dart';
@@ -234,19 +232,74 @@ void main() {
     });
 
     test('深度上限：maxDepth 之外不识别', () async {
-      final deep =
-          p.join(home.path, 'a', 'b', 'c', 'deeper-project');
+      // depth 5 是 HOME=1 的 5 个路径段；HOME=1、d1=2、d2=3、d3=4、d4=5
+      // 不超限，deep-project=6 超限。
+      final deep = p.join(home.path, 'd1', 'd2', 'd3', 'd4', 'deep-project');
       await Directory(deep).create(recursive: true);
       await File(p.join(deep, 'pubspec.yaml')).writeAsString('name: x');
 
       final roots = await ProjectArtifactDetector(
         home: home.path,
-        discoverMaxDepth: 3,
+        discoverMaxDepth: 5,
       ).discoverProjectRoots();
       expect(
         roots.map((r) => p.normalize(r)),
         isNot(contains(p.normalize(deep))),
       );
+    });
+
+    test('pom.xml 根被识别（无 .git 的 Maven 项目）', () async {
+      final root = p.join(home.path, 'maven-proj');
+      await _writeFile(p.join(root, 'pom.xml'), '<project/>');
+      final roots = await ProjectArtifactDetector(home: home.path)
+          .discoverProjectRoots();
+      expect(roots, contains(p.normalize(root)));
+    });
+
+    test('Cargo.toml 根被识别（无 .git 的 Rust 项目）', () async {
+      final root = p.join(home.path, 'rust-proj');
+      await _writeFile(p.join(root, 'Cargo.toml'), '[package]');
+      final roots = await ProjectArtifactDetector(home: home.path)
+          .discoverProjectRoots();
+      expect(roots, contains(p.normalize(root)));
+    });
+
+    test('包管理器缓存目录内的 manifest 不被识别为根', () async {
+      // .pub-cache 内大量 pubspec.yaml 是下载副本，不是用户项目
+      await _writeFile(p.join(home.path, '.pub-cache', 'pkg1', 'pubspec.yaml'),
+          'name: x');
+      await _writeFile(p.join(home.path, '.npm', 'node_modules', 'pkg',
+              'package.json'),
+          '{}');
+      await _writeFile(
+          p.join(home.path, '.cargo', 'registry', 'src', 'pkg', 'Cargo.toml'),
+          '[package]');
+
+      final roots = await ProjectArtifactDetector(home: home.path)
+          .discoverProjectRoots();
+      final normalized = roots.map((r) => p.normalize(r)).toList();
+      expect(normalized,
+          isNot(contains(anyElement(
+              startsWith(p.normalize(p.join(home.path, '.pub-cache')))))));
+      expect(normalized,
+          isNot(contains(anyElement(
+              startsWith(p.normalize(p.join(home.path, '.npm')))))));
+      expect(normalized,
+          isNot(contains(anyElement(
+              startsWith(p.normalize(p.join(home.path, '.cargo')))))));
+    });
+
+    test('~/Applications 内的 manifest 不被识别为根', () async {
+      await _writeFile(p.join(home.path, 'Applications', 'SomeApp.app',
+              'Contents', 'package.json'),
+          '{}');
+
+      final roots = await ProjectArtifactDetector(home: home.path)
+          .discoverProjectRoots();
+      final normalized = roots.map((r) => p.normalize(r)).toList();
+      expect(normalized,
+          isNot(contains(anyElement(
+              startsWith(p.normalize(p.join(home.path, 'Applications')))))));
     });
   });
 
