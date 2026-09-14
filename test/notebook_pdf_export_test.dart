@@ -8,7 +8,7 @@ import 'package:V8WorkToolbox/tools/notebook/note_database.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  int _counter = 0;
+  int counter = 0;
   final rootTempDir = Directory.systemTemp.createTempSync('pdf_export_test_');
   final createdDirs = <Directory>[];
 
@@ -22,13 +22,13 @@ void main() {
   late Directory dir;
 
   setUp(() async {
-    _counter += 1;
-    dir = Directory('${rootTempDir.path}/case_$_counter');
+    counter += 1;
+    dir = Directory('${rootTempDir.path}/case_$counter');
     createdDirs.add(dir);
     await dir.create(recursive: true);
   });
 
-  Note _noteWithChinese() => Note(
+  Note noteWithChinese() => Note(
     id: 'test-note-1',
     title: '中文笔记标题测试',
     deltaJson: jsonEncode([
@@ -70,7 +70,7 @@ void main() {
 
   group('PDF 中文字体嵌入', () {
     test('导出中文笔记会内嵌 TrueType 字体子集', () async {
-      final note = _noteWithChinese();
+      final note = noteWithChinese();
       await ExportService.instance.exportToFile(
         note: note,
         format: ExportFormat.pdf,
@@ -107,7 +107,7 @@ void main() {
       expect(await ExportService.instance.loadCjkFont(paths: ['/nonexistent/cjk.ttf']), isNotNull);
 
       // 此时缓存为回退状态，导出应使用内置字体完成而非崩溃
-      final note = _noteWithChinese();
+      final note = noteWithChinese();
       await ExportService.instance.exportToFile(
         note: note,
         format: ExportFormat.pdf,
@@ -123,7 +123,7 @@ void main() {
 
   group('非 PDF 导出回归', () {
     test('Markdown / HTML / TXT 均不受字体改动影响', () async {
-      final note = _noteWithChinese();
+      final note = noteWithChinese();
 
       final md = await ExportService.instance.exportNote(note, ExportFormat.markdown);
       expect(md.contains('中文笔记标题测试'), isTrue);

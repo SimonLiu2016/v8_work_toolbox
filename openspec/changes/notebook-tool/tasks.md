@@ -11,7 +11,7 @@
 - [x] 2.1 添加 `flutter_quill` 依赖，验证与 Flutter 3.9+ 兼容性
 - [x] 2.2 实现 `NoteEditor` 组件：flutter_quill 封装、工具栏（标题/加粗/列表/代码块/引用/链接）、自动保存
 - [x] 2.3 实现代码块语法高亮：customStyles 暗色主题 (#1E1E1E 背景，monospace 字体)
-- [ ] 2.4 实现表格编辑支持（quill_table_embed 或自定义 embed block）
+- [x] 2.4 实现表格编辑支持（自定义 table embed block：工具栏插入按钮、选中文字自动拆行拆列、GridView 渲染、行编辑模式、行列增删、_splitMarkdownTableRow 解析 GFM 管道表格）
 - [x] 2.5 实现图片/文件插入：选择文件 → 保存到 attachments/ → 插入 embed
 
 ## 3. Markdown 双向转换
@@ -53,5 +53,5 @@
 
 - [x] 7.1 运行 `flutter analyze --no-fatal-infos`，确认 0 错误（仅 pre-existing tts_engine 警告）
 - [x] 7.2 编写 Markdown 转换集成测试：26 个测试覆盖所有格式和往返一致性
-- [ ] 7.3 手动验证印象笔记导入：执行完整导入，检查 217 条笔记的标题/正文/标签/笔记本/附件是否正确迁移
-- [ ] 7.4 手动验证导出：分别导出 MD/HTML/PDF/TXT，确认格式正确
+- [x] 7.3 手动验证印象笔记导入：执行完整导入，检查 217 条笔记的标题/正文/标签/笔记本/附件是否正确迁移
+- [x] 7.4 手动验证导出：分别导出 MD/HTML/PDF/TXT，确认格式正确（PDF 图片已修复，导出管线从 Markdown 中转改为 Delta 直接渲染，支持图片嵌入、表格、未知 embed 占位提示）

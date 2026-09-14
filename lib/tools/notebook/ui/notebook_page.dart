@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../theme/app_theme.dart';
+import 'package:appflowy_editor/appflowy_editor.dart';
+import '../appflowy_codec.dart';
 import '../evernote_import_service.dart';
 import '../export_service.dart';
 import '../markdown_converter.dart';
@@ -260,7 +262,7 @@ class _NotebookPageState extends State<NotebookPage> {
 
     final id = await _store.createNote(
       title: '无标题笔记',
-      deltaJson: '[{"insert":"\\n"}]',
+      deltaJson: AppFlowyCodec.documentToJson(Document.blank(withInitialText: true)),
       notebookId: targetNbId,
     );
     await _refresh(silent: true);
@@ -626,7 +628,7 @@ class _NotebookPageState extends State<NotebookPage> {
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
-        position & windowSize,
+        position & const Size(0, 0),
         Offset.zero & windowSize,
       ),
       elevation: 6,
@@ -1433,8 +1435,8 @@ class _NotebookPageState extends State<NotebookPage> {
         children: [
           // Search & New Note & Batch Toggle
           Container(
-            height: 48,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            height: 68,
+            padding: const EdgeInsets.only(top: 28, left: 8, right: 8, bottom: 4),
             decoration: const BoxDecoration(
               color: Color(0xFFFFFFFF),
               border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
@@ -1702,35 +1704,36 @@ class _NotebookPageState extends State<NotebookPage> {
       child: Column(
         children: [
           // Top Export Bar
-          if (_selectedNote != null)
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16),
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFFFFF),
-                border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _selectedNote!.title,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF0F172A),
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const Text('导出：', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-                  _buildExportButton('MD', ExportFormat.markdown),
-                  _buildExportButton('HTML', ExportFormat.html),
-                  _buildExportButton('PDF', ExportFormat.pdf),
-                  _buildExportButton('TXT', ExportFormat.plainText),
-                ],
-              ),
+          Container(
+            height: 68,
+            padding: const EdgeInsets.only(top: 28, left: AppTheme.space16, right: AppTheme.space16, bottom: 4),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFFFFFF),
+              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
             ),
+            child: _selectedNote != null
+                ? Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _selectedNote!.title,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF0F172A),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Text('导出：', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                      _buildExportButton('MD', ExportFormat.markdown),
+                      _buildExportButton('HTML', ExportFormat.html),
+                      _buildExportButton('PDF', ExportFormat.pdf),
+                      _buildExportButton('TXT', ExportFormat.plainText),
+                    ],
+                  )
+                : const SizedBox.shrink(),
+          ),
 
           // Note Editor
           Expanded(

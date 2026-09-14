@@ -1,21 +1,20 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
-import 'package:flutter_highlight/themes/github.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path/path.dart' as p;
+import 'package:appflowy_editor/appflowy_editor.dart';
 
 import '../../../theme/app_theme.dart';
+import '../appflowy_codec.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import 'components/note_code_block_component.dart';
+import 'components/note_editor_toolbar.dart';
+import 'components/note_image_menu.dart';
+import 'components/note_mindmap_component.dart';
 
-/// 笔记编辑器组件（仿印象笔记交互）
 class NoteEditor extends StatefulWidget {
   final Note? note;
   final VoidCallback? onSaved;
@@ -39,273 +38,157 @@ class NoteEditor extends StatefulWidget {
 }
 
 class _NoteEditorState extends State<NoteEditor> {
+  EditorState? _editorState;
+  EditorScrollController? _editorScrollController;
+  StreamSubscription? _transactionSub;
   late TextEditingController _titleCtrl;
-  late final FocusNode _editorFocusNode;
-  late final ScrollController _editorScrollController;
-  QuillController? _quillCtrl;
-  bool _isSaving = false;
-  bool _isCodeBlockEditing = false;
-  Timer? _titleDebounce;
   Timer? _bodyDebounce;
+  bool _isSaving = false;
 
   List<Notebook> _notebooks = [];
-  List<Tag> _noteTags = [];
   List<Tag> _allTags = [];
+  List<Tag> _noteTags = [];
+
+  late FocusNode _editorFocusNode;
+  late final Map<String, BlockComponentBuilder> _blockComponentBuilders;
+
+  EditorStyle get _editorStyle => EditorStyle.desktop(
+    padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+    cursorColor: AppTheme.accent,
+    selectionColor: AppTheme.accent.withValues(alpha: 0.2),
+    textStyleConfiguration: const TextStyleConfiguration(
+      text: TextStyle(
+        fontSize: 15.0,
+        color: Color(0xFF0F172A),
+        height: 1.6,
+      ),
+      bold: TextStyle(
+        fontWeight: FontWeight.bold,
+        color: Color(0xFF0F172A),
+      ),
+      italic: TextStyle(
+        fontStyle: FontStyle.italic,
+        color: Color(0xFF0F172A),
+      ),
+    ),
+  );
 
   @override
   void initState() {
     super.initState();
-    _editorFocusNode = FocusNode();
-    _editorScrollController = ScrollController();
+    _editorFocusNode = FocusNode(debugLabel: 'NoteEditorCanvasFocus');
     _titleCtrl = TextEditingController(text: widget.note?.title ?? '');
+    _initBlockBuilders();
     _initEditor();
     _loadMetadata();
-    _checkAutoFocus();
   }
 
-  void _checkAutoFocus() {
-    if (widget.note == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (widget.note!.title == '无标题笔记' || (_quillCtrl != null && _quillCtrl!.document.isEmpty())) {
-        _focusEditor();
-      }
-    });
-  }
-
-  void _focusEditor() {
-    if (!mounted) return;
-    if (_isCodeBlockEditing) {
-      FocusManager.instance.primaryFocus?.unfocus();
-      _quillCtrl?.readOnly = false;
-      setState(() {
-        _isCodeBlockEditing = false;
-      });
-    }
-    if (_editorFocusNode.canRequestFocus) {
-      _editorFocusNode.requestFocus();
-    }
-    if (_quillCtrl != null && (!_quillCtrl!.selection.isValid || _quillCtrl!.selection.baseOffset < 0)) {
-      final len = _quillCtrl!.document.length;
-      final targetOffset = len > 0 ? len - 1 : 0;
-      _quillCtrl!.updateSelection(
-        TextSelection.collapsed(offset: targetOffset),
-        ChangeSource.local,
-      );
-    }
+  void _initBlockBuilders() {
+    _blockComponentBuilders = {
+      ...standardBlockComponentBuilderMap,
+      TableBlockKeys.type: TableBlockComponentBuilder(
+        tableStyle: const TableStyle(
+          borderWidth: 1.0,
+          borderColor: Color(0xFFE2E8F0),
+          borderHoverColor: AppTheme.accent,
+        ),
+      ),
+      TableCellBlockKeys.type: TableCellBlockComponentBuilder(
+        colorBuilder: (context, node) {
+          final row = node.attributes[TableCellBlockKeys.rowPosition] as int? ?? 0;
+          if (row == 0) {
+            return const Color(0xFFF8FAFC);
+          }
+          return Colors.white;
+        },
+      ),
+      ImageBlockKeys.type: ImageBlockComponentBuilder(
+        showMenu: true,
+        menuBuilder: (node, state) => buildNoteImageMenu(context, node, state),
+      ),
+      NoteCodeBlockKeys.type: NoteCodeBlockComponentBuilder(),
+      'code': NoteCodeBlockComponentBuilder(),
+      MindMapBlockKeys.type: MindMapBlockComponentBuilder(),
+    };
   }
 
   void _initEditor() {
+    _transactionSub?.cancel();
+    _editorScrollController?.dispose();
     if (widget.note != null) {
-      try {
-        final deltaList = jsonDecode(widget.note!.deltaJson) as List;
-        final sanitized = _sanitizeDeltaList(deltaList);
-        final doc = Document.fromJson(List<dynamic>.from(sanitized));
-        _quillCtrl = QuillController(
-          document: doc,
-          selection: const TextSelection.collapsed(offset: 0),
-        );
-      } catch (e) {
-        debugPrint('Failed to parse delta: $e');
-        _quillCtrl = QuillController.basic();
-      }
+      final doc = AppFlowyCodec.parseToDocument(widget.note!.deltaJson);
+      _editorState = EditorState(document: doc);
+      _editorScrollController = EditorScrollController(
+        editorState: _editorState!,
+        shrinkWrap: false,
+      );
+      _transactionSub = _editorState!.transactionStream.listen((_) {
+        _scheduleBodySave();
+      });
     } else {
-      _quillCtrl = QuillController.basic();
+      _editorState = null;
+      _editorScrollController = null;
     }
-
-    // Auto-save listener on content change
-    _quillCtrl!.document.changes.listen((_) => _scheduleBodySave());
-  }
-
-  List<dynamic> _sanitizeDeltaList(List deltaList) {
-    final result = <dynamic>[];
-    var currentLineOps = <Map<String, dynamic>>[];
-    final codeBlockLines = <String>[];
-    String? codeBlockLang;
-
-    void flushCodeBlock() {
-      if (codeBlockLines.isEmpty) return;
-      final fullCode = codeBlockLines.join('\n');
-      codeBlockLines.clear();
-      if (fullCode.trim().isNotEmpty) {
-        result.add({
-          'insert': {
-            'code_block': jsonEncode({
-              'code': fullCode,
-              'language': codeBlockLang ?? 'plaintext',
-            }),
-          },
-        });
-        result.add({'insert': '\n'});
-      }
-      codeBlockLang = null;
-    }
-
-    void flushCurrentLine() {
-      result.addAll(currentLineOps);
-      currentLineOps = [];
-    }
-
-    for (int i = 0; i < deltaList.length; i++) {
-      final rawOp = deltaList[i];
-      if (rawOp is! Map) {
-        if (codeBlockLines.isNotEmpty) flushCodeBlock();
-        result.add(rawOp);
-        continue;
-      }
-      final op = Map<String, dynamic>.from(rawOp);
-      final insert = op['insert'];
-
-      // 1. 自动识别思维导图纯 JSON 字符串并转为 embed
-      if (insert is String && insert.trimLeft().startsWith('{') && insert.contains('"mode":"mindmap"')) {
-        if (codeBlockLines.isNotEmpty) flushCodeBlock();
-        flushCurrentLine();
-        result.add({
-          'insert': {'mindmap': insert.trim()},
-        });
-        continue;
-      }
-
-      // 2. 嵌入对象：清理此前受损生成的空代码块卡片
-      if (insert is Map) {
-        if (insert.containsKey('code_block')) {
-          try {
-            final raw = insert['code_block'];
-            final map = raw is Map ? raw : jsonDecode(raw.toString());
-            final code = map['code']?.toString() ?? '';
-            if (code.trim().isEmpty) {
-              if (i + 1 < deltaList.length) {
-                final nextOp = deltaList[i + 1];
-                if (nextOp is Map && nextOp['insert'] == '\n' && (nextOp['attributes'] == null || (nextOp['attributes'] as Map).isEmpty)) {
-                  i++; // 跳过空代码块后的冗余空行
-                }
-              }
-              continue;
-            }
-          } catch (_) {}
-        }
-        if (codeBlockLines.isNotEmpty) flushCodeBlock();
-        currentLineOps.add(op);
-        continue;
-      }
-
-      // 3. 文本行流式聚合：正确识别挂载在换行符 '\n' 上的 code-block 属性
-      if (insert is String) {
-        final attrs = op['attributes'];
-        final isCodeBlockNewline = (attrs is Map && attrs.containsKey('code-block'));
-
-        if (insert == '\n') {
-          if (isCodeBlockNewline) {
-            final lineBuffer = StringBuffer();
-            for (final lineOp in currentLineOps) {
-              final ins = lineOp['insert'];
-              if (ins is String) {
-                lineBuffer.write(ins);
-              }
-            }
-            currentLineOps.clear();
-            codeBlockLines.add(lineBuffer.toString());
-            final langAttr = attrs['code-block'];
-            if (langAttr is String && langAttr.isNotEmpty && langAttr != 'true') {
-              codeBlockLang = langAttr;
-            }
-            continue;
-          } else {
-            if (codeBlockLines.isNotEmpty) {
-              flushCodeBlock();
-            }
-            currentLineOps.add(op);
-            flushCurrentLine();
-            continue;
-          }
-        }
-
-        if (insert.contains('\n')) {
-          if (codeBlockLines.isNotEmpty) {
-            flushCodeBlock();
-          }
-          final parts = insert.split('\n');
-          for (int p = 0; p < parts.length; p++) {
-            if (parts[p].isNotEmpty) {
-              currentLineOps.add({
-                'insert': parts[p],
-                if (attrs != null) 'attributes': attrs,
-              });
-            }
-            if (p < parts.length - 1) {
-              currentLineOps.add({'insert': '\n', if (attrs != null) 'attributes': attrs});
-              flushCurrentLine();
-            }
-          }
-          continue;
-        }
-
-        currentLineOps.add(op);
-      } else {
-        if (codeBlockLines.isNotEmpty) flushCodeBlock();
-        currentLineOps.add(op);
-      }
-    }
-
-    if (codeBlockLines.isNotEmpty) {
-      flushCodeBlock();
-    }
-    flushCurrentLine();
-    return result;
-  }
-
-
-  Future<void> _loadMetadata() async {
-    if (widget.note == null) return;
-    try {
-      final store = NoteStore.instance;
-      final nbs = await store.allNotebooks();
-      final nTags = await store.tagsForNote(widget.note!.id);
-      final aTags = await store.allTags();
-      if (mounted) {
-        setState(() {
-          _notebooks = nbs;
-          _noteTags = nTags;
-          _allTags = aTags;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading metadata: $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _titleDebounce?.cancel();
-    _bodyDebounce?.cancel();
-    _titleCtrl.dispose();
-    _editorFocusNode.dispose();
-    _editorScrollController.dispose();
-    _quillCtrl?.dispose();
-    super.dispose();
   }
 
   @override
   void didUpdateWidget(NoteEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.note?.id != widget.note?.id) {
-      _titleDebounce?.cancel();
-      _bodyDebounce?.cancel();
-      _quillCtrl?.dispose();
       _titleCtrl.text = widget.note?.title ?? '';
       _initEditor();
       _loadMetadata();
-      _checkAutoFocus();
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Auto-save with debounce
-  // ---------------------------------------------------------------------------
+  @override
+  void dispose() {
+    _transactionSub?.cancel();
+    _bodyDebounce?.cancel();
+    _editorScrollController?.dispose();
+    _editorState?.dispose();
+    _editorFocusNode.dispose();
+    _titleCtrl.dispose();
+    super.dispose();
+  }
+
+  void _focusEditorAtEnd() {
+    if (_editorState == null || !mounted) return;
+    _editorFocusNode.requestFocus();
+    if (_editorState!.document.root.children.isNotEmpty) {
+      final lastNode = _editorState!.document.root.children.last;
+      final length = lastNode.delta?.length ?? 0;
+      _editorState!.updateSelectionWithReason(
+        Selection.single(
+          path: lastNode.path,
+          startOffset: length,
+        ),
+        reason: SelectionUpdateReason.uiEvent,
+      );
+    }
+  }
+
+  Future<void> _loadMetadata() async {
+    if (widget.note == null) return;
+    try {
+      final store = NoteStore.instance;
+      final nbs = await store.allNotebooks();
+      final tags = await store.allTags();
+      final noteTags = await store.tagsForNote(widget.note!.id);
+      if (mounted) {
+        setState(() {
+          _notebooks = nbs;
+          _allTags = tags;
+          _noteTags = noteTags;
+        });
+      }
+    } catch (e) {
+      debugPrint('NoteEditor._loadMetadata safe notice: $e');
+    }
+  }
 
   void _onTitleChanged(String _) {
-    _titleDebounce?.cancel();
-    _titleDebounce = Timer(const Duration(milliseconds: 800), _save);
+    _scheduleBodySave();
   }
 
   void _scheduleBodySave() {
@@ -314,17 +197,17 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   Future<void> _save() async {
-    if (_isSaving || widget.note == null || _quillCtrl == null) return;
+    if (_isSaving || widget.note == null || _editorState == null) return;
     _isSaving = true;
     if (mounted) setState(() {});
 
     try {
-      final deltaJson = jsonEncode(_quillCtrl!.document.toDelta().toJson());
+      final contentJson = AppFlowyCodec.documentToJson(_editorState!.document);
       final currentTitle = _titleCtrl.text.trim();
       await NoteStore.instance.updateNote(
         id: widget.note!.id,
         title: currentTitle.isEmpty ? '无标题笔记' : currentTitle,
-        deltaJson: deltaJson,
+        deltaJson: contentJson,
       );
       widget.onSaved?.call();
     } catch (e) {
@@ -423,117 +306,29 @@ class _NoteEditorState extends State<NoteEditor> {
       } else {
         tagId = await store.createTag(selected);
       }
-      final currentTagIds = _noteTags.map((t) => t.id).toList();
-      if (!currentTagIds.contains(tagId)) {
-        currentTagIds.add(tagId);
-        await store.setNoteTags(widget.note!.id, currentTagIds);
-        await _loadMetadata();
-        widget.onSaved?.call();
-      }
+      final newTagIds = {..._noteTags.map((t) => t.id), tagId}.toList();
+      await store.setNoteTags(widget.note!.id, newTagIds);
+      await _loadMetadata();
+      widget.onSaved?.call();
     }
   }
 
   Future<void> _removeTag(String tagId) async {
     if (widget.note == null) return;
-    final updatedTagIds = _noteTags.map((t) => t.id).where((id) => id != tagId).toList();
-    await NoteStore.instance.setNoteTags(widget.note!.id, updatedTagIds);
+    final newTagIds = _noteTags.map((t) => t.id).where((id) => id != tagId).toList();
+    await NoteStore.instance.setNoteTags(widget.note!.id, newTagIds);
     await _loadMetadata();
     widget.onSaved?.call();
   }
 
   // ---------------------------------------------------------------------------
-  // Image insertion
+  // Paste Interception (macOS bitmap images to attachments)
   // ---------------------------------------------------------------------------
 
-  Future<void> _insertImage() async {
-    if (widget.note == null || _quillCtrl == null) return;
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = File(result.files.first.path!);
-    final store = NoteStore.instance;
-
-    try {
-      final localPath = await store.saveAttachment(
-        noteId: widget.note!.id,
-        sourceFile: file,
-        filename: result.files.first.name,
-        mime: _getMimeType(result.files.first.extension),
-      );
-
-      final index = _quillCtrl!.selection.baseOffset;
-      _quillCtrl!.document.insert(index, BlockEmbed.image(localPath));
-      _quillCtrl!.updateSelection(
-        TextSelection.collapsed(offset: index + 1),
-        ChangeSource.local,
-      );
-      _scheduleBodySave();
-    } catch (e) {
-      debugPrint('Image insert error: $e');
-    }
-  }
-
-  String _getMimeType(String? ext) {
-    switch (ext?.toLowerCase()) {
-      case 'png': return 'image/png';
-      case 'jpg':
-      case 'jpeg': return 'image/jpeg';
-      case 'gif': return 'image/gif';
-      case 'webp': return 'image/webp';
-      case 'svg': return 'image/svg+xml';
-      default: return 'application/octet-stream';
-    }
-  }
-
-  void _toggleOrInsertCodeBlock() {
-    if (widget.note == null || _quillCtrl == null) return;
-    final selection = _quillCtrl!.selection;
-    if (!selection.isCollapsed && selection.isValid) {
-      final start = selection.start;
-      final end = selection.end;
-      final len = end - start;
-      final selectedText = _quillCtrl!.document.getPlainText(start, len);
-      final cleanText = selectedText.trimRight();
-
-      // 替换当前选区为高级代码块卡片
-      _quillCtrl!.document.replace(
-        start,
-        len,
-        BlockEmbed('code_block', jsonEncode({
-          'code': cleanText,
-          'language': 'plaintext',
-        })),
-      );
-      _quillCtrl!.updateSelection(
-        TextSelection.collapsed(offset: start + 1),
-        ChangeSource.local,
-      );
-    } else {
-      final index = (selection.isValid && selection.baseOffset >= 0)
-          ? selection.baseOffset
-          : _quillCtrl!.document.length;
-      final data = jsonEncode({
-        'code': '',
-        'language': 'plaintext',
-        'autoEdit': true, // 标记新插入，立即进入编辑状态并获取光标
-      });
-      _quillCtrl!.document.insert(index, BlockEmbed('code_block', data));
-      _quillCtrl!.updateSelection(
-        const TextSelection.collapsed(offset: -1),
-        ChangeSource.local,
-      );
-    }
-    _scheduleBodySave();
-  }
-
   Future<void> _handlePaste() async {
-    if (widget.note == null || _quillCtrl == null) return;
+    if (widget.note == null || _editorState == null) return;
 
-    // 1. 检测 macOS 系统剪贴板中是否存在位图图片数据
+    // 1. 尝试使用 AppleScript 探测 macOS 系统剪贴板是否含位图图像
     final tempImagePath = '/tmp/v8_clipboard_paste_${DateTime.now().millisecondsSinceEpoch}.png';
     try {
       final res = await Process.run('osascript', [
@@ -563,18 +358,12 @@ class _NoteEditorState extends State<NoteEditor> {
           );
           try { await f.delete(); } catch (_) {}
 
-          final index = _quillCtrl!.selection.baseOffset;
-          _quillCtrl!.document.insert(index, BlockEmbed.image(savedPath));
-          _quillCtrl!.updateSelection(
-            TextSelection.collapsed(offset: index + 1),
-            ChangeSource.local,
-          );
-          _scheduleBodySave();
+          _insertImageAtCursor(savedPath);
           return;
         }
       }
     } catch (e) {
-      debugPrint('Clipboard image check error: $e');
+      debugPrint('Clipboard bitmap image check error: $e');
     }
 
     // 2. 检测剪贴板文本是否为本地已有图片路径
@@ -589,28 +378,34 @@ class _NoteEditorState extends State<NoteEditor> {
             noteId: widget.note!.id,
             sourceFile: f,
             filename: p.basename(text),
-            mime: _getMimeType(ext.replaceFirst('.', '')),
+            mime: 'image/${ext.replaceFirst('.', '')}',
           );
-          final index = _quillCtrl!.selection.baseOffset;
-          _quillCtrl!.document.insert(index, BlockEmbed.image(savedPath));
-          _quillCtrl!.updateSelection(
-            TextSelection.collapsed(offset: index + 1),
-            ChangeSource.local,
-          );
-          _scheduleBodySave();
+          _insertImageAtCursor(savedPath);
           return;
         }
       }
-
-      // 3. 普通文本粘贴
-      final index = _quillCtrl!.selection.baseOffset;
-      _quillCtrl!.document.insert(index, clipData!.text!);
-      _quillCtrl!.updateSelection(
-        TextSelection.collapsed(offset: index + clipData.text!.length),
-        ChangeSource.local,
-      );
-      _scheduleBodySave();
     }
+  }
+
+  void _insertImageAtCursor(String path) {
+    if (_editorState == null) return;
+    final selection = _editorState!.selection;
+    final targetPath = selection != null
+        ? [selection.end.path[0] + 1]
+        : [_editorState!.document.root.children.length];
+
+    final node = imageNode(url: path);
+    final transaction = _editorState!.transaction..insertNode(targetPath, node);
+    _editorState!.apply(transaction);
+    _scheduleBodySave();
+  }
+
+  Future<String> _saveAttachment(File file, String filename) async {
+    return await NoteStore.instance.saveAttachment(
+      noteId: widget.note!.id,
+      sourceFile: file,
+      filename: filename,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -619,7 +414,7 @@ class _NoteEditorState extends State<NoteEditor> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.note == null) {
+    if (widget.note == null || _editorState == null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -634,1316 +429,133 @@ class _NoteEditorState extends State<NoteEditor> {
 
     final currentNotebook = _notebooks.where((nb) => nb.id == widget.note!.notebookId).firstOrNull;
 
-    return CallbackShortcuts(
-      bindings: _isCodeBlockEditing
-          ? {}
-          : {
-              const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _handlePaste,
-              const SingleActivator(LogicalKeyboardKey.keyV, control: true): _handlePaste,
-            },
-      child: Theme(
+    return Theme(
       data: ThemeData.light().copyWith(
-        canvasColor: const Color(0xFFFAFAFA),
         scaffoldBackgroundColor: Colors.white,
-        colorScheme: const ColorScheme.light(
-          surface: Color(0xFFFAFAFA),
-          onSurface: Color(0xFF1E293B),
-          primary: Color(0xFF2563EB),
-        ),
-        textSelectionTheme: const TextSelectionThemeData(
-          cursorColor: Color(0xFF2563EB),
-          selectionColor: Color(0x66BFDBFE), // 半透明选区高亮
-          selectionHandleColor: Color(0xFF2563EB),
+        inputDecorationTheme: const InputDecorationTheme(
+          filled: false,
+          fillColor: Colors.transparent,
         ),
       ),
-      child: Column(
-        children: [
-        // Trash Warning Banner
-        if (widget.note!.isDeleted)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16, vertical: AppTheme.space8),
-            color: AppTheme.warningSubtle,
-            child: Row(
-              children: [
-                const Icon(Icons.delete_outline, size: 18, color: AppTheme.warning),
-                const SizedBox(width: AppTheme.space8),
-                Text('此笔记位于废纸篓中', style: AppTheme.fontBody.copyWith(color: AppTheme.warning)),
-                const Spacer(),
-                TextButton(
-                  onPressed: widget.onRestore,
-                  child: const Text('恢复笔记'),
-                ),
-                const SizedBox(width: AppTheme.space8),
-                TextButton(
-                  onPressed: widget.onPermanentDelete,
-                  child: const Text('彻底粉碎', style: TextStyle(color: AppTheme.error)),
-                ),
-              ],
-            ),
-          ),
-
-        // Metadata Header: Notebook selector, tags, pin toggle
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16, vertical: 6),
-          decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
-            border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-          ),
-          child: Row(
-            children: [
-              // Notebook selector
-              PopupMenuButton<String?>(
-                tooltip: '切换所属笔记本',
-                onSelected: (nbId) => _changeNotebook(nbId),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFCBD5E1)),
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _handlePaste,
+          const SingleActivator(LogicalKeyboardKey.keyV, control: true): _handlePaste,
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+          // 废纸篓警告横幅
+          if (widget.note!.isDeleted)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16, vertical: AppTheme.space8),
+              color: AppTheme.warningSubtle,
+              child: Row(
+                children: [
+                  const Icon(Icons.delete_outline, size: 18, color: AppTheme.warning),
+                  const SizedBox(width: AppTheme.space8),
+                  Text('此笔记位于废纸篓中', style: AppTheme.fontBody.copyWith(color: AppTheme.warning)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: widget.onRestore,
+                    child: const Text('恢复笔记'),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(currentNotebook?.icon ?? '📓', style: const TextStyle(fontSize: 13)),
-                      const SizedBox(width: 4),
-                      Text(
-                        currentNotebook?.name ?? '默认笔记本',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF1E293B),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
-                    ],
+                  const SizedBox(width: AppTheme.space8),
+                  TextButton(
+                    onPressed: widget.onPermanentDelete,
+                    child: const Text('彻底粉碎', style: TextStyle(color: AppTheme.error)),
                   ),
-                ),
-                itemBuilder: (ctx) => [
-                  const PopupMenuItem<String?>(
-                    value: null,
-                    child: Text('📓 默认笔记本 (未归类)'),
-                  ),
-                  ..._notebooks.map((nb) => PopupMenuItem<String?>(
-                    value: nb.id,
-                    child: Text('${nb.icon} ${nb.name}'),
-                  )),
                 ],
               ),
-              const SizedBox(width: AppTheme.space8),
-
-              // Tags wrap
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      ..._noteTags.map((tag) => Container(
-                        margin: const EdgeInsets.only(right: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('#${tag.name}', style: const TextStyle(fontSize: 11, color: Color(0xFF475569))),
-                            const SizedBox(width: 2),
-                            InkWell(
-                              onTap: () => _removeTag(tag.id),
-                              child: const Icon(Icons.close, size: 12, color: Color(0xFF94A3B8)),
-                            ),
-                          ],
-                        ),
-                      )),
-                      InkWell(
-                        onTap: _addTagDialog,
-                        borderRadius: BorderRadius.circular(4),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.add, size: 12, color: AppTheme.accent),
-                              Text(' 标签', style: TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Pin toggle
-              IconButton(
-                icon: Icon(
-                  widget.note!.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  size: 18,
-                  color: widget.note!.isPinned ? AppTheme.accent : const Color(0xFF64748B),
-                ),
-                onPressed: _togglePin,
-                tooltip: widget.note!.isPinned ? '取消置顶' : '置顶笔记',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              ),
-
-              // Soft Delete
-              if (!widget.note!.isDeleted)
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18, color: Color(0xFF94A3B8)),
-                  onPressed: widget.onDelete,
-                  tooltip: '移入废纸篓',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                ),
-            ],
-          ),
-        ),
-
-        // Title bar with translucent selection theme
-        Theme(
-          data: ThemeData.light().copyWith(
-            textSelectionTheme: const TextSelectionThemeData(
-              cursorColor: Color(0xFF2563EB),
-              selectionColor: Color(0x66BFDBFE), // 半透明选区高亮
-              selectionHandleColor: Color(0xFF2563EB),
             ),
-          ),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16, vertical: AppTheme.space8),
+
+          // 元数据栏：笔记本选择器、标签列表、置顶切换
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: AppTheme.space16, vertical: 6),
             decoration: const BoxDecoration(
-              color: Color(0xFFFFFFFF),
+              color: Color(0xFFF8FAFC),
               border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
             ),
             child: Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _titleCtrl,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0F172A),
+                // 笔记本下拉选择
+                PopupMenuButton<String?>(
+                  tooltip: '切换所属笔记本',
+                  onSelected: (nbId) => _changeNotebook(nbId),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFCBD5E1)),
                     ),
-                    decoration: const InputDecoration(
-                      filled: false,
-                      fillColor: Colors.transparent,
-                      hoverColor: Colors.transparent,
-                      focusColor: Colors.transparent,
-                      hintText: '输入笔记标题...',
-                      hintStyle: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF94A3B8),
-                      ),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    onChanged: _onTitleChanged,
-                    onSubmitted: (_) => _save(),
-                  ),
-                ),
-                if (_isSaving)
-                  const SizedBox(
-                    width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
-                  ),
-              ],
-            ),
-          ),
-        ),
-
-        // Quill toolbar + checklist + image button
-        Container(
-          height: 38,
-          decoration: const BoxDecoration(
-            color: Color(0xFFFAFAFA),
-            border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB), width: 0.5)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: QuillSimpleToolbar(
-                  controller: _quillCtrl!,
-                  config: const QuillSimpleToolbarConfig(
-                    multiRowsDisplay: false,
-                    toolbarSize: 32,
-                    showBoldButton: true,
-                    showItalicButton: true,
-                    showUnderLineButton: true,
-                    showStrikeThrough: true,
-                    showHeaderStyle: true,
-                    showListCheck: true,        // 开启待办事项 Checkbox
-                    showListNumbers: true,
-                    showListBullets: true,
-                    showCodeBlock: false,        // 禁用原生灰色单调代码行，统一使用高阶代码块卡片
-                    showQuote: true,
-                    showLink: true,
-                    showColorButton: false,
-                    showBackgroundColorButton: false,
-                    showSearchButton: false,
-                    showAlignmentButtons: false,
-                    showDirection: false,
-                    showIndent: false,
-                    buttonOptions: QuillSimpleToolbarButtonOptions(
-                      base: QuillToolbarBaseButtonOptions(
-                        iconSize: 16,
-                        iconButtonFactor: 1.15,
-                        iconTheme: QuillIconTheme(
-                          iconButtonUnselectedData: IconButtonData(
-                            color: Color(0xFF475569),
-                          ),
-                          iconButtonSelectedData: IconButtonData(
-                            color: Color(0xFF2563EB),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const VerticalDivider(width: 1, indent: 8, endIndent: 8, color: Color(0xFFE5E7EB)),
-              IconButton(
-                icon: const Icon(Icons.code_rounded, size: 18, color: Color(0xFF4B5563)),
-                onPressed: _toggleOrInsertCodeBlock,
-                tooltip: '代码块 (包裹选中代码或插入新块)',
-                splashRadius: 16,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-              IconButton(
-                icon: const Icon(Icons.image_outlined, size: 18, color: Color(0xFF4B5563)),
-                onPressed: _insertImage,
-                tooltip: '插入图片',
-                splashRadius: 16,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-            ],
-          ),
-        ),
-
-        // Editor with light paper styling & customized typography
-        Expanded(
-          child: Theme(
-            data: ThemeData.light().copyWith(
-              textSelectionTheme: const TextSelectionThemeData(
-                cursorColor: Color(0xFF2563EB),
-                selectionColor: Color(0x66BFDBFE), // 半透明高亮选区，避免遮盖底层文本
-                selectionHandleColor: Color(0xFF2563EB),
-              ),
-            ),
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _focusEditor,
-              child: Container(
-                color: const Color(0xFFFFFFFF),
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                child: QuillEditor.basic(
-                  controller: _quillCtrl!,
-                  focusNode: _editorFocusNode,
-                  scrollController: _editorScrollController,
-                  config: QuillEditorConfig(
-                    padding: EdgeInsets.zero,
-                    autoFocus: false,
-                    expands: true,
-                    showCursor: !_isCodeBlockEditing,
-                    embedBuilders: [
-                      NoteImageEmbedBuilder(
-                        quillController: _quillCtrl,
-                        onSave: _scheduleBodySave,
-                      ),
-                      NoteCodeBlockEmbedBuilder(
-                        quillController: _quillCtrl,
-                        onSave: _scheduleBodySave,
-                        editorFocusNode: _editorFocusNode,
-                        onEditingChanged: (editing) {
-                          _quillCtrl?.readOnly = editing;
-                          if (_isCodeBlockEditing != editing) {
-                            setState(() {
-                              _isCodeBlockEditing = editing;
-                            });
-                          }
-                        },
-                      ),
-                      NoteMindMapEmbedBuilder(
-                        quillController: _quillCtrl,
-                        onSave: _scheduleBodySave,
-                      ),
-                    ],
-                    unknownEmbedBuilder: const NoteUnknownEmbedBuilder(),
-                    customStyles: DefaultStyles.getInstance(context).merge(
-                      DefaultStyles(
-                        paragraph: DefaultTextBlockStyle(
-                          const TextStyle(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(currentNotebook?.icon ?? '📓', style: const TextStyle(fontSize: 13)),
+                        const SizedBox(width: 4),
+                        Text(
+                          currentNotebook?.name ?? '默认笔记本',
+                          style: const TextStyle(
+                            fontSize: 12,
                             color: Color(0xFF1E293B),
-                            fontSize: 14,
-                            height: 1.6,
+                            fontWeight: FontWeight.w500,
                           ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(0, 0),
-                          const VerticalSpacing(0, 0),
-                          null,
                         ),
-                        h1: DefaultTextBlockStyle(
-                          const TextStyle(
-                            color: Color(0xFF0F172A),
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            height: 1.3,
-                          ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(12, 4),
-                          const VerticalSpacing(0, 0),
-                          null,
-                        ),
-                        h2: DefaultTextBlockStyle(
-                          const TextStyle(
-                            color: Color(0xFF0F172A),
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            height: 1.3,
-                          ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(10, 4),
-                          const VerticalSpacing(0, 0),
-                          null,
-                        ),
-                        h3: DefaultTextBlockStyle(
-                          const TextStyle(
-                            color: Color(0xFF0F172A),
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            height: 1.3,
-                          ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(8, 4),
-                          const VerticalSpacing(0, 0),
-                          null,
-                        ),
-                        code: DefaultTextBlockStyle(
-                          const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 13,
-                            color: Color(0xFF0F172A),
-                            height: 1.45,
-                          ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(8, 8),
-                          const VerticalSpacing(0, 0),
-                          BoxDecoration(
-                            color: const Color(0xFFF1F5F9), // 优雅浅灰代码底色
-                            borderRadius: BorderRadius.circular(6),
+                        const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
+                      ],
+                    ),
+                  ),
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem<String?>(
+                      value: null,
+                      child: Text('📓 默认笔记本 (未归类)'),
+                    ),
+                    ..._notebooks.map((nb) => PopupMenuItem<String?>(
+                      value: nb.id,
+                      child: Text('${nb.icon} ${nb.name}'),
+                    )),
+                  ],
+                ),
+                const SizedBox(width: AppTheme.space8),
+
+                // 标签列表
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        ..._noteTags.map((tag) => Container(
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(4),
                             border: Border.all(color: const Color(0xFFE2E8F0)),
                           ),
-                        ),
-                        inlineCode: InlineCodeStyle(
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 13,
-                            color: Color(0xFFB45309),
-                            backgroundColor: Color(0xFFFEF3C7),
-                          ),
-                        ),
-                        quote: DefaultTextBlockStyle(
-                          const TextStyle(
-                            color: Color(0xFF475569),
-                            fontStyle: FontStyle.italic,
-                            fontSize: 14,
-                            height: 1.5,
-                          ),
-                          const HorizontalSpacing(0, 0),
-                          const VerticalSpacing(6, 6),
-                          const VerticalSpacing(0, 0),
-                          const BoxDecoration(
-                            border: Border(
-                              left: BorderSide(color: Color(0xFFCBD5E1), width: 4),
-                            ),
-                          ),
-                        ),
-                        link: const TextStyle(
-                          color: Color(0xFF2563EB),
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-  ),
-);
-}
-}
-
-// =============================================================================
-// Enhanced Embed Builders: Image, Code Block, Mind Map
-// =============================================================================
-
-/// 1. 高级交互式图片嵌入组件（支持选中边框、拖拽缩放、快捷预设尺寸、右键菜单与 SVG 渲染）
-class NoteImageEmbedBuilder extends EmbedBuilder {
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-
-  const NoteImageEmbedBuilder({
-    this.quillController,
-    this.onSave,
-  });
-
-  @override
-  String get key => BlockEmbed.imageType;
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
-    return _NoteImageWidget(
-      embedContext: embedContext,
-      quillController: quillController,
-      onSave: onSave,
-    );
-  }
-}
-
-class _NoteImageWidget extends StatefulWidget {
-  final EmbedContext embedContext;
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-
-  const _NoteImageWidget({
-    required this.embedContext,
-    this.quillController,
-    this.onSave,
-  });
-
-  @override
-  State<_NoteImageWidget> createState() => _NoteImageWidgetState();
-}
-
-class _NoteImageWidgetState extends State<_NoteImageWidget> {
-  bool _isSelected = false;
-  double? _customWidth;
-
-  @override
-  Widget build(BuildContext context) {
-    final dynamic data = widget.embedContext.node.value.data;
-    final imageSource = data is String ? data : '';
-    if (imageSource.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final isSvg = imageSource.toLowerCase().endsWith('.svg');
-
-    Widget imageWidget;
-    if (isSvg) {
-      final file = File(imageSource);
-      if (file.existsSync()) {
-        imageWidget = SvgPicture.file(
-          file,
-          fit: BoxFit.contain,
-          placeholderBuilder: (_) => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-        );
-      } else {
-        imageWidget = _buildErrorPlaceholder(imageSource);
-      }
-    } else if (imageSource.startsWith('http://') || imageSource.startsWith('https://')) {
-      imageWidget = Image.network(
-        imageSource,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => _buildErrorPlaceholder(imageSource),
-      );
-    } else {
-      final file = File(imageSource);
-      if (file.existsSync()) {
-        imageWidget = Image.file(
-          file,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) => _buildErrorPlaceholder(imageSource),
-        );
-      } else {
-        imageWidget = _buildErrorPlaceholder(imageSource);
-      }
-    }
-
-    return GestureDetector(
-      onTap: () => setState(() => _isSelected = !_isSelected),
-      onSecondaryTapUp: (details) => _showContextMenu(context, details.globalPosition, imageSource),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 选中操作浮条（预设比例与快捷功能）
-            if (_isSelected)
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
-                ),
-                child: Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _presetButton('25%', () => setState(() => _customWidth = 200)),
-                    _presetButton('50%', () => setState(() => _customWidth = 380)),
-                    _presetButton('75%', () => setState(() => _customWidth = 550)),
-                    _presetButton('100%', () => setState(() => _customWidth = 750)),
-                    _presetButton('自适应', () => setState(() => _customWidth = null)),
-                    const SizedBox(height: 12, child: VerticalDivider(width: 8, color: Colors.white24)),
-                    InkWell(
-                      onTap: () => _copyImage(imageSource),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        child: Text('复制', style: TextStyle(color: Colors.white, fontSize: 11)),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => _cutImage(imageSource),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        child: Text('剪切', style: TextStyle(color: Colors.white, fontSize: 11)),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => _deleteImage(),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        child: Text('删除', style: TextStyle(color: Color(0xFFF87171), fontSize: 11)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            // 主图片区域与右侧拖拽手柄
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: _customWidth ?? 750,
-                    maxHeight: 520,
-                  ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _isSelected ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0),
-                        width: _isSelected ? 2 : 1,
-                      ),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(7),
-                      child: imageWidget,
-                    ),
-                  ),
-                ),
-
-                // 右边缘拖拽手柄
-                if (_isSelected)
-                  Positioned(
-                    right: -10,
-                    top: 0,
-                    bottom: 0,
-                    child: Center(
-                      child: GestureDetector(
-                        onHorizontalDragUpdate: (details) {
-                          setState(() {
-                            final cur = _customWidth ?? 500;
-                            _customWidth = (cur + details.delta.dx).clamp(150.0, 1000.0);
-                          });
-                        },
-                        child: Container(
-                          width: 16,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2563EB),
-                            borderRadius: BorderRadius.circular(4),
-                            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                          ),
-                          child: const Icon(Icons.drag_indicator, size: 12, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _presetButton(String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Text(label, style: const TextStyle(color: Color(0xFF93C5FD), fontSize: 11)),
-      ),
-    );
-  }
-
-  void _copyImage(String source) {
-    Clipboard.setData(ClipboardData(text: source));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已复制图片路径到剪贴板'), duration: Duration(seconds: 1)),
-    );
-  }
-
-  void _cutImage(String source) {
-    _copyImage(source);
-    _deleteImage();
-  }
-
-  void _deleteImage() {
-    final offset = widget.embedContext.node.documentOffset;
-    widget.quillController?.document.delete(offset, 1);
-    widget.onSave?.call();
-  }
-
-  Future<void> _showContextMenu(BuildContext context, Offset globalPos, String source) async {
-    final result = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(globalPos.dx, globalPos.dy, globalPos.dx + 1, globalPos.dy + 1),
-      items: const [
-        PopupMenuItem(value: 'copy', child: Text('复制图片')),
-        PopupMenuItem(value: 'cut', child: Text('剪切图片')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'w25', child: Text('比例 25%')),
-        PopupMenuItem(value: 'w50', child: Text('比例 50%')),
-        PopupMenuItem(value: 'w75', child: Text('比例 75%')),
-        PopupMenuItem(value: 'w100', child: Text('比例 100%')),
-        PopupMenuItem(value: 'w_auto', child: Text('自适应原始大小')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'delete', child: Text('删除图片', style: TextStyle(color: AppTheme.error))),
-      ],
-    );
-
-    if (result == null) return;
-    switch (result) {
-      case 'copy': _copyImage(source); break;
-      case 'cut': _cutImage(source); break;
-      case 'w25': setState(() => _customWidth = 200); break;
-      case 'w50': setState(() => _customWidth = 380); break;
-      case 'w75': setState(() => _customWidth = 550); break;
-      case 'w100': setState(() => _customWidth = 750); break;
-      case 'w_auto': setState(() => _customWidth = null); break;
-      case 'delete': _deleteImage(); break;
-    }
-  }
-
-  Widget _buildErrorPlaceholder(String path) {
-    final fileName = path.split(Platform.pathSeparator).last;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.broken_image_outlined, size: 20, color: Color(0xFF94A3B8)),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              '图片附件加载失败 ($fileName)',
-              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 2. 业界标准代码块嵌入组件（语言选择、语法高亮、自动格式化、行号显示与一键复制）
-/// 2. 业界标准代码块嵌入组件（语言选择、语法高亮、自动格式化、行号显示、一键复制、行内单击即时编辑与焦点隔离）
-class NoteCodeBlockEmbedBuilder extends EmbedBuilder {
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-  final FocusNode? editorFocusNode;
-  final ValueChanged<bool>? onEditingChanged;
-
-  const NoteCodeBlockEmbedBuilder({
-    this.quillController,
-    this.onSave,
-    this.editorFocusNode,
-    this.onEditingChanged,
-  });
-
-  @override
-  String get key => 'code_block';
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
-    return _NoteCodeBlockWidget(
-      embedContext: embedContext,
-      quillController: quillController,
-      onSave: onSave,
-      editorFocusNode: editorFocusNode,
-      onEditingChanged: onEditingChanged,
-    );
-  }
-}
-
-class _NoteCodeBlockWidget extends StatefulWidget {
-  final EmbedContext embedContext;
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-  final FocusNode? editorFocusNode;
-  final ValueChanged<bool>? onEditingChanged;
-
-  const _NoteCodeBlockWidget({
-    required this.embedContext,
-    this.quillController,
-    this.onSave,
-    this.editorFocusNode,
-    this.onEditingChanged,
-  });
-
-  @override
-  State<_NoteCodeBlockWidget> createState() => _NoteCodeBlockWidgetState();
-}
-
-class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
-  late String _code;
-  late String _language;
-  bool _isEditing = false;
-  bool _copied = false;
-  bool _autoEdit = false;
-  late TextEditingController _textCtrl;
-  late FocusNode _codeFocusNode;
-
-  static const List<String> _languages = [
-    'plaintext', 'dart', 'python', 'javascript', 'typescript',
-    'java', 'c', 'cpp', 'go', 'rust', 'html', 'css',
-    'sql', 'bash', 'json', 'yaml', 'markdown',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _parseData();
-    _textCtrl = TextEditingController(text: _code);
-    _codeFocusNode = FocusNode(
-      debugLabel: 'CodeBlockEditorFocus',
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent || event is KeyRepeatEvent) {
-          // 1. Esc 键退出
-          if (event.logicalKey == LogicalKeyboardKey.escape) {
-            _finishEditMode();
-            return KeyEventResult.handled;
-          }
-          // 2. Tab 插入两空格
-          if (event.logicalKey == LogicalKeyboardKey.tab) {
-            _insertTab();
-            return KeyEventResult.handled;
-          }
-          // 3. 粘贴快捷键
-          final isPaste = (event.logicalKey == LogicalKeyboardKey.keyV) &&
-              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed);
-          if (isPaste) {
-            _handleCodePaste();
-            return KeyEventResult.handled;
-          }
-          // 4. Backspace 键：自主确定性向前删除
-          if (event.logicalKey == LogicalKeyboardKey.backspace) {
-            _handleBackspace();
-            return KeyEventResult.handled;
-          }
-
-          // 5. Delete 键：自主确定性向后删除
-          if (event.logicalKey == LogicalKeyboardKey.delete) {
-            _handleForwardDelete();
-            return KeyEventResult.handled;
-          }
-        }
-        return KeyEventResult.ignored;
-      },
-    );
-    _codeFocusNode.addListener(_handleFocusChange);
-
-    if (_autoEdit) {
-      _isEditing = true;
-      widget.editorFocusNode?.unfocus();
-      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          widget.editorFocusNode?.unfocus();
-          _codeFocusNode.requestFocus();
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_isEditing) {
-      widget.onEditingChanged?.call(false);
-    }
-    widget.editorFocusNode?.canRequestFocus = true;
-    _codeFocusNode.removeListener(_handleFocusChange);
-    _codeFocusNode.dispose();
-    _textCtrl.dispose();
-    super.dispose();
-  }
-
-  void _parseData() {
-    final raw = widget.embedContext.node.value.data;
-    if (raw is String) {
-      try {
-        final parsed = jsonDecode(raw) as Map<String, dynamic>;
-        _code = parsed['code'] as String? ?? '';
-        _language = parsed['language'] as String? ?? 'plaintext';
-        _autoEdit = parsed['autoEdit'] as bool? ?? false;
-      } catch (_) {
-        _code = raw;
-        _language = 'plaintext';
-      }
-    } else if (raw is Map) {
-      _code = raw['code']?.toString() ?? '';
-      _language = raw['language']?.toString() ?? 'plaintext';
-      _autoEdit = raw['autoEdit'] == true;
-    } else {
-      _code = '';
-      _language = 'plaintext';
-    }
-  }
-
-  void _handleFocusChange() {
-    if (!_codeFocusNode.hasFocus && _isEditing) {
-      _finishEditMode();
-    }
-  }
-
-  void _enterEditMode() {
-    if (_isEditing) return;
-    widget.quillController?.readOnly = true;
-    widget.onEditingChanged?.call(true);
-    widget.editorFocusNode?.unfocus();
-    setState(() {
-      _textCtrl.text = _code;
-      _textCtrl.selection = TextSelection.collapsed(offset: _textCtrl.text.length);
-      _isEditing = true;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        widget.editorFocusNode?.unfocus();
-        _codeFocusNode.requestFocus();
-      }
-    });
-  }
-
-  void _finishEditMode() {
-    if (!_isEditing) return;
-    widget.quillController?.readOnly = false;
-    widget.onEditingChanged?.call(false);
-    widget.editorFocusNode?.canRequestFocus = true;
-    final newCode = _textCtrl.text;
-    setState(() {
-      _code = newCode;
-      _isEditing = false;
-    });
-    _persist();
-  }
-
-  void _persist() {
-    final offset = widget.embedContext.node.documentOffset;
-    final payload = jsonEncode({
-      'code': _code,
-      'language': _language,
-    });
-    widget.quillController?.document.replace(offset, 1, BlockEmbed('code_block', payload));
-    widget.onSave?.call();
-  }
-
-  void _copyCode() {
-    final codeToCopy = _isEditing ? _textCtrl.text : _code;
-    Clipboard.setData(ClipboardData(text: codeToCopy));
-    setState(() => _copied = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  void _formatCode() {
-    final currentCode = _isEditing ? _textCtrl.text : _code;
-    if (_language == 'json') {
-      try {
-        final parsed = jsonDecode(currentCode);
-        final pretty = const JsonEncoder.withIndent('  ').convert(parsed);
-        setState(() {
-          _code = pretty;
-          _textCtrl.text = pretty;
-        });
-        if (!_isEditing) {
-          _persist();
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('JSON 格式化成功'), duration: Duration(seconds: 1)),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('JSON 格式错误: $e'), duration: const Duration(seconds: 2)),
-        );
-      }
-    } else {
-      final lines = currentCode.split('\n').map((l) => l.trimRight()).toList();
-      final formatted = lines.join('\n').trim();
-      setState(() {
-        _code = formatted;
-        _textCtrl.text = formatted;
-      });
-      if (!_isEditing) {
-        _persist();
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已清除行尾空白字符'), duration: Duration(seconds: 1)),
-      );
-    }
-  }
-
-  void _insertTab() {
-    final val = _textCtrl.value;
-    final text = val.text;
-    final sel = val.selection;
-    const tabStr = '  '; // 2 spaces
-    if (sel.isValid) {
-      final newText = text.replaceRange(sel.start, sel.end, tabStr);
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: sel.start + tabStr.length),
-      );
-    } else {
-      _textCtrl.text += tabStr;
-    }
-  }
-
-  void _handleBackspace() {
-    final val = _textCtrl.value;
-    final sel = val.selection;
-    if (!sel.isValid) return;
-    if (!sel.isCollapsed) {
-      final start = sel.start;
-      final end = sel.end;
-      final newText = val.text.replaceRange(start, end, '');
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: start),
-      );
-    } else if (sel.baseOffset > 0) {
-      final pos = sel.baseOffset;
-      final newText = val.text.replaceRange(pos - 1, pos, '');
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: pos - 1),
-      );
-    }
-  }
-
-  void _handleForwardDelete() {
-    final val = _textCtrl.value;
-    final sel = val.selection;
-    if (!sel.isValid) return;
-    if (!sel.isCollapsed) {
-      final start = sel.start;
-      final end = sel.end;
-      final newText = val.text.replaceRange(start, end, '');
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: start),
-      );
-    } else if (sel.baseOffset < val.text.length) {
-      final pos = sel.baseOffset;
-      final newText = val.text.replaceRange(pos, pos + 1, '');
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: pos),
-      );
-    }
-  }
-
-  Future<void> _handleCodePaste() async {
-    final clipData = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = clipData?.text;
-    if (text == null || text.isEmpty) return;
-    final val = _textCtrl.value;
-    final sel = val.selection;
-    if (sel.isValid) {
-      final newText = val.text.replaceRange(sel.start, sel.end, text);
-      _textCtrl.value = TextEditingValue(
-        text: newText,
-        selection: TextSelection.collapsed(offset: sel.start + text.length),
-      );
-    } else {
-      _textCtrl.text += text;
-    }
-  }
-
-  void _deleteBlock() {
-    final offset = widget.embedContext.node.documentOffset;
-    widget.quillController?.document.delete(offset, 1);
-    widget.onSave?.call();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final displayLines = (_isEditing ? _textCtrl.text : _code).split('\n');
-    final lineCount = displayLines.isEmpty ? 1 : displayLines.length;
-
-    final blockWidget = Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: _isEditing ? const Color(0xFF3B82F6) : const Color(0xFFE2E8F0),
-            width: _isEditing ? 1.5 : 1.0,
-          ),
-          boxShadow: _isEditing
-              ? [
-                  BoxShadow(
-                    color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  )
-                ]
-              : null,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header
-            Container(
-              height: 36,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: _isEditing ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
-                border: Border(
-                  bottom: BorderSide(
-                    color: _isEditing ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
-                  ),
-                ),
-              ),
-              child: Row(
-                children: [
-                  // Language selector
-                  DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _languages.contains(_language) ? _language : 'plaintext',
-                      icon: const Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF64748B)),
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF334155)),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() => _language = val);
-                          if (!_isEditing) {
-                            _persist();
-                          }
-                        }
-                      },
-                      items: _languages.map((lang) => DropdownMenuItem(
-                        value: lang,
-                        child: Text(lang.toUpperCase()),
-                      )).toList(),
-                    ),
-                  ),
-
-                  const Spacer(),
-
-                  // Format button
-                  TextButton.icon(
-                    onPressed: _formatCode,
-                    icon: const Icon(Icons.auto_fix_high_rounded, size: 14, color: Color(0xFF475569)),
-                    label: const Text('格式化', style: TextStyle(fontSize: 12, color: Color(0xFF475569))),
-                    style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
-                  ),
-
-                  // Copy button
-                  if (!_isEditing)
-                    TextButton.icon(
-                      onPressed: _copyCode,
-                      icon: Icon(
-                        _copied ? Icons.check_rounded : Icons.copy_rounded,
-                        size: 14,
-                        color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
-                      ),
-                      label: Text(
-                        _copied ? '已复制' : '复制',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _copied ? const Color(0xFF16A34A) : const Color(0xFF475569),
-                        ),
-                      ),
-                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6)),
-                    ),
-
-                  // Edit / Done toggle button
-                  IconButton(
-                    icon: Icon(
-                      _isEditing ? Icons.check_circle_rounded : Icons.edit_outlined,
-                      size: 16,
-                      color: _isEditing ? const Color(0xFF16A34A) : AppTheme.accent,
-                    ),
-                    tooltip: _isEditing ? '完成编辑 (Esc)' : '直接编辑代码',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: () {
-                      if (_isEditing) {
-                        _finishEditMode();
-                      } else {
-                        _enterEditMode();
-                      }
-                    },
-                  ),
-
-                  // Delete button
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF94A3B8)),
-                    tooltip: '删除代码块',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: _deleteBlock,
-                  ),
-                ],
-              ),
-            ),
-
-            // Content Area
-            if (_isEditing)
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Gutter line numbers in edit mode
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
-                        border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                      ),
-                      child: ValueListenableBuilder<TextEditingValue>(
-                        valueListenable: _textCtrl,
-                        builder: (context, value, _) {
-                          final currentLines = value.text.split('\n');
-                          final count = currentLines.isEmpty ? 1 : currentLines.length;
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: List.generate(
-                              count,
-                              (index) => Text(
-                                '${index + 1}',
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                  height: 1.5,
-                                  color: Color(0xFF94A3B8),
-                                ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('#${tag.name}', style: const TextStyle(fontSize: 11, color: Color(0xFF475569))),
+                              const SizedBox(width: 2),
+                              InkWell(
+                                onTap: () => _removeTag(tag.id),
+                                child: const Icon(Icons.close, size: 12, color: Color(0xFF94A3B8)),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    // Edit TextField with fully isolated key event firewall
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                        child: TextField(
-                          controller: _textCtrl,
-                          focusNode: _codeFocusNode,
-                          maxLines: null,
-                          keyboardType: TextInputType.multiline,
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 13,
-                            height: 1.5,
-                            color: Color(0xFF0F172A),
+                            ],
                           ),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                            hintText: '在此输入或粘贴代码...',
-                            hintStyle: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 13,
-                              height: 1.5,
-                              color: Color(0xFF94A3B8),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _enterEditMode,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.text,
-                  child: IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Line numbers
-                        Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFF1F5F9),
-                            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(7)),
-                            border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: List.generate(
-                              lineCount,
-                              (index) => Text(
-                                '${index + 1}',
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                  height: 1.5,
-                                  color: Color(0xFF94A3B8),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        // Syntax highlight view
-                        Expanded(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: HighlightView(
-                              _code.isEmpty ? '// 暂无代码内容 (点击直接编辑)' : _code,
-                              language: _language,
-                              theme: githubTheme,
-                              padding: const EdgeInsets.all(12),
-                              textStyle: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                                height: 1.5,
-                              ),
+                        )),
+                        InkWell(
+                          onTap: _addTagDialog,
+                          borderRadius: BorderRadius.circular(4),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add, size: 12, color: AppTheme.accent),
+                                Text(' 标签', style: TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+                              ],
                             ),
                           ),
                         ),
@@ -1951,393 +563,80 @@ class _NoteCodeBlockWidgetState extends State<_NoteCodeBlockWidget> {
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
-      );
 
-    if (_isEditing) {
-      return TapRegion(
-        onTapOutside: (event) {
-          _finishEditMode();
-        },
-        child: blockWidget,
-      );
-    }
-
-    return blockWidget;
-  }
-}
-
-/// 3. 原生思维导图嵌入组件（高清矢量 SVG 无损缩放、平移浏览与结构化大纲双模式展示）
-class NoteMindMapEmbedBuilder extends EmbedBuilder {
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-
-  const NoteMindMapEmbedBuilder({
-    this.quillController,
-    this.onSave,
-  });
-
-  @override
-  String get key => 'mindmap';
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
-    return _NoteMindMapWidget(
-      embedContext: embedContext,
-      quillController: quillController,
-      onSave: onSave,
-    );
-  }
-}
-
-class _NoteMindMapWidget extends StatefulWidget {
-  final EmbedContext embedContext;
-  final QuillController? quillController;
-  final VoidCallback? onSave;
-
-  const _NoteMindMapWidget({
-    required this.embedContext,
-    this.quillController,
-    this.onSave,
-  });
-
-  @override
-  State<_NoteMindMapWidget> createState() => _NoteMindMapWidgetState();
-}
-
-class _NoteMindMapWidgetState extends State<_NoteMindMapWidget> {
-  String _title = '思维导图';
-  String? _svgPath;
-  Map<String, dynamic>? _tree;
-  bool _showOutline = false;
-  final TransformationController _transformCtrl = TransformationController();
-
-  @override
-  void initState() {
-    super.initState();
-    _parseData();
-  }
-
-  void _parseData() {
-    final raw = widget.embedContext.node.value.data;
-    if (raw is Map) {
-      _title = raw['title']?.toString() ?? '思维导图';
-      _svgPath = raw['svg_path']?.toString();
-      _tree = raw['tree'] is Map ? (raw['tree'] as Map).cast<String, dynamic>() : null;
-    } else if (raw is String) {
-      try {
-        final parsed = jsonDecode(raw) as Map<String, dynamic>;
-        _title = parsed['title'] as String? ?? parsed['name'] as String? ?? '思维导图';
-        _svgPath = parsed['svg_path'] as String?;
-        if (parsed.containsKey('tree') && parsed['tree'] is Map) {
-          _tree = (parsed['tree'] as Map).cast<String, dynamic>();
-        } else if (parsed.containsKey('mode') && parsed['mode'] == 'mindmap') {
-          _tree = parsed;
-        }
-      } catch (_) {
-        _title = '思维导图';
-      }
-    }
-  }
-
-  void _zoomIn() {
-    _transformCtrl.value = _transformCtrl.value * Matrix4.diagonal3Values(1.25, 1.25, 1.0);
-  }
-
-  void _zoomOut() {
-    _transformCtrl.value = _transformCtrl.value * Matrix4.diagonal3Values(0.8, 0.8, 1.0);
-  }
-
-  void _resetZoom() {
-    _transformCtrl.value = Matrix4.identity();
-  }
-
-  Future<void> _exportSvg() async {
-    if (_svgPath == null) return;
-    final file = File(_svgPath!);
-    if (!file.existsSync()) return;
-
-    final output = await FilePicker.platform.saveFile(
-      dialogTitle: '导出思维导图 SVG 矢量文件',
-      fileName: '$_title.svg',
-      type: FileType.custom,
-      allowedExtensions: ['svg'],
-    );
-    if (output != null) {
-      await file.copy(output);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已成功导出 SVG 至: $output')),
-        );
-      }
-    }
-  }
-
-  void _deleteBlock() {
-    final offset = widget.embedContext.node.documentOffset;
-    widget.quillController?.document.delete(offset, 1);
-    widget.onSave?.call();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasSvg = _svgPath != null && File(_svgPath!).existsSync();
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 顶部标头与控制栏
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(9)),
-              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.account_tree_rounded, size: 18, color: Color(0xFF2563EB)),
-                const SizedBox(width: 8),
-                Text(
-                  _title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFFBFDBFE)),
-                  ),
-                  child: const Text('思维导图', style: TextStyle(fontSize: 10, color: Color(0xFF2563EB), fontWeight: FontWeight.w600)),
-                ),
-
-                const Spacer(),
-
-                // 视图模式切换：矢量导图 vs 结构大纲
-                Container(
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE2E8F0),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    children: [
-                      _tabButton('🗺️ 导图', !_showOutline, () => setState(() => _showOutline = false)),
-                      _tabButton('📋 大纲', _showOutline, () => setState(() => _showOutline = true)),
-                    ],
-                  ),
-                ),
-
-                if (!_showOutline && hasSvg) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.zoom_in_rounded, size: 18, color: Color(0xFF475569)),
-                    tooltip: '放大',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: _zoomIn,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.zoom_out_rounded, size: 18, color: Color(0xFF475569)),
-                    tooltip: '缩小',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: _zoomOut,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.restart_alt_rounded, size: 18, color: Color(0xFF475569)),
-                    tooltip: '重置比例',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: _resetZoom,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.download_rounded, size: 18, color: Color(0xFF475569)),
-                    tooltip: '导出矢量 SVG',
-                    splashRadius: 14,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                    onPressed: _exportSvg,
-                  ),
-                ],
-
-                const SizedBox(width: 4),
+                // 置顶按钮
                 IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF94A3B8)),
-                  tooltip: '删除导图',
-                  splashRadius: 14,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                  onPressed: _deleteBlock,
+                  icon: Icon(
+                    widget.note!.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    size: 18,
+                    color: widget.note!.isPinned ? AppTheme.accent : AppTheme.textTertiary,
+                  ),
+                  tooltip: widget.note!.isPinned ? '取消置顶' : '置顶笔记',
+                  onPressed: _togglePin,
                 ),
               ],
             ),
           ),
 
-          // 主体展示：高清无损矢量导图 或 结构化大纲
-          if (!_showOutline && hasSvg)
-            Container(
-              height: 480,
-              color: Colors.white,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(9)),
-                child: InteractiveViewer(
-                  transformationController: _transformCtrl,
-                  minScale: 0.1,
-                  maxScale: 6.0,
-                  boundaryMargin: const EdgeInsets.all(400),
-                  child: Center(
-                    child: SvgPicture.file(
-                      File(_svgPath!),
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
+          // 笔记标题输入框
+          Container(
+            padding: const EdgeInsets.fromLTRB(AppTheme.space24, AppTheme.space12, AppTheme.space24, AppTheme.space4),
+            color: Colors.white,
+            child: TextField(
+              controller: _titleCtrl,
+              onChanged: _onTitleChanged,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF0F172A),
+                height: 1.3,
               ),
-            )
-          else
-            Container(
-              height: 420,
-              padding: const EdgeInsets.all(16),
-              color: Colors.white,
-              child: _tree != null
-                  ? SingleChildScrollView(child: _buildTreeNode(_tree!, 0))
-                  : Center(
-                      child: Text(
-                        hasSvg ? '切换到大纲模式' : '导图矢量附件尚未同步，暂无大纲结构数据',
-                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-                      ),
-                    ),
+              decoration: const InputDecoration(
+                hintText: '笔记标题...',
+                hintStyle: TextStyle(color: Color(0xFF94A3B8), fontWeight: FontWeight.normal),
+                border: InputBorder.none,
+                filled: false,
+                fillColor: Colors.transparent,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tabButton(String label, bool active, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(5),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: active ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(5),
-          boxShadow: active ? const [BoxShadow(color: Colors.black12, blurRadius: 2)] : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: active ? FontWeight.bold : FontWeight.normal,
-            color: active ? const Color(0xFF1E293B) : const Color(0xFF64748B),
           ),
-        ),
-      ),
-    );
-  }
 
-  Widget _buildTreeNode(Map<String, dynamic> node, int level) {
-    final rawName = node['name']?.toString() ?? '';
-    final rawHtml = node['html']?.toString() ?? '';
-    final name = rawName.isNotEmpty ? rawName : rawHtml.replaceAll(RegExp(r'<[^>]+>'), '');
-    final children = (node['children'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+          // 编辑器格式工具栏
+          NoteEditorToolbar(
+            editorState: _editorState!,
+            onSaveAttachment: _saveAttachment,
+          ),
 
-    return Padding(
-      padding: EdgeInsets.only(left: level * 20.0, top: 4, bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                level == 0 ? Icons.folder_open_rounded : Icons.subdirectory_arrow_right_rounded,
-                size: 16,
-                color: level == 0 ? const Color(0xFF2563EB) : const Color(0xFF64748B),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: level == 0 ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: level == 0 ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
-                  ),
-                ),
-                child: Text(
-                  name.isEmpty ? '节点' : name,
-                  style: TextStyle(
-                    fontSize: level == 0 ? 14 : 12,
-                    fontWeight: level == 0 ? FontWeight.bold : FontWeight.w500,
-                    color: level == 0 ? const Color(0xFF1E3A8A) : const Color(0xFF334155),
+          // AppFlowyEditor 编辑器画布（由 AppFlowy 原生接管视口与滚动）
+          Expanded(
+            child: Container(
+              color: Colors.white,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _focusEditorAtEnd,
+                child: AppFlowyEditor(
+                  editorState: _editorState!,
+                  editorScrollController: _editorScrollController,
+                  editorStyle: _editorStyle,
+                  blockComponentBuilders: _blockComponentBuilders,
+                  focusNode: _editorFocusNode,
+                  footer: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _focusEditorAtEnd,
+                    child: const SizedBox(
+                      width: double.infinity,
+                      height: 280,
+                    ),
                   ),
                 ),
               ),
-            ],
-          ),
-          for (final ch in children) _buildTreeNode(ch, level + 1),
-        ],
-      ),
-    );
-  }
-}
-
-/// 4. 自定义未知 Embed 兜底渲染器
-class NoteUnknownEmbedBuilder extends EmbedBuilder {
-  const NoteUnknownEmbedBuilder();
-
-  @override
-  String get key => 'unknown';
-
-  @override
-  Widget build(
-    BuildContext context,
-    EmbedContext embedContext,
-  ) {
-    final embedType = embedContext.node.value.type;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.extension_outlined, size: 14, color: Color(0xFF64748B)),
-          const SizedBox(width: 6),
-          Text(
-            '嵌入对象: $embedType',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            ),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
-
+}

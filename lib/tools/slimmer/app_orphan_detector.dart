@@ -1,4 +1,5 @@
 import 'dart:io';
+import '../../services/system_service.dart';
 import 'slimmer_models.dart';
 
 /// 孤立应用残留分析器
@@ -160,9 +161,13 @@ class AppOrphanDetector {
           // 计算目录大小与修改时间
           final stats = await _measureDirQuick(item);
           if (stats.sizeBytes > 5 * 1024 * 1024) { // 超过 5MB
-            // 根据匹配结果和修改时间确定安全等级
-            final safety = _determineSafety(matchResult, stats.lastModified);
-            final isSelected = safety == SafetyRating.safe;
+            final requiresAdmin = SystemService.isRootOwned(item.path);
+            // 根据匹配结果和修改时间确定安全等级（管理员项降级为 caution，且默认不预选）
+            var safety = _determineSafety(matchResult, stats.lastModified);
+            if (requiresAdmin && safety == SafetyRating.safe) {
+              safety = SafetyRating.caution;
+            }
+            final isSelected = !requiresAdmin && safety == SafetyRating.safe;
 
             results.add(SlimCandidateItem(
               id: 'orphan_${item.path.hashCode}',
@@ -175,6 +180,7 @@ class AppOrphanDetector {
               safety: safety,
               appName: folderName,
               isSelected: isSelected,
+              requiresAdmin: requiresAdmin,
             ));
           }
         }

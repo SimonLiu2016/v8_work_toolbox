@@ -102,6 +102,11 @@ void main() {
     });
 
     testWidgets('打开规则管理弹窗能正常展示', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: UnattendedPage(),
@@ -109,7 +114,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final ruleBtn = find.text('规则管理');
+      final ruleBtn = find.text('规则管理').first;
       await tester.ensureVisible(ruleBtn);
       await tester.pumpAndSettle();
 
@@ -124,6 +129,85 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('安全黑名单正则表达式规则'), findsNothing);
+    });
+
+    testWidgets('白名单卡片正常渲染与规则管理弹窗交互', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: UnattendedPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('白名单优先放行 (高于黑名单)'), findsOneWidget);
+      expect(find.textContaining('暂未添加任何白名单规则'), findsOneWidget);
+
+      // 点击白名单卡片的规则管理 (第二个规则管理按钮)
+      final allowlistManageBtn = find.text('规则管理').last;
+      await tester.ensureVisible(allowlistManageBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(allowlistManageBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('白名单命令/正则规则管理'), findsOneWidget);
+      expect(find.text('清空白名单'), findsOneWidget);
+      expect(find.text('保存修改'), findsOneWidget);
+
+      await tester.tap(find.text('保存修改'));
+      await tester.pumpAndSettle();
+      expect(find.text('白名单命令/正则规则管理'), findsNothing);
+    });
+
+    testWidgets('已拦截记录展示「加入白名单」按钮，点击后加白且变为「已在白名单」', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final service = UnattendedService.instance;
+      // 记录一条已拦截的流水日志
+      await service.recordAudit(
+        AuditRecord(
+          timestamp: DateTime.now(),
+          client: 'claude',
+          toolName: 'Bash',
+          command: 'git push origin main --force',
+          decision: 'deny',
+          reason: 'matched_danger_floor',
+        ),
+      );
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: UnattendedPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 切换至「已拦截」标签
+      await tester.tap(find.text('已拦截'));
+      await tester.pumpAndSettle();
+
+      // 验证命令与拦截标签存在，并存在「加入白名单」按钮
+      expect(find.text('git push origin main --force'), findsOneWidget);
+      expect(find.text('安全拦截'), findsOneWidget);
+      expect(find.text('加入白名单'), findsOneWidget);
+
+      // 点击加入白名单
+      await tester.tap(find.text('加入白名单'));
+      await tester.pumpAndSettle();
+
+      // 验证 SnackBar 提示及按钮状态更新为「已在白名单」
+      expect(find.textContaining('已将命令加入白名单'), findsOneWidget);
+      expect(find.text('已在白名单'), findsOneWidget);
+
+      // 验证服务状态中已加入白名单
+      expect(service.isCommandInAllowlist('git push origin main --force'), isTrue);
     });
   });
 }

@@ -132,4 +132,21 @@ class LauncherService {
       return false;
     }
   }
+
+  /// 设置无人值守托盘指示器状态与提示
+  Future<bool> setUnattendedStatus({
+    required bool active,
+    String? tooltip,
+  }) async {
+    try {
+      final res = await _channel.invokeMethod<bool>('setUnattendedStatus', {
+        'active': active,
+        if (tooltip != null) 'tooltip': tooltip,
+      });
+      return res ?? false;
+    } catch (e) {
+      debugPrint('Error setting unattended status: $e');
+      return false;
+    }
+  }
 }

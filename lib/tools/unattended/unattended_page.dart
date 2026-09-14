@@ -113,6 +113,8 @@ class _UnattendedPageState extends State<UnattendedPage> {
                 );
               },
             ),
+            const SizedBox(height: AppTheme.space20),
+            _buildAllowlistCard(state),
             const SizedBox(height: AppTheme.space24),
             _buildAuditStreamSection(),
           ],
@@ -610,6 +612,140 @@ class _UnattendedPageState extends State<UnattendedPage> {
     );
   }
 
+  /// 白名单优先放行卡片
+  Widget _buildAllowlistCard(UnattendedState state) {
+    final allowlist = state.allowlist;
+
+    return Container(
+      padding: const EdgeInsets.all(AppTheme.space16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: AppTheme.borderRadiusMedium,
+        border: Border.all(color: AppTheme.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Text('白名单优先放行 (高于黑名单)', style: AppTheme.fontTitle),
+                  const SizedBox(width: AppTheme.space8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.successSubtle,
+                      borderRadius: AppTheme.borderRadiusSmall,
+                    ),
+                    child: Text(
+                      '${allowlist.length} 条规则',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.success, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.tune_rounded, size: 16),
+                label: const Text('规则管理'),
+                onPressed: () => _showAllowlistRulesDialog(state),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTheme.space8),
+          Text(
+            '处于无人值守状态时，命中白名单的命令将拥有最高优先级，绕过黑名单直接自动审批通过：',
+            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: AppTheme.space12),
+          if (allowlist.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
+              child: const Text(
+                '暂未添加任何白名单规则。在下方实时流水中，可针对已拦截记录一键点击「加入白名单」。',
+                style: TextStyle(fontSize: 12, color: AppTheme.textTertiary),
+              ),
+            )
+          else
+            Wrap(
+              spacing: AppTheme.space8,
+              runSpacing: AppTheme.space8,
+              children: allowlist.map((rule) {
+                return Chip(
+                  label: Text(
+                    rule,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  ),
+                  backgroundColor: AppTheme.bgInput,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: AppTheme.borderRadiusSmall,
+                    side: const BorderSide(color: AppTheme.borderSubtle),
+                  ),
+                  deleteIcon: const Icon(Icons.close_rounded, size: 14),
+                  onDeleted: () async {
+                    await _service.removeFromAllowlist(rule);
+                  },
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showAllowlistRulesDialog(UnattendedState state) {
+    final controller = TextEditingController(text: state.allowlist.join('\n'));
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Text('白名单命令/正则规则管理'),
+        content: SizedBox(
+          width: 540,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('每行一条规则（支持正则表达式或精确命令）。处于无人值守时优先放行：', style: AppTheme.fontCaption),
+              const SizedBox(height: AppTheme.space8),
+              TextField(
+                controller: controller,
+                maxLines: 8,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: r'^git push .*$\n^rm -rf /tmp/my-dir$',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _service.clearAllowlist();
+            },
+            child: const Text('清空白名单', style: TextStyle(color: AppTheme.error)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final rules = controller.text
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .where((s) => s.isNotEmpty)
+                  .toList();
+              Navigator.of(ctx).pop();
+              _service.updateAllowlist(rules);
+            },
+            child: const Text('保存修改'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// 实时审批流水展示面板
   Widget _buildAuditStreamSection() {
     final filtered = _auditLogs.where((item) {
@@ -782,8 +918,64 @@ class _UnattendedPageState extends State<UnattendedPage> {
               ],
             ),
           ),
+          if (item.isDenied) ...[
+            const SizedBox(width: AppTheme.space8),
+            _buildAllowlistAction(item.command),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildAllowlistAction(String command) {
+    final isAlreadyWhitelisted = _service.isCommandInAllowlist(command);
+    if (isAlreadyWhitelisted) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: AppTheme.bgInput,
+          borderRadius: AppTheme.borderRadiusSmall,
+          border: Border.all(color: AppTheme.borderSubtle),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_rounded, size: 12, color: AppTheme.textTertiary),
+            SizedBox(width: 4),
+            Text(
+              '已在白名单',
+              style: TextStyle(fontSize: 11, color: AppTheme.textTertiary),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        side: BorderSide(color: AppTheme.accent.withAlpha(120)),
+      ),
+      icon: const Icon(Icons.playlist_add_check_rounded, size: 14, color: AppTheme.accent),
+      label: const Text(
+        '加入白名单',
+        style: TextStyle(fontSize: 11, color: AppTheme.accent, fontWeight: FontWeight.bold),
+      ),
+      onPressed: () async {
+        await _service.addToAllowlist(command);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('已将命令加入白名单，后续将优先自动审批放行：$command'),
+              duration: const Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      },
     );
   }
 }

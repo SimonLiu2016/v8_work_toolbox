@@ -38,6 +38,7 @@ class SlimCandidateItem {
   final String? aiAdvice;
   final bool isAiAnalyzed;
   final bool userMarkedKeep;
+  final bool requiresAdmin;
 
   const SlimCandidateItem({
     required this.id,
@@ -54,6 +55,7 @@ class SlimCandidateItem {
     this.aiAdvice,
     this.isAiAnalyzed = false,
     this.userMarkedKeep = false,
+    this.requiresAdmin = false,
   });
 
   SlimCandidateItem copyWith({
@@ -71,6 +73,7 @@ class SlimCandidateItem {
     String? aiAdvice,
     bool? isAiAnalyzed,
     bool? userMarkedKeep,
+    bool? requiresAdmin,
   }) {
     return SlimCandidateItem(
       id: id ?? this.id,
@@ -87,6 +90,7 @@ class SlimCandidateItem {
       aiAdvice: aiAdvice ?? this.aiAdvice,
       isAiAnalyzed: isAiAnalyzed ?? this.isAiAnalyzed,
       userMarkedKeep: userMarkedKeep ?? this.userMarkedKeep,
+      requiresAdmin: requiresAdmin ?? this.requiresAdmin,
     );
   }
 

@@ -19,6 +19,7 @@ class RecycleResult {
   final List<String> successPaths;
   final List<String> failedPaths;
   final List<String> cleanedContainerPaths;
+  final List<String> rootOwnedFailedPaths;
   final int freedBytes;
   final String? errorMessage;
 
@@ -26,6 +27,7 @@ class RecycleResult {
     required this.successPaths,
     required this.failedPaths,
     this.cleanedContainerPaths = const [],
+    this.rootOwnedFailedPaths = const [],
     this.freedBytes = 0,
     this.errorMessage,
   });
@@ -34,6 +36,7 @@ class RecycleResult {
   bool get isAllFailed => successPaths.isEmpty && failedPaths.isNotEmpty;
   bool get isPartialSuccess => successPaths.isNotEmpty && failedPaths.isNotEmpty;
   bool get hasCleanedContainers => cleanedContainerPaths.isNotEmpty;
+  bool get hasRootOwnedFailures => rootOwnedFailedPaths.isNotEmpty;
 }
 
 /// 系统级原生桥接服务
@@ -54,6 +57,63 @@ class SystemService {
     return normalized.contains('/Library/Containers/') ||
            Directory('$path/Data').existsSync() ||
            File('$path/.com.apple.containermanagerd.metadata.plist').existsSync();
+  }
+
+  /// 判定指定路径是否由 root 用户拥有 (UID == 0)
+  static bool isRootOwned(String path) {
+    if (!Platform.isMacOS) return false;
+    try {
+      final cleanPath = path.endsWith('/') && path.length > 1 ? path.substring(0, path.length - 1) : path;
+      final res = Process.runSync('stat', ['-f', '%u', cleanPath]);
+      if (res.exitCode == 0) {
+        final uid = int.tryParse(res.stdout.toString().trim());
+        return uid == 0;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// 校验路径是否符合管理员提权清理的安全白名单，严格防止路径穿越与系统误删
+  static bool isPathSafeForAdminCleanup(String path) {
+    if (path.isEmpty || !path.startsWith('/')) return false;
+    if (path.contains('..') ||
+        path.contains('\x00') ||
+        path.contains('\n') ||
+        path.contains('\r') ||
+        path.contains(';') ||
+        path.contains('&') ||
+        path.contains('|') ||
+        path.contains('`') ||
+        path.contains(r'$')) {
+      return false;
+    }
+
+    final normalized = path.replaceAll(r'\', '/');
+    final home = Platform.environment['HOME'] ?? '';
+    if (home.isEmpty || !home.startsWith('/')) return false;
+
+    final allowedPrefixes = [
+      '$home/Library/Application Support/',
+      '$home/Library/Caches/',
+      '$home/Library/Containers/',
+      '$home/Library/Saved Application State/',
+      '$home/Downloads/',
+      '/private/tmp/',
+      '/tmp/',
+      '/Library/Java/JavaVirtualMachines/',
+    ];
+
+    for (final prefix in allowedPrefixes) {
+      if (normalized.startsWith(prefix) && normalized.length > prefix.length) {
+        final relative = normalized.substring(prefix.length).trim();
+        // 必须包含至少一个子级名称且不能以斜杠开头
+        if (relative.isNotEmpty && !relative.startsWith('/')) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /// 递归测量目录内部实际文件大小（严格 followLinks: false，严禁跟随软链接）
@@ -313,10 +373,18 @@ class SystemService {
       }
     }
 
+    final rootOwnedFailed = <String>[];
+    for (final p in failedPaths) {
+      if (isRootOwned(p)) {
+        rootOwnedFailed.add(p);
+      }
+    }
+
     String? errorMsg;
     if (failedPaths.isNotEmpty) {
-      final hasContainer = failedPaths.any((p) => p.contains('/Library/Containers/'));
-      if (hasContainer) {
+      if (rootOwnedFailed.isNotEmpty) {
+        errorMsg = '未能移入废纸篓：包含由系统管理员 (root) 拥有的项目，需要管理员权限授权清理。';
+      } else if (failedPaths.any((p) => p.contains('/Library/Containers/'))) {
         errorMsg = '未能移入废纸篓：包含受 macOS 沙盒保护的容器目录，需要"完全磁盘访问权限"。';
       } else {
         errorMsg = '未能移入废纸篓：目标文件可能被占用、受系统保护或缺少权限。';
@@ -327,8 +395,85 @@ class SystemService {
       successPaths: successPaths,
       failedPaths: failedPaths,
       cleanedContainerPaths: cleanedContainerPaths,
+      rootOwnedFailedPaths: rootOwnedFailed,
       freedBytes: totalFreedBytes,
       errorMessage: errorMsg,
+    );
+  }
+
+  /// 使用 macOS 管理员提权清理受保护的路径集合
+  /// 严格执行路径白名单安全校验，调用原生 AppleScript 弹出系统身份认证对话框 (Touch ID / 密码)
+  Future<RecycleResult> recyclePathsWithAdminPrivileges(List<String> paths) async {
+    if (paths.isEmpty) {
+      return const RecycleResult(successPaths: [], failedPaths: []);
+    }
+
+    // 1. 安全白名单校验
+    final validPaths = <String>[];
+    final rejectedPaths = <String>[];
+    for (final p in paths) {
+      if (isPathSafeForAdminCleanup(p) && _pathExists(p)) {
+        validPaths.add(p);
+      } else {
+        rejectedPaths.add(p);
+      }
+    }
+
+    if (validPaths.isEmpty) {
+      return RecycleResult(
+        successPaths: [],
+        failedPaths: paths,
+        errorMessage: '目标路径未通过安全白名单校验，已拒绝执行管理员清理。',
+      );
+    }
+
+    // 2. 构造转义的 AppleScript 命令
+    final escapedArgs = validPaths.map((p) => "'${p.replaceAll("'", r"'\''")}'").join(' ');
+    final shellCmd = 'rm -rf $escapedArgs';
+    final appleScript = 'do shell script "${shellCmd.replaceAll('"', r'\"')}" with administrator privileges';
+
+    try {
+      final res = await Process.run('osascript', ['-e', appleScript]);
+      if (res.exitCode != 0) {
+        final stderr = res.stderr.toString();
+        if (stderr.contains('User canceled') || stderr.contains('-128')) {
+          return RecycleResult(
+            successPaths: [],
+            failedPaths: paths,
+            errorMessage: '已取消管理员密码认证。',
+          );
+        }
+        return RecycleResult(
+          successPaths: [],
+          failedPaths: paths,
+          errorMessage: '管理员提权清理失败：$stderr',
+        );
+      }
+    } catch (e) {
+      return RecycleResult(
+        successPaths: [],
+        failedPaths: paths,
+        errorMessage: '调起管理员提权失败：$e',
+      );
+    }
+
+    // 3. 物理后置核验
+    await Future.delayed(const Duration(milliseconds: 100));
+    final successPaths = <String>[];
+    final failedPaths = <String>[];
+
+    for (final p in paths) {
+      if (!_pathExists(p)) {
+        successPaths.add(p);
+      } else {
+        failedPaths.add(p);
+      }
+    }
+
+    return RecycleResult(
+      successPaths: successPaths,
+      failedPaths: failedPaths,
+      errorMessage: failedPaths.isNotEmpty ? '部分项目在提权清理后依然存在。' : null,
     );
   }
 

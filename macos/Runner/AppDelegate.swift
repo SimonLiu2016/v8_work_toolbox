@@ -19,6 +19,12 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   private var launcherChannel: FlutterMethodChannel?
   private var isTrulyQuitting = false
 
+  // 无人值守托盘指示器
+  private var defaultTrayImage: NSImage?
+  private var unattendedTimer: Timer?
+  private var isUnattendedDimmed = false
+  private let defaultToolTip = "V8 工作工具箱 (⌥Space)"
+
   override func applicationDidFinishLaunching(_ aNotification: Notification) {
     // 注意：不要调用 super.applicationDidFinishLaunching(aNotification)
     // 因为 FlutterAppDelegate (直接继承自 NSObject) 并未实现该可选代理方法，
@@ -107,6 +113,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
 
     if let image = trayImage {
       image.isTemplate = true
+      defaultTrayImage = image
       button.image = image
       button.imagePosition = .imageOnly
       NSLog("[V8Tray] Tray image set successfully (size: \(image.size.width)x\(image.size.height))")
@@ -115,7 +122,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
       NSLog("[V8Tray] Warning: Tray image missing, fallback to title 'V8'")
     }
 
-    button.toolTip = "V8 工作工具箱 (⌥Space)"
+    button.toolTip = defaultToolTip
     button.target = self
     button.action = #selector(statusItemClicked(_:))
 
@@ -171,8 +178,51 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   }
 
   @objc private func quitApp() {
+    unattendedTimer?.invalidate()
+    unattendedTimer = nil
     isTrulyQuitting = true
     NSApp.terminate(nil)
+  }
+
+  // MARK: - Unattended Tray Animation & Status
+  func setUnattendedStatus(active: Bool, tooltip: String?) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, let button = self.statusItem?.button else { return }
+
+      // 始终确保托盘图标为主体原生 V8 Logo
+      if let defaultImg = self.defaultTrayImage {
+        button.image = defaultImg
+      }
+
+      if active {
+        button.toolTip = tooltip ?? "V8 工作工具箱 - 无人值守运行中"
+
+        if self.unattendedTimer == nil {
+          self.isUnattendedDimmed = false
+          self.unattendedTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            guard let self = self, let btn = self.statusItem?.button else { return }
+            self.isUnattendedDimmed.toggle()
+            let targetAlpha: CGFloat = self.isUnattendedDimmed ? 0.35 : 1.0
+            NSAnimationContext.runAnimationGroup { context in
+              context.duration = 0.4
+              context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+              btn.animator().alphaValue = targetAlpha
+            }
+          }
+        }
+      } else {
+        self.unattendedTimer?.invalidate()
+        self.unattendedTimer = nil
+        self.isUnattendedDimmed = false
+
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.2
+          button.animator().alphaValue = 1.0
+        }
+
+        button.toolTip = tooltip ?? self.defaultToolTip
+      }
+    }
   }
 
 
@@ -357,6 +407,12 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
       case "isWindowVisible":
         let isVis = strongSelf.mainFlutterWindow?.isVisible ?? false
         result(isVis)
+
+      case "setUnattendedStatus":
+        let active = (call.arguments as? [String: Any])?["active"] as? Bool ?? false
+        let tooltip = (call.arguments as? [String: Any])?["tooltip"] as? String
+        strongSelf.setUnattendedStatus(active: active, tooltip: tooltip)
+        result(true)
 
       default:
         result(FlutterMethodNotImplemented)

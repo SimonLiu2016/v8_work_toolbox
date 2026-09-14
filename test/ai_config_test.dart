@@ -5,6 +5,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'package:V8WorkToolbox/tools/password/crypto/kek_manager.dart';
+
+/// 测试用内存 Keychain 桥（flutter test 无平台通道，真实 Keychain 不可用）
+class _TestKeychainBridge implements KeychainBridge {
+  static final Map<String, String> store = {};
+
+  @override
+  Future<String?> read({required String service, required String account}) async {
+    return store['$service/$account'];
+  }
+
+  @override
+  Future<void> write({
+    required String service,
+    required String account,
+    required String value,
+  }) async {
+    store['$service/$account'] = value;
+  }
+
+  @override
+  Future<void> delete({required String service, required String account}) async {
+    store.remove('$service/$account');
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +38,10 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('v8_ai_config_test_');
+    _TestKeychainBridge.store.clear();
+    KeychainService.instance.setKekManagerForTesting(
+      KekManager(bridge: _TestKeychainBridge()),
+    );
   });
 
   tearDown(() async {
@@ -38,13 +67,13 @@ void main() {
       expect(afterDelete, isNull);
     });
 
-    test('模拟重启：当内存被清空时，从本地安全文件 .secrets.dat 正确恢复密钥', () async {
+    test('模拟重启：当内存被清空时，从本地加密文件 .secrets.bin 正确恢复密钥', () async {
       final keyService = KeychainService.instance;
       await keyService.init(customRootDir: tempDir);
       await keyService.writeSecret('key_persisted_test', 'sk-durable-secret-999');
 
-      // 验证 .secrets.dat 文件已在磁盘上生成
-      final secretsFile = File('${tempDir.path}/.secrets.dat');
+      // 验证 .secrets.bin 文件已在磁盘上生成
+      final secretsFile = File('${tempDir.path}/.secrets.bin');
       expect(await secretsFile.exists(), isTrue);
 
       // 模拟重启：重新初始化 KeychainService 并读取

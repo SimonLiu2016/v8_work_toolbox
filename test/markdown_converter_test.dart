@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/tools/notebook/markdown_converter.dart';
 
@@ -137,12 +138,85 @@ void main() {
     test('代码块', () {
       final delta = MarkdownConverter.markdownToDelta('```js\ncode\n```');
       expect(delta.contains('code'), isTrue);
-      expect(delta.contains('"code-block":true'), isTrue);
+      expect(delta.contains('"code_block"') || delta.contains('"code-block"'), isTrue);
     });
 
     test('水平分割线', () {
       final delta = MarkdownConverter.markdownToDelta('---');
       expect(delta.contains('"divider":true'), isTrue);
+    });
+  });
+
+  group('MarkdownConverter 表格', () {
+    test('Delta 表格 embed 渲染为 GFM 管道表格', () {
+      final delta = jsonEncode([
+        {
+          'insert': {
+            'table': {
+              'rows': [
+                [
+                  {'text': '姓名', 'style': 'header'},
+                  {'text': '年龄', 'style': 'header'},
+                ],
+                [
+                  {'text': '张三', 'style': ''},
+                  {'text': '30', 'style': ''},
+                ],
+                [
+                  {'text': '李四', 'style': ''},
+                  {'text': '25', 'style': ''},
+                ],
+              ]
+            }
+          }
+        },
+        {'insert': '\n'}
+      ]);
+      final md = MarkdownConverter.deltaToMarkdown(delta);
+      expect(md.contains('姓名'), isTrue, reason: '首行应为表头行');
+      expect(md.contains('年龄'), isTrue);
+      expect(md.contains('---'), isTrue, reason: '应有分隔行');
+      expect(md.contains('张三'), isTrue);
+      expect(md.contains('30'), isTrue);
+      expect(md.contains('李四'), isTrue);
+      expect(md.contains('25'), isTrue);
+    });
+
+    test('Markdown 表格解析为 table embed', () {
+      final md = '|姓名 |年龄|\n| --- | --- |\n|张三 |30|';
+      final delta = MarkdownConverter.markdownToDelta(md);
+      expect(delta.contains('"table"'), isTrue, reason: '应生成 table embed');
+      expect(delta.contains('"rows"'), isTrue);
+      expect(delta.contains('张三'), isTrue);
+    });
+
+    test('表格往返保持行列内容', () {
+      const md = '|A |B|\n| --- | --- |\n|1 |2|';
+      final md2 = MarkdownConverter.deltaToMarkdown(MarkdownConverter.markdownToDelta(md));
+      expect(md2.contains('A'), isTrue);
+      expect(md2.contains('B'), isTrue);
+      expect(md2.contains('1'), isTrue);
+      expect(md2.contains('2'), isTrue);
+      expect(md2.contains('---'), isTrue, reason: '往返后仍应保留表格分隔行');
+    });
+
+    test('单元格内的竖线被转义', () {
+      final delta = jsonEncode([
+        {
+          'insert': {
+            'table': {
+              'rows': [
+                [
+                  {'text': 'a|b', 'style': ''}
+                ]
+              ]
+            }
+          }
+        },
+        {'insert': '\n'}
+      ]);
+      final md = MarkdownConverter.deltaToMarkdown(delta);
+      expect(md.contains(r'a\|b'), isTrue, reason: '竖线应转义，否则列数错乱');
     });
   });
 

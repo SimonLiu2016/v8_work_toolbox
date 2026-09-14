@@ -405,6 +405,57 @@ def import_local_client(output_file=None):
     except Exception:
         pass
 
+    # 4.5 空间归属链解析 (ZENTEAMSPACENOTE: ZNOTE -> ZNOTEBOOK/ZSPACEID)
+    # 团队空间中的笔记不落在普通笔记本，而是落在一个"空间收容笔记本"；
+    # 真实笔记本与空间归属藏在这张关联表里。
+    space_note_map = {}   # ZENNOTE.Z_PK -> {'notebook_pk': int, 'space_name': str|None}
+    space_names = {}      # ZENTEAMSPACE.ZGUID -> ZNAME
+    try:
+        for row in conn.execute('SELECT ZGUID, ZNAME FROM ZENTEAMSPACE').fetchall():
+            if row[0]:
+                space_names[row[0]] = row[1]
+        for row in conn.execute(
+            'SELECT ZNOTE, ZNOTEBOOK, ZSPACEID FROM ZENTEAMSPACENOTE'
+        ).fetchall():
+            note_pk, real_nb_pk, space_id = row
+            if note_pk is None:
+                continue
+            space_note_map[note_pk] = {
+                'notebook_pk': real_nb_pk,
+                'space_name': space_names.get(space_id),
+            }
+    except Exception:
+        pass
+
+    # 空间收容笔记本 PK 集合（名称匹配 空间笔记本_<uuid>）
+    SPACE_HUSK_RE = re.compile(r'^空间笔记本_[0-9a-fA-F-]{36}$')
+    space_husk_pks = {
+        pk for pk, name in notebooks.items()
+        if name and SPACE_HUSK_RE.match(name)
+    }
+
+    def resolve_notebook(note_pk, nb_pk, title_hint=''):
+        """解析笔记的真实归属：空间笔记走归属链（key 为笔记 Z_PK），普通笔记走 ZENNOTEBOOK"""
+        sp = space_note_map.get(note_pk)
+        if sp is not None:
+            space_name = sp['space_name']
+            real_pk = sp['notebook_pk']
+            # 真实笔记本不存在（ZENNOTEBOOK 无此 PK，如 8 号）或指向空间收容自己
+            # → 空间自由笔记，归到以空间名命名的笔记本
+            real_name = notebooks.get(real_pk) if real_pk is not None else None
+            if (real_name is None or SPACE_HUSK_RE.match(real_name)) and space_name:
+                return space_name, None, None
+            if real_name is not None:
+                stack = notebook_stacks.get(real_pk)
+                if space_name:
+                    stack = f'{space_name} / {stack}' if stack else space_name
+                return real_name, stack, real_pk
+        # 普通笔记：ZNOTEBOOK 指向的笔记本若是空间收容笔记本则回退默认
+        nb_name = notebooks.get(nb_pk, '默认笔记本')
+        if nb_name and SPACE_HUSK_RE.match(nb_name):
+            return '默认笔记本', None, None
+        return nb_name, notebook_stacks.get(nb_pk), nb_pk
+
     # 5. 遍历所有未删除的活跃笔记 (ZACTIVE = 1)
     notes_rows = conn.execute(
         'SELECT Z_PK, ZTITLE, ZLOCALUUID, ZGUID, ZNOTEBOOK, ZDATECREATED, ZDATEUPDATED '
@@ -412,12 +463,15 @@ def import_local_client(output_file=None):
     ).fetchall()
 
     notes_result = []
+    space_routed = 0
     total_notes = len(notes_rows)
 
     for i, row in enumerate(notes_rows):
         pk, title, local_uuid, guid, nb_pk, date_created, date_updated = row
         title = title or '无标题笔记'
-        nb_name = notebooks.get(nb_pk, '默认笔记本')
+        nb_name, stack, resolved_pk = resolve_notebook(pk, nb_pk, title)
+        if pk in space_note_map:
+            space_routed += 1
         note_tags = note_tags_map.get(pk, [])
 
         # 时间转换
@@ -514,7 +568,7 @@ def import_local_client(output_file=None):
             'guid': guid,
             'title': title,
             'notebook': nb_name,
-            'stack': notebook_stacks.get(nb_pk),
+            'stack': stack,
             'tags': note_tags,
             'markdown': markdown,
             'created': created_iso,
@@ -529,6 +583,7 @@ def import_local_client(output_file=None):
     notebooks_payload = [
         {'name': name, 'stack': notebook_stacks.get(pk)}
         for pk, name in notebooks.items()
+        if name and not SPACE_HUSK_RE.match(name)
     ]
 
     result = {
@@ -538,6 +593,7 @@ def import_local_client(output_file=None):
         'notebooks': notebooks_payload,
         'tags': list(tags.values()),
         'notes': notes_result,
+        'space_routed': space_routed,
     }
 
     if output_file:

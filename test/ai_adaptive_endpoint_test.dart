@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
+import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'test_keychain_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +16,10 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('v8_ai_adaptive_test_');
+    TestKeychainBridge.install();
+    KeychainService.instance.setKekManagerForTesting(
+      TestKeychainBridge.makeManager(),
+    );
     AiService.instance.clearResolvedChatEndpoints();
   });
 

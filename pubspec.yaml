@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  file_picker: ^8.0.0+1
+  file_picker: ^10.3.10
   yaml: ^3.1.0
   csv: ^6.0.0
   path: ^1.9.0
@@ -31,6 +31,7 @@ dependencies:
   media_kit_video: ^2.0.1
   media_kit_libs_macos_video: ^1.1.4
   flutter_markdown: ^0.7.7+1
+  markdown: ^7.2.2
   flutter_quill: ^11.5.0
   delta_to_html: ^0.2.2
   quill_markdown: ^0.1.0
@@ -44,6 +45,8 @@ dependencies:
   desktop_multi_window: ^0.3.1
   window_manager: ^0.5.2
   flutter_svg: ^2.3.0
+  appflowy_editor: ^6.2.0
+  provider: ^6.1.2
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 
@@ -51,7 +54,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-  drift: ^2.31.0
   drift_dev: ^2.31.0
   build_runner: ^2.15.1
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'launcher_service.dart';
 
 /// 无人值守状态模型
 class UnattendedState {
@@ -11,6 +12,7 @@ class UnattendedState {
   final DateTime? expiresAt;
   final int ttlMinutes;
   final List<String> denylist;
+  final List<String> allowlist;
   final bool keepSystemAwake;
   final bool keepDisplayAwake;
 
@@ -20,6 +22,7 @@ class UnattendedState {
     this.expiresAt,
     this.ttlMinutes = 120,
     this.denylist = defaultDenylist,
+    this.allowlist = const [],
     this.keepSystemAwake = true,
     this.keepDisplayAwake = true,
   });
@@ -55,6 +58,7 @@ class UnattendedState {
     'expiresAt': expiresAt?.toIso8601String(),
     'ttlMinutes': ttlMinutes,
     'denylist': denylist,
+    'allowlist': allowlist,
     'keepSystemAwake': keepSystemAwake,
     'keepDisplayAwake': keepDisplayAwake,
   };
@@ -72,12 +76,18 @@ class UnattendedState {
         ? rawDenylist.map((e) => e.toString()).toList()
         : defaultDenylist;
 
+    final rawAllowlist = json['allowlist'];
+    final allowList = rawAllowlist is List
+        ? rawAllowlist.map((e) => e.toString()).toList()
+        : const <String>[];
+
     return UnattendedState(
       enabled: json['enabled'] == true,
       since: parseDate(json['since']),
       expiresAt: parseDate(json['expiresAt']),
       ttlMinutes: json['ttlMinutes'] is int ? json['ttlMinutes'] as int : 120,
       denylist: list,
+      allowlist: allowList,
       keepSystemAwake: json['keepSystemAwake'] != false,
       keepDisplayAwake: json['keepDisplayAwake'] != false,
     );
@@ -89,6 +99,7 @@ class UnattendedState {
     DateTime? expiresAt,
     int? ttlMinutes,
     List<String>? denylist,
+    List<String>? allowlist,
     bool? keepSystemAwake,
     bool? keepDisplayAwake,
   }) {
@@ -98,6 +109,7 @@ class UnattendedState {
       expiresAt: expiresAt ?? this.expiresAt,
       ttlMinutes: ttlMinutes ?? this.ttlMinutes,
       denylist: denylist ?? this.denylist,
+      allowlist: allowlist ?? this.allowlist,
       keepSystemAwake: keepSystemAwake ?? this.keepSystemAwake,
       keepDisplayAwake: keepDisplayAwake ?? this.keepDisplayAwake,
     );
@@ -260,6 +272,7 @@ class UnattendedService extends ChangeNotifier {
 
     await _loadState();
     await ensureProxyScriptInstalled();
+    _syncTrayStatus(force: true);
 
     // 启动秒级心跳 Timer，驱动 UI 倒计时渲染与惰性超时检测
     _countdownTimer?.cancel();
@@ -269,10 +282,57 @@ class UnattendedService extends ChangeNotifier {
           // 惰性超时自动关闭
           disable(silentReason: 'ttl_expired');
         } else {
+          _syncTrayStatus();
           notifyListeners();
         }
       }
     });
+  }
+
+  bool? _lastTrayActive;
+  int? _lastTrayMinutes;
+
+  /// 格式化倒计时时长
+  static String formatRemainingDuration(Duration d) {
+    if (d.inSeconds <= 0) return '00:00';
+    final hours = d.inHours;
+    final minutes = d.inMinutes % 60;
+    final seconds = d.inSeconds % 60;
+    if (hours > 0) {
+      return '$hours小时${minutes.toString().padLeft(2, '0')}分';
+    } else if (minutes > 0) {
+      return '$minutes分钟';
+    } else {
+      return '$seconds秒';
+    }
+  }
+
+  /// 同步 macOS 菜单栏托盘指示器状态
+  void _syncTrayStatus({bool force = false}) {
+    final active = _state.isEffectivelyActive;
+    final remainingMinutes = active ? _state.remainingTime.inMinutes : 0;
+
+    if (!force && _lastTrayActive == active) {
+      // 若处于激活状态，仅在分钟数变化（或剩余不足1分钟且秒数变动）时更新提示，避免高频 IPC
+      if (active && _lastTrayMinutes == remainingMinutes && remainingMinutes > 0) {
+        return;
+      }
+      if (!active) {
+        return;
+      }
+    }
+
+    _lastTrayActive = active;
+    _lastTrayMinutes = remainingMinutes;
+
+    final tooltip = active
+        ? 'V8 工作工具箱 - 无人值守运行中 (剩余 ${formatRemainingDuration(_state.remainingTime)})'
+        : 'V8 工作工具箱 (⌥Space)';
+
+    LauncherService.instance.setUnattendedStatus(
+      active: active,
+      tooltip: tooltip,
+    );
   }
 
   /// 从磁盘读取状态
@@ -337,6 +397,7 @@ class UnattendedService extends ChangeNotifier {
     await ensureProxyScriptInstalled();
     await installClientHooks();
     await _startKeepAwakeIfActive();
+    _syncTrayStatus(force: true);
     notifyListeners();
   }
 
@@ -346,6 +407,7 @@ class UnattendedService extends ChangeNotifier {
     _saveState();
     _stopKeepAwake();
     await uninstallClientHooks();
+    _syncTrayStatus(force: true);
     notifyListeners();
   }
 
@@ -430,6 +492,58 @@ class UnattendedService extends ChangeNotifier {
   /// 重置安全硬地板为系统预设
   Future<void> resetDenylistToDefaults() async {
     _state = _state.copyWith(denylist: UnattendedState.defaultDenylist);
+    _saveState();
+    notifyListeners();
+  }
+
+  /// 检查命令是否命中白名单规则
+  bool isCommandInAllowlist(String command) {
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return false;
+    for (final pattern in _state.allowlist) {
+      final pTrimmed = pattern.trim();
+      if (pTrimmed.isEmpty) continue;
+      try {
+        final reg = RegExp(pTrimmed, multiLine: true, caseSensitive: false);
+        if (reg.hasMatch(trimmed)) return true;
+      } catch (_) {}
+      if (trimmed == pTrimmed) return true;
+    }
+    return false;
+  }
+
+  /// 添加命令到白名单（自动转义正则元字符，实现精确全词匹配）
+  Future<void> addToAllowlist(String command) async {
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return;
+    if (isCommandInAllowlist(trimmed)) return;
+
+    final escaped = RegExp.escape(trimmed);
+    final pattern = '^$escaped\$';
+    final updated = List<String>.from(_state.allowlist)..add(pattern);
+    _state = _state.copyWith(allowlist: updated);
+    _saveState();
+    notifyListeners();
+  }
+
+  /// 从白名单移除指定规则
+  Future<void> removeFromAllowlist(String pattern) async {
+    final updated = List<String>.from(_state.allowlist)..remove(pattern.trim());
+    _state = _state.copyWith(allowlist: updated);
+    _saveState();
+    notifyListeners();
+  }
+
+  /// 批量更新白名单规则
+  Future<void> updateAllowlist(List<String> newAllowlist) async {
+    _state = _state.copyWith(allowlist: List.from(newAllowlist));
+    _saveState();
+    notifyListeners();
+  }
+
+  /// 清空白名单规则
+  Future<void> clearAllowlist() async {
+    _state = _state.copyWith(allowlist: const []);
     _saveState();
     notifyListeners();
   }
@@ -598,6 +712,31 @@ class UnattendedService extends ChangeNotifier {
       return const ApprovalEvaluationResult(isAllowed: false, reason: 'unattended_inactive_or_expired');
     }
 
+    final trimmed = command.trim();
+
+    // 0. 白名单优先放行检测 (优先级高于黑名单与 rm 作用域分析)
+    for (final pattern in _state.allowlist) {
+      final pTrimmed = pattern.trim();
+      if (pTrimmed.isEmpty) continue;
+      try {
+        final reg = RegExp(pTrimmed, multiLine: true, caseSensitive: false);
+        if (reg.hasMatch(trimmed)) {
+          return ApprovalEvaluationResult(
+            isAllowed: true,
+            reason: 'matched_whitelist',
+            matchedPattern: pattern,
+          );
+        }
+      } catch (_) {}
+      if (trimmed == pTrimmed) {
+        return ApprovalEvaluationResult(
+          isAllowed: true,
+          reason: 'matched_whitelist',
+          matchedPattern: pattern,
+        );
+      }
+    }
+
     final effectiveCwd = cwd ?? Directory.current.path;
     final home = _home;
 
@@ -612,7 +751,6 @@ class UnattendedService extends ChangeNotifier {
     }
 
     // 2. 机械安全硬地板黑名单正则扫描
-    final trimmed = command.trim();
     for (final pattern in _state.denylist) {
       try {
         final reg = RegExp(pattern, multiLine: true, caseSensitive: false);
@@ -1290,9 +1428,27 @@ function isTargetSafe(rawTarget, cwd, home) {
   return { safe: false, reason: 'Target is outside workspace and not in temp directory: ' + target + ' (' + resolved + ')' };
 }
 
-function evaluateSafety(command, cwd, denylist, home) {
+function evaluateSafety(command, cwd, denylist, home, allowlist) {
   const normCwd = cwd || process.cwd();
   const normHome = home || process.env.HOME || '';
+  const trimmed = (command || '').trim();
+
+  // 0. 白名单优先放行检测 (优先级高于黑名单与 rm 作用域分析)
+  if (Array.isArray(allowlist)) {
+    for (const pattern of allowlist) {
+      const pTrimmed = (pattern || '').trim();
+      if (!pTrimmed) continue;
+      try {
+        const reg = new RegExp(pTrimmed, 'im');
+        if (reg.test(trimmed)) {
+          return { isAllowed: true, reason: 'matched_whitelist: ' + pTrimmed };
+        }
+      } catch (_) {}
+      if (trimmed === pTrimmed) {
+        return { isAllowed: true, reason: 'matched_whitelist: ' + pTrimmed };
+      }
+    }
+  }
 
   // 1. rm 作用域评估
   const subcommands = command.split(/&&|\\|\\||;|\\|/);
@@ -1418,7 +1574,7 @@ process.stdin.on('end', () => {
       if (data.cwd) cwd = data.cwd;
     }
 
-    const evalResult = evaluateSafety(command, cwd, state.denylist || [], HOME);
+    const evalResult = evaluateSafety(command, cwd, state.denylist || [], HOME, state.allowlist || []);
 
     if (!evalResult.isAllowed) {
       logAudit({ client, toolName, command, decision: 'deny', reason: evalResult.reason });
@@ -1441,7 +1597,7 @@ process.stdin.on('end', () => {
       process.exit(0);
     } else {
       // 安全命令：直接放行并审计
-      logAudit({ client, toolName, command, decision: 'allow', reason: 'unattended_active_and_safe' });
+      logAudit({ client, toolName, command, decision: 'allow', reason: evalResult.reason || 'unattended_active_and_safe' });
 
       if (client === 'claude') {
         process.stdout.write(JSON.stringify({

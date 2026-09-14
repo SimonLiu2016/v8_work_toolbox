@@ -11,6 +11,7 @@ import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
 import 'ai_assistant/ui/ai_assistant_page.dart';
 import 'notebook/ui/notebook_page.dart';
+import 'password/ui/password_page.dart';
 import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
@@ -258,6 +259,46 @@ class NotebookToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const NotebookPage();
 }
 
+class PasswordVaultToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'password-vault';
+  @override
+  String get title => '密码工具';
+  @override
+  String get subtitle => '本地加密密码库：密码生成、TOTP 两步验证、体检报告';
+  @override
+  IconData get icon => Icons.lock_rounded;
+  @override
+  ToolCategory get category => ToolCategory.system;
+
+  @override
+  bool get openInNewWindow => true;
+
+  @override
+  Future<void> openNewWindow() async {
+    try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == 'password-vault') {
+          await window.show();
+          return;
+        }
+      }
+      final configuration = WindowConfiguration(
+        arguments: 'password-vault',
+        hiddenAtLaunch: false,
+      );
+      final controller = await WindowController.create(configuration);
+      await controller.show();
+    } catch (e) {
+      debugPrint('Failed to open password vault window: $e');
+    }
+  }
+
+  @override
+  Widget buildPage(BuildContext context) => const PasswordPage();
+}
+
 /// ---------------------------------------------------------------------------
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
@@ -268,6 +309,7 @@ class ToolRegistry {
   static final List<ToolDefinition> tools = <ToolDefinition>[
     // 隐私空间
     PrivateMediaPlayerToolDefinition(),
+    PasswordVaultToolDefinition(),
     // 文件处理
     DocAudioReaderToolDefinition(),
     BatchRenameToolDefinition(),

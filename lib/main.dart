@@ -17,6 +17,7 @@ import 'tools/notebook/note_database.dart';
 import 'tools/notebook/note_store.dart';
 import 'tools/notebook/ui/note_editor.dart';
 import 'tools/notebook/ui/notebook_page.dart';
+import 'tools/password/ui/password_page.dart';
 import 'tools/private_player/services/media_history_store.dart';
 import 'tools/private_player/services/private_storage_manager.dart';
 
@@ -35,6 +36,12 @@ Future<void> main(List<String> args) async {
   // desktop_multi_window passes ["multi_window", windowId, arguments] for sub-windows
   final isSubWindow = args.isNotEmpty && args.first == 'multi_window';
   final subWindowArgument = isSubWindow && args.length > 2 ? args[2] : '';
+
+  if (isSubWindow && subWindowArgument == 'password-vault') {
+    // Sub-window mode for password vault.
+    runApp(const _PasswordVaultWindowApp());
+    return;
+  }
 
   if (isSubWindow && subWindowArgument == 'notebook') {
     // Sub-window mode for notebook.
@@ -127,6 +134,31 @@ class V8WorkToolboxApp extends StatelessWidget {
 }
 
 /// Notebook sub-window app
+/// 密码工具子窗口 app
+class _PasswordVaultWindowApp extends StatelessWidget {
+  const _PasswordVaultWindowApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '密码工具 - V8 工作工具箱',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
+      home: const PasswordPage(),
+    );
+  }
+}
+
 class _NotebookWindowApp extends StatelessWidget {
   const _NotebookWindowApp();
 
@@ -147,6 +179,7 @@ class _NotebookWindowApp extends StatelessWidget {
         Locale('en', 'US'),
       ],
       home: const Scaffold(
+        backgroundColor: Colors.white,
         body: NotebookPage(),
       ),
     );
@@ -188,7 +221,13 @@ class _SingleNoteWindowAppState extends State<_SingleNoteWindowApp> {
     return MaterialApp(
       title: '笔记 - V8 工作工具箱',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
+      theme: ThemeData.light().copyWith(
+        scaffoldBackgroundColor: Colors.white,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppTheme.accent,
+          surface: Colors.white,
+        ),
+      ),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -200,32 +239,34 @@ class _SingleNoteWindowAppState extends State<_SingleNoteWindowApp> {
         Locale('en', 'US'),
       ],
       home: Scaffold(
-        body: FutureBuilder<Note?>(
-          future: _noteFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.data == null) {
-              return const Scaffold(
-                body: Center(
+        backgroundColor: Colors.white,
+        body: Padding(
+          padding: const EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+          child: FutureBuilder<Note?>(
+            future: _noteFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.data == null) {
+                return const Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.note_outlined, size: 40, color: Colors.grey),
                       SizedBox(height: 8),
-                      Text('笔记不存在或已删除'),
+                      Text('笔记不存在或已删除', style: TextStyle(color: Colors.grey)),
                     ],
                   ),
-                ),
+                );
+              }
+              return NoteEditor(
+                key: ValueKey(snapshot.data!.id),
+                note: snapshot.data,
+                onSaved: () {},
               );
-            }
-            return NoteEditor(
-              key: ValueKey(snapshot.data!.id),
-              note: snapshot.data,
-              onSaved: () {},
-            );
-          },
+            },
+          ),
         ),
       ),
     );

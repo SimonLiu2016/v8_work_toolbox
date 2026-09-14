@@ -667,4 +667,133 @@ void main() {
       expect(service.state.keepDisplayAwake, isTrue);
     });
   });
+
+  group('Allowlist & High-Priority Auto-Approval Tests', () {
+    late Directory tempDir;
+    late UnattendedService service;
+
+    setUp(() async {
+      tempDir = Directory.systemTemp.createTempSync('unattended_allowlist_test_');
+      service = UnattendedService.instance;
+      service.customStateFilePath = '${tempDir.path}/state.json';
+      service.customAuditFilePath = '${tempDir.path}/audit.jsonl';
+      service.customClaudeSettingsPath = '${tempDir.path}/claude_settings.json';
+      service.customAgyHooksPath = '${tempDir.path}/agy_hooks.json';
+      service.customBinDirPath = '${tempDir.path}/bin';
+
+      await service.init();
+      await service.resetDenylistToDefaults();
+      await service.clearAllowlist();
+    });
+
+    tearDown(() async {
+      await service.disable();
+      service.customStateFilePath = null;
+      service.customAuditFilePath = null;
+      service.customClaudeSettingsPath = null;
+      service.customAgyHooksPath = null;
+      service.customBinDirPath = null;
+
+      try {
+        tempDir.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+
+    test('UnattendedState allowlist 序列化与反序列化测试', () {
+      const state = UnattendedState(
+        enabled: true,
+        allowlist: ['^git push origin main --force\$', '^rm -rf /tmp/my-dir\$'],
+      );
+
+      final json = state.toJson();
+      expect(json['allowlist'], isA<List>());
+      expect((json['allowlist'] as List).length, 2);
+
+      final parsed = UnattendedState.fromJson(json);
+      expect(parsed.allowlist.length, 2);
+      expect(parsed.allowlist[0], '^git push origin main --force\$');
+      expect(parsed.allowlist[1], '^rm -rf /tmp/my-dir\$');
+    });
+
+    test('白名单管理方法：addToAllowlist、isCommandInAllowlist、removeFromAllowlist、clearAllowlist', () async {
+      expect(service.state.allowlist, isEmpty);
+      expect(service.isCommandInAllowlist('git reset --hard'), isFalse);
+
+      await service.addToAllowlist('git reset --hard');
+      expect(service.state.allowlist.length, 1);
+      expect(service.isCommandInAllowlist('git reset --hard'), isTrue);
+
+      // 重复添加不增加重复项
+      await service.addToAllowlist('git reset --hard');
+      expect(service.state.allowlist.length, 1);
+
+      // 正则模式添加与检查
+      await service.updateAllowlist(['^git push .*']);
+      expect(service.isCommandInAllowlist('git push origin feat'), isTrue);
+      expect(service.isCommandInAllowlist('git status'), isFalse);
+
+      // 单独移除规则
+      await service.removeFromAllowlist('^git push .*');
+      expect(service.state.allowlist, isEmpty);
+
+      // 清空白名单
+      await service.updateAllowlist(['rule1', 'rule2']);
+      expect(service.state.allowlist.length, 2);
+      await service.clearAllowlist();
+      expect(service.state.allowlist, isEmpty);
+    });
+
+    test('白名单优先级高于黑名单 (Precedence: Allowlist > Denylist)', () async {
+      await service.enable(ttlMinutes: 60);
+
+      const dangerCmd = 'git push origin main --force';
+
+      // 1. 未加白时，命中黑地板，判定拦截
+      final deniedEval = service.evaluateCommand(dangerCmd);
+      expect(deniedEval.isAllowed, isFalse);
+      expect(deniedEval.reason, 'matched_danger_floor');
+
+      // 2. 加入白名单后，优先放行，绕过黑名单
+      await service.addToAllowlist(dangerCmd);
+      final allowedEval = service.evaluateCommand(dangerCmd);
+      expect(allowedEval.isAllowed, isTrue);
+      expect(allowedEval.reason, 'matched_whitelist');
+    });
+
+    test('白名单优先级高于 rm 作用域分析 (Precedence: Allowlist > Rm Scope)', () async {
+      await service.enable(ttlMinutes: 60);
+
+      const dangerousRm = 'rm -rf /';
+
+      // 1. 未加白时，由于超出安全目录被拦截
+      final deniedEval = service.evaluateCommand(dangerousRm);
+      expect(deniedEval.isAllowed, isFalse);
+      expect(deniedEval.reason, 'rm_target_out_of_bounds');
+
+      // 2. 加入白名单后，优先放行
+      await service.addToAllowlist(dangerousRm);
+      final allowedEval = service.evaluateCommand(dangerousRm);
+      expect(allowedEval.isAllowed, isTrue);
+      expect(allowedEval.reason, 'matched_whitelist');
+    });
+
+    test('无人值守未激活时，即使在白名单中也不自动放行', () async {
+      await service.disable();
+      await service.addToAllowlist('npm run build');
+
+      final eval = service.evaluateCommand('npm run build');
+      expect(eval.isAllowed, isFalse);
+      expect(eval.reason, 'unattended_inactive_or_expired');
+    });
+
+    test('代理脚本包含白名单检测与状态传递', () async {
+      await service.enable(ttlMinutes: 60);
+      final proxyJs = File(service.proxyJsPath);
+      expect(proxyJs.existsSync(), isTrue);
+
+      final content = proxyJs.readAsStringSync();
+      expect(content.contains('state.allowlist || []'), isTrue);
+      expect(content.contains('matched_whitelist'), isTrue);
+    });
+  });
 }

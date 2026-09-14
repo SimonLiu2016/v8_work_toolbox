@@ -479,6 +479,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       );
     } else {
       final failedCount = result.failedPaths.length;
+      final isRootOwnedRelated = result.hasRootOwnedFailures;
       final isContainersRelated = result.failedPaths.any((p) => p.contains('/Library/Containers/'));
 
       showDialog<void>(
@@ -539,22 +540,30 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 Container(
                   padding: const EdgeInsets.all(AppTheme.space10),
                   decoration: BoxDecoration(
-                    color: AppTheme.accentSubtle,
+                    color: isRootOwnedRelated ? AppTheme.errorSubtle : AppTheme.accentSubtle,
                     borderRadius: AppTheme.borderRadiusSmall,
-                    border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: (isRootOwnedRelated ? AppTheme.error : AppTheme.accent).withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isContainersRelated
-                            ? '原因：包含受 macOS 沙盒保护的 Containers 目录，需要赋予应用「完全磁盘访问权限」。'
-                            : '原因：文件受系统保护或缺少访问权限。',
+                        isRootOwnedRelated
+                            ? '原因：包含由系统管理员 (root) 拥有的项目，普通权限无法移入废纸篓。'
+                            : (isContainersRelated
+                                ? '原因：包含受 macOS 沙盒保护的 Containers 目录，需要赋予应用「完全磁盘访问权限」。'
+                                : '原因：文件受系统保护、被正在运行的进程占用或缺少访问权限。'),
                         style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: AppTheme.space4),
                       Text(
-                        '前往「系统设置 → 隐私与安全性 → 完全磁盘访问权限」添加 V8WorkToolbox 即可支持直接清理。您也可以在访达中手动删除。',
+                        isRootOwnedRelated
+                            ? '您可以点击下方「授权管理员清理」直接输入开机密码或使用 Touch ID 彻底清理，也可以在访达中手动删除。'
+                            : (isContainersRelated
+                                ? '前往「系统设置 → 隐私与安全性 → 完全磁盘访问权限」添加 V8WorkToolbox 即可支持直接清理。您也可以在访达中手动删除。'
+                                : '请确认相关程序已完全退出后重试，或在访达中手动删除。'),
                         style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
                       ),
                     ],
@@ -568,16 +577,71 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
               onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('稍后处理'),
             ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
-              icon: const Icon(Icons.security_rounded, size: 16),
-              label: const Text('打开系统设置'),
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                SystemService.instance.openFullDiskAccessSettings();
-              },
-            ),
+            if (result.failedPaths.isNotEmpty)
+              TextButton.icon(
+                icon: const Icon(Icons.folder_open_rounded, size: 16),
+                label: const Text('在访达中显示'),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _revealInFinder(result.failedPaths.first);
+                },
+              ),
+            if (isRootOwnedRelated)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.error,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.lock_open_rounded, size: 16),
+                label: const Text('授权管理员清理'),
+                onPressed: () async {
+                  Navigator.of(ctx).pop();
+                  await _cleanWithAdminPrivileges(result.rootOwnedFailedPaths);
+                },
+              )
+            else if (isContainersRelated)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.accent,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.security_rounded, size: 16),
+                label: const Text('打开系统设置'),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  SystemService.instance.openFullDiskAccessSettings();
+                },
+              ),
           ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _cleanWithAdminPrivileges(List<String> paths) async {
+    final adminResult = await SystemService.instance.recyclePathsWithAdminPrivileges(paths);
+    if (!mounted) return;
+
+    if (adminResult.successPaths.isNotEmpty) {
+      final successSet = adminResult.successPaths.toSet();
+      setState(() {
+        _items.removeWhere((it) => successSet.contains(it.path));
+      });
+      _loadDiskSpace();
+      final count = adminResult.successPaths.length;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已成功通过管理员权限清理 $count 个项目！'),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+    }
+
+    if (adminResult.failedPaths.isNotEmpty && adminResult.errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(adminResult.errorMessage!),
+          backgroundColor: adminResult.errorMessage!.contains('取消') ? AppTheme.warning : AppTheme.error,
         ),
       );
     }
@@ -1024,6 +1088,28 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                         style: TextStyle(color: safetyColor, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                     ),
+                    if (item.requiresAdmin) ...[
+                      const SizedBox(width: AppTheme.space6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.errorSubtle,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.lock_outline_rounded, size: 11, color: AppTheme.error),
+                            const SizedBox(width: 3),
+                            Text(
+                              '需管理员权限',
+                              style: AppTheme.fontCaption.copyWith(color: AppTheme.error, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     if (item.version != null) ...[
                       const SizedBox(width: AppTheme.space6),
                       Container(

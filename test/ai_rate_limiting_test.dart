@@ -8,6 +8,8 @@ import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
 import 'package:V8WorkToolbox/tools/slimmer/ai_disk_diagnostics_service.dart';
 import 'package:V8WorkToolbox/tools/slimmer/slimmer_models.dart';
+import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'test_keychain_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +18,10 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('v8_ai_rate_limit_test_');
+    TestKeychainBridge.install();
+    KeychainService.instance.setKekManagerForTesting(
+      TestKeychainBridge.makeManager(),
+    );
     AiService.instance.clearResolvedChatEndpoints();
   });
 

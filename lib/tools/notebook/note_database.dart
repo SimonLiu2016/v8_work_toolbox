@@ -98,8 +98,34 @@ class NoteDatabase extends _$NoteDatabase {
       } catch (_) {
         // Column already exists, ignore safely
       }
+      await _normalizeTextTimestamps();
     },
   );
+
+  /// 自愈：把 TEXT 形式的日期时间戳归一化为 drift 期望的 unix 秒整数。
+  ///
+  /// drift 的 DateTimeColumn 读取时会对原始值做 int 解析，一旦某行被外部工具
+  /// （如手工 sqlite3 脚本）写入 `datetime('now')` 这类 TEXT 时间戳，读取即抛
+  /// FormatException，导致笔记本列表、自动补全、导入预创建全部失败。此处
+  /// 在数据库打开时统一修复，避免整库不可用。
+  Future<void> _normalizeTextTimestamps() async {
+    const tables = {
+      'notebooks': ['created_at', 'updated_at'],
+      'notes': ['created_at', 'updated_at'],
+    };
+    for (final entry in tables.entries) {
+      for (final column in entry.value) {
+        try {
+          await customStatement(
+            'UPDATE ${entry.key} SET $column = strftime(\'%s\', $column) '
+            'WHERE typeof($column) = \'text\';',
+          );
+        } catch (_) {
+          // 表或列不存在时静默跳过
+        }
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Notebook CRUD

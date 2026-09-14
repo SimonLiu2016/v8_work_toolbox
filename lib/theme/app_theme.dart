@@ -160,6 +160,12 @@ class AppTheme {
         ),
         margin: EdgeInsets.zero,
       ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: accent,
+          foregroundColor: Colors.white,
+        ),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: bgInput,

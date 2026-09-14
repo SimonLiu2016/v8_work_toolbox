@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:appflowy_editor/appflowy_editor.dart';
+import 'appflowy_codec.dart';
 
 /// 笔记本数据模型（纯 Dart，不依赖 drift 生成代码）
 /// 用于 UI 层和导入/导出层的数据传递
@@ -48,44 +50,57 @@ class NoteModel {
     this.tags = const [],
   });
 
-  /// 从 Delta JSON 提取纯文本摘要（前 120 字符）
+  /// 提取纯文本摘要（前 120 字符），支持 AppFlowy JSON、Markdown 与历史 Delta JSON
   String get summary {
     try {
-      final ops = jsonDecode(deltaJson) as List<dynamic>;
-      final buffer = StringBuffer();
-      for (final op in ops) {
-        if (op is Map && op.containsKey('insert')) {
-          final insert = op['insert'];
-          if (insert is String) {
-            buffer.write(insert);
-          }
-        }
-        if (buffer.length >= 120) break;
+      if (deltaJson.contains('"document"')) {
+        final doc = Document.fromJson(jsonDecode(deltaJson) as Map<String, dynamic>);
+        return AppFlowyCodec.documentToSummary(doc);
       }
-      final text = buffer.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
-      return text.length > 120 ? '${text.substring(0, 120)}...' : text;
-    } catch (_) {
-      return '';
-    }
+      final decoded = jsonDecode(deltaJson);
+      if (decoded is List) {
+        final buffer = StringBuffer();
+        for (final op in decoded) {
+          if (op is Map && op.containsKey('insert')) {
+            final insert = op['insert'];
+            if (insert is String) {
+              buffer.write(insert);
+            }
+          }
+          if (buffer.length >= 120) break;
+        }
+        final text = buffer.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+        return text.length > 120 ? '${text.substring(0, 120)}...' : text;
+      }
+    } catch (_) {}
+
+    // 纯文本/Markdown 兜底
+    final clean = deltaJson.replaceAll(RegExp(r'[#*`\[\]\(\)|-]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    return clean.length > 120 ? '${clean.substring(0, 120)}...' : clean;
   }
 
-  /// 从 Delta JSON 提取纯文本（用于搜索索引）
+  /// 提取纯文本（用于搜索索引）
   String get plainText {
     try {
-      final ops = jsonDecode(deltaJson) as List<dynamic>;
-      final buffer = StringBuffer();
-      for (final op in ops) {
-        if (op is Map && op.containsKey('insert')) {
-          final insert = op['insert'];
-          if (insert is String) {
-            buffer.write(insert);
+      if (deltaJson.contains('"document"')) {
+        final doc = Document.fromJson(jsonDecode(deltaJson) as Map<String, dynamic>);
+        return AppFlowyCodec.documentToSummary(doc, maxLength: 100000);
+      }
+      final decoded = jsonDecode(deltaJson);
+      if (decoded is List) {
+        final buffer = StringBuffer();
+        for (final op in decoded) {
+          if (op is Map && op.containsKey('insert')) {
+            final insert = op['insert'];
+            if (insert is String) {
+              buffer.write(insert);
+            }
           }
         }
+        return buffer.toString();
       }
-      return buffer.toString();
-    } catch (_) {
-      return '';
-    }
+    } catch (_) {}
+    return deltaJson;
   }
 }
 

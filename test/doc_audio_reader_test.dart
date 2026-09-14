@@ -16,6 +16,31 @@ import 'package:V8WorkToolbox/tools/registry.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_logger.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'package:V8WorkToolbox/tools/password/crypto/kek_manager.dart';
+
+/// 测试用内存 Keychain 桥（flutter test 无平台通道，真实 Keychain 不可用）
+class _TestKeychainBridge implements KeychainBridge {
+  static final Map<String, String> store = {};
+
+  @override
+  Future<String?> read({required String service, required String account}) async {
+    return store['$service/$account'];
+  }
+
+  @override
+  Future<void> write({
+    required String service,
+    required String account,
+    required String value,
+  }) async {
+    store['$service/$account'] = value;
+  }
+
+  @override
+  Future<void> delete({required String service, required String account}) async {
+    store.remove('$service/$account');
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -335,6 +360,10 @@ Guide is very helpful.''';
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('doc_reader_ai_test_');
+      _TestKeychainBridge.store.clear();
+      KeychainService.instance.setKekManagerForTesting(
+        KekManager(bridge: _TestKeychainBridge()),
+      );
       await KeychainService.instance.init(customRootDir: tempDir);
       await AiConfigStore.instance.init(customRootDir: tempDir);
     });

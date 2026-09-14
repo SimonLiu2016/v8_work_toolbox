@@ -239,8 +239,9 @@ class MarkdownConverter {
 
   static String _handleEmbed(Map<String, dynamic> embed) {
     if (embed.containsKey('image')) {
-      final url = embed['image'].toString();
-      return '![]($url)';
+      final url = embed['image'].toString().trim();
+      final formattedUrl = url.contains(' ') && !url.startsWith('<') ? '<$url>' : url;
+      return '![]($formattedUrl)';
     }
     if (embed.containsKey('code_block')) {
       try {
@@ -262,6 +263,9 @@ class MarkdownConverter {
         return '\n```mindmap\n${embed['mindmap']}\n```\n';
       }
     }
+    if (embed.containsKey('table')) {
+      return _tableToMarkdown(embed['table']);
+    }
     if (embed.containsKey('video')) {
       final url = embed['video'].toString();
       return '[Video]($url)';
@@ -271,6 +275,87 @@ class MarkdownConverter {
       return '[📎 $name]($name)';
     }
     return '';
+  }
+
+  /// 把表格 embed 渲染成 GFM 管道表格。
+  ///
+  /// 首行固定为表头（`style: 'header'`），与编辑器里首行加粗底色的呈现保持一致。
+  static String _tableToMarkdown(dynamic raw) {
+    try {
+      final map = raw is Map ? raw : jsonDecode(raw.toString());
+      final rowsRaw = map['rows'];
+      if (rowsRaw is! List || rowsRaw.isEmpty) return '';
+
+      final rows = <List<String>>[];
+      for (final r in rowsRaw) {
+        if (r is! List) continue;
+        rows.add(r.map(_tableCellText).toList());
+      }
+      if (rows.isEmpty) return '';
+
+      final colCount = rows.fold(0, (max, r) => r.length > max ? r.length : max);
+      final sb = StringBuffer();
+      sb.write('|');
+      for (int c = 0; c < colCount; c++) {
+        sb.write(rows.isNotEmpty && c < rows[0].length ? _tableEscape(rows[0][c]) : '');
+        sb.write(' |');
+      }
+      sb.write('\n|');
+      for (int c = 0; c < colCount; c++) {
+        sb.write(' --- |');
+      }
+      sb.write('\n');
+      for (var r = 1; r < rows.length; r++) {
+        sb.write('|');
+        for (int c = 0; c < colCount; c++) {
+          sb.write(c < rows[r].length ? _tableEscape(rows[r][c]) : '');
+          sb.write(' |');
+        }
+        sb.write('\n');
+      }
+      return sb.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String _tableCellText(dynamic cell) {
+    if (cell is String) return cell;
+    if (cell is Map) return (cell['text']?.toString() ?? '');
+    return cell?.toString() ?? '';
+  }
+
+  static String _tableEscape(String s) => s.replaceAll('|', r'\|');
+
+  /// GFM 分隔行：单元格只能是 `:---` 这种对齐标记。
+  static bool _isMarkdownTableSeparator(String line) {
+    final trimmed = line.trim();
+    if (!trimmed.contains('|') || !RegExp(r'^[\s|:\-]+$').hasMatch(trimmed)) return false;
+    final cells = _splitMarkdownTableRow(trimmed);
+    if (cells.isEmpty) return false;
+    return cells.every((c) => RegExp(r'^:?-{3,}:?$').hasMatch(c.trim()));
+  }
+
+  static List<String> _splitMarkdownTableRow(String line) {
+    var s = line.trim();
+    if (s.startsWith('|')) s = s.substring(1);
+    if (s.endsWith('|')) s = s.substring(0, s.length - 1);
+    // 按竖线拆列，跳过转义的 \|
+    final cells = <String>[];
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == '\\' && i + 1 < s.length && s[i + 1] == '|') {
+        buf.write('|');
+        i++; // skip '|'
+      } else if (s[i] == '|') {
+        cells.add(buf.toString().trim());
+        buf.clear();
+      } else {
+        buf.write(s[i]);
+      }
+    }
+    cells.add(buf.toString().trim());
+    return cells;
   }
 
   // ---------------------------------------------------------------------------
@@ -295,6 +380,28 @@ class MarkdownConverter {
     int i = 0;
     while (i < lines.length) {
       final line = lines[i];
+
+      // GFM 管道表格：表头行 + `| --- |` 分隔行。
+      if (line.contains('|') &&
+          i + 1 < lines.length &&
+          _isMarkdownTableSeparator(lines[i + 1])) {
+        final header = _splitMarkdownTableRow(line);
+        i += 2;
+        final rows = <List<String>>[header];
+        while (i < lines.length && lines[i].contains('|') && lines[i].trim().isNotEmpty) {
+          rows.add(_splitMarkdownTableRow(lines[i]));
+          i++;
+        }
+        final cells = <List<Map<String, dynamic>>>[];
+        for (var r = 0; r < rows.length; r++) {
+          cells.add(rows[r]
+              .map((t) => {'text': t, 'style': r == 0 ? 'header' : ''})
+              .toList());
+        }
+        ops.add({'insert': {'table': {'rows': cells}}});
+        ops.add({'insert': '\n'});
+        continue;
+      }
 
       // Mind map block
       if (line.trimLeft().startsWith('```mindmap')) {

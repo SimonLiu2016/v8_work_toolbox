@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import 'appflowy_codec.dart';
 import 'note_database.dart';
 import 'note_store.dart';
 
@@ -342,11 +343,14 @@ class EvernoteImportService {
         }
 
         // 查找是否已存在同名笔记（避免重复导入时生成冗余副本）
+        // 去重策略：先按同笔记本下同名，再按全局同名（空间笔记重新归属时
+        // 旧副本可能还在原笔记本，如"空间笔记本_..."杂烩），最后兜底回收站
         Note? existingNote;
         if (nbId != null) {
           final nbNotes = await store.notesForNotebook(nbId);
           existingNote = nbNotes.where((n) => n.title == title).firstOrNull;
         }
+        existingNote ??= await _findGlobalDuplicate(title);
         final noteId = existingNote?.id ?? const Uuid().v4();
 
         // 优先保存附件资源并建立哈希与文件名映射，供正文图片回填定位
@@ -382,11 +386,12 @@ class EvernoteImportService {
 
         String deltaJson;
         if (markdown != null && markdown.isNotEmpty) {
-          deltaJson = _markdownToDelta(markdown, attachmentMap);
+          deltaJson = markdownToAppFlowyJson(markdown, attachmentMap);
         } else if (isEncrypted) {
-          deltaJson = '[{"insert":"[加密内容 - 官方专有格式，未能匹配到本机客户端明文]\\n"}]';
+          final doc = AppFlowyCodec.parseToDocument('[加密内容 - 官方专有格式，未能匹配到本机客户端明文]');
+          deltaJson = AppFlowyCodec.documentToJson(doc);
         } else {
-          deltaJson = '[{"insert":"\\n"}]';
+          deltaJson = AppFlowyCodec.documentToJson(AppFlowyCodec.parseToDocument(''));
         }
 
         final createdStr = note['created'] as String?;
@@ -444,6 +449,76 @@ class EvernoteImportService {
       failed: failed,
       errors: errors,
     );
+  }
+
+  /// 将 Markdown 内容及关联附件路径转换为 AppFlowy Document JSON 格式
+  String markdownToAppFlowyJson(String markdown, [Map<String, String> attachmentMap = const {}]) {
+    var resolved = markdown;
+
+    // 1. 处理思维导图块 ```mindmap 中的 hash
+    final mindmapRegex = RegExp(r'```mindmap\s*([\s\S]*?)\s*```');
+    resolved = resolved.replaceAllMapped(mindmapRegex, (match) {
+      final rawData = match.group(1) ?? '';
+      try {
+        final parsed = jsonDecode(rawData) as Map<String, dynamic>;
+        final hash = parsed['hash'] as String?;
+        if (hash != null && attachmentMap.containsKey(hash.toLowerCase())) {
+          parsed['svg_path'] = attachmentMap[hash.toLowerCase()];
+          return '```mindmap\n${jsonEncode(parsed)}\n```';
+        }
+      } catch (_) {}
+      return match.group(0)!;
+    });
+
+    // 2. 替换 en-media://hash 为本地文件路径
+    final enMediaRegex = RegExp(r'!\[(.*?)\]\(en-media://([a-zA-Z0-9_-]+)\)');
+    resolved = resolved.replaceAllMapped(enMediaRegex, (match) {
+      final alt = match.group(1) ?? '';
+      final hash = match.group(2)!.toLowerCase();
+      final localPath = attachmentMap[hash];
+      if (localPath != null) {
+        return '![$alt]($localPath)';
+      }
+      return match.group(0)!;
+    });
+
+    // 3. 替换直接引用文件名的图片
+    final imgRegex = RegExp(r'!\[(.*?)\]\((.*?)\)');
+    resolved = resolved.replaceAllMapped(imgRegex, (match) {
+      final alt = match.group(1) ?? '';
+      final url = match.group(2)!.trim();
+      if (attachmentMap.containsKey(url.toLowerCase())) {
+        return '![$alt](${attachmentMap[url.toLowerCase()]})';
+      }
+      return match.group(0)!;
+    });
+
+    // 4. 统计已引用的图片，补齐未在正文中出现的图片附件
+    final usedImages = <String>{};
+    for (final m in imgRegex.allMatches(resolved)) {
+      usedImages.add(m.group(2)!.trim());
+    }
+
+    final unreferencedImages = <String>[];
+    for (final entry in attachmentMap.entries) {
+      final path = entry.value;
+      if (_isImageFilePath(path) && !usedImages.contains(path)) {
+        usedImages.add(path);
+        unreferencedImages.add(path);
+      }
+    }
+
+    if (unreferencedImages.isNotEmpty) {
+      final sb = StringBuffer(resolved);
+      sb.writeln('\n');
+      for (final imgPath in unreferencedImages) {
+        sb.writeln('![]($imgPath)');
+      }
+      resolved = sb.toString();
+    }
+
+    final doc = AppFlowyCodec.parseToDocument(resolved);
+    return AppFlowyCodec.documentToJson(doc);
   }
 
   /// 供测试与外部调用的 Markdown → Quill Delta 转换入口
@@ -696,6 +771,21 @@ class EvernoteImportService {
     if (mime.contains('pdf')) return '.pdf';
     if (mime.contains('svg')) return '.svg';
     return '.bin';
+  }
+
+  /// 全局同名查重（跨笔记本，含已删除笔记），空间笔记重新归属时
+  /// 旧副本可能还留在原笔记本（如"空间笔记本_..."杂烩）或回收站
+  Future<Note?> _findGlobalDuplicate(String title) async {
+    // 遍历所有笔记本查同名
+    final notebooks = await NoteStore.instance.allNotebooks();
+    for (final nb in notebooks) {
+      final notes = await NoteStore.instance.notesForNotebook(nb.id);
+      final match = notes.where((n) => n.title == title).firstOrNull;
+      if (match != null) return match;
+    }
+    // 回收站兜底
+    final deleted = await NoteStore.instance.deletedNotes();
+    return deleted.where((n) => n.title == title).firstOrNull;
   }
 
   static bool _isImageFilePath(String filePath) {
