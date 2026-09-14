@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../../components/markdown_view.dart';
 import '../../services/ai_config_store.dart';
@@ -24,6 +25,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   List<SlimCandidateItem> _items = [];
   SlimmerCategory? _selectedCategory;
+  ProjectTechStack? _selectedTechStack;
   ScanProgress? _scanProgress;
   bool _isBatchDiagnosing = false;
   String _aiDiagnosingStatus = ''; // AI 研判进度文本
@@ -33,11 +35,16 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   int _batchConcurrency = 1;
   int _batchMaxRetries = 10;
 
+  // 项目构建产物：额外项目根与产物类型开关
+  List<String> _extraRoots = [];
+  Map<String, bool> _artifactOptions = {};
+
   @override
   void initState() {
     super.initState();
     _loadDiskSpace();
     _loadBatchConfig();
+    _loadProjectArtifactConfig();
     // 移除自动扫描，由用户主动点击按钮触发
   }
 
@@ -49,6 +56,43 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         _batchMaxRetries = config.maxRetries;
       });
     }
+  }
+
+  Future<void> _loadProjectArtifactConfig() async {
+    final config =
+        await SettingsStore.instance.getSlimerProjectArtifactConfig();
+    if (!mounted) return;
+    setState(() {
+      _extraRoots = config.extraRoots;
+      _artifactOptions = Map<String, bool>.from(config.artifactOptions);
+    });
+  }
+
+  Future<void> _saveProjectArtifactConfig() async {
+    await SettingsStore.instance.saveSlimerProjectArtifactConfig(
+      SlimerProjectArtifactConfig(
+        extraRoots: _extraRoots,
+        artifactOptions: _artifactOptions,
+      ),
+    );
+  }
+
+  /// 项目构建产物设置：额外项目根（豁免 manifest 门控）与产物类型开关。
+  void _showProjectArtifactSettings() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _ProjectArtifactSettingsDialog(
+        initialRoots: _extraRoots,
+        initialOptions: _artifactOptions,
+        onSave: (roots, options) {
+          setState(() {
+            _extraRoots = roots;
+            _artifactOptions = options;
+          });
+          _saveProjectArtifactConfig();
+        },
+      ),
+    );
   }
 
   Future<void> _loadDiskSpace() async {
@@ -63,6 +107,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       _hasScanned = true;
       _items = [];
       _scanProgress = null;
+      _selectedTechStack = null;
     });
 
     _scanner.startScan(
@@ -118,12 +163,20 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     }
   }
 
+  /// 当前筛选视图（分类 + 项目产物技术栈）
+  List<SlimCandidateItem> get filteredItems {
+    final cat = _selectedCategory;
+    final tech = _selectedTechStack;
+    if (cat == null && tech == null) return _items;
+    return _items
+        .where((it) =>
+            (cat == null || it.category == cat) &&
+            (tech == null || it.techStack == tech))
+        .toList();
+  }
+
   /// 全选当前筛选视图中的所有条目
   void _selectAll() {
-    final filteredItems = _selectedCategory == null
-        ? _items
-        : _items.where((it) => it.category == _selectedCategory).toList();
-
     setState(() {
       for (final filtered in filteredItems) {
         final idx = _items.indexWhere((it) => it.id == filtered.id);
@@ -136,10 +189,6 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   /// 取消全选当前筛选视图中的所有条目
   void _deselectAll() {
-    final filteredItems = _selectedCategory == null
-        ? _items
-        : _items.where((it) => it.category == _selectedCategory).toList();
-
     setState(() {
       for (final filtered in filteredItems) {
         final idx = _items.indexWhere((it) => it.id == filtered.id);
@@ -664,10 +713,6 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredItems = _selectedCategory == null
-        ? _items
-        : _items.where((it) => it.category == _selectedCategory).toList();
-
     final selectedTotalBytes = _items
         .where((it) => it.isSelected)
         .fold<int>(0, (sum, it) => sum + it.sizeBytes);
@@ -701,6 +746,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
               // 分类标签栏
               _buildCategoryTabs(),
+              if (_selectedCategory == SlimmerCategory.projectArtifacts) ...[
+                const SizedBox(height: AppTheme.space8),
+                _buildTechStackChips(),
+              ],
               const SizedBox(height: AppTheme.space12),
 
               // 列表区域
@@ -723,14 +772,18 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                           ],
                         ),
                       )
-                    : ListView.separated(
-                        itemCount: filteredItems.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: AppTheme.space8),
-                        itemBuilder: (ctx, idx) {
-                          final item = filteredItems[idx];
-                          return _buildItemTile(item);
-                        },
-                      ),
+                    : _selectedCategory == SlimmerCategory.projectArtifacts &&
+                            _selectedTechStack == null
+                        ? _buildTechStackGroups()
+                        : ListView.separated(
+                            itemCount: filteredItems.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: AppTheme.space8),
+                            itemBuilder: (ctx, idx) {
+                              final item = filteredItems[idx];
+                              return _buildItemTile(item);
+                            },
+                          ),
               ),
             ],
           ],
@@ -916,6 +969,11 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 ),
                 onPressed: selectedBytes > 0 ? _performCleanSelected : null,
               ),
+              IconButton(
+                icon: const Icon(Icons.folder_special_rounded, size: 18),
+                tooltip: '项目构建产物设置（额外项目根 / 产物类型开关）',
+                onPressed: _showProjectArtifactSettings,
+              ),
             ],
           ),
           const SizedBox(height: AppTheme.space12),
@@ -1002,6 +1060,81 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     );
   }
 
+  /// 项目产物按技术栈分组：组是列表行，项目根是组的展开明细。
+  Widget _buildTechStackGroups() {
+    final artifactItems = filteredItems
+        .where((it) => it.category == SlimmerCategory.projectArtifacts)
+        .toList();
+    final groups = <(ProjectTechStack, List<SlimCandidateItem>)>[
+      for (final tech in ProjectTechStack.values)
+        (tech, artifactItems.where((it) => it.techStack == tech).toList())
+    ].where((g) => g.$2.isNotEmpty).toList();
+    return ListView.separated(
+      itemCount: groups.length,
+      separatorBuilder: (_, __) => const SizedBox(height: AppTheme.space8),
+      itemBuilder: (ctx, idx) {
+        final tech = groups[idx].$1;
+        final groupItems = groups[idx].$2;
+        final total = groupItems.fold<int>(0, (sum, it) => sum + it.sizeBytes);
+        return _buildTechStackGroupTile(tech, groupItems, total);
+      },
+    );
+  }
+
+  Widget _buildTechStackGroupTile(
+      ProjectTechStack tech, List<SlimCandidateItem> items, int totalBytes) {
+    bool expanded = false;
+    return StatefulBuilder(
+      builder: (ctx, setExpanded) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard,
+            borderRadius: AppTheme.borderRadiusSmall,
+            border: Border.all(color: AppTheme.borderSubtle),
+          ),
+          child: Column(
+            children: [
+              InkWell(
+                onTap: () => setExpanded(() => expanded = !expanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppTheme.space12, vertical: AppTheme.space10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                        size: 20,
+                        color: AppTheme.accent,
+                      ),
+                      const SizedBox(width: AppTheme.space10),
+                      Expanded(
+                        child: Text(
+                          '${tech.label}（${items.length} 个项目）',
+                          style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Text(
+                        _formatSize(totalBytes),
+                        style: AppTheme.fontTitle.copyWith(color: AppTheme.textPrimary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (expanded) ...[
+                const Divider(height: 1, color: AppTheme.borderSubtle),
+                for (final item in items) ...[
+                  _buildItemTile(item),
+                  const SizedBox(height: AppTheme.space4),
+                ],
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildCategoryTabs() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -1016,6 +1149,45 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// 技术栈筛选（仅"项目构建产物"分类下呈现，组 = chip）
+  Widget _buildTechStackChips() {
+    final artifactItems =
+        _items.where((it) => it.category == SlimmerCategory.projectArtifacts).toList();
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildTechChip(null, '全部技术栈 (${artifactItems.length})'),
+          for (final tech in ProjectTechStack.values) ...[
+            const SizedBox(width: AppTheme.space8),
+            _buildTechChip(
+              tech,
+              '${tech.label} (${artifactItems.where((it) => it.techStack == tech).length})',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTechChip(ProjectTechStack? tech, String label) {
+    final isSelected = _selectedTechStack == tech;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _selectedTechStack = tech),
+      selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+      labelStyle: TextStyle(
+        color: isSelected ? AppTheme.accent : AppTheme.textSecondary,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      backgroundColor: AppTheme.bgCard,
+      side: BorderSide(
+        color: isSelected ? AppTheme.accent : AppTheme.borderSubtle,
       ),
     );
   }
@@ -1035,6 +1207,75 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       side: BorderSide(
         color: isSelected ? AppTheme.accent : AppTheme.borderSubtle,
       ),
+    );
+  }
+
+  /// 项目根内的产物目录明细（path + size），展开可见
+  Widget _buildArtifactDetail(SlimCandidateItem item) {
+    final artifacts = item.artifacts
+        .toList()
+      ..sort((a, b) => b.sizeBytes.compareTo(a.sizeBytes));
+    bool detailExpanded = false;
+    final top = artifacts.length > 3 ? artifacts.sublist(0, 3) : artifacts;
+    return StatefulBuilder(
+      builder: (ctx, setDetailExpanded) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final a in top)
+              Row(
+                children: [
+                  Icon(Icons.folder_outlined, size: 12, color: AppTheme.textTertiary),
+                  const SizedBox(width: AppTheme.space6),
+                  Expanded(
+                    child: Text(
+                      a.path,
+                      style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: AppTheme.space6),
+                  Text(
+                    _formatSize(a.sizeBytes),
+                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+            if (artifacts.length > top.length) ...[
+              const SizedBox(height: AppTheme.space4),
+              TextButton(
+                onPressed: () => setDetailExpanded(() => detailExpanded = !detailExpanded),
+                child: Text(
+                  detailExpanded ? '收起' : '展开其余 ${artifacts.length - top.length} 项',
+                  style: AppTheme.fontCaption.copyWith(color: AppTheme.accent),
+                ),
+              ),
+              if (detailExpanded)
+                for (final a in artifacts.sublist(top.length))
+                  Row(
+                    children: [
+                      Icon(Icons.folder_outlined, size: 12, color: AppTheme.textTertiary),
+                      const SizedBox(width: AppTheme.space6),
+                      Expanded(
+                        child: Text(
+                          a.path,
+                          style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: AppTheme.space6),
+                      Text(
+                        _formatSize(a.sizeBytes),
+                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -1124,6 +1365,21 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                         ),
                       ),
                     ],
+                    if (item.scanIncomplete) ...[
+                      const SizedBox(width: AppTheme.space6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.warning.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+                        ),
+                        child: const Text(
+                          '扫描超时 / 未完整',
+                          style: TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
                     if (item.userMarkedKeep) ...[
                       const SizedBox(width: AppTheme.space6),
                       Container(
@@ -1147,6 +1403,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                if (item.artifacts.isNotEmpty) ...[
+                  const SizedBox(height: AppTheme.space4),
+                  _buildArtifactDetail(item),
+                ],
                 if (item.aiAdvice != null) ...[
                   const SizedBox(height: 4),
                   Row(
@@ -1193,6 +1453,196 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         ],
       ),
     );
+  }
+}
+
+class _ProjectArtifactSettingsDialog extends StatefulWidget {
+  final List<String> initialRoots;
+  final Map<String, bool> initialOptions;
+  final void Function(List<String> roots, Map<String, bool> options) onSave;
+
+  const _ProjectArtifactSettingsDialog({
+    required this.initialRoots,
+    required this.initialOptions,
+    required this.onSave,
+  });
+
+  @override
+  State<_ProjectArtifactSettingsDialog> createState() =>
+      _ProjectArtifactSettingsDialogState();
+}
+
+class _ProjectArtifactSettingsDialogState
+    extends State<_ProjectArtifactSettingsDialog> {
+  final TextEditingController _rootController = TextEditingController();
+  List<String> _roots = [];
+  Map<String, bool> _options = {};
+
+  /// 可选产物类型（与 ProjectArtifactDetector.artifactNames 对齐）
+  static const List<String> _knownArtifactNames = [
+    'build',
+    'target',
+    'node_modules',
+    'dist',
+    '.dart_tool',
+    '.gradle',
+    'cmake-build-debug',
+    'out',
+    '__pycache__',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _roots = List<String>.from(widget.initialRoots);
+    _options = Map<String, bool>.from(widget.initialOptions);
+  }
+
+  @override
+  void dispose() {
+    _rootController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDirectory() async {
+    final result = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: '选择要加入的项目根目录',
+    );
+    if (result == null || result.isEmpty) return;
+    if (_roots.contains(result)) return;
+    setState(() => _roots = [..._roots, result]);
+  }
+
+  void _toggleOption(String name, bool value) {
+    setState(() => _options = {..._options, name: value});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppTheme.bgCard,
+      shape: RoundedRectangleBorder(borderRadius: AppTheme.borderRadiusMedium),
+      title: const Text('项目构建产物设置', style: AppTheme.fontTitle),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '自动发现依赖项目根内的构建清单信号（.git / package.json / pubspec.yaml / '
+              'build.gradle / Podfile / CMakeLists.txt / go.mod）。以下项目根为"额外指定"，'
+              '不受清单信号限制；不在工作区内的产物需手动添加项目根。',
+              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: AppTheme.space12),
+            const Text('额外项目根', style: AppTheme.fontBody),
+            const SizedBox(height: AppTheme.space8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _rootController,
+                    style: AppTheme.fontBody,
+                    decoration: InputDecoration(
+                      hintText: '输入项目根目录路径',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onSubmitted: (_) => _addFromInput(),
+                  ),
+                ),
+                const SizedBox(width: AppTheme.space8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('添加'),
+                  onPressed: _addFromInput,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_open_rounded, size: 16),
+                  label: const Text('选择'),
+                  onPressed: _pickDirectory,
+                ),
+              ],
+            ),
+            if (_roots.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: AppTheme.space8),
+                child: Text(
+                  '（空）',
+                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                ),
+              )
+            else
+              const SizedBox(height: AppTheme.space8),
+            for (final root in _roots)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppTheme.space4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        root,
+                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                          Icons.close_rounded, size: 14, color: AppTheme.textTertiary),
+                      onPressed: () =>
+                          setState(() => _roots = _roots.where((r) => r != root).toList()),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: AppTheme.space12),
+            const Text('产物类型开关', style: AppTheme.fontBody),
+            const SizedBox(height: AppTheme.space8),
+            for (final name in _knownArtifactNames)
+              CheckboxListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 0),
+                title: Text(
+                  name,
+                  style: AppTheme.fontBody.copyWith(
+                    fontFamily: 'Menlo',
+                    fontSize: 13,
+                  ),
+                ),
+                value: _options[name] ?? true,
+                onChanged: (v) => _toggleOption(name, v ?? false),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.accent,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () {
+            widget.onSave(List<String>.from(_roots), Map<String, bool>.from(_options));
+            Navigator.pop(context);
+          },
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  void _addFromInput() {
+    final path = _rootController.text.trim();
+    if (path.isEmpty || _roots.contains(path)) return;
+    setState(() => _roots = [..._roots, path]);
+    _rootController.clear();
   }
 }
 

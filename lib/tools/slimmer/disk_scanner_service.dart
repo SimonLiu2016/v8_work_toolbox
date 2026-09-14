@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+import '../../services/settings_store.dart';
 import 'app_orphan_detector.dart';
 import 'multi_version_scanner.dart';
+import 'project_artifact_detector.dart';
 import 'slimmer_models.dart';
 
 /// 扫描进度状态
@@ -82,18 +84,58 @@ class DiskScannerService {
       // ─────────────────────────────────────────────────────────────
       // 阶段 3: 深度孤立卸载残留匹配
       // ─────────────────────────────────────────────────────────────
-      notify(3, '正在比对已安装应用，查找已卸载软件残留...', 0.75);
+      notify(3, '正在比对已安装应用，查找已卸载软件残留...', 0.70);
       await _orphanDetector.initialize();
-      notify(3, '正在分析 ~/Library 孤立目录与容器...', 0.85);
+      notify(3, '正在分析 ~/Library 孤立目录与容器...', 0.74);
       final orphanItems = await _orphanDetector.scanOrphans();
       allItems.addAll(orphanItems);
       totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
-      notify(3, '全盘分级扫描完成', 1.0, done: true);
+
+      // ─────────────────────────────────────────────────────────────
+      // 阶段 4: 项目构建产物（manifest 门控 + 发现预算）
+      // ─────────────────────────────────────────────────────────────
+      notify(4, '正在发现项目根...', 0.80);
+      final artifactItems = await _scanProjectArtifacts(onProgress: notify);
+      allItems.addAll(artifactItems);
+      totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
+      notify(4, '全盘分级扫描完成', 1.0, done: true);
       yield List.of(allItems);
 
     } finally {
       _isScanning = false;
     }
+  }
+
+  /// 阶段 4：项目构建产物。
+  ///
+  /// Tier A 浅层 manifest 发现项目根（秒级，不读大小）；Tier B 仅在识别出的
+  /// 项目根内做剪枝收集，按根设预算，超预算标记"未完整"而非静默丢弃。
+  Future<List<SlimCandidateItem>> _scanProjectArtifacts({
+    void Function(int stage, String name, double p, {bool done})? onProgress,
+  }) async {
+    final config = await SettingsStore.instance.getSlimerProjectArtifactConfig();
+    final detector = ProjectArtifactDetector(
+      watchlist: config.extraRoots,
+      artifactOptions: config.artifactOptions,
+    );
+
+    final roots = await detector.discoverProjectRoots();
+    if (roots.isEmpty) return const <SlimCandidateItem>[];
+
+    final items = <SlimCandidateItem>[];
+    var done = 0;
+    await for (final emitted in detector.collect(roots)) {
+      items
+        ..clear()
+        ..addAll(emitted);
+      onProgress?.call(
+        4,
+        '正在收集项目构建产物 ${done + 1}/$roots.length',
+        0.80 + 0.20 * ((done + 1) / roots.length),
+      );
+      done++;
+    }
+    return items;
   }
 
   Future<List<SlimCandidateItem>> _scanInstantTargets(String home) async {

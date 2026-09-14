@@ -226,8 +226,23 @@ class SettingsStore {
   // 最近使用与全局快捷键辅助接口
   // ---------------------------------------------------------------------------
 
+  /// 已并入的工具标识重定向表：被移除工具 → 承接工具。
+  ///
+  /// 最近使用记录里若保存了被移除工具的标识，读取时透明替换为承接工具，
+  /// 避免用户看到无法打开的条目。
+  static const Map<String, String> removedToolRedirects = {
+    'clean-builds': 'smart-disk-slimmer',
+  };
+
   List<String> getRecentToolIds() {
-    return List<String>.from(_appConfig['recentTools'] ?? []);
+    final raw = List<String>.from(_appConfig['recentTools'] ?? []);
+    final seen = <String>{};
+    final result = <String>[];
+    for (final id in raw) {
+      final mapped = removedToolRedirects[id] ?? id;
+      if (seen.add(mapped)) result.add(mapped);
+    }
+    return result;
   }
 
   Future<void> recordToolUsed(String toolId) async {
@@ -333,7 +348,88 @@ class SettingsStore {
     return SlimerBatchConfig.fromJson(json);
   }
 
+  /// 写入批量诊断配置时合并而非整体覆盖，避免冲掉同一配置文件里的
+  /// `extraRoots` / `artifactOptions`（项目构建产物配置）。
   Future<void> saveSlimerBatchConfig(SlimerBatchConfig config) async {
-    await writeToolConfig('smart-disk-slimmer', config.toJson());
+    final json = await readToolConfig('smart-disk-slimmer');
+    json.addAll(config.toJson());
+    await writeToolConfig('smart-disk-slimmer', json);
   }
+
+  // ---------------------------------------------------------------------------
+  // 磁盘瘦身项目构建产物配置 (config/smart-disk-slimmer.json)
+  // ---------------------------------------------------------------------------
+
+  /// 额外项目根 + 产物类型开关。首次读取时惰性继承已并入的
+  /// "清理构建产物"（clean-builds）配置。
+  Future<SlimerProjectArtifactConfig> getSlimerProjectArtifactConfig() async {
+    final json = await readToolConfig('smart-disk-slimmer');
+    await _inheritCleanBuildsConfigIfNeeded(json);
+    return SlimerProjectArtifactConfig.fromJson(json);
+  }
+
+  Future<void> saveSlimerProjectArtifactConfig(
+      SlimerProjectArtifactConfig config) async {
+    final json = await readToolConfig('smart-disk-slimmer');
+    json.addAll(config.toJson());
+    await writeToolConfig('smart-disk-slimmer', json);
+  }
+
+  /// 工具合并时的配置继承：把 `clean-builds` 的项目根 watchlist 与产物类型
+  /// 开关搬进瘦身配置。
+  ///
+  /// 语义：复制而非移动（`clean-builds.json` 原文件保留不删除）、只执行一次
+  /// （以 `slimmerInheritedFromCleanBuilds` 为标记）、不覆盖用户在承接键中
+  /// 已填入的内容（仅当目标字段为空时才继承）。
+  Future<void> _inheritCleanBuildsConfigIfNeeded(
+      Map<String, dynamic> json) async {
+    if (json['slimmerInheritedFromCleanBuilds'] == true) return;
+
+    final cleanBuilds = await readToolConfig('clean-builds');
+    final sourceRoots = _extractCleanBuildsRoots(cleanBuilds);
+    final sourceOptions = _extractCleanBuildsArtifactOptions(cleanBuilds);
+
+    if (json['extraRoots'] == null || _isEmptyList(json['extraRoots'])) {
+      final existing = json['extraRoots'];
+      final merged = existing is List
+          ? <String>[...existing.map((e) => e.toString())]
+          : <String>[];
+      for (final root in sourceRoots) {
+        if (!merged.contains(root)) merged.add(root);
+      }
+      json['extraRoots'] = merged;
+    }
+    if (json['artifactOptions'] == null ||
+        json['artifactOptions'] is! Map ||
+        (json['artifactOptions'] as Map).isEmpty) {
+      json['artifactOptions'] = sourceOptions;
+    }
+
+    json['slimmerInheritedFromCleanBuilds'] = true;
+    await writeToolConfig('smart-disk-slimmer', json);
+  }
+
+  static List<String> _extractCleanBuildsRoots(Map<String, dynamic> json) {
+    final result = <String>[];
+    final configs = json['configs'];
+    if (configs is! List) return result;
+    for (final entry in configs) {
+      if (entry is Map) {
+        final path = entry['path']?.toString() ?? '';
+        if (path.trim().isNotEmpty && !result.contains(path)) {
+          result.add(path);
+        }
+      }
+    }
+    return result;
+  }
+
+  static Map<String, bool> _extractCleanBuildsArtifactOptions(
+      Map<String, dynamic> json) {
+    final options = json['artifactOptions'];
+    if (options is! Map) return const <String, bool>{};
+    return options.map((k, v) => MapEntry(k.toString(), v == true));
+  }
+
+  static bool _isEmptyList(Object? value) => value is List && value.isEmpty;
 }

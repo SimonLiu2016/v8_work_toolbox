@@ -5,7 +5,6 @@ import '../app_shortcut_tool.dart';
 import '../batch_rename_tool.dart';
 import '../bc_config_shell.dart';
 import '../bc_config_tool.dart';
-import '../clean_builds_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import '../kma_package_tool.dart';
@@ -127,21 +126,6 @@ class AppShortcutToolDefinition extends ToolDefinition {
   ToolCategory get category => ToolCategory.system;
   @override
   Widget buildPage(BuildContext context) => const AppShortcutToolPage();
-}
-
-class CleanBuildsToolDefinition extends ToolDefinition {
-  @override
-  String get id => 'clean-builds';
-  @override
-  String get title => '清理构建产物';
-  @override
-  String get subtitle => '扫描并删除 build/ target 等缓存';
-  @override
-  IconData get icon => Icons.cleaning_services;
-  @override
-  ToolCategory get category => ToolCategory.build;
-  @override
-  Widget buildPage(BuildContext context) => const CleanBuildsHomePage();
 }
 
 class SmartDiskSlimmerToolDefinition extends ToolDefinition {
@@ -317,7 +301,6 @@ class ToolRegistry {
     ImageResizeToolDefinition(),
     // 包与构建
     KmaPackageToolDefinition(),
-    CleanBuildsToolDefinition(),
     // 系统与配置
     AiAssistantToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
