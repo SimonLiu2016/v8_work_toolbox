@@ -17,5 +17,5 @@
 
 ## 3. 部署
 
-- [x] 3.1 `flutter build macos --release` 成功（110M），已暂存到 `/tmp/deploy/V8WorkToolbox.app`。替换 `/Applications/V8WorkToolbox.app` 由用户执行（会话沙箱禁止写工作区外路径）。
-- [x] 3.2 端到端验证通过（`flutter test test/_e2e_dcpromotion.dart`，验证后删除）：Tier A 自然发现 `/Users/simon/Workspace/ctf-gitlab/dc-promotion`（depth 4），Tier B 收集出 `target/` **109.9MB** 为 `dir=target` 产物，聚合条目 `incomplete=false`。UI 内的呈现由部署后人工确认。
+- [x] 3.1 `flutter build macos --release` 成功（110M），已替换 `/Applications/V8WorkToolbox.app`（先 SIGTERM 退出运行中的旧实例，再 `rm -rf` + `mv`；替换前校验二进制哈希确认本机原为旧版 `6e6eeae0`，替换后为新版 `e4fd7c38`，并 `open` 验证可正常启动）。
+- [x] 3.2 端到端验证通过（`flutter test test/_e2e_dcpromotion.dart`，验证后删除）：Tier A 自然发现 `/Users/simon/Workspace/ctf-gitlab/dc-promotion`（depth 4），Tier B 收集出 `target/` **109.9MB** 为 `dir=target` 产物，聚合条目 `incomplete=false`。代码路径已确认；UI 内呈现由用户打开 App 跑一次磁盘扫描人工确认。
