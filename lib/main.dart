@@ -84,8 +84,14 @@ Future<void> main(List<String> args) async {
   // 初始化无人值守服务状态与代理脚本
   await UnattendedService.instance.init();
 
-  // 初始化隐私空间安全服务与私密存储
-  await PrivacySecurityService.instance.init();
+  // 初始化隐私空间安全服务与私密存储。
+  // 密钥/密文异常（DEK 不可用、密文损坏）时保持锁定并继续启动，
+  // 不允许单个安全组件的故障黑屏整个应用（异常细节由服务层记录）。
+  try {
+    await PrivacySecurityService.instance.init();
+  } catch (e, stack) {
+    debugPrint('PrivacySecurityService init failed, staying locked: $e\n$stack');
+  }
   await PrivateStorageManager.instance.init();
   await MediaHistoryStore.instance.init();
 
