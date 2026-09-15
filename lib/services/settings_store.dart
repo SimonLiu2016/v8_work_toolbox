@@ -207,6 +207,34 @@ class SettingsStore {
     }
   }
 
+  /// 读取配置继承的源（被移除工具 `clean-builds`）配置。
+  ///
+  /// 容忍两种形状：旧版工具自己保存的 `{configs: [...], artifactOptions: {}}`
+  /// （`readToolConfig` 可读），以及从 `~/.v8_cleaner_config.json` 一次性迁移
+  /// 进来的顶层数组（形如 `[{name, path}, ...]`，`readToolConfig` 的 `as Map`
+  /// 断言会失败并回退为空配置，导致 12 个根静默丢失）。
+  ///
+  /// 读取失败回退为空配置，不阻塞应用启动（沿用既有容错语义）。
+  Future<Map<String, dynamic>> _readCleanBuildsSourceConfig() async {
+    try {
+      if (_configDir == null) await init();
+      final file = File(p.join(_configDir!.path, 'clean-builds.json'));
+      if (!await file.exists()) return {};
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) return {};
+      final decoded = jsonDecode(content);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+      if (decoded is List) {
+        return <String, dynamic>{'configs': decoded};
+      }
+      return {};
+    } catch (e) {
+      _lastError = '配置继承源 [clean-builds] 读取失败，已按空配置处理: $e';
+      debugPrint(_lastError);
+      return {};
+    }
+  }
+
   Future<void> writeToolConfig(
     String toolId,
     Map<String, dynamic> data,
@@ -376,34 +404,43 @@ class SettingsStore {
   }
 
   /// 工具合并时的配置继承：把 `clean-builds` 的项目根 watchlist 与产物类型
-  /// 开关搬进瘦身配置。
+  /// 开关并集合并进瘦身配置。
   ///
-  /// 语义：复制而非移动（`clean-builds.json` 原文件保留不删除）、只执行一次
-  /// （以 `slimmerInheritedFromCleanBuilds` 为标记）、不覆盖用户在承接键中
-  /// 已填入的内容（仅当目标字段为空时才继承）。
+  /// 语义：复制而非移动（`clean-builds.json` 原文件保留不删除）、按值去重
+  /// 并集合并（幂等，重复读取不产生重复条目）、不删除或覆盖用户在承接键中
+  /// 既有的条目。
+  ///
+  /// `slimmerInheritedFromCleanBuilds` 仅作一次性提示标志，不作为门闸：
+  /// 承接键非空曾导致被移除工具的条目被跳过并入（静默丢弃 12 个根），
+  /// 标志置位后又不重试。改为无条件并集后，既有受影响用户的配置在下一次
+  /// 读取时自愈补齐。
   Future<void> _inheritCleanBuildsConfigIfNeeded(
       Map<String, dynamic> json) async {
-    if (json['slimmerInheritedFromCleanBuilds'] == true) return;
-
-    final cleanBuilds = await readToolConfig('clean-builds');
+    final cleanBuilds = await _readCleanBuildsSourceConfig();
     final sourceRoots = _extractCleanBuildsRoots(cleanBuilds);
     final sourceOptions = _extractCleanBuildsArtifactOptions(cleanBuilds);
 
-    if (json['extraRoots'] == null || _isEmptyList(json['extraRoots'])) {
-      final existing = json['extraRoots'];
-      final merged = existing is List
-          ? <String>[...existing.map((e) => e.toString())]
-          : <String>[];
-      for (final root in sourceRoots) {
-        if (!merged.contains(root)) merged.add(root);
+    final existingRoots = json['extraRoots'];
+    final mergedRoots = existingRoots is List
+        ? <String>[...existingRoots.map((e) => e.toString())]
+        : <String>[];
+    for (final root in sourceRoots) {
+      if (!mergedRoots.contains(root)) mergedRoots.add(root);
+    }
+    json['extraRoots'] = mergedRoots;
+
+    final existingOptions = json['artifactOptions'];
+    final mergedOptions = <String, bool>{};
+    if (existingOptions is Map) {
+      for (final entry in existingOptions.entries) {
+        mergedOptions[entry.key.toString()] = entry.value == true;
       }
-      json['extraRoots'] = merged;
     }
-    if (json['artifactOptions'] == null ||
-        json['artifactOptions'] is! Map ||
-        (json['artifactOptions'] as Map).isEmpty) {
-      json['artifactOptions'] = sourceOptions;
+    // 并集：被移除工具的开关并入，用户已显式关闭的类型保持关闭
+    for (final entry in sourceOptions.entries) {
+      mergedOptions.putIfAbsent(entry.key, () => entry.value);
     }
+    json['artifactOptions'] = mergedOptions;
 
     json['slimmerInheritedFromCleanBuilds'] = true;
     await writeToolConfig('smart-disk-slimmer', json);
@@ -431,5 +468,4 @@ class SettingsStore {
     return options.map((k, v) => MapEntry(k.toString(), v == true));
   }
 
-  static bool _isEmptyList(Object? value) => value is List && value.isEmpty;
 }

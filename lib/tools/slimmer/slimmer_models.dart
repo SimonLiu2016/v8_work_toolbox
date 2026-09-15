@@ -5,6 +5,7 @@ enum ProjectTechStack {
   flutterDart('Flutter / Dart', 'pubspec.yaml', '.dart_tool', 'build'),
   node('Node', 'package.json', 'node_modules', 'dist'),
   gradleAndroid('Gradle / Android', 'build.gradle', '.gradle', 'build'),
+  maven('Maven / Java', 'pom.xml', 'target', 'build'),
   other('其他构建产物', null, null, null);
 
   final String label;

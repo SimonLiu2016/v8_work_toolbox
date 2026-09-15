@@ -73,7 +73,7 @@ void main() {
       expect(slimmerJson['slimmerInheritedFromCleanBuilds'], isTrue);
     });
 
-    test('只执行一次：不重复搬入，不覆盖用户新设置', () async {
+    test('承接键非空时仍并入被移除工具的根，用户既有条目保留', () async {
       final oldConfigPath =
           p.join(tempOldFilesDir.path, '.v8_cleaner_config.json');
       await writeJson(oldConfigPath, {
@@ -91,6 +91,7 @@ void main() {
         ],
       );
 
+      // 用户先手动添加了自己的条目
       await store.saveSlimerProjectArtifactConfig(
         SlimerProjectArtifactConfig(
           extraRoots: ['/Users/x/user-new-root'],
@@ -99,9 +100,116 @@ void main() {
       );
 
       final cfg = await store.getSlimerProjectArtifactConfig();
-      expect(cfg.extraRoots, ['/Users/x/user-new-root']);
+      // 无条件并集：既保留用户条目，也补回被移除工具的条目
+      expect(cfg.extraRoots, containsAll([
+        '/Users/x/user-new-root',
+        '/Users/x/old-root',
+      ]));
+      // 用户显式关闭的类型保持关闭
       expect(cfg.artifactOptions['build'], isFalse);
-      expect(cfg.extraRoots, isNot(contains('/Users/x/old-root')));
+    });
+
+    test('继承幂等：重复读取不产生重复条目', () async {
+      final oldConfigPath =
+          p.join(tempOldFilesDir.path, '.v8_cleaner_config.json');
+      await writeJson(oldConfigPath, {
+        'configs': [
+          {'name': 'a', 'path': '/Users/x/a'},
+          {'name': 'b', 'path': '/Users/x/b'},
+        ],
+      });
+
+      final store = SettingsStore.instance;
+      await store.init(
+        rootDir: tempRootDir,
+        customMigrations: [
+          MigrationEntry(toolId: 'clean-builds', oldFilePath: oldConfigPath),
+        ],
+      );
+
+      await store.getSlimerProjectArtifactConfig();
+      await store.getSlimerProjectArtifactConfig();
+      await store.getSlimerProjectArtifactConfig();
+
+      final cfg = await store.getSlimerProjectArtifactConfig();
+      expect(cfg.extraRoots, hasLength(2));
+      expect(cfg.extraRoots, containsAll(['/Users/x/a', '/Users/x/b']));
+    });
+
+    test('flag 已置位时仍补齐（自愈），既有条目不被删除', () async {
+      final oldConfigPath =
+          p.join(tempOldFilesDir.path, '.v8_cleaner_config.json');
+      await writeJson(oldConfigPath, {
+        'configs': [
+          {'name': 'lost', 'path': '/Users/x/lost-root'},
+        ],
+      });
+
+      final store = SettingsStore.instance;
+      await store.init(
+        rootDir: tempRootDir,
+        customMigrations: [
+          MigrationEntry(toolId: 'clean-builds', oldFilePath: oldConfigPath),
+        ],
+      );
+
+      // 模拟既有受影响用户：flag 已置位，承接键非空，旧根从未并入
+      final json = await store.readToolConfig('smart-disk-slimmer');
+      json['extraRoots'] = ['/Users/x/user-only'];
+      json['slimmerInheritedFromCleanBuilds'] = true;
+      await store.writeToolConfig('smart-disk-slimmer', json);
+
+      final cfg = await store.getSlimerProjectArtifactConfig();
+      expect(cfg.extraRoots, containsAll([
+        '/Users/x/user-only',
+        '/Users/x/lost-root',
+      ]));
+    });
+
+    test('从旧 JSON 迁移进来的顶层数组形状被正确继承', () async {
+      // ~/.v8_cleaner_config.json 是顶层数组 [{name, path}, ...]，
+      // readToolConfig 的 as Map 断言会失败回退空配置，需容忍该形状。
+      final oldConfigPath =
+          p.join(tempOldFilesDir.path, '.v8_cleaner_config.json');
+      await File(oldConfigPath).writeAsString(jsonEncode([
+        {'name': 'c1', 'path': '/Users/x/top-level-1'},
+        {'name': 'c2', 'path': '/Users/x/top-level-2'},
+      ]));
+
+      final store = SettingsStore.instance;
+      await store.init(
+        rootDir: tempRootDir,
+        customMigrations: [
+          MigrationEntry(toolId: 'clean-builds', oldFilePath: oldConfigPath),
+        ],
+      );
+
+      final cfg = await store.getSlimerProjectArtifactConfig();
+      expect(cfg.extraRoots, containsAll([
+        '/Users/x/top-level-1',
+        '/Users/x/top-level-2',
+      ]));
+    });
+
+    test('被移除工具的原配置文件保留不删除', () async {
+      final oldConfigPath =
+          p.join(tempOldFilesDir.path, '.v8_cleaner_config.json');
+      await writeJson(oldConfigPath, {
+        'configs': [
+          {'name': 'keep', 'path': '/Users/x/keep'},
+        ],
+      });
+
+      final store = SettingsStore.instance;
+      await store.init(
+        rootDir: tempRootDir,
+        customMigrations: [
+          MigrationEntry(toolId: 'clean-builds', oldFilePath: oldConfigPath),
+        ],
+      );
+      await store.getSlimerProjectArtifactConfig();
+
+      expect(await File(oldConfigPath).exists(), isTrue);
     });
 
     test('批量诊断配置保存不冲掉项目产物配置', () async {
@@ -119,7 +227,10 @@ void main() {
       );
 
       final cfg = await store.getSlimerProjectArtifactConfig();
-      expect(cfg.extraRoots, ['/Users/x/keep']);
+      // 本测试关心的是"批量诊断保存不冲掉项目产物配置"：用户自己的条目与
+      // 开关必须存活。无条件并集会另行补回迁移来的旧根，故不精确断言全集。
+      expect(cfg.extraRoots, contains('/Users/x/keep'));
+      expect(cfg.extraRoots, isNot(contains('')));
       expect(cfg.artifactOptions['dist'], isFalse);
       final batch = await store.getSlimerBatchConfig();
       expect(batch.concurrency, 3);
@@ -132,6 +243,8 @@ void main() {
       await File(p.join(tempRootDir.path, 'config', 'clean-builds.json'))
           .writeAsString('{ not valid json');
 
+      // 迁移源损坏时不抛异常、不阻塞启动，继承回退为空配置。
+      // 用户此前保存的条目与开关不受影响（见上一用例）。
       final cfg = await store.getSlimerProjectArtifactConfig();
       expect(cfg.extraRoots, isEmpty);
       expect(cfg.artifactOptions, isEmpty);
@@ -229,6 +342,48 @@ void main() {
         watchlist: [p.join(home.path, 'no-manifest')],
       ).discoverProjectRoots();
       expect(roots, contains(p.normalize(p.join(home.path, 'no-manifest'))));
+    });
+
+    test('watchlist 宽容器条目弃父保子：其下自然根全部保留，容器自身不入列',
+        () async {
+      final container = p.join(home.path, 'Workspace');
+      await Directory(container).create(recursive: true);
+      await _writeFile(p.join(container, 'proj-a', 'package.json'), '{}');
+      await _writeFile(p.join(container, 'proj-b', 'pubspec.yaml'), 'name: x');
+
+      final roots = await ProjectArtifactDetector(
+        home: home.path,
+        watchlist: [container],
+      ).discoverProjectRoots();
+      final normalized = roots.map((r) => p.normalize(r)).toList();
+
+      expect(normalized, isNot(contains(p.normalize(container))));
+      expect(normalized, containsAll([
+        p.normalize(p.join(container, 'proj-a')),
+        p.normalize(p.join(container, 'proj-b')),
+      ]));
+    });
+
+    test('watchlist 条目其下无自然根时自身作为根加入（逃生口）', () async {
+      final legacy = p.join(home.path, 'legacy-project');
+      await Directory(legacy).create(recursive: true);
+      await _writeFile(p.join(legacy, 'src', 'main.c'), 'int main(){}');
+
+      final roots = await ProjectArtifactDetector(
+        home: home.path,
+        watchlist: [legacy],
+      ).discoverProjectRoots();
+      expect(roots, contains(p.normalize(legacy)));
+    });
+
+    test('watchlist 条目与已发现自然根重复时不产生重复条目', () async {
+      final root = p.join(home.path, 'projs', 'alpha');
+      final roots = await ProjectArtifactDetector(
+        home: home.path,
+        watchlist: [root],
+      ).discoverProjectRoots();
+      expect(roots.where((r) => p.normalize(r) == p.normalize(root)),
+          hasLength(1));
     });
 
     test('深度上限：maxDepth 之外不识别', () async {
@@ -484,6 +639,49 @@ void main() {
         [root],
       );
       expect(items, isEmpty);
+    });
+
+    test('技术栈：含 pom.xml 的根归类为 maven', () async {
+      final root = p.join(home.path, 'maven-proj');
+      await _writeFile(p.join(root, 'pom.xml'), '<project/>');
+      await _bigDir(p.join(root, 'target'), 20 * 1024 * 1024);
+
+      final detector = ProjectArtifactDetector(
+        home: home.path,
+        minPresentBytes: 0,
+      );
+      final items = await _collectAll(detector, [root]);
+      expect(items, hasLength(1));
+      expect(items.first.techStack, ProjectTechStack.maven);
+    });
+
+    test('技术栈：gradle 信号优先于 pom.xml', () async {
+      final root = p.join(home.path, 'hybrid');
+      await _writeFile(p.join(root, 'build.gradle'), 'apply plugin: java');
+      await _writeFile(p.join(root, 'pom.xml'), '<project/>');
+      await _bigDir(p.join(root, 'build'), 20 * 1024 * 1024);
+
+      final detector = ProjectArtifactDetector(
+        home: home.path,
+        minPresentBytes: 0,
+      );
+      final items = await _collectAll(detector, [root]);
+      expect(items, hasLength(1));
+      expect(items.first.techStack, ProjectTechStack.gradleAndroid);
+    });
+
+    test('技术栈：无 manifest 信号的根归 other 兜底', () async {
+      final root = p.join(home.path, 'plain');
+      await _writeFile(p.join(root, 'README.md'), 'x');
+      await _bigDir(p.join(root, 'out'), 20 * 1024 * 1024);
+
+      final detector = ProjectArtifactDetector(
+        home: home.path,
+        minPresentBytes: 0,
+      );
+      final items = await _collectAll(detector, [root]);
+      expect(items, hasLength(1));
+      expect(items.first.techStack, ProjectTechStack.other);
     });
 
     test('多根进度式上抛：每收完一根递增', () async {

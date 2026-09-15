@@ -121,14 +121,21 @@ class ProjectArtifactDetector {
       await _walkDiscover(homeDir, 1, raw);
     }
 
-    // 额外指定的根豁免 manifest 门控，强制进入 Tier B
-    for (final root in watchlist) {
-      if (Directory(root).existsSync()) raw.add(_normalize(root));
-    }
-
     final withoutHome =
         raw.where((r) => _normalize(r) != _normalize(home)).toSet().toList();
-    return _dedupeNested(withoutHome);
+
+    // 额外指定的根豁免 manifest 门控，强制进入 Tier B。
+    // 但 watchlist 条目若其下已存在自然发现的项目根，则弃父保子：宽容器条目
+    // （例如 ~/Workspace）若自身成为根，会把整片树压成一个条目——技术栈归属
+    // 只能读顶层信号而落为"其他"，Tier B 也因预算超限而扫描不完整。
+    final natural = _dedupeNested(withoutHome);
+    final supplement = watchlist
+        .map(_normalize)
+        .where((root) =>
+            Directory(root).existsSync() &&
+            !natural.any((r) => r == root || r.startsWith('$root/')))
+        .toList();
+    return _dedupeNested([...natural, ...supplement]);
   }
 
   /// 剪枝遍历：不下降进 Library（阶段 1 已覆盖全局缓存）、`~/Applications`
@@ -292,6 +299,9 @@ class ProjectArtifactDetector {
         entries.contains('.dart_tool') ||
         entries.contains('xcodeproj')) {
       return ProjectTechStack.flutterDart;
+    }
+    if (entries.contains('pom.xml')) {
+      return ProjectTechStack.maven;
     }
     if (entries.contains('package.json') ||
         entries.contains('node_modules') ||
