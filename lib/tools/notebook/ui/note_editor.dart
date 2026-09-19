@@ -10,6 +10,7 @@ import '../../../theme/app_theme.dart';
 import '../appflowy_codec.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import 'components/attachment_block_component.dart';
 import 'components/note_code_block_component.dart';
 import 'components/note_editor_toolbar.dart';
 import 'components/note_image_menu.dart';
@@ -108,6 +109,7 @@ class _NoteEditorState extends State<NoteEditor> {
       ),
       NoteCodeBlockKeys.type: NoteCodeBlockComponentBuilder(),
       'code': NoteCodeBlockComponentBuilder(),
+      AttachmentBlockKeys.type: AttachmentBlockComponentBuilder(),
       MindMapBlockKeys.type: MindMapBlockComponentBuilder(),
     };
   }
@@ -408,6 +410,32 @@ class _NoteEditorState extends State<NoteEditor> {
     );
   }
 
+  /// 添加附件：保存到笔记附件目录并返回引用信息供工具栏插入附件块。
+  ///
+  /// 只回传附件 ID 与展示元数据——文件路径由附件块渲染时查表解析，
+  /// 确保引用的是应用副本而非用户选择的原始文件。
+  Future<List<AttachmentRef>> _addAttachments(List<File> files) async {
+    final refs = <AttachmentRef>[];
+    for (final file in files) {
+      try {
+        final attId = await NoteStore.instance.addAttachment(
+          noteId: widget.note!.id,
+          sourceFile: file,
+        );
+        final stat = await file.stat();
+        refs.add(AttachmentRef(
+          attachmentId: attId,
+          filename: p.basename(file.path),
+          sizeBytes: stat.size,
+        ));
+      } catch (e) {
+        debugPrint('添加附件失败 ${file.path}: $e');
+      }
+    }
+    _scheduleBodySave();
+    return refs;
+  }
+
   // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
@@ -607,6 +635,7 @@ class _NoteEditorState extends State<NoteEditor> {
           NoteEditorToolbar(
             editorState: _editorState!,
             onSaveAttachment: _saveAttachment,
+            onAddAttachments: _addAttachments,
           ),
 
           // AppFlowyEditor 编辑器画布（由 AppFlowy 原生接管视口与滚动）

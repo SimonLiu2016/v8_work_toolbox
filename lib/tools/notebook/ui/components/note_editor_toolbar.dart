@@ -2,16 +2,40 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
+import 'attachment_block_component.dart';
 import 'note_code_block_component.dart';
+
+/// 附件保存结果：用于插入附件块节点。
+///
+/// 刻意不含文件路径——节点只持有 attachmentId，路径由附件块渲染时
+/// 从 attachments 表解析，确保引用的是应用自己的副本而非用户原始文件。
+class AttachmentRef {
+  const AttachmentRef({
+    required this.attachmentId,
+    required this.filename,
+    required this.sizeBytes,
+    this.mime,
+  });
+
+  final String attachmentId;
+  final String filename;
+  final int sizeBytes;
+  final String? mime;
+}
 
 class NoteEditorToolbar extends StatelessWidget {
   final EditorState editorState;
   final Future<String> Function(File file, String filename)? onSaveAttachment;
 
+  /// 添加附件回调：接收选中文件列表，返回每个文件的 (附件ID, 本地路径)，
+  /// 由编辑器插入附件块节点。
+  final Future<List<AttachmentRef>> Function(List<File> files)? onAddAttachments;
+
   const NoteEditorToolbar({
     super.key,
     required this.editorState,
     this.onSaveAttachment,
+    this.onAddAttachments,
   });
 
   void _formatHeading(int level) {
@@ -93,6 +117,46 @@ class NoteEditorToolbar extends StatelessWidget {
     editorState.apply(transaction);
   }
 
+  /// 添加附件：选文件 → 交给上层保存 → 在当前光标后插入附件块
+  Future<void> _addAttachments() async {
+    final handler = onAddAttachments;
+    if (handler == null) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      dialogTitle: '选择要添加的附件',
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final files = <File>[];
+    for (final f in result.files) {
+      if (f.path != null) files.add(File(f.path!));
+    }
+    if (files.isEmpty) return;
+
+    final refs = await handler(files);
+    if (refs.isEmpty) return;
+
+    var targetPath = editorState.selection != null
+        ? [editorState.selection!.end.path[0] + 1]
+        : [editorState.document.root.children.length];
+
+    final transaction = editorState.transaction;
+    for (final ref in refs) {
+      transaction.insertNode(
+        targetPath,
+        attachmentNode(
+          attachmentId: ref.attachmentId,
+          filename: ref.filename,
+          sizeBytes: ref.sizeBytes,
+          mime: ref.mime,
+        ),
+      );
+      targetPath = [targetPath[0] + 1];
+    }
+    editorState.apply(transaction);
+  }
+
   void _insertList(String listType) {
     final selection = editorState.selection;
     if (selection == null) return;
@@ -160,6 +224,10 @@ class NoteEditorToolbar extends StatelessWidget {
             _actionBtn(Icons.code_rounded, '插入代码', _insertCodeBlock),
             const SizedBox(width: 4),
             _actionBtn(Icons.image_outlined, '插入图片', () => _insertImage(context)),
+            if (onAddAttachments != null) ...[
+              const SizedBox(width: 4),
+              _actionBtn(Icons.attach_file_rounded, '添加附件', _addAttachments),
+            ],
           ],
         ),
       ),

@@ -71,6 +71,9 @@ class Attachments extends Table {
 class NoteDatabase extends _$NoteDatabase {
   NoteDatabase() : super(_openConnection());
 
+  /// 测试用构造函数：注入自定义连接（内存 db 等）
+  NoteDatabase.forTesting(QueryExecutor e) : super(e);
+
   @override
   int get schemaVersion => 2;
 

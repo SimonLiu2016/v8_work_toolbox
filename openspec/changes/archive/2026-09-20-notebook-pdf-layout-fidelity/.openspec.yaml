@@ -1,0 +1,10 @@
+schema: spec-driven
+# 不携带 spec delta：本 change 要修改的需求
+# "Import a PDF document with structural restoration" 目前仍存在于
+# `notebook-import-and-attachments` 的 delta 中（该 change 尚未归档、
+# 未合入 `openspec/specs/notebook-storage/spec.md`），
+# 无法直接对尚未落地的需求做 MODIFIED。
+# 待 `notebook-import-and-attachments` 归档后，用
+# openspec/changes/notebook-pdf-layout-fidelity/specs/notebook-storage/spec.md
+# 追加正式的 MODIFIED delta。需求意图已记录在 proposal.md / design.md。
+skip_specs: true

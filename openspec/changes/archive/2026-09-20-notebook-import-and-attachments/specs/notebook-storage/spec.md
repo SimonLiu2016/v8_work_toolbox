@@ -1,50 +1,25 @@
-## Purpose
+## ADDED Requirements
 
-Provides SQLite-based local storage for notebooks, notes, tags, and attachments with full-text search, supporting CRUD operations and hierarchical notebook organization.
-## Requirements
-### Requirement: Note storage with Quill Delta format
-The system SHALL store notes as Quill Delta JSON in SQLite, preserving rich text formatting including headings, bold, italic, code blocks, tables, images, and attachments.
+### Requirement: Custom attachment block in editor
 
-#### Scenario: Create a new note
-- **WHEN** user creates a new note in a notebook
-- **THEN** the system generates a UUID, stores the note with empty Delta content, associates it with the selected notebook, and sets created/updated timestamps.
+The notebook editor SHALL render a custom attachment block (`AttachmentBlock`) when the document contains an attachment reference, displaying the file name, human-readable file size, and a file-type icon. The block SHALL provide clickable actions to reveal the file in Finder and to save-as to a user-chosen directory. Multiple attachment blocks MAY coexist in a single note, each independently operable.
 
-#### Scenario: Auto-save on edit
-- **WHEN** user edits note content in the editor
-- **THEN** the system auto-saves the Delta JSON to SQLite after a debounce period (e.g. 1 second of inactivity), preserving the full edit history.
+#### Scenario: Attachment block renders file metadata
 
-#### Scenario: Soft delete and restore
-- **WHEN** user deletes a note
-- **THEN** the note is marked as deleted (is_deleted=1) but not removed; user can restore it from trash within 30 days.
+- **WHEN** a note contains one or more attachment references
+- **THEN** each attachment renders as a distinct block showing the original filename, formatted file size (e.g. "1.2 MB"), and a type-specific icon
 
-### Requirement: Notebook organization
-The system SHALL support hierarchical notebooks for organizing notes, with drag-and-drop reordering.
+#### Scenario: Reveal attachment in Finder
 
-#### Scenario: Create and manage notebooks
-- **WHEN** user creates, renames, or deletes a notebook
-- **THEN** the operation is persisted to SQLite, and the notebook tree updates immediately.
+- **WHEN** user clicks the "在访达中显示" action on an attachment block
+- **THEN** the system opens Finder with the attachment file selected and revealed
 
-#### Scenario: Move notes between notebooks
-- **WHEN** user drags a note to a different notebook
-- **THEN** the note's notebook_id is updated, and the note appears in the new notebook's list.
+#### Scenario: Save attachment as
 
-### Requirement: Tag management
-The system SHALL support tags for cross-notebook categorization, with multi-tag assignment per note.
+- **WHEN** user clicks the "另存为" action on an attachment block
+- **THEN** the system presents a save dialog and copies the attachment to the chosen destination
 
-#### Scenario: Assign tags to notes
-- **WHEN** user adds or removes tags on a note
-- **THEN** the note_tags junction table is updated, and the tag filter reflects the change.
-
-#### Scenario: Filter by tag
-- **WHEN** user clicks a tag in the sidebar
-- **THEN** the note list shows only notes with that tag, regardless of notebook.
-
-### Requirement: Full-text search
-The system SHALL provide full-text search across note titles and content using SQLite FTS5.
-
-#### Scenario: Search notes
-- **WHEN** user types a search query in the search bar
-- **THEN** the system queries FTS5 and returns matching notes ranked by relevance, with search terms highlighted in results.
+## MODIFIED Requirements
 
 ### Requirement: Attachment storage
 The system SHALL store file attachments associated with notes, saved to the local filesystem. The system SHALL provide an API for users to add one or more files as attachments to an existing note: each file is copied into the application's own attachment storage under the note's subdirectory, and a reference is stored in the attachments table linked to the note. Multiple files MAY be added in a single action. The attachment's original filename, MIME type, and copied local path MUST be persisted. The application MUST NOT retain a dependency on the user's source file location: after the attachment is added, deleting the original source file MUST NOT affect the note's attachment.
@@ -73,6 +48,8 @@ The system SHALL store file attachments associated with notes, saved to the loca
 
 - **WHEN** user imports a document with the "保留原文件为附件" option checked
 - **THEN** the created note contains an attachment block for the original file, and the block exposes the same reveal-in-Finder and save-as actions as a manually added attachment
+
+## ADDED Requirements
 
 ### Requirement: Attachment reference integrity
 
@@ -141,4 +118,3 @@ The notebook SHALL support importing documents in `.pdf`, `.docx`, `.xlsx`, `.md
 
 - **WHEN** import of a file fails after the note has already been created (for example the extracted text was written but retaining the original file as an attachment did not complete)
 - **THEN** the partially created note, any attachment record and copied file it produced, and its full-text-search entry are all removed, so the reported failure matches the stored state — no orphan note, attachment file, or search hit is left behind
-

@@ -379,7 +379,10 @@ class NoteStore {
     return candidate;
   }
 
-  /// 保存文件到附件目录并创建数据库记录
+  /// 保存文件到附件目录并创建数据库记录（返回本地路径）。
+  ///
+  /// 扁平存储（`attachmentsDir/<id><ext>`），由 Evernote 导入与编辑器粘贴使用。
+  /// 新增的 [addAttachment] 按 noteId 分子目录并返回附件 ID。
   Future<String> saveAttachment({
     required String noteId,
     required File sourceFile,
@@ -400,6 +403,101 @@ class NoteStore {
       createdAt: Value(DateTime.now()),
     ));
     return targetPath;
+  }
+
+  /// 用户主动添加附件：复制文件到 `attachmentsDir/<noteId>/` 子目录，
+  /// 返回 attachment ID（便于编辑器插入附件块引用）。
+  /// 与 [saveAttachment] 的区别：按 noteId 分子目录 + 返回 ID + 自动 MIME 检测。
+  Future<String> addAttachment({
+    required String noteId,
+    required File sourceFile,
+  }) async {
+    final id = _uuid.v4();
+    final ext = p.extension(sourceFile.path);
+    final noteDir = Directory(p.join(attachmentsDir, noteId));
+    await noteDir.create(recursive: true);
+    final targetPath = p.join(noteDir.path, '${id}_$ext'.replaceAll(' ', '_'));
+    await sourceFile.copy(targetPath);
+
+    final mime = _lookupMime(sourceFile.path);
+    await _db.insertAttachment(AttachmentsCompanion(
+      id: Value(id),
+      noteId: Value(noteId),
+      filename: Value(p.basename(sourceFile.path)),
+      mime: Value(mime),
+      localPath: Value(targetPath),
+      createdAt: Value(DateTime.now()),
+    ));
+    return id;
+  }
+
+  /// 批量添加附件，返回 attachment ID 列表。
+  Future<List<String>> addAttachments({
+    required String noteId,
+    required List<File> files,
+  }) async {
+    final ids = <String>[];
+    for (final f in files) {
+      ids.add(await addAttachment(noteId: noteId, sourceFile: f));
+    }
+    return ids;
+  }
+
+  /// 按 attachment ID 查询单个附件。
+  Future<Attachment?> attachmentById(String attId) async {
+    final results = await _db.customSelect(
+      'SELECT id, note_id, filename, mime, local_path, created_at FROM attachments WHERE id = ?',
+      variables: [Variable<String>(attId)],
+    ).get();
+    if (results.isEmpty) return null;
+    final row = results.first;
+    return Attachment(
+      id: row.read<String>('id'),
+      noteId: row.read<String>('note_id'),
+      filename: row.readNullable<String>('filename'),
+      mime: row.readNullable<String>('mime'),
+      localPath: row.read<String>('local_path'),
+      createdAt: row.read<DateTime>('created_at'),
+    );
+  }
+
+  /// 删除指定附件（文件 + 数据库记录）。
+  Future<void> deleteAttachment(String attId) async {
+    final results = await _db.customSelect(
+      'SELECT * FROM attachments WHERE id = ?',
+      variables: [Variable<String>(attId)],
+    ).get();
+    if (results.isEmpty) return;
+    final row = results.first;
+    final localPath = row.read<String>('local_path');
+    final f = File(localPath);
+    if (f.existsSync()) await f.delete();
+    await _db.customStatement('DELETE FROM attachments WHERE id = ?', [attId]);
+  }
+
+  static String? _lookupMime(String filePath) {
+    // 简易 MIME 检测——依赖 path 包的 extension
+    final ext = p.extension(filePath).toLowerCase();
+    const map = {
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.ppt': 'application/vnd.ms-powerpoint',
+      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      '.txt': 'text/plain',
+      '.md': 'text/markdown',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.zip': 'application/zip',
+      '.csv': 'text/csv',
+      '.json': 'application/json',
+      '.html': 'text/html',
+    };
+    return map[ext];
   }
 
   /// 从 base64 数据保存附件

@@ -215,6 +215,29 @@ class AppFlowyCodec {
     return Document(root: pageNode(children: children));
   }
 
+  /// 在文档末尾追加一个附件块，返回序列化后的 JSON。
+  ///
+  /// 文档导入（"保留原文件为附件"）与编辑器插入共用此入口。
+  /// 必须用 [Node.insert]：[parseToDocument] 返回的 `root.children` 是
+  /// `growable: false` 的缓存快照，直接 `.add()` 会抛 UnsupportedError。
+  static String appendAttachmentNode(
+    String deltaJson, {
+    required String attachmentId,
+    required String filename,
+    required int sizeBytes,
+  }) {
+    final doc = parseToDocument(deltaJson);
+    doc.root.insert(Node(
+      type: 'attachment',
+      attributes: {
+        'attachmentId': attachmentId,
+        'filename': filename,
+        'sizeBytes': sizeBytes,
+      },
+    ));
+    return documentToJson(doc);
+  }
+
   /// 将 [Document] 序列化为 JSON 字符串以便落盘
   static String documentToJson(Document doc) {
     try {

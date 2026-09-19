@@ -9,11 +9,14 @@ import 'package:flutter/services.dart';
 import '../../../theme/app_theme.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
 import '../appflowy_codec.dart';
+import '../docx_to_markdown.dart';
 import '../evernote_import_service.dart';
 import '../export_service.dart';
 import '../markdown_converter.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import '../pdf_to_markdown.dart';
+import '../xlsx_to_markdown.dart';
 import 'note_editor.dart';
 
 /// 笔记本工具主页面（仿印象笔记三栏布局）
@@ -300,37 +303,204 @@ class _NotebookPageState extends State<NotebookPage> {
   // Import
   // ---------------------------------------------------------------------------
 
-  Future<void> _importMarkdown() async {
+  /// 支持的多格式导入扩展名
+  static const _importExtensions = ['pdf', 'docx', 'xlsx', 'md', 'markdown', 'txt'];
+
+  /// 多格式文档导入：pdf/docx/xlsx/md/txt → 新笔记。
+  /// 可选"保留原文件为附件"。
+  Future<void> _importDocuments() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['md', 'markdown', 'txt'],
+      allowedExtensions: _importExtensions,
       allowMultiple: true,
     );
     if (result == null || result.files.isEmpty) return;
 
+    // 导入选项：是否保留原文件为附件
+    final keepOriginal = await _askKeepOriginal(result.files.length);
+    if (keepOriginal == null) return; // 用户取消
+
     int successCount = 0;
+    int failCount = 0;
     for (final picked in result.files) {
       if (picked.path == null) continue;
-      final file = File(picked.path!);
-      final content = await file.readAsString();
-      final title = picked.name.replaceAll(RegExp(r'\.(md|markdown|txt)$'), '');
-      final deltaJson = MarkdownConverter.markdownToDelta(content);
+      String? createdNoteId;
+      try {
+        final markdown = await _extractMarkdown(picked.path!, picked.name);
+        if (markdown == null) {
+          failCount++;
+          continue;
+        }
+        final title = picked.name.replaceAll(
+            RegExp(r'\.(pdf|docx|xlsx|md|markdown|txt)$', caseSensitive: false), '');
+        final deltaJson = MarkdownConverter.markdownToDelta(markdown);
 
-      await _store.createNote(
-        title: title,
-        deltaJson: deltaJson,
-        notebookId: _selectedNotebookId,
-      );
-      successCount++;
+        final noteId = await _store.createNote(
+          title: title,
+          deltaJson: deltaJson,
+          notebookId: _selectedNotebookId,
+        );
+        createdNoteId = noteId;
+
+        if (keepOriginal) {
+          // 先建笔记拿到 noteId（addAttachment 需要），再把附件块追加进正文——
+          // 只建记录不写正文的话，用户在笔记里看不到任何入口。
+          final sourceFile = File(picked.path!);
+          final attId = await _store.addAttachment(
+            noteId: noteId,
+            sourceFile: sourceFile,
+          );
+          final stat = await sourceFile.stat();
+          final updatedJson = _appendAttachmentBlock(
+            deltaJson,
+            attId: attId,
+            filename: picked.name,
+            sizeBytes: stat.size,
+          );
+          await _store.updateNote(id: noteId, deltaJson: updatedJson);
+        }
+        createdNoteId = null; // 已成功，退出回滚范围
+        successCount++;
+      } catch (e) {
+        debugPrint('导入 ${picked.name} 失败: $e');
+        await _rollbackFailedImport(createdNoteId);
+        failCount++;
+      }
     }
 
     await _refresh(silent: true);
 
     if (mounted) {
+      final msg = failCount > 0
+          ? '已导入 $successCount 篇，$failCount 篇失败'
+          : '已导入 $successCount 篇笔记';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已导入 $successCount 篇 Markdown 笔记')),
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: failCount > 0 ? AppTheme.warning : null,
+        ),
       );
     }
+  }
+
+  /// 在笔记文档末尾追加一个附件块，返回更新后的 deltaJson。
+  /// 用于"保留原文件为附件"——让附件在笔记里可见可操作。
+  String _appendAttachmentBlock(
+    String deltaJson, {
+    required String attId,
+    required String filename,
+    required int sizeBytes,
+  }) =>
+      AppFlowyCodec.appendAttachmentNode(
+        deltaJson,
+        attachmentId: attId,
+        filename: filename,
+        sizeBytes: sizeBytes,
+      );
+
+  /// 导入失败时回滚已建的半成品笔记。
+  ///
+  /// `createNote` 在附件追加之前执行，中途失败会留下正文不全 + 附件文件/记录
+  /// 的孤儿笔记，但用户只看到"失败 1 篇"。此处彻底删除（含附件文件与 DB 记录、
+  /// FTS 条目），使"失败"与磁盘/数据库状态一致。
+  Future<void> _rollbackFailedImport(String? noteId) async {
+    if (noteId == null) return;
+    try {
+      await _store.permanentlyDeleteNote(noteId);
+      // permanentlyDeleteNote 未清理 FTS，同步删除索引条目避免可搜索到已删笔记。
+      await _store.db.customStatement(
+        'DELETE FROM notes_fts WHERE note_id = ?',
+        [noteId],
+      );
+      debugPrint('已回滚失败的导入笔记 $noteId');
+    } catch (e) {
+      debugPrint('回滚导入笔记 $noteId 失败: $e');
+    }
+  }
+
+  /// 按扩展名分发解析为 Markdown；不支持的格式返回 null 并提示。
+  Future<String?> _extractMarkdown(String path, String name) async {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'md':
+      case 'markdown':
+      case 'txt':
+        return File(path).readAsString();
+      case 'docx':
+        return DocxToMarkdown.convert(path);
+      case 'xlsx':
+        return XlsxToMarkdown.convert(path);
+      case 'pdf':
+        try {
+          return await _extractPdfMarkdown(path);
+        } on PdfNoTextLayerException catch (e) {
+          // 扫描件无文字层：明确告知，并引导到"保留原文件为附件"这条可用路径
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('$e\n可在导入时勾选「保留原文件为附件」以保留原始文档。'),
+                backgroundColor: AppTheme.warning,
+                duration: const Duration(seconds: 8),
+              ),
+            );
+          }
+          return null;
+        }
+      default:
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('不支持的格式 .$ext（支持：${_importExtensions.join('、')}）'),
+              backgroundColor: AppTheme.error,
+            ),
+          );
+        }
+        return null;
+    }
+  }
+
+  /// PDF 文本提取（复用朗读模块的解析能力）
+  Future<String> _extractPdfMarkdown(String path) async {
+    return PdfToMarkdown.convert(path);
+  }
+
+  /// 询问是否保留原文件为附件。返回 null 表示取消。
+  Future<bool?> _askKeepOriginal(int fileCount) {
+    bool keep = false;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: AppTheme.bgCard,
+          title: Text('导入 $fileCount 个文件', style: AppTheme.fontTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('将提取文件内容生成新笔记。', style: AppTheme.fontBody),
+              const SizedBox(height: AppTheme.space12),
+              CheckboxListTile(
+                value: keep,
+                onChanged: (v) => setDialogState(() => keep = v ?? false),
+                title: const Text('保留原文件为附件', style: AppTheme.fontBody),
+                subtitle: const Text('原始文档将作为笔记附件保存，可随时下载查看',
+                    style: AppTheme.fontCaption),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消')),
+            ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(keep),
+                child: const Text('导入')),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _showEvernoteImportDialog() async {
@@ -1226,8 +1396,8 @@ class _NotebookPageState extends State<NotebookPage> {
                       side: const BorderSide(color: AppTheme.borderSubtle),
                     ),
                     icon: const Icon(Icons.file_upload_outlined, size: 16),
-                    label: const Text('导入 Markdown', style: TextStyle(fontSize: 12)),
-                    onPressed: _importMarkdown,
+                    label: const Text('导入文档', style: TextStyle(fontSize: 12)),
+                    onPressed: _importDocuments,
                   ),
                 ),
               ],

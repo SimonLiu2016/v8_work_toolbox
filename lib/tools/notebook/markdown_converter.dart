@@ -561,14 +561,9 @@ class MarkdownConverter {
       lastEnd = match.end;
     }
 
-    // Remaining text after last match
+    // Remaining text after last match（无匹配时 lastEnd 仍为 0，此处已覆盖整行）
     if (lastEnd < text.length) {
       ops.add({'insert': text.substring(lastEnd)});
-    }
-
-    // If no matches found, just add the whole text
-    if (lastEnd == 0) {
-      ops.add({'insert': text});
     }
   }
 }
