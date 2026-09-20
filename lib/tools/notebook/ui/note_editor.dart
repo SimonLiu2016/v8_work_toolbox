@@ -30,6 +30,12 @@ class NoteEditor extends StatefulWidget {
   /// 点击关联笔记时跳转（阶段三）。
   final void Function(String noteId)? onOpenNote;
 
+  /// 编辑器从数据库重新读到当前笔记时回调（资产/关联写入后的快照刷新）。
+  ///
+  /// 父层用它替换自己持有的 `note` 快照，使元数据栏的资产 chip 与关联计数反映
+  /// 持久化现状，而不是打开编辑器时的旧值。
+  final void Function(Note note)? onNoteReloaded;
+
   const NoteEditor({
     super.key,
     this.note,
@@ -39,6 +45,7 @@ class NoteEditor extends StatefulWidget {
     this.onRestore,
     this.onPermanentDelete,
     this.onOpenNote,
+    this.onNoteReloaded,
   });
 
   @override
@@ -190,9 +197,33 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   /// 弹窗（资产 / 整理 / 关联）写入后刷新元数据栏与外部列表。
-  void _refreshMetadata() {
-    _loadMetadata();
+  ///
+  /// 除元数据外还重新读一次当前笔记本身：资产 chip 的文案（品类 / 到期倒计时）
+  /// 与关联计数都来自 `widget.note`，只重读列表的话这些值会停留在打开时的快照，
+  /// 表现为「保存后内容丢失」。
+  Future<void> _refreshMetadata() async {
+    await _loadMetadata();
+    final reloaded = await _reloadNote();
     widget.onSaved?.call();
+    return reloaded;
+  }
+
+  /// 从数据库重新读取当前笔记，并上报给父层替换其快照。
+  ///
+  /// 父层的 `_refresh` 只在笔记仍处于当前过滤列表内时才更新 `_selectedNote`；
+  /// 一旦过滤条件变化（搜索词、标签、笔记本切换）它会改为清空选择，资产 chip
+  /// 就再也拿不到新值。这里显式回传，保证写入后 UI 反映数据库现状。
+  Future<void> _reloadNote() async {
+    final id = widget.note?.id;
+    if (id == null) return;
+    try {
+      final latest = await NoteStore.instance.noteById(id);
+      if (latest != null && mounted) {
+        widget.onNoteReloaded?.call(latest);
+      }
+    } catch (e) {
+      debugPrint('NoteEditor._reloadNote safe notice: $e');
+    }
   }
 
   Future<void> _openAssetDialog() async {
@@ -200,7 +231,7 @@ class _NoteEditorState extends State<NoteEditor> {
     if (note == null) return;
     await showAssetDialog(context, note: note, onChanged: _refreshMetadata);
     // 弹窗可能在父组件重建后仍持有旧 note 引用，取最新一份再刷新。
-    _refreshMetadata();
+    await _refreshMetadata();
   }
 
   Future<void> _openRelatedDialog() async {
@@ -212,7 +243,7 @@ class _NoteEditorState extends State<NoteEditor> {
       onOpenNote: (id) => widget.onOpenNote?.call(id),
       onChanged: _refreshMetadata,
     );
-    _refreshMetadata();
+    await _refreshMetadata();
   }
 
   void _onTitleChanged(String _) {

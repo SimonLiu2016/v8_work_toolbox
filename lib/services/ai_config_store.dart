@@ -131,11 +131,7 @@ class SlotCandidate {
     );
   }
 
-  SlotCandidate copyWith({
-    String? providerId,
-    String? model,
-    int? priority,
-  }) {
+  SlotCandidate copyWith({String? providerId, String? model, int? priority}) {
     return SlotCandidate(
       providerId: providerId ?? this.providerId,
       model: model ?? this.model,
@@ -155,7 +151,8 @@ class SlotCandidate {
   int get hashCode => providerId.hashCode ^ model.hashCode;
 
   @override
-  String toString() => 'SlotCandidate(providerId: $providerId, model: $model, priority: $priority)';
+  String toString() =>
+      'SlotCandidate(providerId: $providerId, model: $model, priority: $priority)';
 }
 
 /// 外部第三方 MCP 客户端配置
@@ -210,7 +207,8 @@ class McpClientConfig {
     String id = 'mcp_firecrawl',
     String name = 'Firecrawl 爬虫与搜索',
     String apiUrl = 'https://43-133-77-38.nip.io',
-    String apiKey = '9f3a39789003582170a952660dc66bba31190da43e4875591916caafef6d818c',
+    String apiKey =
+        '9f3a39789003582170a952660dc66bba31190da43e4875591916caafef6d818c',
     bool enabled = true,
   }) {
     return McpClientConfig(
@@ -219,10 +217,7 @@ class McpClientConfig {
       transport: 'stdio',
       endpointOrCommand: 'npx',
       args: const ['-y', 'firecrawl-mcp'],
-      env: {
-        'FIRECRAWL_API_URL': apiUrl,
-        'FIRECRAWL_API_KEY': apiKey,
-      },
+      env: {'FIRECRAWL_API_URL': apiUrl, 'FIRECRAWL_API_KEY': apiKey},
       timeoutSeconds: 120,
       enabled: enabled,
     );
@@ -265,11 +260,55 @@ class AiConfigStore {
   Map<String, List<SlotCandidate>> _slotBindings = {};
   List<McpClientConfig> _mcpClients = [];
 
+  /// 本进程是否已完成初始化。
+  ///
+  /// 单例状态是**进程级**的：`desktop_multi_window` 的每个子窗口都会重跑
+  /// `main()`，若该窗口的启动路径没有调用 [init]，这里就是 false，槽位绑定表
+  /// 为空。此前这会让下游报「槽位无可用候选供应商」，与「确实没绑候选」混为
+  /// 一谈，排查时无法归因。
+  bool _isInitialized = false;
+
+  /// 最近一次 [init] 失败的原因；成功后被清空。
+  String? _lastInitError;
+
   List<AiProviderConfig> get providers => List.unmodifiable(_providers);
-  Map<String, List<SlotCandidate>> get slotBindings => Map.unmodifiable(_slotBindings);
+  Map<String, List<SlotCandidate>> get slotBindings =>
+      Map.unmodifiable(_slotBindings);
   List<McpClientConfig> get mcpClients => List.unmodifiable(_mcpClients);
 
+  /// 本进程的配置存储是否已初始化成功。
+  bool get isInitialized => _isInitialized;
+
+  /// 仅供测试：把单例重置为「尚未初始化」的干净状态。
+  ///
+  /// 生产代码不得调用——子窗口漏初始化的bug 正是靠这个状态被诊断出来的。
+  @visibleForTesting
+  Future<void> resetForTesting() async {
+    _configFile = null;
+    _providers = [];
+    _slotBindings = {};
+    _mcpClients = [];
+    _isInitialized = false;
+    _lastInitError = null;
+  }
+
+  /// 最近一次初始化失败的原因；无失败时为 null。
+  String? get lastInitError => _lastInitError;
+
+  /// 初始化未完成时的可诊断描述，供槽位路由构造可归因的错误消息。
+  ///
+  /// 已成功初始化且没有保留的加载失败时返回 null。
+  String? get uninitializedReason {
+    if (_isInitialized && _lastInitError == null) return null;
+    return _lastInitError ??
+        'AI 配置存储尚未初始化。此窗口进程可能未在启动时完成初始化'
+            '（详见 main.dart 的 WindowServices 必需服务清单）。';
+  }
+
   Future<void> init({Directory? customRootDir}) async {
+    // 每次 init 都是全新一次加载尝试：先清掉上一次的失败原因，
+    // `_load()` 遇到配置损坏会重新记录更具体的原因。
+    _lastInitError = null;
     try {
       Directory dir;
       if (customRootDir != null) {
@@ -277,7 +316,9 @@ class AiConfigStore {
       } else {
         final home = Platform.environment['HOME'];
         if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          dir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'));
+          dir = Directory(
+            p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
+          );
         } else {
           final appSupport = await getApplicationSupportDirectory();
           dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
@@ -291,8 +332,14 @@ class AiConfigStore {
       _configFile = File(p.join(dir.path, 'ai_config.json'));
       await KeychainService.instance.init(customRootDir: dir);
       await _load();
+      _isInitialized = true;
+      // `_load()` 内部处理配置损坏：保留它记录的更具体原因，不清空。
     } catch (e) {
-      debugPrint('初始化 AI 配置失败: $e');
+      // 记录但不抛出：main() 的 fail-soft 契约不允许单个服务阻断 runApp。
+      // 但必须留下可诊断信号，否则下游只能看到「配置为空」。
+      _isInitialized = false;
+      _lastInitError = '初始化 AI 配置失败: $e';
+      debugPrint(_lastInitError);
     }
   }
 
@@ -311,7 +358,9 @@ class AiConfigStore {
       }
       final json = jsonDecode(text) as Map<String, dynamic>;
       final providerList = (json['providers'] as List<dynamic>?) ?? [];
-      _providers = providerList.map((e) => AiProviderConfig.fromJson(e as Map<String, dynamic>)).toList();
+      _providers = providerList
+          .map((e) => AiProviderConfig.fromJson(e as Map<String, dynamic>))
+          .toList();
 
       final slots = (json['defaultSlots'] as Map<String, dynamic>?) ?? {};
       bool needsMigration = false;
@@ -328,7 +377,9 @@ class AiConfigStore {
           final providerId = (value['providerId'] as String?) ?? '';
           final model = (value['model'] as String?) ?? '';
           if (providerId.isNotEmpty) {
-            return MapEntry(key, [SlotCandidate(providerId: providerId, model: model, priority: 0)]);
+            return MapEntry(key, [
+              SlotCandidate(providerId: providerId, model: model, priority: 0),
+            ]);
           }
           return MapEntry(key, <SlotCandidate>[]);
         }
@@ -341,7 +392,9 @@ class AiConfigStore {
       }
 
       final mcps = (json['mcpServers'] as List<dynamic>?) ?? [];
-      _mcpClients = mcps.map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>)).toList();
+      _mcpClients = mcps
+          .map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>))
+          .toList();
       if (_mcpClients.isEmpty) {
         _mcpClients.add(McpClientConfig.firecrawlPreset());
         await _save();
@@ -353,7 +406,11 @@ class AiConfigStore {
         await _save();
       }
     } catch (e) {
-      debugPrint('读取 ai_config.json 异常，加载默认配置: $e');
+      // 配置损坏/不可读是**真实的加载失败**，不能静默换成空默认值——那会让用户
+      // 以为「没绑候选」，而实际是文件坏了。保留原因供 [uninitializedReason]
+      // 与槽位错误消息使用；默认值仍写入以保持功能可继续（不阻断启动）。
+      _lastInitError = '读取 ai_config.json 异常: $e';
+      debugPrint('$_lastInitError，加载默认配置');
       _initDefaults();
     }
   }
@@ -366,9 +423,7 @@ class AiConfigStore {
       'tts': <SlotCandidate>[],
       'stt': <SlotCandidate>[],
     };
-    _mcpClients = [
-      McpClientConfig.firecrawlPreset(),
-    ];
+    _mcpClients = [McpClientConfig.firecrawlPreset()];
   }
 
   Future<void> _save() async {
@@ -376,8 +431,9 @@ class AiConfigStore {
     try {
       final map = {
         'providers': _providers.map((p) => p.toJson()).toList(),
-        'defaultSlots': _slotBindings.map((key, candidates) =>
-          MapEntry(key, candidates.map((c) => c.toJson()).toList()),
+        'defaultSlots': _slotBindings.map(
+          (key, candidates) =>
+              MapEntry(key, candidates.map((c) => c.toJson()).toList()),
         ),
         'mcpServers': _mcpClients.map((m) => m.toJson()).toList(),
       };
@@ -409,7 +465,10 @@ class AiConfigStore {
 
     if (apiKey != null && apiKey.isNotEmpty) {
       try {
-        await KeychainService.instance.writeSecret(provider.keychainKeyId, apiKey);
+        await KeychainService.instance.writeSecret(
+          provider.keychainKeyId,
+          apiKey,
+        );
       } catch (e) {
         throw KeychainWriteException('API Key 写入加密密钥库失败: $e');
       }
@@ -417,7 +476,16 @@ class AiConfigStore {
   }
 
   Future<void> deleteProvider(String providerId) async {
-    final p = _providers.firstWhere((e) => e.id == providerId, orElse: () => const AiProviderConfig(id: '', name: '', protocol: AiProtocolType.openai, baseUrl: '', keychainKeyId: ''));
+    final p = _providers.firstWhere(
+      (e) => e.id == providerId,
+      orElse: () => const AiProviderConfig(
+        id: '',
+        name: '',
+        protocol: AiProtocolType.openai,
+        baseUrl: '',
+        keychainKeyId: '',
+      ),
+    );
     if (p.keychainKeyId.isNotEmpty) {
       await KeychainService.instance.deleteSecret(p.keychainKeyId);
     }
@@ -437,7 +505,11 @@ class AiConfigStore {
 
   /// @deprecated 使用 addSlotCandidate / removeSlotCandidate / reorderSlotCandidates 替代
   /// 保留向后兼容：将单一绑定设置为该槽位的唯一候选
-  Future<void> setSlotBinding(String slotName, String providerId, String modelName) async {
+  Future<void> setSlotBinding(
+    String slotName,
+    String providerId,
+    String modelName,
+  ) async {
     if (providerId.isEmpty) {
       _slotBindings[slotName] = <SlotCandidate>[];
     } else {
@@ -449,10 +521,20 @@ class AiConfigStore {
   }
 
   /// 向槽位候选列表末尾追加新候选
-  Future<void> addSlotCandidate(String slotName, String providerId, String model) async {
+  Future<void> addSlotCandidate(
+    String slotName,
+    String providerId,
+    String model,
+  ) async {
     final candidates = _slotBindings[slotName] ?? <SlotCandidate>[];
     final newPriority = candidates.length;
-    candidates.add(SlotCandidate(providerId: providerId, model: model, priority: newPriority));
+    candidates.add(
+      SlotCandidate(
+        providerId: providerId,
+        model: model,
+        priority: newPriority,
+      ),
+    );
     _slotBindings[slotName] = candidates;
     await _save();
   }
@@ -470,7 +552,11 @@ class AiConfigStore {
   }
 
   /// 调整槽位候选的优先级顺序（拖拽排序）
-  Future<void> reorderSlotCandidates(String slotName, int oldIndex, int newIndex) async {
+  Future<void> reorderSlotCandidates(
+    String slotName,
+    int oldIndex,
+    int newIndex,
+  ) async {
     final candidates = _slotBindings[slotName];
     if (candidates == null) return;
     if (oldIndex < 0 || oldIndex >= candidates.length) return;

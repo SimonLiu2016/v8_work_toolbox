@@ -100,6 +100,10 @@ Future<void> showAssetDialog(
 /// 编辑品类 / 购买日 / 服务期至 / 到期日，并可将附件标记为"凭证"
 /// （供 RAG 命中后指引用户定位凭证）。改动即时落库，无需额外保存按钮。
 ///
+/// 打开时按 [note] 的 id 从数据库读一份最新值——传入的 `note` 可能已被弹窗外的
+/// 保存操作改变（曾因信任打开时的快照，导致保存后重开弹窗看到旧值，表现为
+/// 「内容丢失」）。读取失败时回落到传入快照，不让面板因此打不开。
+///
 /// **必须包在 [NotebookLightScope] 内**（[showAssetDialog] 已包），否则输入框
 /// 会被全局暗色填充盖住。
 class AssetFieldsPanel extends StatefulWidget {
@@ -123,21 +127,26 @@ class _AssetFieldsPanelState extends State<AssetFieldsPanel> {
   bool _saving = false;
   List<Attachment> _attachments = const [];
 
+  /// 当前正在编辑的资产字段。打开时用数据库现值替换传入快照。
+  late Note _note;
+
   @override
   void initState() {
     super.initState();
-    _categoryCtrl = TextEditingController(
-      text: widget.note.assetCategory ?? '',
-    );
+    _note = widget.note;
+    _categoryCtrl = TextEditingController(text: _note.assetCategory ?? '');
     _loadAttachments();
+    _reloadNote();
   }
 
   @override
   void didUpdateWidget(covariant AssetFieldsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.note.id != widget.note.id) {
-      _categoryCtrl.text = widget.note.assetCategory ?? '';
+      _note = widget.note;
+      _categoryCtrl.text = _note.assetCategory ?? '';
       _loadAttachments();
+      _reloadNote();
     }
   }
 
@@ -147,11 +156,24 @@ class _AssetFieldsPanelState extends State<AssetFieldsPanel> {
     super.dispose();
   }
 
+  /// 从数据库读最新资产字段。失败则保留当前值（不让面板因此不可用）。
+  Future<void> _reloadNote() async {
+    try {
+      final latest = await NoteStore.instance.noteById(_note.id);
+      if (!mounted || latest == null) return;
+      setState(() {
+        _note = latest;
+        // 只在用户尚未输入时同步输入框，避免覆盖正在编辑的内容。
+        _categoryCtrl.text = latest.assetCategory ?? '';
+      });
+    } catch (e) {
+      debugPrint('AssetFieldsPanel 读取最新资产字段失败，使用打开时快照: $e');
+    }
+  }
+
   Future<void> _loadAttachments() async {
     try {
-      final list = await NoteStore.instance.db.attachmentsForNote(
-        widget.note.id,
-      );
+      final list = await NoteStore.instance.db.attachmentsForNote(_note.id);
       if (mounted) setState(() => _attachments = list);
     } catch (_) {}
   }
@@ -169,7 +191,7 @@ class _AssetFieldsPanelState extends State<AssetFieldsPanel> {
     setState(() => _saving = true);
     try {
       await NoteStore.instance.updateAssetFields(
-        widget.note.id,
+        _note.id,
         assetCategory: clearCategory
             ? const Value(null)
             : (category != null ? Value(category) : const Value.absent()),
@@ -215,7 +237,7 @@ class _AssetFieldsPanelState extends State<AssetFieldsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final n = widget.note;
+    final n = _note;
 
     return SizedBox(
       width: 420,

@@ -28,7 +28,8 @@ class RouteAttempt {
   });
 
   @override
-  String toString() => 'RouteAttempt($providerId/$model: $outcome, ${durationMs}ms${error != null ? ', error: $error' : ''})';
+  String toString() =>
+      'RouteAttempt($providerId/$model: $outcome, ${durationMs}ms${error != null ? ', error: $error' : ''})';
 }
 
 /// chat() 的结构化返回结果
@@ -46,7 +47,8 @@ class ChatResult {
   });
 
   @override
-  String toString() => 'ChatResult(provider: $usedProviderId, model: $usedModel, trace: ${routingTrace.length} attempts)';
+  String toString() =>
+      'ChatResult(provider: $usedProviderId, model: $usedModel, trace: ${routingTrace.length} attempts)';
 }
 
 /// 槽位不可用结构化异常
@@ -55,18 +57,38 @@ class SlotUnavailableException implements Exception {
   final int candidateCount;
   final List<String> candidateErrors;
 
+  /// 本进程 AI 配置存储未就绪的原因。
+  ///
+  /// 非 null 表示「候选为空」是初始化缺失/配置损坏的**症状**，而非用户真的
+  /// 没有绑定候选。见 [AiConfigStore.uninitializedReason]。
+  final String? configNotReadyReason;
+
   const SlotUnavailableException({
     required this.slotName,
     required this.candidateCount,
     required this.candidateErrors,
+    this.configNotReadyReason,
   });
+
+  /// 候选为空是否由配置未就绪导致。
+  bool get isConfigNotReady =>
+      candidateCount == 0 && configNotReadyReason != null;
+
+  /// 本进程 AI 配置存储是否已成功就绪（供调用方判断该信哪种错误消息）。
+  bool get isConfigReady => !isConfigNotReady;
 
   @override
   String toString() {
+    // 配置未就绪优先呈现：此时「请添加供应商绑定」是错的指引。
+    if (candidateCount == 0 && configNotReadyReason != null) {
+      return '槽位 "$slotName" 无可用候选供应商：$configNotReadyReason';
+    }
     if (candidateCount == 0) {
       return '槽位 "$slotName" 无可用候选供应商。请在 AI 配置中为该槽位添加至少一个供应商绑定。';
     }
-    final errorSummary = candidateErrors.asMap().entries
+    final errorSummary = candidateErrors
+        .asMap()
+        .entries
         .map((e) => '  候选 ${e.key + 1}: ${e.value}')
         .join('\n');
     return '槽位 "$slotName" 的全部 $candidateCount 个候选供应商均不可用：\n$errorSummary\n请检查供应商配置或网络连接。';
@@ -106,7 +128,8 @@ class ProviderHealthState {
   );
 
   @override
-  String toString() => 'ProviderHealthState(healthy: $isHealthy, failures: $failureCount, lastError: $lastError)';
+  String toString() =>
+      'ProviderHealthState(healthy: $isHealthy, failures: $failureCount, lastError: $lastError)';
 }
 
 // ---------------------------------------------------------------------------
@@ -176,34 +199,53 @@ class AiService {
 
   /// 标记供应商为健康
   void _markProviderHealthy(String providerId) {
-    _healthCache[providerId] = (_healthCache[providerId] ??
-        ProviderHealthState(isHealthy: true, lastCheckedAt: DateTime(2000)))
-        .markHealthy();
+    _healthCache[providerId] =
+        (_healthCache[providerId] ??
+                ProviderHealthState(
+                  isHealthy: true,
+                  lastCheckedAt: DateTime(2000),
+                ))
+            .markHealthy();
   }
 
   /// 标记供应商为不健康（对 429 速率限制豁免，不设置 60s 硬冷却）
   void _markProviderUnhealthy(String providerId, String error) {
-    if (error.contains('429') || error.toLowerCase().contains('too many requests')) {
-      AiLogger.logWarning('供应商 $providerId 遭遇限频 (429 Too Many Requests)，豁免 60 秒冷却锁定');
+    if (error.contains('429') ||
+        error.toLowerCase().contains('too many requests')) {
+      AiLogger.logWarning(
+        '供应商 $providerId 遭遇限频 (429 Too Many Requests)，豁免 60 秒冷却锁定',
+      );
       return;
     }
-    _healthCache[providerId] = (_healthCache[providerId] ??
-        ProviderHealthState(isHealthy: true, lastCheckedAt: DateTime(2000)))
-        .markUnhealthy(error);
+    _healthCache[providerId] =
+        (_healthCache[providerId] ??
+                ProviderHealthState(
+                  isHealthy: true,
+                  lastCheckedAt: DateTime(2000),
+                ))
+            .markUnhealthy(error);
   }
 
   @visibleForTesting
-  void markProviderHealthy(String providerId) => _markProviderHealthy(providerId);
+  void markProviderHealthy(String providerId) =>
+      _markProviderHealthy(providerId);
 
   @visibleForTesting
-  void markProviderUnhealthy(String providerId, String error) => _markProviderUnhealthy(providerId, error);
+  void markProviderUnhealthy(String providerId, String error) =>
+      _markProviderUnhealthy(providerId, error);
 
   @visibleForTesting
   bool isProviderHealthy(String providerId) => _isProviderHealthy(providerId);
 
   /// 一键自动探测发现供应商支持的模型列表
-  Future<List<String>> discoverModels(AiProviderConfig provider, {String? apiKey}) async {
-    final key = apiKey ?? await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
+  Future<List<String>> discoverModels(
+    AiProviderConfig provider, {
+    String? apiKey,
+  }) async {
+    final key =
+        apiKey ??
+        await KeychainService.instance.readSecret(provider.keychainKeyId) ??
+        '';
 
     switch (provider.protocol) {
       case AiProtocolType.openai:
@@ -215,9 +257,14 @@ class AiService {
     }
   }
 
-  Future<List<String>> _discoverOpenAiModels(String baseUrl, String apiKey) async {
+  Future<List<String>> _discoverOpenAiModels(
+    String baseUrl,
+    String apiKey,
+  ) async {
     try {
-      var urlStr = baseUrl.trim().isEmpty ? 'https://api.openai.com/v1' : baseUrl.trim();
+      var urlStr = baseUrl.trim().isEmpty
+          ? 'https://api.openai.com/v1'
+          : baseUrl.trim();
       while (urlStr.endsWith('/')) {
         urlStr = urlStr.substring(0, urlStr.length - 1);
       }
@@ -240,7 +287,9 @@ class AiService {
       http.Response? lastResp;
       for (int i = 0; i < candidateUrls.length; i++) {
         final uri = Uri.parse(candidateUrls[i]);
-        final resp = await _client.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+        final resp = await _client
+            .get(uri, headers: headers)
+            .timeout(const Duration(seconds: 10));
         lastResp = resp;
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -255,16 +304,23 @@ class AiService {
           continue;
         }
       }
-      throw Exception('OpenAI /models 探测失败: HTTP ${lastResp?.statusCode}: ${lastResp?.body}');
+      throw Exception(
+        'OpenAI /models 探测失败: HTTP ${lastResp?.statusCode}: ${lastResp?.body}',
+      );
     } catch (e) {
       debugPrint('OpenAI 探测模型失败: $e');
       rethrow;
     }
   }
 
-  Future<List<String>> _discoverAnthropicModels(String baseUrl, String apiKey) async {
+  Future<List<String>> _discoverAnthropicModels(
+    String baseUrl,
+    String apiKey,
+  ) async {
     try {
-      var urlStr = baseUrl.trim().isEmpty ? 'https://api.anthropic.com' : baseUrl.trim();
+      var urlStr = baseUrl.trim().isEmpty
+          ? 'https://api.anthropic.com'
+          : baseUrl.trim();
       while (urlStr.endsWith('/')) {
         urlStr = urlStr.substring(0, urlStr.length - 1);
       }
@@ -272,10 +328,7 @@ class AiService {
       final headers = <String, String>{
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
-        if (apiKey.isNotEmpty) ...{
-          'x-api-key': apiKey,
-          'api-key': apiKey,
-        },
+        if (apiKey.isNotEmpty) ...{'x-api-key': apiKey, 'api-key': apiKey},
       };
 
       final candidateUrls = <String>[];
@@ -294,7 +347,9 @@ class AiService {
       http.Response? lastResp;
       for (int i = 0; i < candidateUrls.length; i++) {
         final uri = Uri.parse(candidateUrls[i]);
-        final resp = await _client.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+        final resp = await _client
+            .get(uri, headers: headers)
+            .timeout(const Duration(seconds: 10));
         lastResp = resp;
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -312,34 +367,48 @@ class AiService {
           continue;
         }
       }
-      throw Exception('Anthropic /models 探测失败: HTTP ${lastResp?.statusCode}: ${lastResp?.body}');
+      throw Exception(
+        'Anthropic /models 探测失败: HTTP ${lastResp?.statusCode}: ${lastResp?.body}',
+      );
     } catch (e) {
       debugPrint('Anthropic 探测模型失败: $e');
       rethrow;
     }
   }
 
-  Future<List<String>> _discoverGeminiModels(String baseUrl, String apiKey) async {
+  Future<List<String>> _discoverGeminiModels(
+    String baseUrl,
+    String apiKey,
+  ) async {
     try {
-      var urlStr = baseUrl.trim().isEmpty ? 'https://generativelanguage.googleapis.com' : baseUrl.trim();
+      var urlStr = baseUrl.trim().isEmpty
+          ? 'https://generativelanguage.googleapis.com'
+          : baseUrl.trim();
       while (urlStr.endsWith('/')) {
         urlStr = urlStr.substring(0, urlStr.length - 1);
       }
       final uri = Uri.parse('$urlStr/v1beta/models?key=$apiKey');
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
+      final headers = <String, String>{'Content-Type': 'application/json'};
 
-      final resp = await _client.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+      final resp = await _client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         final list = data['models'] as List<dynamic>? ?? [];
         final models = list
             .map((e) {
               final raw = (e as Map<String, dynamic>)['name'] as String? ?? '';
-              return raw.startsWith('models/') ? raw.substring('models/'.length) : raw;
+              return raw.startsWith('models/')
+                  ? raw.substring('models/'.length)
+                  : raw;
             })
-            .where((id) => id.isNotEmpty && !id.contains('embedding') && !id.contains('aqa'))
+            .where(
+              (id) =>
+                  id.isNotEmpty &&
+                  !id.contains('embedding') &&
+                  !id.contains('aqa'),
+            )
             .toList();
         models.sort();
         if (models.isNotEmpty) return models;
@@ -354,7 +423,10 @@ class AiService {
   }
 
   /// 测试与供应商的连通性（模型探测 + 真机对话 Ping 双阶段校验）
-  Future<bool> testConnection(AiProviderConfig provider, {String? apiKey}) async {
+  Future<bool> testConnection(
+    AiProviderConfig provider, {
+    String? apiKey,
+  }) async {
     try {
       // 阶段 1：探测可用模型
       final models = await discoverModels(provider, apiKey: apiKey);
@@ -374,10 +446,17 @@ class AiService {
     }
   }
 
-  Future<void> _pingChat(AiProviderConfig provider, String model, {String? apiKey}) async {
-    final key = apiKey ?? await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
+  Future<void> _pingChat(
+    AiProviderConfig provider,
+    String model, {
+    String? apiKey,
+  }) async {
+    final key =
+        apiKey ??
+        await KeychainService.instance.readSecret(provider.keychainKeyId) ??
+        '';
     final pingMessages = [
-      {'role': 'user', 'content': 'ping'}
+      {'role': 'user', 'content': 'ping'},
     ];
     switch (provider.protocol) {
       case AiProtocolType.openai:
@@ -411,7 +490,12 @@ class AiService {
       final modelName = explicitModel ?? '';
       final sw = Stopwatch()..start();
       try {
-        final text = await _chatWithProvider(provider, modelName, messages, timeout: timeout);
+        final text = await _chatWithProvider(
+          provider,
+          modelName,
+          messages,
+          timeout: timeout,
+        );
         sw.stop();
         _markProviderHealthy(provider.id);
         return ChatResult(
@@ -441,6 +525,9 @@ class AiService {
         slotName: slot,
         candidateCount: 0,
         candidateErrors: [],
+        // 区分「本进程配置未就绪」与「该槽位确实没有绑定候选」——前者是启动
+        // 路径漏了初始化（曾导致笔记本子窗口静默失效），指引完全不同。
+        configNotReadyReason: store.uninitializedReason,
       );
     }
 
@@ -451,13 +538,15 @@ class AiService {
       // 检查健康状态冷却
       if (!_isProviderHealthy(candidate.providerId)) {
         final health = _healthCache[candidate.providerId];
-        routingTrace.add(RouteAttempt(
-          providerId: candidate.providerId,
-          model: candidate.model,
-          outcome: 'skipped_cooldown',
-          durationMs: 0,
-          error: health?.lastError ?? '供应商处于冷却期',
-        ));
+        routingTrace.add(
+          RouteAttempt(
+            providerId: candidate.providerId,
+            model: candidate.model,
+            outcome: 'skipped_cooldown',
+            durationMs: 0,
+            error: health?.lastError ?? '供应商处于冷却期',
+          ),
+        );
         candidateErrors.add('冷却中 (上次错误: ${health?.lastError ?? "未知"})');
         continue;
       }
@@ -468,28 +557,37 @@ class AiService {
         orElse: () => null,
       );
       if (provider == null) {
-        routingTrace.add(RouteAttempt(
-          providerId: candidate.providerId,
-          model: candidate.model,
-          outcome: 'failure',
-          durationMs: 0,
-          error: '供应商配置不存在',
-        ));
+        routingTrace.add(
+          RouteAttempt(
+            providerId: candidate.providerId,
+            model: candidate.model,
+            outcome: 'failure',
+            durationMs: 0,
+            error: '供应商配置不存在',
+          ),
+        );
         candidateErrors.add('供应商配置不存在');
         continue;
       }
 
       final sw = Stopwatch()..start();
       try {
-        final text = await _chatWithProvider(provider, candidate.model, messages, timeout: timeout);
+        final text = await _chatWithProvider(
+          provider,
+          candidate.model,
+          messages,
+          timeout: timeout,
+        );
         sw.stop();
         _markProviderHealthy(provider.id);
-        routingTrace.add(RouteAttempt(
-          providerId: provider.id,
-          model: candidate.model,
-          outcome: 'success',
-          durationMs: sw.elapsedMilliseconds,
-        ));
+        routingTrace.add(
+          RouteAttempt(
+            providerId: provider.id,
+            model: candidate.model,
+            outcome: 'success',
+            durationMs: sw.elapsedMilliseconds,
+          ),
+        );
         return ChatResult(
           text: text,
           usedProviderId: provider.id,
@@ -500,13 +598,15 @@ class AiService {
         sw.stop();
         final errorStr = e.toString();
         _markProviderUnhealthy(provider.id, errorStr);
-        routingTrace.add(RouteAttempt(
-          providerId: provider.id,
-          model: candidate.model,
-          outcome: 'failure',
-          durationMs: sw.elapsedMilliseconds,
-          error: errorStr,
-        ));
+        routingTrace.add(
+          RouteAttempt(
+            providerId: provider.id,
+            model: candidate.model,
+            outcome: 'failure',
+            durationMs: sw.elapsedMilliseconds,
+            error: errorStr,
+          ),
+        );
         candidateErrors.add(errorStr);
         debugPrint('路由降级: 供应商 ${provider.name} 失败 ($errorStr), 尝试下一候选...');
       }
@@ -527,15 +627,34 @@ class AiService {
     List<Map<String, String>> messages, {
     Duration? timeout,
   }) async {
-    final key = await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
+    final key =
+        await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
 
     switch (provider.protocol) {
       case AiProtocolType.openai:
-        return _chatOpenAi(provider, key, modelName, messages, timeout: timeout);
+        return _chatOpenAi(
+          provider,
+          key,
+          modelName,
+          messages,
+          timeout: timeout,
+        );
       case AiProtocolType.anthropic:
-        return _chatAnthropic(provider, key, modelName, messages, timeout: timeout);
+        return _chatAnthropic(
+          provider,
+          key,
+          modelName,
+          messages,
+          timeout: timeout,
+        );
       case AiProtocolType.gemini:
-        return _chatGemini(provider.baseUrl, key, modelName, messages, timeout: timeout);
+        return _chatGemini(
+          provider.baseUrl,
+          key,
+          modelName,
+          messages,
+          timeout: timeout,
+        );
     }
   }
 
@@ -548,7 +667,9 @@ class AiService {
     Duration? timeout,
   }) async {
     final effTimeout = timeout ?? defaultChatTimeout;
-    var urlStr = provider.baseUrl.trim().isEmpty ? 'https://api.openai.com/v1' : provider.baseUrl.trim();
+    var urlStr = provider.baseUrl.trim().isEmpty
+        ? 'https://api.openai.com/v1'
+        : provider.baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
     }
@@ -596,13 +717,19 @@ class AiService {
       );
 
       final sw = Stopwatch()..start();
-      var resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
+      var resp = await _client
+          .post(uri, headers: headers, body: body)
+          .timeout(effTimeout);
 
       // 429 速率限制退避重试 1 次
       if (resp.statusCode == 429) {
-        AiLogger.logWarning('OpenAI 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...');
+        AiLogger.logWarning(
+          'OpenAI 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...',
+        );
         await Future.delayed(const Duration(milliseconds: 2500));
-        resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
+        resp = await _client
+            .post(uri, headers: headers, body: body)
+            .timeout(effTimeout);
       }
 
       sw.stop();
@@ -627,10 +754,14 @@ class AiService {
       } else if (resp.statusCode == 404 && i < candidateEndpoints.length - 1) {
         continue;
       } else {
-        throw Exception('OpenAI 对话请求失败 ($endpoint): HTTP ${resp.statusCode}, ${resp.body}');
+        throw Exception(
+          'OpenAI 对话请求失败 ($endpoint): HTTP ${resp.statusCode}, ${resp.body}',
+        );
       }
     }
-    throw Exception('OpenAI 对话请求失败: HTTP ${lastResp?.statusCode}, ${lastResp?.body}');
+    throw Exception(
+      'OpenAI 对话请求失败: HTTP ${lastResp?.statusCode}, ${lastResp?.body}',
+    );
   }
 
   Future<String> _chatAnthropic(
@@ -642,7 +773,9 @@ class AiService {
     Duration? timeout,
   }) async {
     final effTimeout = timeout ?? defaultChatTimeout;
-    var urlStr = provider.baseUrl.trim().isEmpty ? 'https://api.anthropic.com' : provider.baseUrl.trim();
+    var urlStr = provider.baseUrl.trim().isEmpty
+        ? 'https://api.anthropic.com'
+        : provider.baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
     }
@@ -650,10 +783,7 @@ class AiService {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
-      if (apiKey.isNotEmpty) ...{
-        'x-api-key': apiKey,
-        'api-key': apiKey,
-      },
+      if (apiKey.isNotEmpty) ...{'x-api-key': apiKey, 'api-key': apiKey},
     };
 
     // 分离 system prompt 与对话消息
@@ -661,7 +791,9 @@ class AiService {
     final chatMsgs = <Map<String, String>>[];
     for (final m in messages) {
       if (m['role'] == 'system') {
-        systemPrompt = systemPrompt.isEmpty ? (m['content'] ?? '') : '$systemPrompt\n\n${m['content']}';
+        systemPrompt = systemPrompt.isEmpty
+            ? (m['content'] ?? '')
+            : '$systemPrompt\n\n${m['content']}';
       } else {
         chatMsgs.add({
           'role': m['role'] ?? 'user',
@@ -714,13 +846,19 @@ class AiService {
       );
 
       final sw = Stopwatch()..start();
-      var resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
+      var resp = await _client
+          .post(uri, headers: headers, body: body)
+          .timeout(effTimeout);
 
       // 429 速率限制退避重试 1 次
       if (resp.statusCode == 429) {
-        AiLogger.logWarning('Anthropic 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...');
+        AiLogger.logWarning(
+          'Anthropic 供应商 ${provider.name} ($endpoint) 返回 429 Too Many Requests，等待 2500ms 后自动重试...',
+        );
         await Future.delayed(const Duration(milliseconds: 2500));
-        resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
+        resp = await _client
+            .post(uri, headers: headers, body: body)
+            .timeout(effTimeout);
       }
 
       sw.stop();
@@ -748,10 +886,14 @@ class AiService {
       } else if (resp.statusCode == 404 && i < candidateEndpoints.length - 1) {
         continue;
       } else {
-        throw Exception('Anthropic 对话请求失败 ($endpoint): HTTP ${resp.statusCode}, ${resp.body}');
+        throw Exception(
+          'Anthropic 对话请求失败 ($endpoint): HTTP ${resp.statusCode}, ${resp.body}',
+        );
       }
     }
-    throw Exception('Anthropic 对话请求失败: HTTP ${lastResp?.statusCode}, ${lastResp?.body}');
+    throw Exception(
+      'Anthropic 对话请求失败: HTTP ${lastResp?.statusCode}, ${lastResp?.body}',
+    );
   }
 
   Future<String> _chatGemini(
@@ -762,25 +904,35 @@ class AiService {
     Duration? timeout,
   }) async {
     final effTimeout = timeout ?? defaultChatTimeout;
-    var urlStr = baseUrl.trim().isEmpty ? 'https://generativelanguage.googleapis.com' : baseUrl.trim();
+    var urlStr = baseUrl.trim().isEmpty
+        ? 'https://generativelanguage.googleapis.com'
+        : baseUrl.trim();
     while (urlStr.endsWith('/')) {
       urlStr = urlStr.substring(0, urlStr.length - 1);
     }
-    final modelName = model.isEmpty ? 'gemini-2.0-flash' : (model.startsWith('models/') ? model.substring('models/'.length) : model);
-    final uri = Uri.parse('$urlStr/v1beta/models/$modelName:generateContent?key=$apiKey');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-    };
+    final modelName = model.isEmpty
+        ? 'gemini-2.0-flash'
+        : (model.startsWith('models/')
+              ? model.substring('models/'.length)
+              : model);
+    final uri = Uri.parse(
+      '$urlStr/v1beta/models/$modelName:generateContent?key=$apiKey',
+    );
+    final headers = <String, String>{'Content-Type': 'application/json'};
 
     String systemPrompt = '';
     final contents = <Map<String, dynamic>>[];
     for (final m in messages) {
       if (m['role'] == 'system') {
-        systemPrompt = systemPrompt.isEmpty ? (m['content'] ?? '') : '$systemPrompt\n\n${m['content']}';
+        systemPrompt = systemPrompt.isEmpty
+            ? (m['content'] ?? '')
+            : '$systemPrompt\n\n${m['content']}';
       } else {
         contents.add({
           'role': m['role'] == 'assistant' ? 'model' : 'user',
-          'parts': [{'text': m['content'] ?? ''}],
+          'parts': [
+            {'text': m['content'] ?? ''},
+          ],
         });
       }
     }
@@ -788,7 +940,9 @@ class AiService {
     final body = jsonEncode({
       if (systemPrompt.isNotEmpty)
         'systemInstruction': {
-          'parts': [{'text': systemPrompt}],
+          'parts': [
+            {'text': systemPrompt},
+          ],
         },
       'contents': contents,
     });
@@ -798,11 +952,15 @@ class AiService {
       protocol: 'gemini',
       model: modelName,
       endpoint: uri.toString(),
-      promptSummary: contents.isNotEmpty ? contents.last['parts']?.toString() : '',
+      promptSummary: contents.isNotEmpty
+          ? contents.last['parts']?.toString()
+          : '',
     );
 
     final sw = Stopwatch()..start();
-    final resp = await _client.post(uri, headers: headers, body: body).timeout(effTimeout);
+    final resp = await _client
+        .post(uri, headers: headers, body: body)
+        .timeout(effTimeout);
     sw.stop();
 
     AiLogger.logResponse(
