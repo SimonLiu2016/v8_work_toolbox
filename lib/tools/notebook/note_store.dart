@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import 'note_database.dart';
+import '../../services/settings_store.dart';
 
 /// 笔记存储服务（单例）
 /// 封装 NoteDatabase，提供高层业务操作
@@ -30,6 +31,29 @@ class NoteStore {
 
     // 自动为已有但缺少 stack 的笔记本补充印象笔记层级组
     await autoBackfillNotebookStacksFromEvernote();
+
+    // 中文分词上线的一次性索引重建（版本标记驱动，只跑一次）
+    await _migrateFtsTokenizerIfNeeded();
+  }
+
+  /// 当前 FTS 分词方案版本。变更此值会触发一次全量索引重建。
+  /// v1 = 未分词原始文本（unicode61 直存）
+  /// v2 = CJK bigram 分词
+  static const int ftsTokenizerVersion = 2;
+
+  /// 检测分词方案变更并重建 FTS 索引。旧索引存的是未分词原始文本，
+  /// `unicode61` 对中文整串当单 token，不重建则既有笔记搜不到。
+  Future<void> _migrateFtsTokenizerIfNeeded() async {
+    try {
+      final cfg = await SettingsStore.instance.readToolConfig('notebook');
+      if ((cfg['ftsTokenizerVersion'] as int?) == ftsTokenizerVersion) return;
+
+      await rebuildFtsIndex();
+      cfg['ftsTokenizerVersion'] = ftsTokenizerVersion;
+      await SettingsStore.instance.writeToolConfig('notebook', cfg);
+    } catch (e) {
+      debugPrint('FTS 分词迁移失败: $e');
+    }
   }
 
   NoteDatabase get db {
@@ -587,6 +611,30 @@ class NoteStore {
       await _db.indexNote(noteId, title, plainText);
     } catch (e) {
       debugPrint('FTS index error for note $noteId: $e');
+    }
+  }
+
+  /// 重建全部 FTS 索引。中文分词方案（CJK bigram）上线后必须执行一次——
+  /// 旧索引存的是未分词的原始文本，`unicode61` 对中文整串当单 token，不重建
+  /// 则既有笔记搜不到。`notes_fts` 是派生数据，可安全清空重灌。
+  Future<int> rebuildFtsIndex() async {
+    try {
+      await _db.clearFtsIndex();
+      final all = await _db.allNotesForIndexing();
+      var count = 0;
+      for (final n in all) {
+        try {
+          await _indexNote(n.id, n.title, n.deltaJson);
+          count++;
+        } catch (e) {
+          debugPrint('重建 FTS 索引失败 (note ${n.id}): $e');
+        }
+      }
+      debugPrint('FTS 索引重建完成：$count 条笔记');
+      return count;
+    } catch (e) {
+      debugPrint('FTS 索引重建失败: $e');
+      return 0;
     }
   }
 

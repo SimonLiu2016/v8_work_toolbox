@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:drift_sqflite/drift_sqflite.dart';
 
+import 'cjk_tokenizer.dart';
+
 part 'note_database.g.dart';
 
 // ---------------------------------------------------------------------------
@@ -396,33 +398,56 @@ class NoteDatabase extends _$NoteDatabase {
   // Full-Text Search
   // ---------------------------------------------------------------------------
 
+  /// 中文全文检索。
+  ///
+  /// 查询经 CJK bigram 分词后以 OR 拼接（见 [cjkFtsQuery]），靠 `bm25()` 把命中
+  /// bigram 更多的笔记排序在前。`unicode61` 默认分词对中文失效，故索引与查询
+  /// 两侧都做 bigram 化。
   Future<List<Note>> searchNotes(String query) async {
+    final ftsQuery = cjkFtsQuery(query);
+    // 查询无有效 token（纯标点/空白）时直接返回空，避免 MATCH 空表达式报错。
+    if (ftsQuery.isEmpty) return [];
+
     final results = await customSelect(
-      "SELECT note_id FROM notes_fts WHERE notes_fts MATCH ?1 ORDER BY rank",
-      variables: [Variable.withString(query)],
+      "SELECT note_id FROM notes_fts WHERE notes_fts MATCH ?1 "
+      "ORDER BY bm25(notes_fts)",
+      variables: [Variable.withString(ftsQuery)],
     ).get();
 
     final ids = results.map((r) => r.data['note_id'] as String).toList();
     if (ids.isEmpty) return [];
 
-    return (select(notes)
-          ..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false))
-          ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
-        .get();
+    // 保持 bm25 的相关性顺序，而非按 updatedAt 重排。
+    final notesById = <String, Note>{};
+    for (final n in await (select(notes)
+          ..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false)))
+        .get()) {
+      notesById[n.id] = n;
+    }
+    return ids.map((id) => notesById[id]).whereType<Note>().toList();
   }
 
+  /// 写入 FTS 索引。title 与 content 均经 CJK bigram 化后存储，
+  /// 与 [searchNotes] 的查询侧分词保持一致。
   Future<void> indexNote(String noteId, String title, String plainContent) async {
     // Remove old index entry
     await customStatement(
       "DELETE FROM notes_fts WHERE note_id = ?",
       [noteId],
     );
-    // Insert new index entry
+    // Insert new index entry（bigram 化后的文本）
     await customStatement(
       "INSERT INTO notes_fts (title, content, note_id) VALUES (?1, ?2, ?3)",
-      [title, plainContent, noteId],
+      [cjkIndexText(title), cjkIndexText(plainContent), noteId],
     );
   }
+
+  /// 清空 FTS 索引。分词方案变更后配合重建使用（`notes_fts` 是派生数据）。
+  Future<void> clearFtsIndex() => customStatement("DELETE FROM notes_fts");
+
+  /// 所有未删除笔记，供 FTS 索引重建遍历。
+  Future<List<Note>> allNotesForIndexing() =>
+      (select(notes)..where((t) => t.isDeleted.equals(false))).get();
 
   // ---------------------------------------------------------------------------
   // Stats
