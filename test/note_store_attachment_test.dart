@@ -136,6 +136,7 @@ class _TestNoteStore {
       mime: row.readNullable<String>('mime'),
       localPath: row.read<String>('local_path'),
       createdAt: row.read<DateTime>('created_at'),
+      isCredential: false,
     );
   }
 

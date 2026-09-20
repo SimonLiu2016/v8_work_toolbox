@@ -6,23 +6,23 @@
 
 ### 1.1 数据模型迁移
 
-- [ ] 1.1.1 `lib/tools/notebook/note_database.dart`：`Notes` 表增加可空列 `assetCategory` / `assetPurchaseDate` / `assetServiceUntil` / `assetExpiryDate`；`Attachments` 表加 `isCredential` bool（default false）；schemaVersion +1，写迁移 ALTER TABLE
-- [ ] 1.1.2 重新生成 `note_database.g.dart`（`dart run build_runner build`）
-- [ ] 1.1.3 `NoteStore` 增加资产字段 CRUD：`updateAssetFields(noteId, {...})`、`assetsDueSoon(days)`、`flagAttachmentCredential(attachmentId, bool)`
-- [ ] 1.1.4 单测：迁移后旧笔记资产字段为空、凭证标识默认 false；资产查询能按到期日过滤
+- [x] 1.1.1 `lib/tools/notebook/note_database.dart`：`Notes` 表增加可空列 `assetCategory` / `assetPurchaseDate` / `assetServiceUntil` / `assetExpiryDate`；`Attachments` 表加 `isCredential` bool（default false）；schemaVersion +1，写迁移 ALTER TABLE
+- [x] 1.1.2 重新生成 `note_database.g.dart`（`dart run build_runner build`）
+- [x] 1.1.3 `NoteStore` 增加资产字段 CRUD：`updateAssetFields(noteId, {...})`、`assetsDueSoon(days)`、`flagAttachmentCredential(attachmentId, bool)`
+- [x] 1.1.4 单测：迁移后旧笔记资产字段为空、凭证标识默认 false；资产查询能按到期日过滤
 
 ### 1.2 资产提醒服务
 
-- [ ] 1.2.1 新建 `lib/tools/notebook/asset_reminder_service.dart`：30s tick 扫描到期日 ≤ now+leadWindow 且未过期且未 dismiss 的资产；复用 `ScheduledNewsService` 的 osascript 通知 + 任务级退避模式
-- [ ] 1.2.2 到期前默认 30 天通知；过期后标记 expired 停止提醒；dismiss 进入冷却
-- [ ] 1.2.3 在 `main.dart` 启动链注册 `AssetReminderService.instance.init()`，加 PrivacySecurityService 风格的异常守卫（单组件故障不黑屏）
-- [ ] 1.2.4 单测：到期资产命中提醒、过期资产不重复提醒、dismiss 冷却
+- [x] 1.2.1 新建 `lib/tools/notebook/asset_reminder_service.dart`：30s tick 扫描到期日 ≤ now+leadWindow 且未过期且未 dismiss 的资产；复用 `ScheduledNewsService` 的 osascript 通知 + 任务级退避模式
+- [x] 1.2.2 到期前默认 30 天通知；过期后标记 expired 停止提醒；dismiss 进入冷却
+- [x] 1.2.3 在 `main.dart` 启动链注册 `AssetReminderService.instance.init()`，加 PrivacySecurityService 风格的异常守卫（单组件故障不黑屏）
+- [x] 1.2.4 单测：到期资产命中提醒、过期资产不重复提醒、dismiss 冷却
 
 ### 1.3 资产 UI
 
-- [ ] 1.3.1 新建 `lib/tools/notebook/ui/asset_fields_panel.dart`：可折叠面板，编辑品类/购买日/服务期/到期日；附件列表勾选"标记为凭证"
-- [ ] 1.3.2 笔记列表项：资产笔记显示资产徽章 + 到期倒计时；普通笔记无徽章
-- [ ] 1.3.3 笔记编辑页接入资产面板（默认折叠，无资产数据时不干扰编辑面）
+- [x] 1.3.1 新建 `lib/tools/notebook/ui/asset_fields_panel.dart`：可折叠面板，编辑品类/购买日/服务期/到期日；附件列表勾选"标记为凭证"
+- [x] 1.3.2 笔记列表项：资产笔记显示资产徽章 + 到期倒计时；普通笔记无徽章
+- [x] 1.3.3 笔记编辑页接入资产面板（默认折叠，无资产数据时不干扰编辑面）
 - [ ] 1.3.4 手工验证：登记豆浆机 5 年换新资产，到期日设 2029-09-20，列表显示徽章与倒计时
 
 ## 阶段二：AI 问答（RAG）

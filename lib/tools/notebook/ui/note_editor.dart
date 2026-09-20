@@ -10,6 +10,7 @@ import '../../../theme/app_theme.dart';
 import '../appflowy_codec.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import 'asset_fields_panel.dart';
 import 'components/attachment_block_component.dart';
 import 'components/note_code_block_component.dart';
 import 'components/note_editor_toolbar.dart';
@@ -636,6 +637,12 @@ class _NoteEditorState extends State<NoteEditor> {
             editorState: _editorState!,
             onSaveAttachment: _saveAttachment,
             onAddAttachments: _addAttachments,
+          ),
+
+          // 资产 / 凭证面板（无资产数据的笔记默认折叠，不干扰编辑面）
+          AssetFieldsPanel(
+            note: widget.note!,
+            onChanged: () => widget.onSaved?.call(),
           ),
 
           // AppFlowyEditor 编辑器画布（由 AppFlowy 原生接管视口与滚动）

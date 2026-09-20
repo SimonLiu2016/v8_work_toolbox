@@ -30,6 +30,13 @@ class Notes extends Table {
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
+  // 资产字段（可空，普通笔记为空）：用户选择加列到 Notes（A 方案）。
+  // 让耐用消费品资产（延保/订阅/保险/会员）带可查询的到期日，供提醒与 RAG 命中。
+  TextColumn get assetCategory => text().nullable()();
+  DateTimeColumn get assetPurchaseDate => dateTime().nullable()();
+  DateTimeColumn get assetServiceUntil => dateTime().nullable()();
+  DateTimeColumn get assetExpiryDate => dateTime().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -58,16 +65,35 @@ class Attachments extends Table {
   TextColumn get mime => text().nullable()();
   TextColumn get localPath => text()();
   DateTimeColumn get createdAt => dateTime()();
+  // 凭证标识：资产笔记的"凭证附件"用于 RAG 命中后指引用户定位凭证。
+  BoolColumn get isCredential => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {id};
 }
 
 // ---------------------------------------------------------------------------
+// 关联边（阶段三启用，阶段一先建表占位以避免后续二次迁移）
+// ---------------------------------------------------------------------------
+
+/// 笔记间泛化关联（B 方案：relation 恒 'related_to'，语义由 reason 自由文本承载）。
+/// 双向可见通过查询（WHERE source=? OR target=?），不双写。
+class NoteLinks extends Table {
+  TextColumn get sourceNoteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get targetNoteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get relation => text().withDefault(const Constant('related_to'))();
+  TextColumn get reason => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {sourceNoteId, targetNoteId};
+}
+
+// ---------------------------------------------------------------------------
 // Database
 // ---------------------------------------------------------------------------
 
-@DriftDatabase(tables: [Notebooks, Notes, Tags, NoteTags, Attachments])
+@DriftDatabase(tables: [Notebooks, Notes, Tags, NoteTags, Attachments, NoteLinks])
 class NoteDatabase extends _$NoteDatabase {
   NoteDatabase() : super(_openConnection());
 
@@ -75,7 +101,7 @@ class NoteDatabase extends _$NoteDatabase {
   NoteDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -94,6 +120,15 @@ class NoteDatabase extends _$NoteDatabase {
           await m.addColumn(notebooks, notebooks.stack);
         } catch (_) {}
       }
+      if (from < 3) {
+        // 资产字段 + 凭证标识 + 关联边表
+        try { await m.addColumn(notes, notes.assetCategory); } catch (_) {}
+        try { await m.addColumn(notes, notes.assetPurchaseDate); } catch (_) {}
+        try { await m.addColumn(notes, notes.assetServiceUntil); } catch (_) {}
+        try { await m.addColumn(notes, notes.assetExpiryDate); } catch (_) {}
+        try { await m.addColumn(attachments, attachments.isCredential); } catch (_) {}
+        try { await m.createTable(noteLinks); } catch (_) {}
+      }
     },
     beforeOpen: (details) async {
       try {
@@ -101,6 +136,28 @@ class NoteDatabase extends _$NoteDatabase {
       } catch (_) {
         // Column already exists, ignore safely
       }
+      // 资产列与凭证标识：旧库升级时 beforeOpen 兜底（onUpgrade 已处理，此处幂等）
+      for (final stmt in [
+        'ALTER TABLE notes ADD COLUMN asset_category TEXT;',
+        'ALTER TABLE notes ADD COLUMN asset_purchase_date INTEGER;',
+        'ALTER TABLE notes ADD COLUMN asset_service_until INTEGER;',
+        'ALTER TABLE notes ADD COLUMN asset_expiry_date INTEGER;',
+        'ALTER TABLE attachments ADD COLUMN is_credential INTEGER DEFAULT 0;',
+      ]) {
+        try { await customStatement(stmt); } catch (_) {}
+      }
+      try { await customStatement(
+        'CREATE TABLE IF NOT EXISTS note_links ('
+        'source_note_id TEXT NOT NULL, '
+        'target_note_id TEXT NOT NULL, '
+        'relation TEXT NOT NULL DEFAULT \'related_to\', '
+        'reason TEXT, '
+        'created_at INTEGER NOT NULL, '
+        'PRIMARY KEY (source_note_id, target_note_id), '
+        'FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE, '
+        'FOREIGN KEY (target_note_id) REFERENCES notes(id) ON DELETE CASCADE'
+        ');',
+      ); } catch (_) {}
       await _normalizeTextTimestamps();
     },
   );
@@ -246,6 +303,50 @@ class NoteDatabase extends _$NoteDatabase {
     query.orderBy([(t) => OrderingTerm.desc(t.updatedAt)]);
     return query.get();
   }
+
+  // ---------------------------------------------------------------------------
+  // Asset queries（阶段一）
+  // ---------------------------------------------------------------------------
+
+  /// 到期日 ≤ now+leadDays 且未过期（到期日 ≥ now）且未删除的资产笔记。
+  /// 供 AssetReminderService 扫描提醒。
+  Future<List<Note>> assetsDueSoon(int leadDays) {
+    final now = DateTime.now();
+    final horizon = now.add(Duration(days: leadDays));
+    final query = select(notes)
+      ..where((t) => t.isDeleted.equals(false))
+      ..where((t) => t.assetExpiryDate.isNotNull())
+      ..where((t) => t.assetExpiryDate.isBiggerOrEqualValue(now))
+      ..where((t) => t.assetExpiryDate.isSmallerOrEqualValue(horizon))
+      ..orderBy([(t) => OrderingTerm.asc(t.assetExpiryDate)]);
+    return query.get();
+  }
+
+  /// 所有未删除的资产笔记（资产字段任一非空），按到期日升序。
+  Future<List<Note>> allAssets() {
+    final query = select(notes)
+      ..where((t) => t.isDeleted.equals(false))
+      ..where((t) =>
+          t.assetCategory.isNotNull() |
+          t.assetPurchaseDate.isNotNull() |
+          t.assetServiceUntil.isNotNull() |
+          t.assetExpiryDate.isNotNull())
+      ..orderBy([(t) => OrderingTerm.asc(t.assetExpiryDate)]);
+    return query.get();
+  }
+
+  /// 标记/取消标记附件为凭证。
+  Future<void> setAttachmentCredential(String attachmentId, bool isCredential) =>
+      (update(attachments)..where((t) => t.id.equals(attachmentId))).write(
+        AttachmentsCompanion(isCredential: Value(isCredential)),
+      );
+
+  /// 资产笔记的凭证附件。
+  Future<List<Attachment>> credentialsForNote(String noteId) =>
+      (select(attachments)
+            ..where((t) => t.noteId.equals(noteId))
+            ..where((t) => t.isCredential.equals(true)))
+          .get();
 
   // ---------------------------------------------------------------------------
   // Tag CRUD

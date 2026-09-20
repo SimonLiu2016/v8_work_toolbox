@@ -559,6 +559,53 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _assetCategoryMeta = const VerificationMeta(
+    'assetCategory',
+  );
+  @override
+  late final GeneratedColumn<String> assetCategory = GeneratedColumn<String>(
+    'asset_category',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _assetPurchaseDateMeta = const VerificationMeta(
+    'assetPurchaseDate',
+  );
+  @override
+  late final GeneratedColumn<DateTime> assetPurchaseDate =
+      GeneratedColumn<DateTime>(
+        'asset_purchase_date',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _assetServiceUntilMeta = const VerificationMeta(
+    'assetServiceUntil',
+  );
+  @override
+  late final GeneratedColumn<DateTime> assetServiceUntil =
+      GeneratedColumn<DateTime>(
+        'asset_service_until',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _assetExpiryDateMeta = const VerificationMeta(
+    'assetExpiryDate',
+  );
+  @override
+  late final GeneratedColumn<DateTime> assetExpiryDate =
+      GeneratedColumn<DateTime>(
+        'asset_expiry_date',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -569,6 +616,10 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
     isDeleted,
     createdAt,
     updatedAt,
+    assetCategory,
+    assetPurchaseDate,
+    assetServiceUntil,
+    assetExpiryDate,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -637,6 +688,42 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
+    if (data.containsKey('asset_category')) {
+      context.handle(
+        _assetCategoryMeta,
+        assetCategory.isAcceptableOrUnknown(
+          data['asset_category']!,
+          _assetCategoryMeta,
+        ),
+      );
+    }
+    if (data.containsKey('asset_purchase_date')) {
+      context.handle(
+        _assetPurchaseDateMeta,
+        assetPurchaseDate.isAcceptableOrUnknown(
+          data['asset_purchase_date']!,
+          _assetPurchaseDateMeta,
+        ),
+      );
+    }
+    if (data.containsKey('asset_service_until')) {
+      context.handle(
+        _assetServiceUntilMeta,
+        assetServiceUntil.isAcceptableOrUnknown(
+          data['asset_service_until']!,
+          _assetServiceUntilMeta,
+        ),
+      );
+    }
+    if (data.containsKey('asset_expiry_date')) {
+      context.handle(
+        _assetExpiryDateMeta,
+        assetExpiryDate.isAcceptableOrUnknown(
+          data['asset_expiry_date']!,
+          _assetExpiryDateMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -678,6 +765,22 @@ class $NotesTable extends Notes with TableInfo<$NotesTable, Note> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       )!,
+      assetCategory: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}asset_category'],
+      ),
+      assetPurchaseDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}asset_purchase_date'],
+      ),
+      assetServiceUntil: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}asset_service_until'],
+      ),
+      assetExpiryDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}asset_expiry_date'],
+      ),
     );
   }
 
@@ -696,6 +799,10 @@ class Note extends DataClass implements Insertable<Note> {
   final bool isDeleted;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? assetCategory;
+  final DateTime? assetPurchaseDate;
+  final DateTime? assetServiceUntil;
+  final DateTime? assetExpiryDate;
   const Note({
     required this.id,
     required this.title,
@@ -705,6 +812,10 @@ class Note extends DataClass implements Insertable<Note> {
     required this.isDeleted,
     required this.createdAt,
     required this.updatedAt,
+    this.assetCategory,
+    this.assetPurchaseDate,
+    this.assetServiceUntil,
+    this.assetExpiryDate,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -719,6 +830,18 @@ class Note extends DataClass implements Insertable<Note> {
     map['is_deleted'] = Variable<bool>(isDeleted);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || assetCategory != null) {
+      map['asset_category'] = Variable<String>(assetCategory);
+    }
+    if (!nullToAbsent || assetPurchaseDate != null) {
+      map['asset_purchase_date'] = Variable<DateTime>(assetPurchaseDate);
+    }
+    if (!nullToAbsent || assetServiceUntil != null) {
+      map['asset_service_until'] = Variable<DateTime>(assetServiceUntil);
+    }
+    if (!nullToAbsent || assetExpiryDate != null) {
+      map['asset_expiry_date'] = Variable<DateTime>(assetExpiryDate);
+    }
     return map;
   }
 
@@ -734,6 +857,18 @@ class Note extends DataClass implements Insertable<Note> {
       isDeleted: Value(isDeleted),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
+      assetCategory: assetCategory == null && nullToAbsent
+          ? const Value.absent()
+          : Value(assetCategory),
+      assetPurchaseDate: assetPurchaseDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(assetPurchaseDate),
+      assetServiceUntil: assetServiceUntil == null && nullToAbsent
+          ? const Value.absent()
+          : Value(assetServiceUntil),
+      assetExpiryDate: assetExpiryDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(assetExpiryDate),
     );
   }
 
@@ -751,6 +886,14 @@ class Note extends DataClass implements Insertable<Note> {
       isDeleted: serializer.fromJson<bool>(json['isDeleted']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      assetCategory: serializer.fromJson<String?>(json['assetCategory']),
+      assetPurchaseDate: serializer.fromJson<DateTime?>(
+        json['assetPurchaseDate'],
+      ),
+      assetServiceUntil: serializer.fromJson<DateTime?>(
+        json['assetServiceUntil'],
+      ),
+      assetExpiryDate: serializer.fromJson<DateTime?>(json['assetExpiryDate']),
     );
   }
   @override
@@ -765,6 +908,10 @@ class Note extends DataClass implements Insertable<Note> {
       'isDeleted': serializer.toJson<bool>(isDeleted),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'assetCategory': serializer.toJson<String?>(assetCategory),
+      'assetPurchaseDate': serializer.toJson<DateTime?>(assetPurchaseDate),
+      'assetServiceUntil': serializer.toJson<DateTime?>(assetServiceUntil),
+      'assetExpiryDate': serializer.toJson<DateTime?>(assetExpiryDate),
     };
   }
 
@@ -777,6 +924,10 @@ class Note extends DataClass implements Insertable<Note> {
     bool? isDeleted,
     DateTime? createdAt,
     DateTime? updatedAt,
+    Value<String?> assetCategory = const Value.absent(),
+    Value<DateTime?> assetPurchaseDate = const Value.absent(),
+    Value<DateTime?> assetServiceUntil = const Value.absent(),
+    Value<DateTime?> assetExpiryDate = const Value.absent(),
   }) => Note(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -786,6 +937,18 @@ class Note extends DataClass implements Insertable<Note> {
     isDeleted: isDeleted ?? this.isDeleted,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
+    assetCategory: assetCategory.present
+        ? assetCategory.value
+        : this.assetCategory,
+    assetPurchaseDate: assetPurchaseDate.present
+        ? assetPurchaseDate.value
+        : this.assetPurchaseDate,
+    assetServiceUntil: assetServiceUntil.present
+        ? assetServiceUntil.value
+        : this.assetServiceUntil,
+    assetExpiryDate: assetExpiryDate.present
+        ? assetExpiryDate.value
+        : this.assetExpiryDate,
   );
   Note copyWithCompanion(NotesCompanion data) {
     return Note(
@@ -799,6 +962,18 @@ class Note extends DataClass implements Insertable<Note> {
       isDeleted: data.isDeleted.present ? data.isDeleted.value : this.isDeleted,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      assetCategory: data.assetCategory.present
+          ? data.assetCategory.value
+          : this.assetCategory,
+      assetPurchaseDate: data.assetPurchaseDate.present
+          ? data.assetPurchaseDate.value
+          : this.assetPurchaseDate,
+      assetServiceUntil: data.assetServiceUntil.present
+          ? data.assetServiceUntil.value
+          : this.assetServiceUntil,
+      assetExpiryDate: data.assetExpiryDate.present
+          ? data.assetExpiryDate.value
+          : this.assetExpiryDate,
     );
   }
 
@@ -812,7 +987,11 @@ class Note extends DataClass implements Insertable<Note> {
           ..write('isPinned: $isPinned, ')
           ..write('isDeleted: $isDeleted, ')
           ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('assetCategory: $assetCategory, ')
+          ..write('assetPurchaseDate: $assetPurchaseDate, ')
+          ..write('assetServiceUntil: $assetServiceUntil, ')
+          ..write('assetExpiryDate: $assetExpiryDate')
           ..write(')'))
         .toString();
   }
@@ -827,6 +1006,10 @@ class Note extends DataClass implements Insertable<Note> {
     isDeleted,
     createdAt,
     updatedAt,
+    assetCategory,
+    assetPurchaseDate,
+    assetServiceUntil,
+    assetExpiryDate,
   );
   @override
   bool operator ==(Object other) =>
@@ -839,7 +1022,11 @@ class Note extends DataClass implements Insertable<Note> {
           other.isPinned == this.isPinned &&
           other.isDeleted == this.isDeleted &&
           other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.assetCategory == this.assetCategory &&
+          other.assetPurchaseDate == this.assetPurchaseDate &&
+          other.assetServiceUntil == this.assetServiceUntil &&
+          other.assetExpiryDate == this.assetExpiryDate);
 }
 
 class NotesCompanion extends UpdateCompanion<Note> {
@@ -851,6 +1038,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
   final Value<bool> isDeleted;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
+  final Value<String?> assetCategory;
+  final Value<DateTime?> assetPurchaseDate;
+  final Value<DateTime?> assetServiceUntil;
+  final Value<DateTime?> assetExpiryDate;
   final Value<int> rowid;
   const NotesCompanion({
     this.id = const Value.absent(),
@@ -861,6 +1052,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
     this.isDeleted = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.assetCategory = const Value.absent(),
+    this.assetPurchaseDate = const Value.absent(),
+    this.assetServiceUntil = const Value.absent(),
+    this.assetExpiryDate = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   NotesCompanion.insert({
@@ -872,6 +1067,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
     this.isDeleted = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
+    this.assetCategory = const Value.absent(),
+    this.assetPurchaseDate = const Value.absent(),
+    this.assetServiceUntil = const Value.absent(),
+    this.assetExpiryDate = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        title = Value(title),
@@ -887,6 +1086,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
     Expression<bool>? isDeleted,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
+    Expression<String>? assetCategory,
+    Expression<DateTime>? assetPurchaseDate,
+    Expression<DateTime>? assetServiceUntil,
+    Expression<DateTime>? assetExpiryDate,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -898,6 +1101,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
       if (isDeleted != null) 'is_deleted': isDeleted,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (assetCategory != null) 'asset_category': assetCategory,
+      if (assetPurchaseDate != null) 'asset_purchase_date': assetPurchaseDate,
+      if (assetServiceUntil != null) 'asset_service_until': assetServiceUntil,
+      if (assetExpiryDate != null) 'asset_expiry_date': assetExpiryDate,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -911,6 +1118,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
     Value<bool>? isDeleted,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
+    Value<String?>? assetCategory,
+    Value<DateTime?>? assetPurchaseDate,
+    Value<DateTime?>? assetServiceUntil,
+    Value<DateTime?>? assetExpiryDate,
     Value<int>? rowid,
   }) {
     return NotesCompanion(
@@ -922,6 +1133,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
       isDeleted: isDeleted ?? this.isDeleted,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      assetCategory: assetCategory ?? this.assetCategory,
+      assetPurchaseDate: assetPurchaseDate ?? this.assetPurchaseDate,
+      assetServiceUntil: assetServiceUntil ?? this.assetServiceUntil,
+      assetExpiryDate: assetExpiryDate ?? this.assetExpiryDate,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -953,6 +1168,18 @@ class NotesCompanion extends UpdateCompanion<Note> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (assetCategory.present) {
+      map['asset_category'] = Variable<String>(assetCategory.value);
+    }
+    if (assetPurchaseDate.present) {
+      map['asset_purchase_date'] = Variable<DateTime>(assetPurchaseDate.value);
+    }
+    if (assetServiceUntil.present) {
+      map['asset_service_until'] = Variable<DateTime>(assetServiceUntil.value);
+    }
+    if (assetExpiryDate.present) {
+      map['asset_expiry_date'] = Variable<DateTime>(assetExpiryDate.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -970,6 +1197,10 @@ class NotesCompanion extends UpdateCompanion<Note> {
           ..write('isDeleted: $isDeleted, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('assetCategory: $assetCategory, ')
+          ..write('assetPurchaseDate: $assetPurchaseDate, ')
+          ..write('assetServiceUntil: $assetServiceUntil, ')
+          ..write('assetExpiryDate: $assetExpiryDate, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1519,6 +1750,21 @@ class $AttachmentsTable extends Attachments
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _isCredentialMeta = const VerificationMeta(
+    'isCredential',
+  );
+  @override
+  late final GeneratedColumn<bool> isCredential = GeneratedColumn<bool>(
+    'is_credential',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_credential" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1527,6 +1773,7 @@ class $AttachmentsTable extends Attachments
     mime,
     localPath,
     createdAt,
+    isCredential,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1581,6 +1828,15 @@ class $AttachmentsTable extends Attachments
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('is_credential')) {
+      context.handle(
+        _isCredentialMeta,
+        isCredential.isAcceptableOrUnknown(
+          data['is_credential']!,
+          _isCredentialMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1614,6 +1870,10 @@ class $AttachmentsTable extends Attachments
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
       )!,
+      isCredential: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_credential'],
+      )!,
     );
   }
 
@@ -1630,6 +1890,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
   final String? mime;
   final String localPath;
   final DateTime createdAt;
+  final bool isCredential;
   const Attachment({
     required this.id,
     required this.noteId,
@@ -1637,6 +1898,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
     this.mime,
     required this.localPath,
     required this.createdAt,
+    required this.isCredential,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1651,6 +1913,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
     }
     map['local_path'] = Variable<String>(localPath);
     map['created_at'] = Variable<DateTime>(createdAt);
+    map['is_credential'] = Variable<bool>(isCredential);
     return map;
   }
 
@@ -1664,6 +1927,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
       mime: mime == null && nullToAbsent ? const Value.absent() : Value(mime),
       localPath: Value(localPath),
       createdAt: Value(createdAt),
+      isCredential: Value(isCredential),
     );
   }
 
@@ -1679,6 +1943,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
       mime: serializer.fromJson<String?>(json['mime']),
       localPath: serializer.fromJson<String>(json['localPath']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      isCredential: serializer.fromJson<bool>(json['isCredential']),
     );
   }
   @override
@@ -1691,6 +1956,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
       'mime': serializer.toJson<String?>(mime),
       'localPath': serializer.toJson<String>(localPath),
       'createdAt': serializer.toJson<DateTime>(createdAt),
+      'isCredential': serializer.toJson<bool>(isCredential),
     };
   }
 
@@ -1701,6 +1967,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
     Value<String?> mime = const Value.absent(),
     String? localPath,
     DateTime? createdAt,
+    bool? isCredential,
   }) => Attachment(
     id: id ?? this.id,
     noteId: noteId ?? this.noteId,
@@ -1708,6 +1975,7 @@ class Attachment extends DataClass implements Insertable<Attachment> {
     mime: mime.present ? mime.value : this.mime,
     localPath: localPath ?? this.localPath,
     createdAt: createdAt ?? this.createdAt,
+    isCredential: isCredential ?? this.isCredential,
   );
   Attachment copyWithCompanion(AttachmentsCompanion data) {
     return Attachment(
@@ -1717,6 +1985,9 @@ class Attachment extends DataClass implements Insertable<Attachment> {
       mime: data.mime.present ? data.mime.value : this.mime,
       localPath: data.localPath.present ? data.localPath.value : this.localPath,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isCredential: data.isCredential.present
+          ? data.isCredential.value
+          : this.isCredential,
     );
   }
 
@@ -1728,14 +1999,22 @@ class Attachment extends DataClass implements Insertable<Attachment> {
           ..write('filename: $filename, ')
           ..write('mime: $mime, ')
           ..write('localPath: $localPath, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('isCredential: $isCredential')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, noteId, filename, mime, localPath, createdAt);
+  int get hashCode => Object.hash(
+    id,
+    noteId,
+    filename,
+    mime,
+    localPath,
+    createdAt,
+    isCredential,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1745,7 +2024,8 @@ class Attachment extends DataClass implements Insertable<Attachment> {
           other.filename == this.filename &&
           other.mime == this.mime &&
           other.localPath == this.localPath &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.isCredential == this.isCredential);
 }
 
 class AttachmentsCompanion extends UpdateCompanion<Attachment> {
@@ -1755,6 +2035,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
   final Value<String?> mime;
   final Value<String> localPath;
   final Value<DateTime> createdAt;
+  final Value<bool> isCredential;
   final Value<int> rowid;
   const AttachmentsCompanion({
     this.id = const Value.absent(),
@@ -1763,6 +2044,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
     this.mime = const Value.absent(),
     this.localPath = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.isCredential = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   AttachmentsCompanion.insert({
@@ -1772,6 +2054,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
     this.mime = const Value.absent(),
     required String localPath,
     required DateTime createdAt,
+    this.isCredential = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        noteId = Value(noteId),
@@ -1784,6 +2067,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
     Expression<String>? mime,
     Expression<String>? localPath,
     Expression<DateTime>? createdAt,
+    Expression<bool>? isCredential,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1793,6 +2077,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
       if (mime != null) 'mime': mime,
       if (localPath != null) 'local_path': localPath,
       if (createdAt != null) 'created_at': createdAt,
+      if (isCredential != null) 'is_credential': isCredential,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1804,6 +2089,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
     Value<String?>? mime,
     Value<String>? localPath,
     Value<DateTime>? createdAt,
+    Value<bool>? isCredential,
     Value<int>? rowid,
   }) {
     return AttachmentsCompanion(
@@ -1813,6 +2099,7 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
       mime: mime ?? this.mime,
       localPath: localPath ?? this.localPath,
       createdAt: createdAt ?? this.createdAt,
+      isCredential: isCredential ?? this.isCredential,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1838,6 +2125,9 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
+    if (isCredential.present) {
+      map['is_credential'] = Variable<bool>(isCredential.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1853,6 +2143,388 @@ class AttachmentsCompanion extends UpdateCompanion<Attachment> {
           ..write('mime: $mime, ')
           ..write('localPath: $localPath, ')
           ..write('createdAt: $createdAt, ')
+          ..write('isCredential: $isCredential, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $NoteLinksTable extends NoteLinks
+    with TableInfo<$NoteLinksTable, NoteLink> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $NoteLinksTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _sourceNoteIdMeta = const VerificationMeta(
+    'sourceNoteId',
+  );
+  @override
+  late final GeneratedColumn<String> sourceNoteId = GeneratedColumn<String>(
+    'source_note_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES notes (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _targetNoteIdMeta = const VerificationMeta(
+    'targetNoteId',
+  );
+  @override
+  late final GeneratedColumn<String> targetNoteId = GeneratedColumn<String>(
+    'target_note_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES notes (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _relationMeta = const VerificationMeta(
+    'relation',
+  );
+  @override
+  late final GeneratedColumn<String> relation = GeneratedColumn<String>(
+    'relation',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('related_to'),
+  );
+  static const VerificationMeta _reasonMeta = const VerificationMeta('reason');
+  @override
+  late final GeneratedColumn<String> reason = GeneratedColumn<String>(
+    'reason',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    sourceNoteId,
+    targetNoteId,
+    relation,
+    reason,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'note_links';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<NoteLink> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('source_note_id')) {
+      context.handle(
+        _sourceNoteIdMeta,
+        sourceNoteId.isAcceptableOrUnknown(
+          data['source_note_id']!,
+          _sourceNoteIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceNoteIdMeta);
+    }
+    if (data.containsKey('target_note_id')) {
+      context.handle(
+        _targetNoteIdMeta,
+        targetNoteId.isAcceptableOrUnknown(
+          data['target_note_id']!,
+          _targetNoteIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetNoteIdMeta);
+    }
+    if (data.containsKey('relation')) {
+      context.handle(
+        _relationMeta,
+        relation.isAcceptableOrUnknown(data['relation']!, _relationMeta),
+      );
+    }
+    if (data.containsKey('reason')) {
+      context.handle(
+        _reasonMeta,
+        reason.isAcceptableOrUnknown(data['reason']!, _reasonMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {sourceNoteId, targetNoteId};
+  @override
+  NoteLink map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return NoteLink(
+      sourceNoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_note_id'],
+      )!,
+      targetNoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_note_id'],
+      )!,
+      relation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relation'],
+      )!,
+      reason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}reason'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $NoteLinksTable createAlias(String alias) {
+    return $NoteLinksTable(attachedDatabase, alias);
+  }
+}
+
+class NoteLink extends DataClass implements Insertable<NoteLink> {
+  final String sourceNoteId;
+  final String targetNoteId;
+  final String relation;
+  final String? reason;
+  final DateTime createdAt;
+  const NoteLink({
+    required this.sourceNoteId,
+    required this.targetNoteId,
+    required this.relation,
+    this.reason,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['source_note_id'] = Variable<String>(sourceNoteId);
+    map['target_note_id'] = Variable<String>(targetNoteId);
+    map['relation'] = Variable<String>(relation);
+    if (!nullToAbsent || reason != null) {
+      map['reason'] = Variable<String>(reason);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  NoteLinksCompanion toCompanion(bool nullToAbsent) {
+    return NoteLinksCompanion(
+      sourceNoteId: Value(sourceNoteId),
+      targetNoteId: Value(targetNoteId),
+      relation: Value(relation),
+      reason: reason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(reason),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory NoteLink.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return NoteLink(
+      sourceNoteId: serializer.fromJson<String>(json['sourceNoteId']),
+      targetNoteId: serializer.fromJson<String>(json['targetNoteId']),
+      relation: serializer.fromJson<String>(json['relation']),
+      reason: serializer.fromJson<String?>(json['reason']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'sourceNoteId': serializer.toJson<String>(sourceNoteId),
+      'targetNoteId': serializer.toJson<String>(targetNoteId),
+      'relation': serializer.toJson<String>(relation),
+      'reason': serializer.toJson<String?>(reason),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  NoteLink copyWith({
+    String? sourceNoteId,
+    String? targetNoteId,
+    String? relation,
+    Value<String?> reason = const Value.absent(),
+    DateTime? createdAt,
+  }) => NoteLink(
+    sourceNoteId: sourceNoteId ?? this.sourceNoteId,
+    targetNoteId: targetNoteId ?? this.targetNoteId,
+    relation: relation ?? this.relation,
+    reason: reason.present ? reason.value : this.reason,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  NoteLink copyWithCompanion(NoteLinksCompanion data) {
+    return NoteLink(
+      sourceNoteId: data.sourceNoteId.present
+          ? data.sourceNoteId.value
+          : this.sourceNoteId,
+      targetNoteId: data.targetNoteId.present
+          ? data.targetNoteId.value
+          : this.targetNoteId,
+      relation: data.relation.present ? data.relation.value : this.relation,
+      reason: data.reason.present ? data.reason.value : this.reason,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('NoteLink(')
+          ..write('sourceNoteId: $sourceNoteId, ')
+          ..write('targetNoteId: $targetNoteId, ')
+          ..write('relation: $relation, ')
+          ..write('reason: $reason, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(sourceNoteId, targetNoteId, relation, reason, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is NoteLink &&
+          other.sourceNoteId == this.sourceNoteId &&
+          other.targetNoteId == this.targetNoteId &&
+          other.relation == this.relation &&
+          other.reason == this.reason &&
+          other.createdAt == this.createdAt);
+}
+
+class NoteLinksCompanion extends UpdateCompanion<NoteLink> {
+  final Value<String> sourceNoteId;
+  final Value<String> targetNoteId;
+  final Value<String> relation;
+  final Value<String?> reason;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const NoteLinksCompanion({
+    this.sourceNoteId = const Value.absent(),
+    this.targetNoteId = const Value.absent(),
+    this.relation = const Value.absent(),
+    this.reason = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  NoteLinksCompanion.insert({
+    required String sourceNoteId,
+    required String targetNoteId,
+    this.relation = const Value.absent(),
+    this.reason = const Value.absent(),
+    required DateTime createdAt,
+    this.rowid = const Value.absent(),
+  }) : sourceNoteId = Value(sourceNoteId),
+       targetNoteId = Value(targetNoteId),
+       createdAt = Value(createdAt);
+  static Insertable<NoteLink> custom({
+    Expression<String>? sourceNoteId,
+    Expression<String>? targetNoteId,
+    Expression<String>? relation,
+    Expression<String>? reason,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (sourceNoteId != null) 'source_note_id': sourceNoteId,
+      if (targetNoteId != null) 'target_note_id': targetNoteId,
+      if (relation != null) 'relation': relation,
+      if (reason != null) 'reason': reason,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  NoteLinksCompanion copyWith({
+    Value<String>? sourceNoteId,
+    Value<String>? targetNoteId,
+    Value<String>? relation,
+    Value<String?>? reason,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return NoteLinksCompanion(
+      sourceNoteId: sourceNoteId ?? this.sourceNoteId,
+      targetNoteId: targetNoteId ?? this.targetNoteId,
+      relation: relation ?? this.relation,
+      reason: reason ?? this.reason,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (sourceNoteId.present) {
+      map['source_note_id'] = Variable<String>(sourceNoteId.value);
+    }
+    if (targetNoteId.present) {
+      map['target_note_id'] = Variable<String>(targetNoteId.value);
+    }
+    if (relation.present) {
+      map['relation'] = Variable<String>(relation.value);
+    }
+    if (reason.present) {
+      map['reason'] = Variable<String>(reason.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('NoteLinksCompanion(')
+          ..write('sourceNoteId: $sourceNoteId, ')
+          ..write('targetNoteId: $targetNoteId, ')
+          ..write('relation: $relation, ')
+          ..write('reason: $reason, ')
+          ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1867,6 +2539,7 @@ abstract class _$NoteDatabase extends GeneratedDatabase {
   late final $TagsTable tags = $TagsTable(this);
   late final $NoteTagsTable noteTags = $NoteTagsTable(this);
   late final $AttachmentsTable attachments = $AttachmentsTable(this);
+  late final $NoteLinksTable noteLinks = $NoteLinksTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1877,6 +2550,7 @@ abstract class _$NoteDatabase extends GeneratedDatabase {
     tags,
     noteTags,
     attachments,
+    noteLinks,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -1900,6 +2574,20 @@ abstract class _$NoteDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('attachments', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'notes',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('note_links', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'notes',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('note_links', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -2246,6 +2934,10 @@ typedef $$NotesTableCreateCompanionBuilder =
       Value<bool> isDeleted,
       required DateTime createdAt,
       required DateTime updatedAt,
+      Value<String?> assetCategory,
+      Value<DateTime?> assetPurchaseDate,
+      Value<DateTime?> assetServiceUntil,
+      Value<DateTime?> assetExpiryDate,
       Value<int> rowid,
     });
 typedef $$NotesTableUpdateCompanionBuilder =
@@ -2258,6 +2950,10 @@ typedef $$NotesTableUpdateCompanionBuilder =
       Value<bool> isDeleted,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
+      Value<String?> assetCategory,
+      Value<DateTime?> assetPurchaseDate,
+      Value<DateTime?> assetServiceUntil,
+      Value<DateTime?> assetExpiryDate,
       Value<int> rowid,
     });
 
@@ -2360,6 +3056,26 @@ class $$NotesTableFilterComposer extends Composer<_$NoteDatabase, $NotesTable> {
 
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get assetCategory => $composableBuilder(
+    column: $table.assetCategory,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get assetPurchaseDate => $composableBuilder(
+    column: $table.assetPurchaseDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get assetServiceUntil => $composableBuilder(
+    column: $table.assetServiceUntil,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get assetExpiryDate => $composableBuilder(
+    column: $table.assetExpiryDate,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2481,6 +3197,26 @@ class $$NotesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get assetCategory => $composableBuilder(
+    column: $table.assetCategory,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get assetPurchaseDate => $composableBuilder(
+    column: $table.assetPurchaseDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get assetServiceUntil => $composableBuilder(
+    column: $table.assetServiceUntil,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get assetExpiryDate => $composableBuilder(
+    column: $table.assetExpiryDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$NotebooksTableOrderingComposer get notebookId {
     final $$NotebooksTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -2534,6 +3270,26 @@ class $$NotesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get assetCategory => $composableBuilder(
+    column: $table.assetCategory,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get assetPurchaseDate => $composableBuilder(
+    column: $table.assetPurchaseDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get assetServiceUntil => $composableBuilder(
+    column: $table.assetServiceUntil,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get assetExpiryDate => $composableBuilder(
+    column: $table.assetExpiryDate,
+    builder: (column) => column,
+  );
 
   $$NotebooksTableAnnotationComposer get notebookId {
     final $$NotebooksTableAnnotationComposer composer = $composerBuilder(
@@ -2649,6 +3405,10 @@ class $$NotesTableTableManager
                 Value<bool> isDeleted = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<String?> assetCategory = const Value.absent(),
+                Value<DateTime?> assetPurchaseDate = const Value.absent(),
+                Value<DateTime?> assetServiceUntil = const Value.absent(),
+                Value<DateTime?> assetExpiryDate = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => NotesCompanion(
                 id: id,
@@ -2659,6 +3419,10 @@ class $$NotesTableTableManager
                 isDeleted: isDeleted,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
+                assetCategory: assetCategory,
+                assetPurchaseDate: assetPurchaseDate,
+                assetServiceUntil: assetServiceUntil,
+                assetExpiryDate: assetExpiryDate,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -2671,6 +3435,10 @@ class $$NotesTableTableManager
                 Value<bool> isDeleted = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
+                Value<String?> assetCategory = const Value.absent(),
+                Value<DateTime?> assetPurchaseDate = const Value.absent(),
+                Value<DateTime?> assetServiceUntil = const Value.absent(),
+                Value<DateTime?> assetExpiryDate = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => NotesCompanion.insert(
                 id: id,
@@ -2681,6 +3449,10 @@ class $$NotesTableTableManager
                 isDeleted: isDeleted,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
+                assetCategory: assetCategory,
+                assetPurchaseDate: assetPurchaseDate,
+                assetServiceUntil: assetServiceUntil,
+                assetExpiryDate: assetExpiryDate,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -3400,6 +4172,7 @@ typedef $$AttachmentsTableCreateCompanionBuilder =
       Value<String?> mime,
       required String localPath,
       required DateTime createdAt,
+      Value<bool> isCredential,
       Value<int> rowid,
     });
 typedef $$AttachmentsTableUpdateCompanionBuilder =
@@ -3410,6 +4183,7 @@ typedef $$AttachmentsTableUpdateCompanionBuilder =
       Value<String?> mime,
       Value<String> localPath,
       Value<DateTime> createdAt,
+      Value<bool> isCredential,
       Value<int> rowid,
     });
 
@@ -3467,6 +4241,11 @@ class $$AttachmentsTableFilterComposer
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isCredential => $composableBuilder(
+    column: $table.isCredential,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3528,6 +4307,11 @@ class $$AttachmentsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isCredential => $composableBuilder(
+    column: $table.isCredential,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$NotesTableOrderingComposer get noteId {
     final $$NotesTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -3575,6 +4359,11 @@ class $$AttachmentsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isCredential => $composableBuilder(
+    column: $table.isCredential,
+    builder: (column) => column,
+  );
 
   $$NotesTableAnnotationComposer get noteId {
     final $$NotesTableAnnotationComposer composer = $composerBuilder(
@@ -3634,6 +4423,7 @@ class $$AttachmentsTableTableManager
                 Value<String?> mime = const Value.absent(),
                 Value<String> localPath = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isCredential = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => AttachmentsCompanion(
                 id: id,
@@ -3642,6 +4432,7 @@ class $$AttachmentsTableTableManager
                 mime: mime,
                 localPath: localPath,
                 createdAt: createdAt,
+                isCredential: isCredential,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3652,6 +4443,7 @@ class $$AttachmentsTableTableManager
                 Value<String?> mime = const Value.absent(),
                 required String localPath,
                 required DateTime createdAt,
+                Value<bool> isCredential = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => AttachmentsCompanion.insert(
                 id: id,
@@ -3660,6 +4452,7 @@ class $$AttachmentsTableTableManager
                 mime: mime,
                 localPath: localPath,
                 createdAt: createdAt,
+                isCredential: isCredential,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -3729,6 +4522,414 @@ typedef $$AttachmentsTableProcessedTableManager =
       Attachment,
       PrefetchHooks Function({bool noteId})
     >;
+typedef $$NoteLinksTableCreateCompanionBuilder =
+    NoteLinksCompanion Function({
+      required String sourceNoteId,
+      required String targetNoteId,
+      Value<String> relation,
+      Value<String?> reason,
+      required DateTime createdAt,
+      Value<int> rowid,
+    });
+typedef $$NoteLinksTableUpdateCompanionBuilder =
+    NoteLinksCompanion Function({
+      Value<String> sourceNoteId,
+      Value<String> targetNoteId,
+      Value<String> relation,
+      Value<String?> reason,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+final class $$NoteLinksTableReferences
+    extends BaseReferences<_$NoteDatabase, $NoteLinksTable, NoteLink> {
+  $$NoteLinksTableReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static $NotesTable _sourceNoteIdTable(_$NoteDatabase db) =>
+      db.notes.createAlias(
+        $_aliasNameGenerator(db.noteLinks.sourceNoteId, db.notes.id),
+      );
+
+  $$NotesTableProcessedTableManager get sourceNoteId {
+    final $_column = $_itemColumn<String>('source_note_id')!;
+
+    final manager = $$NotesTableTableManager(
+      $_db,
+      $_db.notes,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_sourceNoteIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $NotesTable _targetNoteIdTable(_$NoteDatabase db) =>
+      db.notes.createAlias(
+        $_aliasNameGenerator(db.noteLinks.targetNoteId, db.notes.id),
+      );
+
+  $$NotesTableProcessedTableManager get targetNoteId {
+    final $_column = $_itemColumn<String>('target_note_id')!;
+
+    final manager = $$NotesTableTableManager(
+      $_db,
+      $_db.notes,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_targetNoteIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$NoteLinksTableFilterComposer
+    extends Composer<_$NoteDatabase, $NoteLinksTable> {
+  $$NoteLinksTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get relation => $composableBuilder(
+    column: $table.relation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get reason => $composableBuilder(
+    column: $table.reason,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$NotesTableFilterComposer get sourceNoteId {
+    final $$NotesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableFilterComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$NotesTableFilterComposer get targetNoteId {
+    final $$NotesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableFilterComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NoteLinksTableOrderingComposer
+    extends Composer<_$NoteDatabase, $NoteLinksTable> {
+  $$NoteLinksTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get relation => $composableBuilder(
+    column: $table.relation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get reason => $composableBuilder(
+    column: $table.reason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$NotesTableOrderingComposer get sourceNoteId {
+    final $$NotesTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableOrderingComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$NotesTableOrderingComposer get targetNoteId {
+    final $$NotesTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableOrderingComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NoteLinksTableAnnotationComposer
+    extends Composer<_$NoteDatabase, $NoteLinksTable> {
+  $$NoteLinksTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get relation =>
+      $composableBuilder(column: $table.relation, builder: (column) => column);
+
+  GeneratedColumn<String> get reason =>
+      $composableBuilder(column: $table.reason, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  $$NotesTableAnnotationComposer get sourceNoteId {
+    final $$NotesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$NotesTableAnnotationComposer get targetNoteId {
+    final $$NotesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetNoteId,
+      referencedTable: $db.notes,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NotesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.notes,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$NoteLinksTableTableManager
+    extends
+        RootTableManager<
+          _$NoteDatabase,
+          $NoteLinksTable,
+          NoteLink,
+          $$NoteLinksTableFilterComposer,
+          $$NoteLinksTableOrderingComposer,
+          $$NoteLinksTableAnnotationComposer,
+          $$NoteLinksTableCreateCompanionBuilder,
+          $$NoteLinksTableUpdateCompanionBuilder,
+          (NoteLink, $$NoteLinksTableReferences),
+          NoteLink,
+          PrefetchHooks Function({bool sourceNoteId, bool targetNoteId})
+        > {
+  $$NoteLinksTableTableManager(_$NoteDatabase db, $NoteLinksTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$NoteLinksTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$NoteLinksTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$NoteLinksTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> sourceNoteId = const Value.absent(),
+                Value<String> targetNoteId = const Value.absent(),
+                Value<String> relation = const Value.absent(),
+                Value<String?> reason = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => NoteLinksCompanion(
+                sourceNoteId: sourceNoteId,
+                targetNoteId: targetNoteId,
+                relation: relation,
+                reason: reason,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String sourceNoteId,
+                required String targetNoteId,
+                Value<String> relation = const Value.absent(),
+                Value<String?> reason = const Value.absent(),
+                required DateTime createdAt,
+                Value<int> rowid = const Value.absent(),
+              }) => NoteLinksCompanion.insert(
+                sourceNoteId: sourceNoteId,
+                targetNoteId: targetNoteId,
+                relation: relation,
+                reason: reason,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$NoteLinksTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback:
+              ({sourceNoteId = false, targetNoteId = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (sourceNoteId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.sourceNoteId,
+                                    referencedTable: $$NoteLinksTableReferences
+                                        ._sourceNoteIdTable(db),
+                                    referencedColumn: $$NoteLinksTableReferences
+                                        ._sourceNoteIdTable(db)
+                                        .id,
+                                  )
+                                  as T;
+                        }
+                        if (targetNoteId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.targetNoteId,
+                                    referencedTable: $$NoteLinksTableReferences
+                                        ._targetNoteIdTable(db),
+                                    referencedColumn: $$NoteLinksTableReferences
+                                        ._targetNoteIdTable(db)
+                                        .id,
+                                  )
+                                  as T;
+                        }
+
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [];
+                  },
+                );
+              },
+        ),
+      );
+}
+
+typedef $$NoteLinksTableProcessedTableManager =
+    ProcessedTableManager<
+      _$NoteDatabase,
+      $NoteLinksTable,
+      NoteLink,
+      $$NoteLinksTableFilterComposer,
+      $$NoteLinksTableOrderingComposer,
+      $$NoteLinksTableAnnotationComposer,
+      $$NoteLinksTableCreateCompanionBuilder,
+      $$NoteLinksTableUpdateCompanionBuilder,
+      (NoteLink, $$NoteLinksTableReferences),
+      NoteLink,
+      PrefetchHooks Function({bool sourceNoteId, bool targetNoteId})
+    >;
 
 class $NoteDatabaseManager {
   final _$NoteDatabase _db;
@@ -3742,4 +4943,6 @@ class $NoteDatabaseManager {
       $$NoteTagsTableTableManager(_db, _db.noteTags);
   $$AttachmentsTableTableManager get attachments =>
       $$AttachmentsTableTableManager(_db, _db.attachments);
+  $$NoteLinksTableTableManager get noteLinks =>
+      $$NoteLinksTableTableManager(_db, _db.noteLinks);
 }

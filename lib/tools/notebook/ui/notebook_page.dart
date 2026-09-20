@@ -1832,6 +1832,8 @@ class _NotebookPageState extends State<NotebookPage> {
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
+                                            if (note.assetExpiryDate != null)
+                                              _buildAssetBadge(note.assetExpiryDate!),
                                           ],
                                         ),
                                         const SizedBox(height: 4),
@@ -1933,6 +1935,33 @@ class _NotebookPageState extends State<NotebookPage> {
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
         child: Text(label, style: AppTheme.fontCaption.copyWith(color: AppTheme.accent)),
+      ),
+    );
+  }
+
+  /// 资产徽章：显示到期倒计时。已过期用红色，临期用蓝色。
+  Widget _buildAssetBadge(DateTime expiry) {
+    final days = expiry.difference(DateTime.now()).inDays;
+    final expired = days < 0;
+    final label = expired
+        ? '已过期'
+        : (days == 0 ? '今天到期' : '$days 天');
+    final bg = expired ? const Color(0xFFFEE2E2) : const Color(0xFFDBEAFE);
+    final fg = expired ? const Color(0xFFB91C1C) : const Color(0xFF1D4ED8);
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.inventory_2_outlined, size: 9, color: fg),
+          const SizedBox(width: 2),
+          Text(label, style: TextStyle(fontSize: 10, color: fg, fontWeight: FontWeight.w500)),
+        ],
       ),
     );
   }

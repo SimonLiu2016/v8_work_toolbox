@@ -233,6 +233,45 @@ class NoteStore {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Asset fields（阶段一）
+  // ---------------------------------------------------------------------------
+
+  /// 更新资产字段。传 null 表示清除该字段，传值表示设置；未传的字段不变。
+  /// 使用 [Value.absent()] 区分"不更新"与"清空"。
+  Future<void> updateAssetFields(
+    String noteId, {
+    Value<String?> assetCategory = const Value.absent(),
+    Value<DateTime?> assetPurchaseDate = const Value.absent(),
+    Value<DateTime?> assetServiceUntil = const Value.absent(),
+    Value<DateTime?> assetExpiryDate = const Value.absent(),
+  }) async {
+    await _db.updateNote(
+      noteId,
+      NotesCompanion(
+        assetCategory: assetCategory,
+        assetPurchaseDate: assetPurchaseDate,
+        assetServiceUntil: assetServiceUntil,
+        assetExpiryDate: assetExpiryDate,
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  /// 到期日 ≤ now+leadDays 且未过期的资产笔记。
+  Future<List<Note>> assetsDueSoon(int leadDays) => _db.assetsDueSoon(leadDays);
+
+  /// 所有未删除的资产笔记（资产字段任一非空）。
+  Future<List<Note>> allAssets() => _db.allAssets();
+
+  /// 标记/取消标记附件为凭证。
+  Future<void> flagAttachmentCredential(String attachmentId, bool isCredential) =>
+      _db.setAttachmentCredential(attachmentId, isCredential);
+
+  /// 资产笔记的凭证附件。
+  Future<List<Attachment>> credentialsForNote(String noteId) =>
+      _db.credentialsForNote(noteId);
+
   Future<void> softDeleteNote(String id) => _db.softDeleteNote(id);
 
   Future<void> batchSoftDeleteNotes(List<String> ids) =>
@@ -458,6 +497,7 @@ class NoteStore {
       mime: row.readNullable<String>('mime'),
       localPath: row.read<String>('local_path'),
       createdAt: row.read<DateTime>('created_at'),
+      isCredential: row.read<bool>('is_credential'),
     );
   }
 

@@ -14,6 +14,7 @@ import 'services/unattended_service.dart';
 import 'shell/app_shell.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
+import 'tools/notebook/asset_reminder_service.dart';
 import 'tools/notebook/note_database.dart';
 import 'tools/notebook/note_store.dart';
 import 'tools/notebook/ui/note_editor.dart';
@@ -84,6 +85,15 @@ Future<void> main(List<String> args) async {
 
   // 初始化定时资讯检索与通知调度
   await ScheduledNewsService.instance.init();
+
+  // 初始化笔记本存储与资产到期提醒。
+  // 笔记本是资产提醒的依赖，初始化失败时守卫住，不让单个组件故障黑屏。
+  try {
+    await NoteStore.instance.init();
+    await AssetReminderService.instance.init();
+  } catch (e, stack) {
+    debugPrint('Notebook/AssetReminder init failed: $e\n$stack');
+  }
 
   // 初始化无人值守服务状态与代理脚本
   await UnattendedService.instance.init();
