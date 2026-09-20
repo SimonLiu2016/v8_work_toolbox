@@ -18,6 +18,7 @@ import '../note_store.dart';
 import '../pdf_to_markdown.dart';
 import '../xlsx_to_markdown.dart';
 import 'note_editor.dart';
+import 'knowledge_graph_view.dart';
 import 'notebook_qa_panel.dart';
 
 /// 笔记本工具主页面（仿印象笔记三栏布局）
@@ -77,6 +78,9 @@ class _NotebookPageState extends State<NotebookPage> {
 
   /// AI 问答面板开关（阶段二）。开启时在最右侧增加一列。
   bool _showQa = false;
+
+  /// 知识星图开关（阶段四）。与问答面板互斥，避免右侧过挤。
+  bool _showGraph = false;
 
   // 批量操作多选状态
   bool _isBatchMode = false;
@@ -1251,6 +1255,18 @@ class _NotebookPageState extends State<NotebookPage> {
               child: NotebookQaPanel(onOpenNote: _openNoteById),
             ),
           ],
+
+          // Far right: 知识星图（阶段四，与问答互斥）
+          if (_showGraph) ...[
+            const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+            SizedBox(
+              width: 420,
+              child: KnowledgeGraphView(
+                selectedNoteId: _selectedNote?.id,
+                onOpenNote: _openNoteById,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1346,7 +1362,30 @@ class _NotebookPageState extends State<NotebookPage> {
               ),
             ),
             selected: _showQa,
-            onTap: () => setState(() => _showQa = !_showQa),
+            onTap: () => setState(() {
+              _showQa = !_showQa;
+              if (_showQa) _showGraph = false;
+            }),
+          ),
+
+          // 知识星图入口（阶段四）
+          ListTile(
+            dense: true,
+            leading: Icon(Icons.hub_outlined,
+                size: 18,
+                color: _showGraph ? AppTheme.accent : AppTheme.textSecondary),
+            title: Text(
+              '知识星图',
+              style: TextStyle(
+                color: _showGraph ? AppTheme.accent : null,
+                fontWeight: _showGraph ? FontWeight.w600 : null,
+              ),
+            ),
+            selected: _showGraph,
+            onTap: () => setState(() {
+              _showGraph = !_showGraph;
+              if (_showGraph) _showQa = false;
+            }),
           ),
 
           const Divider(height: 1, color: AppTheme.borderSubtle),

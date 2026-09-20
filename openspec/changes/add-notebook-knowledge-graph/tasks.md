@@ -90,17 +90,17 @@
 
 ### 4.1 星图视图
 
-- [ ] 4.1.1 新建 `lib/tools/notebook/ui/knowledge_graph_view.dart`：CustomPaint 渲染节点-边，选中笔记高亮 + 邻域强调
-- [ ] 4.1.2 笔记本页增加星图入口
-- [ ] 4.1.3 节点点击跳转到对应笔记
+- [x] 4.1.1 新建 `lib/tools/notebook/ui/knowledge_graph_view.dart`：CustomPaint 渲染节点-边，选中笔记高亮 + 邻域强调
+- [x] 4.1.2 笔记本页增加星图入口
+- [x] 4.1.3 节点点击跳转到对应笔记
 
 ### 4.2 多跳遍历
 
-- [ ] 4.2.1 `NotebookKbService.traverse(noteId, hops)`：应用层 BFS 遍历 `note_links`，返回路径
-- [ ] 4.2.2 AI 问答升级：回答可走星图路径，答案附遍历路径供用户检视每个 hop
-- [ ] 4.2.3 单测：traverse 多跳路径正确；环路不无限循环
+- [x] 4.2.1 `NotebookKbService.traverse(noteId, hops)`：应用层 BFS 遍历 `note_links`，返回路径
+- [x] 4.2.2 AI 问答升级：回答可走星图路径，答案附遍历路径供用户检视每个 hop
+- [x] 4.2.3 单测：traverse 多跳路径正确；环路不无限循环
 
 ### 4.3 收尾
 
 - [ ] 4.3.1 手工验证：星图视图展示节点-边；AI 问答能走多跳路径回答
-- [ ] 4.3.2 全量回归：`flutter test`，确认无新增失败
+- [x] 4.3.2 全量回归：`flutter test`，确认无新增失败

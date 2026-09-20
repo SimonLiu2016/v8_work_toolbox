@@ -8,6 +8,7 @@ import '../../services/ai_service.dart';
 import '../../services/web_search_service.dart';
 import 'cjk_tokenizer.dart';
 import 'markdown_converter.dart';
+import 'note_database.dart';
 import 'note_store.dart';
 
 /// 检索片段：一条命中笔记及其供 LLM 使用的上下文。
@@ -44,24 +45,36 @@ class KbAnswer {
   final bool noMatch;
   final String? error;
 
+  /// 命中的笔记是否沿星图扩展过（阶段四）。为 true 时 [graphHops] 说明跳数。
+  final bool usedGraph;
+
+  /// 星图扩展带入的额外笔记 id（不含 FTS 直接命中的）。
+  final List<String> graphNoteIds;
+
   const KbAnswer({
     required this.text,
     this.citations = const [],
     this.noMatch = false,
     this.error,
+    this.usedGraph = false,
+    this.graphNoteIds = const [],
   });
 
   const KbAnswer.noMatch(String message)
       : text = message,
         citations = const [],
         noMatch = true,
-        error = null;
+        error = null,
+        usedGraph = false,
+        graphNoteIds = const [];
 
   const KbAnswer.failure(String message)
       : text = message,
         citations = const [],
         noMatch = false,
-        error = message;
+        error = message,
+        usedGraph = false,
+        graphNoteIds = const [];
 }
 
 /// 回答中的引用，供 UI 渲染可点击链接定位到笔记。
@@ -316,24 +329,140 @@ class NotebookKbService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 知识星图：多跳遍历（阶段四）
+  // ---------------------------------------------------------------------------
+
+  /// 从 [startNoteId] 出发做 BFS，返回 [hops] 跳内的可达路径。
+  ///
+  /// 返回每条路径的笔记 id 序列（含起点），按跳数升序。`visited` 集合保证
+  /// 环路不会导致无限循环（A→B→A 只保留最短路径）。
+  ///
+  /// 一次取全部关联后在内存建邻接表，避免逐跳查库。
+  Future<List<GraphPath>> traverse(
+    String startNoteId, {
+    int hops = 2,
+    int maxPaths = 50,
+  }) async {
+    if (hops <= 0) return const [];
+
+    final List<NoteLink> links;
+    try {
+      links = await NoteStore.instance.allLinks();
+    } catch (e) {
+      AiLogger.logWarning('星图遍历读取关联失败: $e');
+      return const [];
+    }
+    if (links.isEmpty) return const [];
+
+    final adjacency = <String, Set<String>>{};
+    for (final l in links) {
+      adjacency.putIfAbsent(l.sourceNoteId, () => {}).add(l.targetNoteId);
+      // 无向遍历：关联双向可见，遍历时也双向可达
+      adjacency.putIfAbsent(l.targetNoteId, () => {}).add(l.sourceNoteId);
+    }
+
+    final results = <GraphPath>[];
+    final visited = <String>{startNoteId};
+    // 队列元素：当前路径
+    var frontier = <List<String>>[
+      [startNoteId]
+    ];
+
+    for (var depth = 1; depth <= hops; depth++) {
+      final next = <List<String>>[];
+      for (final path in frontier) {
+        final current = path.last;
+        for (final neighbor in adjacency[current] ?? const <String>{}) {
+          if (visited.contains(neighbor)) continue;
+          visited.add(neighbor);
+          final newPath = [...path, neighbor];
+          results.add(GraphPath(noteIds: newPath, hops: depth));
+          next.add(newPath);
+          if (results.length >= maxPaths) break;
+        }
+        if (results.length >= maxPaths) break;
+      }
+      if (results.length >= maxPaths || next.isEmpty) break;
+      frontier = next;
+    }
+
+    return results;
+  }
+
+  /// 带星图扩展的检索。
+  ///
+  /// 先 FTS 命中，再把每个命中沿关联扩展 [graphHops] 跳，把邻居笔记也纳入
+  /// 上下文——这样问「豆浆机坏了」命中延保笔记后，同订单/同产品的关联笔记
+  /// 也会被带进来。
+  Future<List<KbFragment>> retrieveWithGraph(
+    String query, {
+    int limit = 5,
+    int graphHops = 1,
+  }) async {
+    final direct = await retrieve(query, limit: limit);
+    if (direct.isEmpty || graphHops <= 0) return direct;
+
+    final directIds = direct.map((f) => f.noteId).toSet();
+    final extra = <KbFragment>[];
+    for (final f in direct) {
+      final paths = await traverse(f.noteId, hops: graphHops);
+      for (final p in paths) {
+        final id = p.noteIds.last;
+        if (directIds.contains(id)) continue;
+        if (extra.any((e) => e.noteId == id)) continue;
+        final note = await NoteStore.instance.noteById(id);
+        if (note == null || note.isDeleted) continue;
+        final md = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+        var creds = const <String>[];
+        try {
+          creds = (await NoteStore.instance.db.credentialsForNote(id))
+              .map((a) => a.filename ?? a.localPath.split('/').last)
+              .toList();
+        } catch (_) {}
+        extra.add(KbFragment(
+          noteId: id,
+          title: note.title,
+          snippet: _relevantSnippet(md, query),
+          assetCategory: note.assetCategory,
+          assetExpiryDate: note.assetExpiryDate,
+          credentialFiles: creds,
+        ));
+      }
+    }
+    return [...direct, ...extra];
+  }
+
   /// 问答。检索命中则交给 LLM 基于片段作答并附引用；无命中则明确告知
   /// 无相关笔记，**不伪造答案**。
   ///
   /// 走共享 [AgentLoop]，注入三个工具：`notebook_search`（本服务 retrieve）、
   /// `web_search` / `scrape`（[WebSearchService]）。这样用户问笔记里没有的内容
   /// 时，模型可自行降级到联网检索。
-  Future<KbAnswer> ask(String question, {int limit = 5}) async {
+  Future<KbAnswer> ask(
+    String question, {
+    int limit = 5,
+    int graphHops = 1,
+  }) async {
     final trimmed = question.trim();
     if (trimmed.isEmpty) {
       return const KbAnswer.noMatch('请输入问题。');
     }
 
-    final fragments = await retrieve(trimmed, limit: limit);
-    if (fragments.isEmpty) {
+    // FTS 直接命中 + 沿星图扩展邻居（阶段四）：问「豆浆机坏了」命中延保笔记后，
+    // 同订单/同产品的关联笔记也会被带进上下文。
+    final direct = await retrieve(trimmed, limit: limit);
+    if (direct.isEmpty) {
       return const KbAnswer.noMatch(
         '你的笔记本里没有与这个问题相关的记录。可以换个说法，或到「AI 咨询与检索」里联网查询。',
       );
     }
+    final directIds = direct.map((f) => f.noteId).toSet();
+    final fragments = graphHops > 0
+        ? await retrieveWithGraph(trimmed, limit: limit, graphHops: graphHops)
+        : direct;
+    final graphIds =
+        fragments.map((f) => f.noteId).where((id) => !directIds.contains(id)).toList();
 
     final context = _buildContext(fragments);
     final initialPrompt = '以下是我笔记本里检索到的相关记录：\n\n$context\n\n'
@@ -354,6 +483,8 @@ class NotebookKbService {
         citations: fragments
             .map((f) => KbCitation(noteId: f.noteId, title: f.title))
             .toList(),
+        usedGraph: graphIds.isNotEmpty,
+        graphNoteIds: graphIds,
       );
     } catch (e) {
       AiLogger.logError('笔记本问答失败: $e');
@@ -540,4 +671,18 @@ class LinkSuggestion {
 
   @override
   String toString() => 'LinkSuggestion($noteId, $title, $reason)';
+}
+
+/// 星图上的一条可达路径（含起点），用于回答中标注"经过了哪些跳"。
+class GraphPath {
+  final List<String> noteIds;
+  final int hops;
+
+  const GraphPath({required this.noteIds, required this.hops});
+
+  String get start => noteIds.first;
+  String get end => noteIds.last;
+
+  @override
+  String toString() => 'GraphPath(${noteIds.join(' → ')}, $hops hop)';
 }
