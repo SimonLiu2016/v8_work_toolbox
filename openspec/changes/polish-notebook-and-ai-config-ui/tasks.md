@@ -34,6 +34,6 @@
 
 ## 4. 验证与收尾
 
-- [ ] 4.1 全量回归：`flutter test`，确认无新增失败
-- [ ] 4.2 构建部署：`flutter clean` → `flutter build macos --release` → `codesign -v --strict` 通过 → 替换 `/Applications` → 校验 AOT 快照哈希 → 启动采样 stderr 无未捕获异常
+- [x] 4.1 全量回归：`flutter test`，确认无新增失败
+- [x] 4.2 构建部署：`flutter clean` → `flutter build macos --release` → `codesign -v --strict` 通过 → 替换 `/Applications` → 校验 AOT 快照哈希 → 启动采样 stderr 无未捕获异常
 - [ ] 4.3 实机验证三项成功判据：元数据栏四入口齐全且画布不被挤压；问答输入框可读；编辑态可查看已存密钥
