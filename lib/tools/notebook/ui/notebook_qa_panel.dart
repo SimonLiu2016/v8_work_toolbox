@@ -2,16 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../../components/markdown_view.dart';
 import '../notebook_kb_service.dart';
+import 'notebook_light_scope.dart';
 
 /// 笔记本 AI 问答面板（阶段二）。
 ///
 /// 提问 → 经 [NotebookKbService.ask]（FTS 检索 + LLM）→ 回答 + 可点击引用。
 /// 无相关笔记时明确告知，不伪造答案。
 class NotebookQaPanel extends StatefulWidget {
-  const NotebookQaPanel({
-    super.key,
-    required this.onOpenNote,
-  });
+  const NotebookQaPanel({super.key, required this.onOpenNote});
 
   /// 点击引用时定位到对应笔记。
   final void Function(String noteId) onOpenNote;
@@ -21,10 +19,11 @@ class NotebookQaPanel extends StatefulWidget {
 }
 
 class _NotebookQaPanelState extends State<NotebookQaPanel> {
-  static const _titleColor = Color(0xFF0F172A);
-  static const _subColor = Color(0xFF64748B);
-  static const _borderColor = Color(0xFFE5E7EB);
-  static const _accent = Color(0xFF3B82F6);
+  // 浅色面板调色板统一取自 [NotebookLightScope]，避免各面板各自写字面量。
+  static const _titleColor = NotebookLightScope.textPrimary;
+  static const _subColor = NotebookLightScope.textSecondary;
+  static const _borderColor = NotebookLightScope.border;
+  static const _accent = NotebookLightScope.accent;
 
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
@@ -80,26 +79,28 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _header(),
-          const Divider(height: 1, color: _borderColor),
-          Expanded(
-            child: _turns.isEmpty
-                ? _emptyHint()
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _turns.length,
-                    itemBuilder: (_, i) => _buildTurn(_turns[i]),
-                  ),
-          ),
-          const Divider(height: 1, color: _borderColor),
-          _inputBar(),
-        ],
+    return NotebookLightScope(
+      child: Container(
+        color: NotebookLightScope.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _header(),
+            const Divider(height: 1, color: _borderColor),
+            Expanded(
+              child: _turns.isEmpty
+                  ? _emptyHint()
+                  : ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _turns.length,
+                      itemBuilder: (_, i) => _buildTurn(_turns[i]),
+                    ),
+            ),
+            const Divider(height: 1, color: _borderColor),
+            _inputBar(),
+          ],
+        ),
       ),
     );
   }
@@ -111,16 +112,27 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
         children: [
           const Icon(Icons.auto_awesome, size: 15, color: _accent),
           const SizedBox(width: 6),
-          const Text('问我的笔记',
-              style: TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600, color: _titleColor)),
+          const Text(
+            '问我的笔记',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: _titleColor,
+            ),
+          ),
           const SizedBox(width: 8),
-          const Text('基于你笔记本的内容回答，必要时可联网兜底',
-              style: TextStyle(fontSize: 11, color: _subColor)),
+          const Text(
+            '基于你笔记本的内容回答，必要时可联网兜底',
+            style: TextStyle(fontSize: 11, color: _subColor),
+          ),
           const Spacer(),
           if (_turns.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined, size: 15, color: _subColor),
+              icon: const Icon(
+                Icons.delete_sweep_outlined,
+                size: 15,
+                color: _subColor,
+              ),
               tooltip: '清空对话',
               onPressed: () => setState(_turns.clear),
             ),
@@ -136,8 +148,10 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
         children: [
           const Icon(Icons.forum_outlined, size: 40, color: Color(0xFFCBD5E1)),
           const SizedBox(height: 12),
-          const Text('问点关于你笔记的事',
-              style: TextStyle(fontSize: 13, color: _subColor)),
+          const Text(
+            '问点关于你笔记的事',
+            style: TextStyle(fontSize: 13, color: _subColor),
+          ),
           const SizedBox(height: 6),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -167,8 +181,10 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
                 color: const Color(0xFFEFF6FF),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(turn.question,
-                  style: const TextStyle(fontSize: 12, color: _titleColor)),
+              child: Text(
+                turn.question,
+                style: const TextStyle(fontSize: 12, color: _titleColor),
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -177,10 +193,15 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
             Row(
               children: const [
                 SizedBox(
-                    width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5)),
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 1.5),
+                ),
                 SizedBox(width: 8),
-                Text('正在检索你的笔记…',
-                    style: TextStyle(fontSize: 12, color: _subColor)),
+                Text(
+                  '正在检索你的笔记…',
+                  style: TextStyle(fontSize: 12, color: _subColor),
+                ),
               ],
             )
           else if (turn.answer != null) ...[
@@ -192,8 +213,13 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: const Color(0xFFFECACA)),
                 ),
-                child: Text(turn.answer!.text,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C))),
+                child: Text(
+                  turn.answer!.text,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFFB91C1C),
+                  ),
+                ),
               )
             else if (turn.answer!.noMatch)
               Container(
@@ -206,17 +232,25 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(turn.answer!.text,
-                        style: const TextStyle(fontSize: 12, color: _subColor)),
+                    Text(
+                      turn.answer!.text,
+                      style: const TextStyle(fontSize: 12, color: _subColor),
+                    ),
                     const SizedBox(height: 8),
                     // 无匹配时提议降级到联网检索
                     OutlinedButton.icon(
                       icon: const Icon(Icons.travel_explore, size: 13),
-                      label: const Text('改用联网检索', style: TextStyle(fontSize: 11)),
+                      label: const Text(
+                        '改用联网检索',
+                        style: TextStyle(fontSize: 11),
+                      ),
                       onPressed: _busy ? null : () => _askWeb(turn.question),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: _accent,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
@@ -227,7 +261,11 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
             else
               AppMarkdownView(
                 data: turn.answer!.text,
-                baseStyle: const TextStyle(fontSize: 13, height: 1.5, color: _titleColor),
+                baseStyle: const TextStyle(
+                  fontSize: 13,
+                  height: 1.5,
+                  color: _titleColor,
+                ),
               ),
             if (turn.answer!.citations.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -260,8 +298,7 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
           children: [
             const Icon(Icons.description_outlined, size: 11, color: _subColor),
             const SizedBox(width: 4),
-            Text(c.title,
-                style: const TextStyle(fontSize: 11, color: _accent)),
+            Text(c.title, style: const TextStyle(fontSize: 11, color: _accent)),
           ],
         ),
       ),
@@ -321,7 +358,10 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
                   hintStyle: TextStyle(fontSize: 12, color: _subColor),
                   border: InputBorder.none,
                   isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                 ),
               ),
             ),

@@ -18,7 +18,8 @@ class AiConfigPage extends StatefulWidget {
   State<AiConfigPage> createState() => _AiConfigPageState();
 }
 
-class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderStateMixin {
+class _AiConfigPageState extends State<AiConfigPage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final store = AiConfigStore.instance;
   Timer? _healthRefreshTimer;
@@ -42,8 +43,10 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     if (rebuilt && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('密钥库此前因密钥失配被重置，已存密钥（如 API Key）需重新填入。'
-              '残件备份见 ~/Library/Application Support/V8WorkToolbox/ 下的 .mismatch-* 文件。'),
+          content: Text(
+            '密钥库此前因密钥失配被重置，已存密钥（如 API Key）需重新填入。'
+            '残件备份见 ~/Library/Application Support/V8WorkToolbox/ 下的 .mismatch-* 文件。',
+          ),
           backgroundColor: AppTheme.warning,
           duration: Duration(seconds: 12),
         ),
@@ -67,7 +70,12 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
         children: [
           // 顶部标题与 Tab 栏
           Padding(
-            padding: const EdgeInsets.fromLTRB(AppTheme.space24, 38 + AppTheme.space8, AppTheme.space24, AppTheme.space8),
+            padding: const EdgeInsets.fromLTRB(
+              AppTheme.space24,
+              38 + AppTheme.space8,
+              AppTheme.space24,
+              AppTheme.space8,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -82,7 +90,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           const SizedBox(height: AppTheme.space4),
                           Text(
                             '配置多协议模型供应商、全局能力槽位与外部 MCP 服务。凭证由 macOS Keychain 安全保护。',
-                            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                            style: AppTheme.fontCaption.copyWith(
+                              color: AppTheme.textSecondary,
+                            ),
                           ),
                         ],
                       ),
@@ -105,10 +115,22 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   indicatorSize: TabBarIndicatorSize.tab,
                   dividerColor: AppTheme.borderSubtle,
                   tabs: const [
-                    Tab(icon: Icon(Icons.business_outlined, size: 16), text: '模型供应商'),
-                    Tab(icon: Icon(Icons.hub_outlined, size: 16), text: '默认能力槽位'),
-                    Tab(icon: Icon(Icons.cable_outlined, size: 16), text: '外部 MCP 客户端'),
-                    Tab(icon: Icon(Icons.vpn_lock_outlined, size: 16), text: '网络代理'),
+                    Tab(
+                      icon: Icon(Icons.business_outlined, size: 16),
+                      text: '模型供应商',
+                    ),
+                    Tab(
+                      icon: Icon(Icons.hub_outlined, size: 16),
+                      text: '默认能力槽位',
+                    ),
+                    Tab(
+                      icon: Icon(Icons.cable_outlined, size: 16),
+                      text: '外部 MCP 客户端',
+                    ),
+                    Tab(
+                      icon: Icon(Icons.vpn_lock_outlined, size: 16),
+                      text: '网络代理',
+                    ),
                   ],
                 ),
               ],
@@ -161,11 +183,25 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
               child: Center(
                 child: Column(
                   children: [
-                    const Icon(Icons.smart_toy_outlined, size: 36, color: AppTheme.textTertiary),
+                    const Icon(
+                      Icons.smart_toy_outlined,
+                      size: 36,
+                      color: AppTheme.textTertiary,
+                    ),
                     const SizedBox(height: AppTheme.space12),
-                    Text('暂未配置任何 AI 供应商', style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary)),
+                    Text(
+                      '暂未配置任何 AI 供应商',
+                      style: AppTheme.fontBody.copyWith(
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
                     const SizedBox(height: AppTheme.space8),
-                    Text('支持接入 OpenAI、DeepSeek、Ollama、Anthropic、Gemini 等兼容端点。', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+                    Text(
+                      '支持接入 OpenAI、DeepSeek、Ollama、Anthropic、Gemini 等兼容端点。',
+                      style: AppTheme.fontCaption.copyWith(
+                        color: AppTheme.textTertiary,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -188,7 +224,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             children: [
               Row(
                 children: [
-                  const Icon(Icons.psychology_alt_outlined, size: 20, color: AppTheme.accentLight),
+                  const Icon(
+                    Icons.psychology_alt_outlined,
+                    size: 20,
+                    color: AppTheme.accentLight,
+                  ),
                   const SizedBox(width: AppTheme.space8),
                   Text(p.name, style: AppTheme.fontTitle),
                   const SizedBox(width: AppTheme.space8),
@@ -207,20 +247,32 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   ),
                   const SizedBox(width: AppTheme.space6),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 16, color: AppTheme.error),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 16,
+                      color: AppTheme.error,
+                    ),
                     tooltip: '删除供应商',
                     onPressed: () => _deleteProvider(p),
                   ),
                 ],
               ),
               const SizedBox(height: AppTheme.space8),
-              Text('API 地址: ${p.baseUrl}', style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+              Text(
+                'API 地址: ${p.baseUrl}',
+                style: AppTheme.fontCaption.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+              ),
               if (p.textModels.isNotEmpty) ...[
                 const SizedBox(height: AppTheme.space8),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
-                  children: p.textModels.take(8).map((m) => AppBadge(label: m)).toList(),
+                  children: p.textModels
+                      .take(8)
+                      .map((m) => AppBadge(label: m))
+                      .toList(),
                 ),
               ],
             ],
@@ -236,7 +288,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   Widget _buildSlotsTab() {
     final slots = [
       {'key': 'text', 'label': '文本补全 / 对话 (Text)', 'desc': '用于代码解释、文本生成、规则重写等'},
-      {'key': 'multimodal', 'label': '视觉多模态 (Multimodal)', 'desc': '用于图标理解、设计稿提取分析等'},
+      {
+        'key': 'multimodal',
+        'label': '视觉多模态 (Multimodal)',
+        'desc': '用于图标理解、设计稿提取分析等',
+      },
       {'key': 'tts', 'label': '文本转语音 (TTS)', 'desc': '用于语音合成与播报'},
       {'key': 'stt', 'label': '语音识别 (STT)', 'desc': '用于音频转文字与语音输入'},
     ];
@@ -261,7 +317,8 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     if (candidates.isEmpty) return 0;
     int healthyCount = 0;
     for (final c in candidates) {
-      if (AiService.instance.getProviderHealth(c.providerId)?.isHealthy != false) {
+      if (AiService.instance.getProviderHealth(c.providerId)?.isHealthy !=
+          false) {
         healthyCount++;
       }
     }
@@ -272,19 +329,27 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
 
   Color _healthColor(int level) {
     switch (level) {
-      case 1: return AppTheme.success;
-      case 2: return AppTheme.warning;
-      case 3: return AppTheme.error;
-      default: return AppTheme.textTertiary;
+      case 1:
+        return AppTheme.success;
+      case 2:
+        return AppTheme.warning;
+      case 3:
+        return AppTheme.error;
+      default:
+        return AppTheme.textTertiary;
     }
   }
 
   String _healthLabel(int level) {
     switch (level) {
-      case 1: return '全部健康';
-      case 2: return '已降级';
-      case 3: return '全部不可用';
-      default: return '未配置';
+      case 1:
+        return '全部健康';
+      case 2:
+        return '已降级';
+      case 3:
+        return '全部不可用';
+      default:
+        return '未配置';
     }
   }
 
@@ -309,13 +374,23 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                       children: [
                         Row(
                           children: [
-                            Text(label, style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600)),
+                            Text(
+                              label,
+                              style: AppTheme.fontBody.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                             const SizedBox(width: AppTheme.space8),
                             // 聚合健康指示器
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
-                                color: _healthColor(healthLevel).withValues(alpha: 0.15),
+                                color: _healthColor(
+                                  healthLevel,
+                                ).withValues(alpha: 0.15),
                                 borderRadius: AppTheme.borderRadiusSmall,
                               ),
                               child: Row(
@@ -332,7 +407,10 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                                   const SizedBox(width: 4),
                                   Text(
                                     _healthLabel(healthLevel),
-                                    style: TextStyle(fontSize: 11, color: _healthColor(healthLevel)),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: _healthColor(healthLevel),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -340,32 +418,47 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           ],
                         ),
                         const SizedBox(height: AppTheme.space2),
-                        Text(desc, style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+                        Text(
+                          desc,
+                          style: AppTheme.fontCaption.copyWith(
+                            color: AppTheme.textTertiary,
+                          ),
+                        ),
                         // 降级/不可用时显示额外信息
                         if (healthLevel == 2) ...[
                           const SizedBox(height: AppTheme.space4),
-                          Builder(builder: (_) {
-                            // 找到当前活跃的供应商（第一个健康的）
-                            for (final c in candidates) {
-                              final health = AiService.instance.getProviderHealth(c.providerId);
-                              if (health?.isHealthy != false) {
-                                final provider = store.providers.cast<AiProviderConfig?>().firstWhere(
-                                  (p) => p!.id == c.providerId, orElse: () => null,
-                                );
-                                return Text(
-                                  '当前活跃: ${provider?.name ?? c.providerId}',
-                                  style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
-                                );
+                          Builder(
+                            builder: (_) {
+                              // 找到当前活跃的供应商（第一个健康的）
+                              for (final c in candidates) {
+                                final health = AiService.instance
+                                    .getProviderHealth(c.providerId);
+                                if (health?.isHealthy != false) {
+                                  final provider = store.providers
+                                      .cast<AiProviderConfig?>()
+                                      .firstWhere(
+                                        (p) => p!.id == c.providerId,
+                                        orElse: () => null,
+                                      );
+                                  return Text(
+                                    '当前活跃: ${provider?.name ?? c.providerId}',
+                                    style: AppTheme.fontCaption.copyWith(
+                                      color: AppTheme.warning,
+                                    ),
+                                  );
+                                }
                               }
-                            }
-                            return const SizedBox.shrink();
-                          }),
+                              return const SizedBox.shrink();
+                            },
+                          ),
                         ],
                         if (healthLevel == 3) ...[
                           const SizedBox(height: AppTheme.space4),
                           Text(
                             '请检查供应商配置或网络连接',
-                            style: AppTheme.fontCaption.copyWith(color: AppTheme.error),
+                            style: AppTheme.fontCaption.copyWith(
+                              color: AppTheme.error,
+                            ),
                           ),
                         ],
                       ],
@@ -389,7 +482,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   buildDefaultDragHandles: false,
                   itemCount: candidates.length,
                   onReorder: (oldIndex, newIndex) async {
-                    await store.reorderSlotCandidates(slotKey, oldIndex, newIndex);
+                    await store.reorderSlotCandidates(
+                      slotKey,
+                      oldIndex,
+                      newIndex,
+                    );
                     setState(() {});
                   },
                   proxyDecorator: (child, index, animation) {
@@ -401,29 +498,48 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   },
                   itemBuilder: (context, index) {
                     final candidate = candidates[index];
-                    final provider = store.providers.cast<AiProviderConfig?>().firstWhere(
-                      (p) => p!.id == candidate.providerId, orElse: () => null,
-                    );
+                    final provider = store.providers
+                        .cast<AiProviderConfig?>()
+                        .firstWhere(
+                          (p) => p!.id == candidate.providerId,
+                          orElse: () => null,
+                        );
                     final providerName = provider?.name ?? '未知供应商';
-                    final health = AiService.instance.getProviderHealth(candidate.providerId);
+                    final health = AiService.instance.getProviderHealth(
+                      candidate.providerId,
+                    );
                     final isHealthy = health?.isHealthy != false;
-                    final candidateHealthColor = isHealthy ? AppTheme.success : AppTheme.error;
+                    final candidateHealthColor = isHealthy
+                        ? AppTheme.success
+                        : AppTheme.error;
 
                     return Container(
-                      key: ValueKey('${slotKey}_${candidate.providerId}_${candidate.model}_$index'),
+                      key: ValueKey(
+                        '${slotKey}_${candidate.providerId}_${candidate.model}_$index',
+                      ),
                       margin: const EdgeInsets.only(bottom: AppTheme.space4),
-                      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppTheme.space12,
+                        vertical: AppTheme.space8,
+                      ),
                       decoration: BoxDecoration(
                         color: AppTheme.bgSidebar,
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: AppTheme.borderSubtle, width: 0.5),
+                        border: Border.all(
+                          color: AppTheme.borderSubtle,
+                          width: 0.5,
+                        ),
                       ),
                       child: Row(
                         children: [
                           // 拖拽手柄
                           ReorderableDragStartListener(
                             index: index,
-                            child: const Icon(Icons.drag_indicator, size: 16, color: AppTheme.textTertiary),
+                            child: const Icon(
+                              Icons.drag_indicator,
+                              size: 16,
+                              color: AppTheme.textTertiary,
+                            ),
                           ),
                           const SizedBox(width: AppTheme.space8),
                           // 优先级编号
@@ -437,7 +553,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                             ),
                             child: Text(
                               '${index + 1}',
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.accentLight),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.accentLight,
+                              ),
                             ),
                           ),
                           const SizedBox(width: AppTheme.space12),
@@ -452,13 +572,20 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           ),
                           const SizedBox(width: AppTheme.space8),
                           // 供应商名称
-                          Text(providerName, style: AppTheme.fontBody.copyWith(fontSize: 13)),
+                          Text(
+                            providerName,
+                            style: AppTheme.fontBody.copyWith(fontSize: 13),
+                          ),
                           const SizedBox(width: AppTheme.space8),
                           // 模型名
                           Expanded(
                             child: Text(
-                              candidate.model.isEmpty ? '(未指定模型)' : candidate.model,
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                              candidate.model.isEmpty
+                                  ? '(未指定模型)'
+                                  : candidate.model,
+                              style: AppTheme.fontCaption.copyWith(
+                                color: AppTheme.textSecondary,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -466,15 +593,26 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           if (!isHealthy && health?.lastError != null)
                             Tooltip(
                               message: health!.lastError!,
-                              child: const Icon(Icons.warning_amber_rounded, size: 14, color: AppTheme.warning),
+                              child: const Icon(
+                                Icons.warning_amber_rounded,
+                                size: 14,
+                                color: AppTheme.warning,
+                              ),
                             ),
                           const SizedBox(width: AppTheme.space4),
                           // 删除按钮
                           IconButton(
-                            icon: const Icon(Icons.close, size: 14, color: AppTheme.textTertiary),
+                            icon: const Icon(
+                              Icons.close,
+                              size: 14,
+                              color: AppTheme.textTertiary,
+                            ),
                             tooltip: '移除候选',
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(maxWidth: 24, maxHeight: 24),
+                            constraints: const BoxConstraints(
+                              maxWidth: 24,
+                              maxHeight: 24,
+                            ),
                             onPressed: () async {
                               await store.removeSlotCandidate(slotKey, index);
                               setState(() {});
@@ -490,7 +628,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                 Center(
                   child: Text(
                     '暂无候选供应商，点击"添加候选"配置',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                    style: AppTheme.fontCaption.copyWith(
+                      color: AppTheme.textTertiary,
+                    ),
                   ),
                 ),
               ],
@@ -515,7 +655,13 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
           if (selectedProviderId != null) {
             final provider = providers.firstWhere(
               (p) => p.id == selectedProviderId,
-              orElse: () => const AiProviderConfig(id: '', name: '', protocol: AiProtocolType.openai, baseUrl: '', keychainKeyId: ''),
+              orElse: () => const AiProviderConfig(
+                id: '',
+                name: '',
+                protocol: AiProtocolType.openai,
+                baseUrl: '',
+                keychainKeyId: '',
+              ),
             );
             availableModels = provider.textModels;
           }
@@ -531,7 +677,14 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   DropdownButtonFormField<String>(
                     initialValue: selectedProviderId,
                     decoration: const InputDecoration(labelText: '选择供应商'),
-                    items: providers.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
+                    items: providers
+                        .map(
+                          (p) => DropdownMenuItem(
+                            value: p.id,
+                            child: Text(p.name),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (val) {
                       setDialogState(() {
                         selectedProviderId = val;
@@ -543,7 +696,14 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   DropdownButtonFormField<String>(
                     initialValue: selectedModel,
                     decoration: const InputDecoration(labelText: '选择模型'),
-                    items: availableModels.map((m) => DropdownMenuItem(value: m, child: Text(m, overflow: TextOverflow.ellipsis))).toList(),
+                    items: availableModels
+                        .map(
+                          (m) => DropdownMenuItem(
+                            value: m,
+                            child: Text(m, overflow: TextOverflow.ellipsis),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (val) {
                       setDialogState(() => selectedModel = val);
                     },
@@ -557,7 +717,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                 label: '添加',
                 onPressed: selectedProviderId != null
                     ? () async {
-                        await store.addSlotCandidate(slotKey, selectedProviderId!, selectedModel ?? '');
+                        await store.addSlotCandidate(
+                          slotKey,
+                          selectedProviderId!,
+                          selectedModel ?? '',
+                        );
                         if (ctx.mounted) Navigator.pop(ctx);
                         setState(() {});
                       }
@@ -591,12 +755,16 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   onPressed: () async {
                     final exists = clients.any((c) => c.id == 'mcp_firecrawl');
                     if (!exists) {
-                      await store.saveMcpClient(McpClientConfig.firecrawlPreset());
+                      await store.saveMcpClient(
+                        McpClientConfig.firecrawlPreset(),
+                      );
                       setState(() {});
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('已添加 Firecrawl 官方 MCP 预置，建议点击“测试连接”验证。'),
+                            content: Text(
+                              '已添加 Firecrawl 官方 MCP 预置，建议点击“测试连接”验证。',
+                            ),
                             backgroundColor: AppTheme.success,
                           ),
                         );
@@ -604,7 +772,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                     } else {
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Firecrawl 预置已存在，无需重复添加。')),
+                          const SnackBar(
+                            content: Text('Firecrawl 预置已存在，无需重复添加。'),
+                          ),
                         );
                       }
                     }
@@ -628,11 +798,25 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
               child: Center(
                 child: Column(
                   children: [
-                    const Icon(Icons.cable_outlined, size: 36, color: AppTheme.textTertiary),
+                    const Icon(
+                      Icons.cable_outlined,
+                      size: 36,
+                      color: AppTheme.textTertiary,
+                    ),
                     const SizedBox(height: AppTheme.space12),
-                    Text('暂未配置外部 MCP 客户端', style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary)),
+                    Text(
+                      '暂未配置外部 MCP 客户端',
+                      style: AppTheme.fontBody.copyWith(
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
                     const SizedBox(height: AppTheme.space8),
-                    Text('可配置已运行的第三方 Model Context Protocol 服务的连接端点或命令行调用。', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
+                    Text(
+                      '可配置已运行的第三方 Model Context Protocol 服务的连接端点或命令行调用。',
+                      style: AppTheme.fontCaption.copyWith(
+                        color: AppTheme.textTertiary,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -657,7 +841,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           Icon(
                             Icons.settings_input_component_outlined,
                             size: 20,
-                            color: c.enabled ? AppTheme.accentLight : AppTheme.textTertiary,
+                            color: c.enabled
+                                ? AppTheme.accentLight
+                                : AppTheme.textTertiary,
                           ),
                           const SizedBox(width: AppTheme.space8),
                           Text(c.name, style: AppTheme.fontTitle),
@@ -669,7 +855,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                               label: testResult.isHealthy
                                   ? '已连通 (${testResult.toolCount} 工具)'
                                   : '连通异常',
-                              color: testResult.isHealthy ? AppTheme.success : AppTheme.error,
+                              color: testResult.isHealthy
+                                  ? AppTheme.success
+                                  : AppTheme.error,
                             ),
                             if (testResult.remoteReachable != null) ...[
                               const SizedBox(width: AppTheme.space6),
@@ -677,17 +865,24 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                                 label: testResult.remoteReachable!
                                     ? '远端可达'
                                     : '远端不可达',
-                                color: testResult.remoteReachable! ? AppTheme.success : AppTheme.warning,
+                                color: testResult.remoteReachable!
+                                    ? AppTheme.success
+                                    : AppTheme.warning,
                               ),
                             ],
                           ],
                           const Spacer(),
-                          Text(c.enabled ? '已启用' : '已停用', style: AppTheme.fontCaption),
+                          Text(
+                            c.enabled ? '已启用' : '已停用',
+                            style: AppTheme.fontCaption,
+                          ),
                           Switch(
                             value: c.enabled,
                             activeThumbColor: AppTheme.accentLight,
                             onChanged: (val) async {
-                              await store.saveMcpClient(c.copyWith(enabled: val));
+                              await store.saveMcpClient(
+                                c.copyWith(enabled: val),
+                              );
                               setState(() {});
                             },
                           ),
@@ -695,19 +890,32 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                       ),
                       const SizedBox(height: AppTheme.space8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: AppTheme.bgContent.withAlpha(128),
-                          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusSmall,
+                          ),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
+                            const Icon(
+                              Icons.terminal,
+                              size: 14,
+                              color: AppTheme.textTertiary,
+                            ),
                             const SizedBox(width: AppTheme.space6),
                             Expanded(
                               child: Text(
                                 fullCmd,
-                                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.textSecondary),
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                  color: AppTheme.textSecondary,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -722,35 +930,53 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           runSpacing: 4,
                           children: c.env.keys.map((k) {
                             return Chip(
-                              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                              labelPadding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
                               visualDensity: VisualDensity.compact,
                               backgroundColor: AppTheme.bgContent,
                               side: BorderSide.none,
                               label: Text(
                                 '$k=***',
-                                style: const TextStyle(fontFamily: 'monospace', fontSize: 10, color: AppTheme.textTertiary),
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  color: AppTheme.textTertiary,
+                                ),
                               ),
                             );
                           }).toList(),
                         ),
                       ],
-                      if (testResult != null && !testResult.isHealthy && testResult.lastError != null) ...[
+                      if (testResult != null &&
+                          !testResult.isHealthy &&
+                          testResult.lastError != null) ...[
                         const SizedBox(height: AppTheme.space8),
                         Container(
                           padding: const EdgeInsets.all(AppTheme.space8),
                           decoration: BoxDecoration(
                             color: AppTheme.error.withAlpha(25),
-                            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                            border: Border.all(color: AppTheme.error.withAlpha(60)),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusSmall,
+                            ),
+                            border: Border.all(
+                              color: AppTheme.error.withAlpha(60),
+                            ),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.warning_amber_rounded, size: 16, color: AppTheme.error),
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                size: 16,
+                                color: AppTheme.error,
+                              ),
                               const SizedBox(width: AppTheme.space8),
                               Expanded(
                                 child: Text(
                                   testResult.lastError!,
-                                  style: AppTheme.fontCaption.copyWith(color: AppTheme.error),
+                                  style: AppTheme.fontCaption.copyWith(
+                                    color: AppTheme.error,
+                                  ),
                                 ),
                               ),
                             ],
@@ -763,8 +989,12 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         children: [
                           AppButton.secondary(
                             label: isTesting ? '正在探测...' : '测试连接与探测工具',
-                            icon: isTesting ? Icons.hourglass_top : Icons.bolt_outlined,
-                            onPressed: isTesting ? null : () => _testMcpClient(c),
+                            icon: isTesting
+                                ? Icons.hourglass_top
+                                : Icons.bolt_outlined,
+                            onPressed: isTesting
+                                ? null
+                                : () => _testMcpClient(c),
                           ),
                           const SizedBox(width: AppTheme.space8),
                           AppButton.ghost(
@@ -774,7 +1004,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                           ),
                           const SizedBox(width: AppTheme.space8),
                           IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 16, color: AppTheme.error),
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              size: 16,
+                              color: AppTheme.error,
+                            ),
                             tooltip: '删除 MCP 服务',
                             onPressed: () async {
                               await store.deleteMcpClient(c.id);
@@ -800,7 +1034,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   Widget _buildProxyTab() {
     final proxy = ProxySettings.instance;
     final hostCtrl = TextEditingController(text: proxy.host);
-    final portCtrl = TextEditingController(text: proxy.port > 0 ? proxy.port.toString() : '');
+    final portCtrl = TextEditingController(
+      text: proxy.port > 0 ? proxy.port.toString() : '',
+    );
     bool enabled = proxy.enabled;
 
     return StatefulBuilder(
@@ -813,7 +1049,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             Text(
               '配置应用级 HTTP(S) 代理，统一覆盖 AI 对话、语音合成、文档解析与外部 MCP 子进程。'
               '未启用时应用直连，与系统 TUN 代理互不干扰。代理地址非密钥，仅存明文配置文件。',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(
+                color: AppTheme.textSecondary,
+              ),
             ),
             const SizedBox(height: AppTheme.space16),
             AppCard(
@@ -881,13 +1119,19 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                               AiService.instance.rebuildHttpClient();
                               if (mounted) {
                                 ScaffoldMessenger.of(this.context).showSnackBar(
-                                  const SnackBar(content: Text('代理配置已保存并立即生效。'), backgroundColor: AppTheme.success),
+                                  const SnackBar(
+                                    content: Text('代理配置已保存并立即生效。'),
+                                    backgroundColor: AppTheme.success,
+                                  ),
                                 );
                               }
                             } catch (e) {
                               if (mounted) {
                                 ScaffoldMessenger.of(this.context).showSnackBar(
-                                  SnackBar(content: Text('保存失败: $e'), backgroundColor: AppTheme.error),
+                                  SnackBar(
+                                    content: Text('保存失败: $e'),
+                                    backgroundColor: AppTheme.error,
+                                  ),
                                 );
                               }
                             }
@@ -897,7 +1141,10 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         AppButton.secondary(
                           label: '检测通道',
                           icon: Icons.network_check,
-                          onPressed: () => _testProxyChannel(hostCtrl.text, int.tryParse(portCtrl.text.trim()) ?? 0),
+                          onPressed: () => _testProxyChannel(
+                            hostCtrl.text,
+                            int.tryParse(portCtrl.text.trim()) ?? 0,
+                          ),
                         ),
                       ],
                     ),
@@ -909,7 +1156,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
             Text(
               '提示：代理通道不可用时，AI 对话、TTS、文档解析与 MCP 子进程的联网请求会同时失败。'
               '检测按钮会区分「代理未配置」「代理不可达」与「远端服务故障」三种原因。',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+              style: AppTheme.fontCaption.copyWith(
+                color: AppTheme.textTertiary,
+              ),
             ),
           ],
         );
@@ -922,19 +1171,26 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     if (h.isEmpty || port <= 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('代理未配置：请填写主机与端口后再检测。'), backgroundColor: AppTheme.warning),
+          const SnackBar(
+            content: Text('代理未配置：请填写主机与端口后再检测。'),
+            backgroundColor: AppTheme.warning,
+          ),
         );
       }
       return;
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('正在检测 $h:$port ...')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('正在检测 $h:$port ...')));
     }
     try {
       // 第一步：代理端口本身是否可建立 TCP 连接
-      final socket = await Socket.connect(h, port, timeout: const Duration(seconds: 8));
+      final socket = await Socket.connect(
+        h,
+        port,
+        timeout: const Duration(seconds: 8),
+      );
       socket.destroy();
       // 第二步：经代理访问一个目标站点，验证通道可用且远端可达
       final probeClient = AppHttpClient.create();
@@ -947,7 +1203,10 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('代理通道可用，远端站点可达。'), backgroundColor: AppTheme.success),
+            const SnackBar(
+              content: Text('代理通道可用，远端站点可达。'),
+              backgroundColor: AppTheme.success,
+            ),
           );
         }
       } finally {
@@ -956,9 +1215,13 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     } catch (e) {
       final msg = e.toString();
       String reason;
-      if (msg.contains('SocketException') || msg.contains('Connection refused') || msg.contains('timeout')) {
+      if (msg.contains('SocketException') ||
+          msg.contains('Connection refused') ||
+          msg.contains('timeout')) {
         reason = '代理不可达：$msg';
-      } else if (msg.contains('Handshake') || msg.contains('TLS') || msg.contains('CERT')) {
+      } else if (msg.contains('Handshake') ||
+          msg.contains('TLS') ||
+          msg.contains('CERT')) {
         reason = '代理通道建立但 TLS 握手失败：$msg';
       } else {
         reason = '代理通道可用但远端服务故障：$msg';
@@ -977,12 +1240,22 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   void _showAddOrEditProviderDialog({AiProviderConfig? provider}) {
     final isEditing = provider != null;
     final nameCtrl = TextEditingController(text: provider?.name ?? '');
-    final urlCtrl = TextEditingController(text: provider?.baseUrl ?? 'https://api.openai.com/v1');
+    final urlCtrl = TextEditingController(
+      text: provider?.baseUrl ?? 'https://api.openai.com/v1',
+    );
     final keyCtrl = TextEditingController();
-    final modelsCtrl = TextEditingController(text: provider?.textModels.join(', ') ?? '');
+    final modelsCtrl = TextEditingController(
+      text: provider?.textModels.join(', ') ?? '',
+    );
     AiProtocolType protocol = provider?.protocol ?? AiProtocolType.openai;
     bool isDetecting = false;
     bool isSaving = false;
+
+    // 密钥默认遮蔽；眼睛图标切换明暗。编辑已有供应商且字段为空时，首次点眼睛
+    // 会从密钥库载入已存密钥供核对（design D4），并在保存时跳过冗余写入。
+    bool keyVisible = false;
+    bool keyLoadedFromStore = false;
+    bool keyLoading = false;
 
     showDialog(
       context: context,
@@ -991,11 +1264,17 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
           backgroundColor: AppTheme.bgCard,
           title: Row(
             children: [
-              Text(isEditing ? '编辑 AI 供应商' : '添加 AI 供应商', style: AppTheme.fontTitle),
+              Text(
+                isEditing ? '编辑 AI 供应商' : '添加 AI 供应商',
+                style: AppTheme.fontTitle,
+              ),
               if (isEditing) ...[
                 const SizedBox(width: AppTheme.space8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.success.withValues(alpha: 0.15),
                     borderRadius: AppTheme.borderRadiusSmall,
@@ -1003,9 +1282,16 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.shield_outlined, size: 12, color: AppTheme.success),
+                      Icon(
+                        Icons.shield_outlined,
+                        size: 12,
+                        color: AppTheme.success,
+                      ),
                       SizedBox(width: 4),
-                      Text('已加密存储', style: TextStyle(fontSize: 11, color: AppTheme.success)),
+                      Text(
+                        '已加密存储',
+                        style: TextStyle(fontSize: 11, color: AppTheme.success),
+                      ),
                     ],
                   ),
                 ),
@@ -1027,19 +1313,30 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                     runSpacing: 6,
                     children: [
                       ActionChip(
-                        avatar: const Icon(Icons.bolt, size: 14, color: AppTheme.accent),
-                        label: const Text('DeepSeek', style: TextStyle(fontSize: 11)),
+                        avatar: const Icon(
+                          Icons.bolt,
+                          size: 14,
+                          color: AppTheme.accent,
+                        ),
+                        label: const Text(
+                          'DeepSeek',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = 'DeepSeek';
                             protocol = AiProtocolType.openai;
                             urlCtrl.text = 'https://api.deepseek.com/v1';
-                            modelsCtrl.text = 'deepseek-chat, deepseek-reasoner';
+                            modelsCtrl.text =
+                                'deepseek-chat, deepseek-reasoner';
                           });
                         },
                       ),
                       ActionChip(
-                        label: const Text('OpenAI', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'OpenAI',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = 'OpenAI';
@@ -1050,29 +1347,41 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         },
                       ),
                       ActionChip(
-                        label: const Text('Claude', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'Claude',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = 'Anthropic Claude';
                             protocol = AiProtocolType.anthropic;
                             urlCtrl.text = 'https://api.anthropic.com';
-                            modelsCtrl.text = 'claude-3-7-sonnet-20250219, claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022';
+                            modelsCtrl.text =
+                                'claude-3-7-sonnet-20250219, claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022';
                           });
                         },
                       ),
                       ActionChip(
-                        label: const Text('Gemini', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'Gemini',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = 'Google Gemini';
                             protocol = AiProtocolType.gemini;
-                            urlCtrl.text = 'https://generativelanguage.googleapis.com';
-                            modelsCtrl.text = 'gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash';
+                            urlCtrl.text =
+                                'https://generativelanguage.googleapis.com';
+                            modelsCtrl.text =
+                                'gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash';
                           });
                         },
                       ),
                       ActionChip(
-                        label: const Text('Ollama(本地)', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'Ollama(本地)',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = 'Ollama 本地';
@@ -1083,37 +1392,119 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         },
                       ),
                       ActionChip(
-                        label: const Text('硅基流动', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          '硅基流动',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () {
                           setDialogState(() {
                             nameCtrl.text = '硅基流动 (SiliconFlow)';
                             protocol = AiProtocolType.openai;
                             urlCtrl.text = 'https://api.siliconflow.cn/v1';
-                            modelsCtrl.text = 'deepseek-ai/DeepSeek-V3, deepseek-ai/DeepSeek-R1';
+                            modelsCtrl.text =
+                                'deepseek-ai/DeepSeek-V3, deepseek-ai/DeepSeek-R1';
                           });
                         },
                       ),
                     ],
                   ),
                   const Divider(height: AppTheme.space24),
-                  AppTextField(controller: nameCtrl, label: '供应商名称', hintText: '如 OpenAI / DeepSeek / Ollama'),
+                  AppTextField(
+                    controller: nameCtrl,
+                    label: '供应商名称',
+                    hintText: '如 OpenAI / DeepSeek / Ollama',
+                  ),
                   const SizedBox(height: AppTheme.space12),
                   DropdownButtonFormField<AiProtocolType>(
                     initialValue: protocol,
                     decoration: const InputDecoration(labelText: '协议类型'),
-                    items: AiProtocolType.values.map((p) => DropdownMenuItem(value: p, child: Text(p.label))).toList(),
+                    items: AiProtocolType.values
+                        .map(
+                          (p) =>
+                              DropdownMenuItem(value: p, child: Text(p.label)),
+                        )
+                        .toList(),
                     onChanged: (val) {
                       if (val != null) setDialogState(() => protocol = val);
                     },
                   ),
                   const SizedBox(height: AppTheme.space12),
-                  AppTextField(controller: urlCtrl, label: 'API Base URL', hintText: 'https://api.openai.com/v1'),
+                  AppTextField(
+                    controller: urlCtrl,
+                    label: 'API Base URL',
+                    hintText: 'https://api.openai.com/v1',
+                  ),
                   const SizedBox(height: AppTheme.space12),
                   AppTextField(
                     controller: keyCtrl,
                     label: isEditing ? 'API Key (已安全保存，若不修改请留空)' : 'API Key',
                     hintText: isEditing ? '留空则保持原有密钥不变' : 'sk-...',
-                    obscureText: true,
+                    obscureText: !keyVisible,
+                    suffixIcon: keyLoading
+                        ? const Padding(
+                            padding: EdgeInsets.all(10),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            icon: Icon(
+                              keyVisible
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              size: 16,
+                              color: AppTheme.textSecondary,
+                            ),
+                            tooltip: keyVisible ? '隐藏密钥' : '显示密钥',
+                            onPressed: () async {
+                              // 编辑态且字段为空：先把已存密钥载入输入框再显示，
+                              // 否则用户点了眼睛也只看到一片空白。
+                              if (!keyVisible &&
+                                  isEditing &&
+                                  keyCtrl.text.isEmpty &&
+                                  !keyLoadedFromStore) {
+                                setDialogState(() => keyLoading = true);
+                                try {
+                                  final stored = await KeychainService.instance
+                                      .readSecret(provider!.keychainKeyId);
+                                  if (stored == null || stored.isEmpty) {
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            '未能从密钥库载入已保存的密钥，可能已被清除',
+                                          ),
+                                          backgroundColor: AppTheme.warning,
+                                          duration: Duration(seconds: 6),
+                                        ),
+                                      );
+                                    }
+                                    return;
+                                  }
+                                  keyCtrl.text = stored;
+                                  keyLoadedFromStore = true;
+                                  setDialogState(() => keyVisible = true);
+                                  if (ctx.mounted) {
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          '已载入已保存的密钥（仅用于查看；未修改则保存时不会重复写入）',
+                                        ),
+                                        duration: Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                } finally {
+                                  if (ctx.mounted)
+                                    setDialogState(() => keyLoading = false);
+                                }
+                                return;
+                              }
+                              setDialogState(() => keyVisible = !keyVisible);
+                            },
+                          ),
                   ),
                   const SizedBox(height: AppTheme.space12),
                   Row(
@@ -1121,20 +1512,33 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                     children: [
                       const Text('支持的模型 (逗号分隔)', style: AppTheme.fontCaption),
                       if (isDetecting)
-                        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       else
                         TextButton.icon(
                           icon: const Icon(Icons.auto_awesome, size: 14),
-                          label: const Text('自动探测发现', style: TextStyle(fontSize: 12)),
+                          label: const Text(
+                            '自动探测发现',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           onPressed: () async {
                             setDialogState(() => isDetecting = true);
                             try {
                               String keyToUse = keyCtrl.text.trim();
                               if (keyToUse.isEmpty && provider != null) {
-                                keyToUse = await KeychainService.instance.readSecret(provider.keychainKeyId) ?? '';
+                                keyToUse =
+                                    await KeychainService.instance.readSecret(
+                                      provider.keychainKeyId,
+                                    ) ??
+                                    '';
                               }
 
-                              if (keyToUse.isEmpty && !urlCtrl.text.contains('localhost') && !urlCtrl.text.contains('127.0.0.1')) {
+                              if (keyToUse.isEmpty &&
+                                  !urlCtrl.text.contains('localhost') &&
+                                  !urlCtrl.text.contains('127.0.0.1')) {
                                 if (ctx.mounted) {
                                   ScaffoldMessenger.of(ctx).showSnackBar(
                                     const SnackBar(
@@ -1147,20 +1551,33 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                               }
 
                               final tempProv = AiProviderConfig(
-                                id: provider?.id ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
-                                name: nameCtrl.text.trim().isEmpty ? '临时供应商' : nameCtrl.text.trim(),
+                                id:
+                                    provider?.id ??
+                                    'temp_${DateTime.now().millisecondsSinceEpoch}',
+                                name: nameCtrl.text.trim().isEmpty
+                                    ? '临时供应商'
+                                    : nameCtrl.text.trim(),
                                 protocol: protocol,
                                 baseUrl: urlCtrl.text.trim(),
-                                keychainKeyId: provider?.keychainKeyId ?? 'temp',
+                                keychainKeyId:
+                                    provider?.keychainKeyId ?? 'temp',
                               );
-                              final found = await AiService.instance.discoverModels(tempProv, apiKey: keyToUse.isNotEmpty ? keyToUse : null);
+                              final found = await AiService.instance
+                                  .discoverModels(
+                                    tempProv,
+                                    apiKey: keyToUse.isNotEmpty
+                                        ? keyToUse
+                                        : null,
+                                  );
                               setDialogState(() {
                                 modelsCtrl.text = found.join(', ');
                               });
                               if (ctx.mounted) {
                                 ScaffoldMessenger.of(ctx).showSnackBar(
                                   SnackBar(
-                                    content: Text('✓ 成功探测到 ${found.length} 个可用模型！'),
+                                    content: Text(
+                                      '✓ 成功探测到 ${found.length} 个可用模型！',
+                                    ),
                                     backgroundColor: AppTheme.success,
                                   ),
                                 );
@@ -1182,7 +1599,11 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         ),
                     ],
                   ),
-                  AppTextField(controller: modelsCtrl, maxLines: 2, hintText: '如 gpt-4o, gpt-4o-mini'),
+                  AppTextField(
+                    controller: modelsCtrl,
+                    maxLines: 2,
+                    hintText: '如 gpt-4o, gpt-4o-mini',
+                  ),
                 ],
               ),
             ),
@@ -1200,13 +1621,21 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   : () async {
                       setDialogState(() => isSaving = true);
                       try {
-                        final id = provider?.id ?? 'provider_${DateTime.now().millisecondsSinceEpoch}';
+                        final id =
+                            provider?.id ??
+                            'provider_${DateTime.now().millisecondsSinceEpoch}';
                         final keyId = provider?.keychainKeyId ?? 'key_$id';
-                        final models = modelsCtrl.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+                        final models = modelsCtrl.text
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList();
 
                         final newProv = AiProviderConfig(
                           id: id,
-                          name: nameCtrl.text.trim().isEmpty ? '未命名供应商' : nameCtrl.text.trim(),
+                          name: nameCtrl.text.trim().isEmpty
+                              ? '未命名供应商'
+                              : nameCtrl.text.trim(),
                           protocol: protocol,
                           baseUrl: urlCtrl.text.trim(),
                           keychainKeyId: keyId,
@@ -1214,15 +1643,31 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         );
 
                         AiService.instance.invalidateProviderEndpoint(id);
-                        await store.saveProvider(newProv, apiKey: keyCtrl.text.trim().isEmpty ? null : keyCtrl.text.trim());
+                        // 载入已存密钥后未修改时，值与库里一致——跳过写入，避免冗余。
+                        final enteredKey = keyCtrl.text.trim();
+                        final skipKeyWrite =
+                            keyLoadedFromStore &&
+                            enteredKey ==
+                                (await KeychainService.instance.readSecret(
+                                      keyId,
+                                    ) ??
+                                    '');
+                        await store.saveProvider(
+                          newProv,
+                          apiKey: (enteredKey.isEmpty || skipKeyWrite)
+                              ? null
+                              : enteredKey,
+                        );
                         // 失配自愈信号：若本次保存触发了密钥库重建，告知用户其他已存密钥需重填
-                        final rebuild = KeychainService.instance.consumeRebuildInfo();
+                        final rebuild = KeychainService.instance
+                            .consumeRebuildInfo();
                         if (ctx.mounted) Navigator.pop(ctx);
                         if (rebuild != null && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
-                                  '供应商已保存。\n⚠️ 密钥库此前因密钥失配已重置，其他已存密钥（如其他供应商的 API Key）需重新填入。\n残件备份: ${rebuild.backupPath}'),
+                                '供应商已保存。\n⚠️ 密钥库此前因密钥失配已重置，其他已存密钥（如其他供应商的 API Key）需重新填入。\n残件备份: ${rebuild.backupPath}',
+                              ),
                               backgroundColor: AppTheme.warning,
                               duration: const Duration(seconds: 10),
                             ),
@@ -1235,7 +1680,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('供应商配置已保存，但 $e\n可稍后在编辑界面重新填入 API Key 保存。'),
+                              content: Text(
+                                '供应商配置已保存，但 $e\n可稍后在编辑界面重新填入 API Key 保存。',
+                              ),
                               backgroundColor: AppTheme.warning,
                               duration: const Duration(seconds: 8),
                             ),
@@ -1267,9 +1714,13 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   void _showAddOrEditMcpDialog({McpClientConfig? client}) {
     final isEditing = client != null;
     final nameCtrl = TextEditingController(text: client?.name ?? '');
-    final cmdCtrl = TextEditingController(text: client?.endpointOrCommand ?? '');
+    final cmdCtrl = TextEditingController(
+      text: client?.endpointOrCommand ?? '',
+    );
     final argsCtrl = TextEditingController(text: client?.args.join(' ') ?? '');
-    final timeoutCtrl = TextEditingController(text: (client?.timeoutSeconds ?? 60).toString());
+    final timeoutCtrl = TextEditingController(
+      text: (client?.timeoutSeconds ?? 60).toString(),
+    );
 
     final envSb = StringBuffer();
     if (client != null) {
@@ -1300,10 +1751,20 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(isEditing ? '编辑外部 MCP 客户端' : '添加外部 MCP 客户端', style: AppTheme.fontTitle),
+              Text(
+                isEditing ? '编辑外部 MCP 客户端' : '添加外部 MCP 客户端',
+                style: AppTheme.fontTitle,
+              ),
               TextButton.icon(
-                icon: const Icon(Icons.auto_awesome, size: 14, color: AppTheme.accentLight),
-                label: const Text('填入 Firecrawl 模板', style: TextStyle(color: AppTheme.accentLight, fontSize: 12)),
+                icon: const Icon(
+                  Icons.auto_awesome,
+                  size: 14,
+                  color: AppTheme.accentLight,
+                ),
+                label: const Text(
+                  '填入 Firecrawl 模板',
+                  style: TextStyle(color: AppTheme.accentLight, fontSize: 12),
+                ),
                 onPressed: () => fillFirecrawlPreset(setDialogState),
               ),
             ],
@@ -1315,14 +1776,24 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppTextField(controller: nameCtrl, label: '服务名称', hintText: '如 Firecrawl 爬虫与搜索 / Filesystem'),
+                  AppTextField(
+                    controller: nameCtrl,
+                    label: '服务名称',
+                    hintText: '如 Firecrawl 爬虫与搜索 / Filesystem',
+                  ),
                   const SizedBox(height: AppTheme.space12),
                   DropdownButtonFormField<String>(
                     initialValue: transport,
                     decoration: const InputDecoration(labelText: '通信方式'),
                     items: const [
-                      DropdownMenuItem(value: 'stdio', child: Text('标准输入输出 (stdio)')),
-                      DropdownMenuItem(value: 'sse', child: Text('Server-Sent Events (SSE / HTTP)')),
+                      DropdownMenuItem(
+                        value: 'stdio',
+                        child: Text('标准输入输出 (stdio)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'sse',
+                        child: Text('Server-Sent Events (SSE / HTTP)'),
+                      ),
                     ],
                     onChanged: (val) {
                       if (val != null) setDialogState(() => transport = val);
@@ -1332,7 +1803,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   AppTextField(
                     controller: cmdCtrl,
                     label: transport == 'stdio' ? '启动命令 / 可执行程序' : '服务 URL',
-                    hintText: transport == 'stdio' ? 'npx' : 'http://localhost:8000/sse',
+                    hintText: transport == 'stdio'
+                        ? 'npx'
+                        : 'http://localhost:8000/sse',
                   ),
                   if (transport == 'stdio') ...[
                     const SizedBox(height: AppTheme.space12),
@@ -1345,7 +1818,8 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                     AppTextField(
                       controller: envCtrl,
                       label: '环境变量 (每行一个 KEY=VALUE)',
-                      hintText: 'FIRECRAWL_API_URL=https://43-133-77-38.nip.io\nFIRECRAWL_API_KEY=your_token',
+                      hintText:
+                          'FIRECRAWL_API_URL=https://43-133-77-38.nip.io\nFIRECRAWL_API_KEY=your_token',
                       maxLines: 4,
                     ),
                   ],
@@ -1369,8 +1843,15 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                 final List<String> parsedArgs = [];
                 if (rawArgs.isNotEmpty) {
                   final parts = rawArgs.contains(',')
-                      ? rawArgs.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList()
-                      : rawArgs.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+                      ? rawArgs
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList()
+                      : rawArgs
+                            .split(RegExp(r'\s+'))
+                            .where((s) => s.isNotEmpty)
+                            .toList();
                   parsedArgs.addAll(parts);
                 }
 
@@ -1387,10 +1868,14 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
                   }
                 }
 
-                final id = client?.id ?? 'mcp_${DateTime.now().millisecondsSinceEpoch}';
+                final id =
+                    client?.id ??
+                    'mcp_${DateTime.now().millisecondsSinceEpoch}';
                 final newClient = McpClientConfig(
                   id: id,
-                  name: nameCtrl.text.trim().isEmpty ? '未命名 MCP 服务' : nameCtrl.text.trim(),
+                  name: nameCtrl.text.trim().isEmpty
+                      ? '未命名 MCP 服务'
+                      : nameCtrl.text.trim(),
                   transport: transport,
                   endpointOrCommand: cmdCtrl.text.trim(),
                   args: parsedArgs,
@@ -1413,7 +1898,9 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
   void _testMcpClient(McpClientConfig c) async {
     setState(() => _mcpTesting[c.id] = true);
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(SnackBar(content: Text('正在与 MCP 服务 [${c.name}] 握手并探测工具...')));
+    messenger.showSnackBar(
+      SnackBar(content: Text('正在与 MCP 服务 [${c.name}] 握手并探测工具...')),
+    );
     try {
       final res = await McpService.instance.testConnection(c);
       setState(() {
@@ -1424,32 +1911,42 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
       if (res.isHealthy) {
         final toolNames = res.tools.take(5).map((t) => t.name).join(', ');
         final more = res.tools.length > 5 ? ' 等 ${res.tools.length} 个工具' : '';
-        messenger.showSnackBar(SnackBar(
-          content: Text('✓ MCP [${c.name}] 握手成功！探测到 ${res.toolCount} 个工具: $toolNames$more'),
-          backgroundColor: AppTheme.success,
-          duration: const Duration(seconds: 6),
-        ));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              '✓ MCP [${c.name}] 握手成功！探测到 ${res.toolCount} 个工具: $toolNames$more',
+            ),
+            backgroundColor: AppTheme.success,
+            duration: const Duration(seconds: 6),
+          ),
+        );
       } else {
-        messenger.showSnackBar(SnackBar(
-          content: Text('✕ MCP [${c.name}] 连接失败: ${res.lastError}'),
-          backgroundColor: AppTheme.error,
-          duration: const Duration(seconds: 8),
-        ));
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('✕ MCP [${c.name}] 连接失败: ${res.lastError}'),
+            backgroundColor: AppTheme.error,
+            duration: const Duration(seconds: 8),
+          ),
+        );
       }
     } catch (e) {
       setState(() => _mcpTesting[c.id] = false);
       messenger.clearSnackBars();
-      messenger.showSnackBar(SnackBar(
-        content: Text('✕ 测试异常: $e'),
-        backgroundColor: AppTheme.error,
-        duration: const Duration(seconds: 8),
-      ));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('✕ 测试异常: $e'),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 8),
+        ),
+      );
     }
   }
 
   void _testProvider(AiProviderConfig p) async {
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(content: Text('正在测试连接与真机对话 Ping...')));
+    messenger.showSnackBar(
+      const SnackBar(content: Text('正在测试连接与真机对话 Ping...')),
+    );
     try {
       await AiService.instance.testConnection(p);
       final models = await AiService.instance.discoverModels(p);
