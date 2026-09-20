@@ -18,6 +18,7 @@ import '../note_store.dart';
 import '../pdf_to_markdown.dart';
 import '../xlsx_to_markdown.dart';
 import 'note_editor.dart';
+import 'notebook_qa_panel.dart';
 
 /// 笔记本工具主页面（仿印象笔记三栏布局）
 class NotebookPage extends StatefulWidget {
@@ -73,6 +74,9 @@ class _NotebookPageState extends State<NotebookPage> {
   bool _isTrashSelected = false;
   String _searchQuery = '';
   bool _isLoading = true;
+
+  /// AI 问答面板开关（阶段二）。开启时在最右侧增加一列。
+  bool _showQa = false;
 
   // 批量操作多选状态
   bool _isBatchMode = false;
@@ -1238,9 +1242,34 @@ class _NotebookPageState extends State<NotebookPage> {
 
           // Right: Editor (纯白纸质编辑器列，自适应撑满剩余宽度)
           Expanded(child: _buildRightPanel()),
+
+          // Far right: AI 问答面板（阶段二，可切换）
+          if (_showQa) ...[
+            const VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+            SizedBox(
+              width: 360,
+              child: NotebookQaPanel(onOpenNote: _openNoteById),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// 从问答引用跳转到笔记：切换选中并关闭问答面板（避免遮挡）。
+  Future<void> _openNoteById(String noteId) async {
+    try {
+      final note = await _store.noteById(noteId);
+      if (note == null) return;
+      if (!mounted) return;
+      setState(() {
+        _selectedNote = note;
+        _showQa = false;
+      });
+      await _refresh(silent: true);
+    } catch (e) {
+      debugPrint('跳转笔记失败: $e');
+    }
   }
 
   Widget _buildLeftPanel() {
@@ -1299,6 +1328,25 @@ class _NotebookPageState extends State<NotebookPage> {
               });
               _refresh(silent: true);
             },
+          ),
+
+          const Divider(height: 1, color: AppTheme.borderSubtle),
+
+          // AI 问答入口（阶段二）：切换右侧「问我的笔记」面板
+          ListTile(
+            dense: true,
+            leading: Icon(Icons.auto_awesome,
+                size: 18,
+                color: _showQa ? AppTheme.accent : AppTheme.textSecondary),
+            title: Text(
+              '问我的笔记',
+              style: TextStyle(
+                color: _showQa ? AppTheme.accent : null,
+                fontWeight: _showQa ? FontWeight.w600 : null,
+              ),
+            ),
+            selected: _showQa,
+            onTap: () => setState(() => _showQa = !_showQa),
           ),
 
           const Divider(height: 1, color: AppTheme.borderSubtle),

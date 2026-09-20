@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import '../../../../services/ai_service.dart';
+import '../../../../services/agent_loop.dart';
 import '../../../../services/mcp_service.dart';
 
 enum ToolCallStatus { running, success, failed }
@@ -217,7 +217,10 @@ $toolDescs
 ''';
   }
 
-  /// 智能体循环执行
+  /// 智能体循环执行。
+  ///
+  /// 循环逻辑已提取到共享组件 [AgentLoop]（笔记本问答复用同一循环），此处
+  /// 只提供 AI 助手自己的工具集（MCP 工具）与执行方式（带重试的 MCP 调用）。
   Future<void> _runAgentLoop(ChatMessage assistantMsg) async {
     final tools = await McpService.instance.getAllTools();
     final systemPrompt = _buildSystemPrompt(tools);
@@ -229,67 +232,46 @@ $toolDescs
       historyContext.writeln('${m.isUser ? "用户" : "助手"}: ${m.content}');
     }
 
-    String currentPrompt = '对话历史:\n$historyContext\n\n用户最新指令: ${recent.last.content}\n请思考并回答：';
-    int iterations = 0;
-    const maxIterations = 3;
+    final initialPrompt = '对话历史:\n$historyContext\n\n用户最新指令: ${recent.last.content}\n请思考并回答：';
 
-    while (iterations < maxIterations) {
-      iterations++;
-
-      // 调用当前配置的 text 槽位模型（设置 90 秒超时以支持思考链深度推理模型）
-      final chatResult = await AiService.instance.chat(
-        slot: 'text',
-        messages: [
-          {'role': 'system', 'content': systemPrompt},
-          {'role': 'user', 'content': currentPrompt},
-        ],
-        timeout: const Duration(seconds: 90),
-      );
-
-      final reply = chatResult.text.trim();
-
-      // 检查是否有 tool_call 代码块
-      final toolCallMatch = RegExp(r'```tool_call\s*(\{[\s\S]*?\})\s*```').firstMatch(reply);
-      if (toolCallMatch != null) {
-        final rawJson = toolCallMatch.group(1)!;
-        Map<String, dynamic>? callData;
-        try {
-          callData = jsonDecode(rawJson) as Map<String, dynamic>;
-        } catch (_) {}
-
-        if (callData != null && callData.containsKey('name')) {
-          final toolName = callData['name'] as String;
-          final args = Map<String, dynamic>.from(callData['arguments'] as Map? ?? {});
-
-          final info = ToolCallInfo(toolName: toolName, arguments: args);
-          assistantMsg.toolCalls.add(info);
-          assistantMsg.content = '正在调用外部工具 [$toolName] 检索数据...';
-          notifyListeners();
-
-          // 执行工具调用。瞬时故障（连接重置/超时）重试有限次后再标记失败，
-          // 重试总耗时不超过工具调用配置的超时预算。
-          final result = await _callToolWithRetry(toolName, args);
-
-          if (result.isError) {
-            info.status = ToolCallStatus.failed;
-            info.error = result.rawError ?? '未知错误';
-            info.result = '工具执行失败: ${info.error}';
-          } else {
-            info.status = ToolCallStatus.success;
-            info.result = result.text.isEmpty ? '（工具返回了空内容）' : result.text;
-          }
-          notifyListeners();
-
-          // 组织下一步思考 prompt
-          currentPrompt += '\n\n【你发起的工具调用】: $toolName, 参数: ${jsonEncode(args)}\n【工具返回结果】:\n${info.result}\n\n请根据上述工具返回结果，给出最终整理好的回答：';
-          continue;
+    final result = await AgentLoop.run(
+      systemPrompt: systemPrompt,
+      initialPrompt: initialPrompt,
+      execute: (name, args) async {
+        // 瞬时故障（连接重置/超时）重试有限次后再标记失败，
+        // 重试总耗时不超过工具调用配置的超时预算。
+        final r = await _callToolWithRetry(name, args);
+        return r.isError
+            ? AgentToolOutcome.failure(r.rawError ?? '未知错误')
+            : AgentToolOutcome.success(
+                r.text.isEmpty ? '（工具返回了空内容）' : r.text);
+      },
+      onToolCallStart: (name, args) {
+        assistantMsg.content = '正在调用外部工具 [$name] 检索数据...';
+        notifyListeners();
+      },
+      onToolExecuted: (execution) {
+        final info = ToolCallInfo(
+          toolName: execution.name,
+          arguments: execution.arguments,
+        );
+        if (execution.outcome.isError) {
+          info.status = ToolCallStatus.failed;
+          info.error = execution.outcome.error ?? '未知错误';
+          info.result = '工具执行失败: ${info.error}';
+        } else {
+          info.status = ToolCallStatus.success;
+          info.result = execution.outcome.text;
         }
-      }
+        assistantMsg.toolCalls.add(info);
+        notifyListeners();
+      },
+      maxIterations: 3,
+      timeout: const Duration(seconds: 90),
+    );
 
-      // 如果没有工具调用，说明已经完成回答
-      assistantMsg.content = reply;
-      break;
-    }
+    assistantMsg.content = result.text;
+    notifyListeners();
   }
 
   /// 带有界重试的工具调用。仅对瞬时故障（连接重置/超时/Socket 异常）重试，

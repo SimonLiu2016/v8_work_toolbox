@@ -31,32 +31,32 @@
 
 实测：现有 `notes_fts` 用默认 `unicode61`，整串连续中文被当作单个 token，`MATCH '豆浆机'`/`'延保'`/`'保险'` 全部返回空。分词方案见 design D4。
 
-- [ ] 2.0.1 新建中文 bigram 分词工具（如 `lib/tools/notebook/cjk_tokenizer.dart`）：CJK 连续段切重叠双字，ASCII 词原样保留，标点丢弃；提供 `tokenize(text)` 与 `toFtsQuery(text)`（OR 拼接）
-- [ ] 2.0.2 `note_database.dart` 的 `indexNote` 写入前对 title/content 做 bigram 化
-- [ ] 2.0.3 `note_database.dart` 的 `searchNotes` 查询前对 query 做 bigram 化，`MATCH` 表达式用 OR 拼接，`ORDER BY bm25(notes_fts)`
-- [ ] 2.0.4 一次性 FTS 索引重建：升级时 `DELETE FROM notes_fts` 后从 `notes` 表重灌（派生数据，可安全重建）。放 schema 迁移或 `beforeOpen`
-- [ ] 2.0.5 单测：两字词（`延保`/`保险`）命中、三字词（`豆浆机`）命中、自然语言问句（`豆浆机坏了怎么办`）命中正确笔记且排首位、不相关词返回空、ASCII（`ABC123`）不回归
-- [ ] 2.0.6 单测：索引重建后旧笔记可被新分词方式搜到
+- [x] 2.0.1 新建中文 bigram 分词工具（如 `lib/tools/notebook/cjk_tokenizer.dart`）：CJK 连续段切重叠双字，ASCII 词原样保留，标点丢弃；提供 `tokenize(text)` 与 `toFtsQuery(text)`（OR 拼接）
+- [x] 2.0.2 `note_database.dart` 的 `indexNote` 写入前对 title/content 做 bigram 化
+- [x] 2.0.3 `note_database.dart` 的 `searchNotes` 查询前对 query 做 bigram 化，`MATCH` 表达式用 OR 拼接，`ORDER BY bm25(notes_fts)`
+- [x] 2.0.4 一次性 FTS 索引重建：升级时 `DELETE FROM notes_fts` 后从 `notes` 表重灌（派生数据，可安全重建）。放 schema 迁移或 `beforeOpen`
+- [x] 2.0.5 单测：两字词（`延保`/`保险`）命中、三字词（`豆浆机`）命中、自然语言问句（`豆浆机坏了怎么办`）命中正确笔记且排首位、不相关词返回空、ASCII（`ABC123`）不回归
+- [x] 2.0.6 单测：索引重建后旧笔记可被新分词方式搜到
 
 ### 2.1 NotebookKbService 检索
 
-- [ ] 2.1.1 新建 `lib/tools/notebook/notebook_kb_service.dart`：`retrieve(query, {limit})` 调 `NoteStore.searchNotes` 取 top-N，Delta 转纯文本片段，返回 `[{noteId, title, snippet}]`
-- [ ] 2.1.2 Delta 转纯文本：标题 + 段落文本，丢表格内部；命中在表格内时整条 Delta 转 markdown 喂入
-- [ ] 2.1.3 单测：retrieve 命中含关键词的笔记；无匹配返回空列表而非伪造
+- [x] 2.1.1 新建 `lib/tools/notebook/notebook_kb_service.dart`：`retrieve(query, {limit})` 调 `NoteStore.searchNotes` 取 top-N，Delta 转纯文本片段，返回 `[{noteId, title, snippet}]`
+- [x] 2.1.2 Delta 转纯文本：标题 + 段落文本，丢表格内部；命中在表格内时整条 Delta 转 markdown 喂入
+- [x] 2.1.3 单测：retrieve 命中含关键词的笔记；无匹配返回空列表而非伪造
 
 ### 2.2 AI 问答面板
 
-- [ ] 2.2.0 前置重构：把 `AiAssistantService._runAgentLoop` 提取为共享组件（如 `lib/services/agent_loop.dart`），接受工具定义 + 工具执行回调；`AiAssistantService` 改为使用该组件并注入自己的工具集，行为不变（见 design D6）
-- [ ] 2.2.1 新建 `lib/tools/notebook/ui/notebook_qa_panel.dart`：问答输入 + 回答区 + 引用笔记链接列表
-- [ ] 2.2.2 `NotebookKbService.ask(question)`：retrieve → 拼 context → `AiService.chat(slot:'text')` → 回答附引用 noteId
-- [ ] 2.2.3 经 2.2.0 的共享 agent loop 注入工具集：`notebook_search`（retrieve）、`web_search`、`scrape`
-- [ ] 2.2.4 回答中引用笔记链接可点击，定位到对应笔记
-- [ ] 2.2.5 无匹配笔记时告知用户"无相关笔记"而非伪造，并提议降级到 web_search
-- [ ] 2.2.6 单测：ask 命中凭证笔记时回答引用凭证附件与订单号；无匹配时不伪造
+- [x] 2.2.0 前置重构：把 `AiAssistantService._runAgentLoop` 提取为共享组件（如 `lib/services/agent_loop.dart`），接受工具定义 + 工具执行回调；`AiAssistantService` 改为使用该组件并注入自己的工具集，行为不变（见 design D6）
+- [x] 2.2.1 新建 `lib/tools/notebook/ui/notebook_qa_panel.dart`：问答输入 + 回答区 + 引用笔记链接列表
+- [x] 2.2.2 `NotebookKbService.ask(question)`：retrieve → 拼 context → `AiService.chat(slot:'text')` → 回答附引用 noteId
+- [x] 2.2.3 经 2.2.0 的共享 agent loop 注入工具集：`notebook_search`（retrieve）、`web_search`、`scrape`
+- [x] 2.2.4 回答中引用笔记链接可点击，定位到对应笔记
+- [x] 2.2.5 无匹配笔记时告知用户"无相关笔记"而非伪造，并提议降级到 web_search
+- [x] 2.2.6 单测：ask 命中凭证笔记时回答引用凭证附件与订单号；无匹配时不伪造
 
 ### 2.3 笔记本页接入
 
-- [ ] 2.3.1 笔记本页增加问答面板入口（侧栏按钮或顶部标签）
+- [x] 2.3.1 笔记本页增加问答面板入口（侧栏按钮或顶部标签）
 - [ ] 2.3.2 手工验证：问"豆浆机坏了怎么办"，AI 命中阶段一登记的凭证笔记，回答含服务名 + 凭证定位
 
 
