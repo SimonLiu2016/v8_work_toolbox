@@ -104,4 +104,19 @@ class VaultFileStore {
     }
     _file = null;
   }
+
+  /// 失配残件备份：把当前密文文件 copy 为 `<name>.mismatch-yyyyMMdd-HHmmss`，
+  /// 返回备份文件路径；原文件保持不动（由调用方随后重建覆盖）。
+  /// copy 而非 rename——重建写盘失败的任何时刻残件都在盘上。
+  Future<File?> backupMismatch({DateTime? at}) async {
+    final f = await _ensureFile();
+    if (!f.existsSync()) return null;
+    final t = at ?? DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final stamp =
+        '${t.year}${two(t.month)}${two(t.day)}-${two(t.hour)}${two(t.minute)}${two(t.second)}';
+    final backup = File('${f.path}.mismatch-$stamp');
+    await f.copy(backup.path);
+    return backup;
+  }
 }

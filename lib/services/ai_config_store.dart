@@ -394,6 +394,9 @@ class AiConfigStore {
   }
 
   // 增删改查
+  /// 保存供应商。配置（ai_config.json）总是先落盘；apiKey 非空时再写加密
+  /// 密钥库——密钥写入失败会抛出 [KeychainWriteException]，此时配置已保存，
+  /// 调用方可向用户区分提示"配置已保存但密钥写入失败"。
   Future<void> saveProvider(AiProviderConfig provider, {String? apiKey}) async {
     final idx = _providers.indexWhere((p) => p.id == provider.id);
     if (idx >= 0) {
@@ -401,11 +404,16 @@ class AiConfigStore {
     } else {
       _providers.add(provider);
     }
+    // 配置先落盘，保证密钥库故障不会吞掉用户填写的表单
+    await _save();
 
     if (apiKey != null && apiKey.isNotEmpty) {
-      await KeychainService.instance.writeSecret(provider.keychainKeyId, apiKey);
+      try {
+        await KeychainService.instance.writeSecret(provider.keychainKeyId, apiKey);
+      } catch (e) {
+        throw KeychainWriteException('API Key 写入加密密钥库失败: $e');
+      }
     }
-    await _save();
   }
 
   Future<void> deleteProvider(String providerId) async {
@@ -495,4 +503,14 @@ class AiConfigStore {
     _mcpClients.removeWhere((m) => m.id == clientId);
     await _save();
   }
+}
+
+/// 密钥库写入失败：此时供应商配置已落盘，仅 API Key 未保存。
+/// 调用方应将其与"保存失败"区分提示。
+class KeychainWriteException implements Exception {
+  final String message;
+  const KeychainWriteException(this.message);
+
+  @override
+  String toString() => message;
 }

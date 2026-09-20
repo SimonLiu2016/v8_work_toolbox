@@ -498,29 +498,56 @@ class UnattendedService extends ChangeNotifier {
 
   /// 检查命令是否命中白名单规则
   bool isCommandInAllowlist(String command) {
+    return findMatchingAllowlistRule(command) != null;
+  }
+
+  /// 返回命中该命令的第一条白名单规则；未命中返回 null。
+  String? findMatchingAllowlistRule(String command) {
     final trimmed = command.trim();
-    if (trimmed.isEmpty) return false;
+    if (trimmed.isEmpty) return null;
     for (final pattern in _state.allowlist) {
       final pTrimmed = pattern.trim();
       if (pTrimmed.isEmpty) continue;
       try {
         final reg = RegExp(pTrimmed, multiLine: true, caseSensitive: false);
-        if (reg.hasMatch(trimmed)) return true;
+        if (reg.hasMatch(trimmed)) return pTrimmed;
       } catch (_) {}
-      if (trimmed == pTrimmed) return true;
+      if (trimmed == pTrimmed) return pTrimmed;
     }
-    return false;
+    return null;
   }
 
   /// 添加命令到白名单（自动转义正则元字符，实现精确全词匹配）
-  Future<void> addToAllowlist(String command) async {
+  ///
+  /// 返回命中的既有规则（未添加），或 null（已添加精确规则）。
+  Future<String?> addToAllowlist(String command) async {
     final trimmed = command.trim();
-    if (trimmed.isEmpty) return;
-    if (isCommandInAllowlist(trimmed)) return;
+    if (trimmed.isEmpty) return null;
+    final covered = findMatchingAllowlistRule(trimmed);
+    if (covered != null) return covered;
 
-    final escaped = RegExp.escape(trimmed);
-    final pattern = '^$escaped\$';
+    final pattern = buildExactRule(trimmed);
     final updated = List<String>.from(_state.allowlist)..add(pattern);
+    _state = _state.copyWith(allowlist: updated);
+    _saveState();
+    notifyListeners();
+    return null;
+  }
+
+  /// 将命令构造为精确规则（转义 + ^...$ 锚定）。
+  static String buildExactRule(String command) {
+    final escaped = RegExp.escape(command.trim());
+    return '^$escaped\$';
+  }
+
+  /// 当前白名单规则快照（只读副本）。
+  List<String> get allowlistSnapshot => List<String>.unmodifiable(_state.allowlist);
+
+  /// 用一条宽规则替换多条旧规则（B 路径智能合并应用）。
+  Future<void> replaceAllowlistRules(List<String> removeRules, String newRule) async {
+    final updated = List<String>.from(_state.allowlist)
+      ..removeWhere((r) => removeRules.contains(r));
+    if (!updated.contains(newRule)) updated.add(newRule);
     _state = _state.copyWith(allowlist: updated);
     _saveState();
     notifyListeners();

@@ -28,12 +28,12 @@
 - [x] 3.2 替换 `/Applications/V8WorkToolbox.app`（先 SIGTERM 退出运行中的实例，再 `rm -rf` + `mv`，替换后校验 **Dart AOT 快照** `Contents/Frameworks/App.framework/Versions/A/App` 哈希与构建产物一致，`Maven / Java` 标签存在，终端启动验证无异常）
 
   **踩坑记录**：不能用 `Contents/MacOS/V8WorkToolbox` 的可执行文件哈希判断新旧——它是瘦启动器，跨构建不变（`e4fd7c38…` 恒定）。真正的应用代码在 AOT 快照里。此前曾以可执行文件哈希判定"已部署新版"，结论错误。另外 `/tmp` 是 `/private/tmp` 的符号链接，首次 `cp` 到 `/tmp/deploy` 时因大写路径残留导致暂存失败、`/Applications` 未真正替换。
-- [ ] 3.3 真机验证：Maven / Java 组在技术栈筛选 chip 与分组列表中可见且非空（代码路径已单测覆盖，UI 呈现需用户打开 App 跑一次扫描确认）
-- [ ] 3.4 真机验证：`~/Workspace` 不再作为单一条目出现，其下子项目各自成条目
+- [x] 3.3 真机验证：Maven / Java 组在技术栈筛选 chip 与分组列表中可见且非空（2026-09-16 用户在 App 中展开 Maven/Java 分组确认可见，含子项目条目）
+- [x] 3.4 真机验证：`~/Workspace` 不再作为单一条目出现，其下子项目各自成条目（2026-09-16 用户在 App 中确认分组列表为各子项目，无 `~/Workspace` 粗条目）
 - [x] 3.5 真机验证：`extraRoots` 中 12 个旧根已补回配置。读 `~/Library/Application Support/V8WorkToolbox/config/smart-disk-slimmer.json` 确认共 13 条（原 `~/Workspace` + 12 个旧根：`ctf-gitlab`、`github`、`gitee`、`vsProject`、`Livespace`、`flink_space`、`devops`、`zeebe`、`pythonProject`、`cae`、`PycharmProjects`、`ClaudeWorkspace`）。自愈生效，用户无需手工修复。
 - [x] 3.6 **部署事故记录（黑屏）**：增量构建产物签名 seal 失效 → macOS 拒绝 Keychain 访问 → `getOrCreateDek` 走文件兜底生成新 K2 → 旧 `.secrets.bin`（K1 加密）解密认证失败 → `main.dart` 中 `PrivacySecurityService.init()` 无守卫 → 启动即抛未捕获异常 → 黑屏。处置：`flutter clean` 重建（签名恢复 valid）；`.secrets.bin` 手工隔离为 `.secrets.bin.corrupt-K1-20260915-104205` 留证（内含 PIN 哈希/盐/自动锁定设置，无密码数据，`.vault.bin` 不存在）；`main.dart` 为该 init 加 try/catch 守卫（服务保持锁定语义，不违反 fail-fast 契约）。恢复路径：用户重设 PIN，或将来找回 K1 后走「设置 → DEK 备份恢复」。
 
 ## 4. 归档
 
-- [ ] 4.1 按依赖序归档三个变更：`openspec archive merge-clean-builds-into-slimmer -y` → `openspec archive fix-tier-a-discovery -y` → `openspec archive fix-watchlist-dedupe-and-maven-classification -y`
-- [ ] 4.2 归档后 `openspec validate` 与 `git diff openspec/specs/` 复核合并结果与预期一致（三条需求内容无丢失、无被覆盖）
+- [x] 4.1 按依赖序归档三个变更：`openspec archive merge-clean-builds-into-slimmer -y` → `openspec archive fix-tier-a-discovery -y` → `openspec archive fix-watchlist-dedupe-and-maven-classification -y`（2026-09-16 前两者已归档，本条随本变更归档完成）
+- [x] 4.2 归档后 `openspec validate` 与 `git diff openspec/specs/` 复核合并结果与预期一致（三条需求内容无丢失、无被覆盖；`openspec validate --specs` 24 passed 0 failed）

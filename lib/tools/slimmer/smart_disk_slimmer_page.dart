@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
 import '../../components/markdown_view.dart';
 import '../../services/ai_config_store.dart';
@@ -13,7 +14,11 @@ import 'disk_scanner_service.dart';
 import 'slimmer_models.dart';
 
 class SmartDiskSlimmerPage extends StatefulWidget {
-  const SmartDiskSlimmerPage({super.key});
+  const SmartDiskSlimmerPage({super.key, this.initialItems});
+
+  /// 测试注入：预填候选项，跳过磁盘扫描（仅测试可见）。
+  @visibleForTesting
+  final List<SlimCandidateItem>? initialItems;
 
   @override
   State<SmartDiskSlimmerPage> createState() => _SmartDiskSlimmerPageState();
@@ -39,9 +44,20 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   List<String> _extraRoots = [];
   Map<String, bool> _artifactOptions = {};
 
+  // 技术栈分组展开态：勾选复选框触发页面 rebuild 后保持展开状态。
+  // 修复"勾选后整个分组列表收回"的 bug（此前 expanded 存在闭包里被 rebuild 蒸发）。
+  final Set<ProjectTechStack> _expandedTechStacks = {};
+
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialItems;
+    if (initial != null) {
+      _items = List<SlimCandidateItem>.from(initial);
+      _hasScanned = true; // 测试注入：跳过就绪待扫引导，直接进入结果列表
+    } else {
+      _items = [];
+    }
     _loadDiskSpace();
     _loadBatchConfig();
     _loadProjectArtifactConfig();
@@ -1083,55 +1099,58 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   Widget _buildTechStackGroupTile(
       ProjectTechStack tech, List<SlimCandidateItem> items, int totalBytes) {
-    bool expanded = false;
-    return StatefulBuilder(
-      builder: (ctx, setExpanded) {
-        return Container(
-          decoration: BoxDecoration(
-            color: AppTheme.bgCard,
-            borderRadius: AppTheme.borderRadiusSmall,
-            border: Border.all(color: AppTheme.borderSubtle),
-          ),
-          child: Column(
-            children: [
-              InkWell(
-                onTap: () => setExpanded(() => expanded = !expanded),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppTheme.space12, vertical: AppTheme.space10),
-                  child: Row(
-                    children: [
-                      Icon(
-                        expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                        size: 20,
-                        color: AppTheme.accent,
-                      ),
-                      const SizedBox(width: AppTheme.space10),
-                      Expanded(
-                        child: Text(
-                          '${tech.label}（${items.length} 个项目）',
-                          style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      Text(
-                        _formatSize(totalBytes),
-                        style: AppTheme.fontTitle.copyWith(color: AppTheme.textPrimary),
-                      ),
-                    ],
+    final expanded = _expandedTechStacks.contains(tech);
+    void toggle() => setState(() {
+          if (expanded) {
+            _expandedTechStacks.remove(tech);
+          } else {
+            _expandedTechStacks.add(tech);
+          }
+        });
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: AppTheme.borderRadiusSmall,
+        border: Border.all(color: AppTheme.borderSubtle),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: toggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppTheme.space12, vertical: AppTheme.space10),
+              child: Row(
+                children: [
+                  Icon(
+                    expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    size: 20,
+                    color: AppTheme.accent,
                   ),
-                ),
-              ),
-              if (expanded) ...[
-                const Divider(height: 1, color: AppTheme.borderSubtle),
-                for (final item in items) ...[
-                  _buildItemTile(item),
-                  const SizedBox(height: AppTheme.space4),
+                  const SizedBox(width: AppTheme.space10),
+                  Expanded(
+                    child: Text(
+                      '${tech.label}（${items.length} 个项目）',
+                      style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Text(
+                    _formatSize(totalBytes),
+                    style: AppTheme.fontTitle.copyWith(color: AppTheme.textPrimary),
+                  ),
                 ],
-              ],
-            ],
+              ),
+            ),
           ),
-        );
-      },
+          if (expanded) ...[
+            const Divider(height: 1, color: AppTheme.borderSubtle),
+            for (final item in items) ...[
+              _buildItemTile(item),
+              const SizedBox(height: AppTheme.space4),
+            ],
+          ],
+        ],
+      ),
     );
   }
 

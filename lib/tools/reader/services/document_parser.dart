@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive.dart';
-import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:xml/xml.dart';
+import '../../../services/app_http_client.dart';
 import '../models/reader_models.dart';
 
 /// 智能段落与标点切片器
@@ -324,7 +324,7 @@ class DocumentParser {
       throw Exception('请输入有效的 HTTP / HTTPS 网页地址');
     }
 
-    final client = http.Client();
+    final client = AppHttpClient.create();
     try {
       final response = await client.get(
         uri,

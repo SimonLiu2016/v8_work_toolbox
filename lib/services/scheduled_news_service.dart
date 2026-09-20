@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'ai_service.dart';
-import 'mcp_service.dart';
+import 'web_search_service.dart';
 
 /// 定时检索任务配置
 class ScheduledNewsTask {
@@ -110,6 +110,14 @@ class ScheduledNewsService extends ChangeNotifier {
   File? _tasksFile;
   File? _briefingsFile;
   bool _isRunningTask = false;
+
+  /// 连续失败退避：检索连续失败达到阈值后进入延长退避，避免每 30s tick 空转。
+  /// 与 [WebSearchService] 的后端级冷却不同——这是任务级的整体退避，
+  /// 覆盖「全部后端都不可用」的情况。
+  static const int _consecutiveFailureThreshold = 5;
+  static const Duration _extendedBackoff = Duration(minutes: 10);
+  final Map<String, int> _consecutiveFailures = {};
+  final Map<String, DateTime> _backoffUntil = {};
 
   Future<void> init({Directory? customRootDir}) async {
     try {
@@ -242,6 +250,13 @@ class ScheduledNewsService extends ChangeNotifier {
     for (final task in _tasks) {
       if (!task.enabled) continue;
 
+      // 任务级退避：连续失败达到阈值后，在退避期内跳过该任务，避免每 30s
+      // tick 都空转一次注定失败的检索。
+      final backoff = _backoffUntil[task.id];
+      if (backoff != null && now.isBefore(backoff)) {
+        continue;
+      }
+
       bool isDue = false;
       if (task.lastRunTime == null) {
         isDue = true;
@@ -267,23 +282,46 @@ class ScheduledNewsService extends ChangeNotifier {
 
     try {
       debugPrint('开始执行定时资讯任务: ${task.title} (query: ${task.query})');
-      task.lastRunTime = DateTime.now();
 
-      // 1. 调用 MCP 搜索工具
-      final searchResult = await McpService.instance.callTool(
-        'firecrawl_search',
-        {
-          'query': task.query,
-          'limit': 3,
-        },
+      // 1. 调用内置检索服务（后端链自动降级，不依赖任何单一外部 MCP）
+      final webResult = await WebSearchService.instance.search(
+        task.query,
+        limit: 3,
       );
 
-      String contentToSummarize = '';
-      if (!searchResult.isError && searchResult.text.isNotEmpty) {
-        contentToSummarize = searchResult.text;
-      } else {
-        debugPrint('MCP firecrawl_search 调用提示: ${searchResult.rawError}');
+      // 检索失败：明确区分「检索失败」与「无新动态」。失败不推进 lastRunTime，
+      // 下个 30s tick 即重试（连续失败 ≥5 次后由 WebSearchService 冷却退避）。
+      if (webResult.isError) {
+        final failureReason = webResult.error ?? '未知原因';
+        debugPrint('定时资讯任务检索失败: $failureReason');
+        task.lastBriefing = '检索失败：$failureReason';
+
+        // 连续失败计数与退避：达到阈值后进入延长退避，避免每 tick 空转。
+        final failures = (_consecutiveFailures[task.id] ?? 0) + 1;
+        _consecutiveFailures[task.id] = failures;
+        if (failures >= _consecutiveFailureThreshold) {
+          _backoffUntil[task.id] = DateTime.now().add(_extendedBackoff);
+          debugPrint('任务 [${task.title}] 连续失败 $failures 次，进入 ${_extendedBackoff.inMinutes} 分钟退避');
+        }
+
+        // 不推进 lastRunTime，保持旧值，下个 tick 即可重试。
+        await _saveTasks();
+        notifyListeners();
+        return;
       }
+
+      // 检索成功：重置该任务的连续失败计数与退避。
+      _consecutiveFailures.remove(task.id);
+      _backoffUntil.remove(task.id);
+
+      // 检索成功：现在才推进 lastRunTime。间隔语义为「两次成功检索之间至少
+      // 间隔 N 分钟」，而非「两次尝试之间」，避免瞬时抖动固化为长静默。
+      task.lastRunTime = DateTime.now();
+
+      // 把结构化结果拼成供 AI 总结的文本
+      final contentToSummarize = webResult.results
+          .map((r) => '标题: ${r.title}\n来源: ${r.url}\n摘要: ${r.snippet}')
+          .join('\n\n');
 
       // 2. 调用 AI 生成 150 字精炼快报
       String summary = '';
@@ -307,7 +345,8 @@ class ScheduledNewsService extends ChangeNotifier {
           summary = '检索到数据，但生成快报时出现异常: $e';
         }
       } else {
-        summary = '未检索到新的有效动态（搜索服务暂时无返回或连接受阻）。';
+        // 检索成功但无结果：这是真正的「无新动态」，区别于上面的「检索失败」。
+        summary = '本轮检索未返回新的有效动态。';
       }
 
       task.lastBriefing = summary;

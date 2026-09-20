@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import 'ai_config_store.dart';
 import 'ai_logger.dart';
+import 'app_http_client.dart';
 import 'keychain_service.dart';
 
 // ---------------------------------------------------------------------------
@@ -123,7 +124,14 @@ class AiService {
   /// 默认轻量探测请求超时时间（15 秒）
   static const Duration defaultProbeTimeout = Duration(seconds: 15);
 
-  http.Client _client = http.Client();
+  http.Client _client = AppHttpClient.create();
+
+  /// 代理设置变更后重建 HTTP 客户端，使新通道立即生效。旧客户端被关闭。
+  void rebuildHttpClient() {
+    _client.close();
+    _client = AppHttpClient.create();
+    clearResolvedChatEndpoints();
+  }
 
   /// 供应商健康状态缓存（仅内存，应用重启后清空）
   final Map<String, ProviderHealthState> _healthCache = {};

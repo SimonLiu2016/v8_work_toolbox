@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'ai_config_store.dart';
+import 'proxy_settings.dart';
 
 /// MCP 工具定义
 class McpToolDefinition {
@@ -86,6 +87,12 @@ class McpServerStatus {
   final List<McpToolDefinition> tools;
   final String? lastError;
 
+  /// 远端服务可达性。null 表示未做真实探活（仅本地握手）；true/false 表示
+  /// 是否通过一次真实工具调用确认远端服务可达。UI SHALL 区分「本地子进程
+  /// 可达」与「远端 API 可达」，远端不健康时 MUST NOT 报告整体 healthy。
+  final bool? remoteReachable;
+  final String? remoteProbeError;
+
   const McpServerStatus({
     required this.serverId,
     required this.serverName,
@@ -93,6 +100,8 @@ class McpServerStatus {
     required this.toolCount,
     this.tools = const [],
     this.lastError,
+    this.remoteReachable,
+    this.remoteProbeError,
   });
 }
 
@@ -211,7 +220,11 @@ class McpStdioSession {
     return _cachedDiscoveredPath!;
   }
 
-  /// 构建安全的系统环境变量，补充 GUI 启动时缺失的 Node/Brew/NVM PATH
+  /// 构建安全的系统环境变量，补充 GUI 启动时缺失的 Node/Brew/NVM PATH，并透传
+  /// 应用级代理设置（见 [ProxySettings]），使子进程的远端请求走同一通道。
+  ///
+  /// 代理未配置时不注入任何代理变量且不覆盖 `Platform.environment` 中原有的设置；
+  /// 已配置时注入标准代理变量（含 `NO_PROXY` 排除本机回环与私网段）。
   static Map<String, String> buildSanitizedEnv(Map<String, String> customEnv) {
     final env = Map<String, String>.from(Platform.environment);
     final discoveredPath = getDiscoveredPath();
@@ -222,6 +235,10 @@ class McpStdioSession {
     } else {
       env['PATH'] = discoveredPath;
     }
+
+    // 应用级代理策略透传至子进程，覆盖用户自定义环境中的代理设置，
+    // 保证应用内部与子进程走同一通道。未配置时不注入、不覆盖。
+    env.addAll(ProxySettings.instance.toEnvVars());
 
     env.addAll(customEnv);
     return env;
@@ -462,18 +479,55 @@ class McpService {
 
   final Map<String, McpStdioSession> _sessions = {};
 
-  /// 测试指定 MCP 配置的连通性并列出可用工具
+  /// 测试指定 MCP 配置的连通性并列出可用工具。
+  ///
+  /// 两阶段验证：本地 JSON-RPC 握手 + `tools/list`，随后追加一次真实工具调用
+  /// （`firecrawl_scrape` example.com）以强制远端网络请求。UI 据此区分「本地
+  /// 子进程可达」与「远端 API 可达」——后者不健康时整体 MUST NOT 报告 healthy。
   Future<McpServerStatus> testConnection(McpClientConfig config) async {
     final session = McpStdioSession(config);
     try {
       await session.start();
       final tools = session.tools;
+
+      // 本地子进程可达，但远端服务是否可达仍未知——做一次真实探活。
+      bool? remoteReachable;
+      String? remoteProbeError;
+      // 仅对已知提供 firecrawl_scrape 工具的服务做真实探活；其他服务保持 null
+      // （不强行探活，避免误判不支持该工具的服务为不健康）。
+      if (tools.any((t) => t.name == 'firecrawl_scrape')) {
+        try {
+          final probe = await session.callTool(
+            'firecrawl_scrape',
+            {
+              'url': 'https://example.com',
+              'formats': ['markdown'],
+              'onlyMainContent': true,
+            },
+          ).timeout(const Duration(seconds: 15));
+          remoteReachable = !probe.isError && probe.text.isNotEmpty;
+          if (probe.isError) {
+            remoteProbeError = probe.rawError ?? '工具返回错误';
+          }
+        } catch (e) {
+          remoteReachable = false;
+          remoteProbeError = e.toString();
+        }
+      }
+
+      // 整体健康：本地可达。远端可达性单独呈现，供 UI 区分两层。
+      // 若远端探活失败，整体标记为不健康，避免「连通性正常」假信号。
+      final overallHealthy = remoteReachable ?? true;
+
       return McpServerStatus(
         serverId: config.id,
         serverName: config.name,
-        isHealthy: true,
+        isHealthy: overallHealthy,
         toolCount: tools.length,
         tools: tools,
+        remoteReachable: remoteReachable,
+        remoteProbeError: remoteProbeError,
+        lastError: remoteProbeError,
       );
     } catch (e) {
       String err = e.toString();

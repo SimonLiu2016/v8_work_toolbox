@@ -104,6 +104,22 @@ class AudioReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 清空当前文档。可选清空该文档的音频缓存。
+  Future<void> clearDocument({bool clearCache = false}) async {
+    if (_playbackState != ReaderPlaybackState.stopped) {
+      await stop();
+    }
+    if (clearCache && _document != null) {
+      await coordinator.clearDocCache(_document!.id);
+    }
+    _document = null;
+    _currentChunkIndex = 0;
+    _currentPosition = Duration.zero;
+    _chunkDuration = Duration.zero;
+    _lastErrorMessage = null;
+    notifyListeners();
+  }
+
   /// 开始或恢复播放当前段落
   Future<void> play() async {
     if (_document == null || _document!.chunks.isEmpty) return;

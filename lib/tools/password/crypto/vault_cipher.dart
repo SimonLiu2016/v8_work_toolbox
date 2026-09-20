@@ -4,12 +4,25 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
-/// Vault 密文整体结构异常（认证失败 / 布局损坏）
+/// Vault 密文整体结构异常
+///
+/// 两类互斥：
+/// - [isIntegrityError]：布局损坏（长度不足等），与密钥无关的真损坏
+/// - [isAuthFailure]：布局完整但 GCM 认证失败——密钥不匹配（失配）或文件被篡改，
+///   上层据此走"失配自愈"而非"损坏 fail-fast"
 class VaultCipherException implements Exception {
   final String message;
   final bool isIntegrityError;
+  final bool isAuthFailure;
 
-  VaultCipherException(this.message, {this.isIntegrityError = false});
+  VaultCipherException(
+    this.message, {
+    this.isIntegrityError = false,
+    this.isAuthFailure = false,
+  }) : assert(
+          !(isIntegrityError && isAuthFailure),
+          'isIntegrityError 与 isAuthFailure 互斥',
+        );
 
   @override
   String toString() => 'VaultCipherException: $message';
@@ -81,8 +94,8 @@ class VaultCipher {
       return utf8.decode(clear);
     } on SecretBoxAuthenticationError {
       throw VaultCipherException(
-        '密文认证失败：文件可能被篡改或密钥不匹配',
-        isIntegrityError: true,
+        '密文认证失败：密钥不匹配（DEK 失配）或文件被篡改',
+        isAuthFailure: true,
       );
     }
   }

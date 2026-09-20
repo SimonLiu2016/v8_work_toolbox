@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../../../../services/ai_config_store.dart';
 import '../../../../services/ai_logger.dart';
+import '../../../../services/app_http_client.dart';
 import '../../../../services/keychain_service.dart';
 import '../models/reader_models.dart';
 
@@ -192,7 +193,7 @@ class OpenAiTtsEngine implements TtsEngine {
 
   OpenAiTtsEngine({http.Client? client, http.Client Function()? clientFactory})
       : _clientFactory = clientFactory,
-        _client = client ?? (clientFactory != null ? clientFactory() : http.Client());
+        _client = client ?? (clientFactory != null ? clientFactory() : AppHttpClient.create());
 
   @override
   Future<bool> isAvailable() async {
@@ -457,7 +458,7 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory?.call() ?? http.Client();
+            _client = _clientFactory?.call() ?? AppHttpClient.create();
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }
@@ -570,7 +571,7 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory?.call() ?? http.Client();
+            _client = _clientFactory?.call() ?? AppHttpClient.create();
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }

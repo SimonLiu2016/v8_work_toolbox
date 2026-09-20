@@ -50,6 +50,21 @@ class _AlwaysFailBridge implements KeychainBridge {
   Future<void> delete({required String service, required String account}) async {}
 }
 
+/// 全拒绝的文件桥：与 _AlwaysFailBridge 配合模拟"Keychain 与文件均不可用"
+class _AlwaysFailFileBridge implements DekFileBridge {
+  @override
+  Future<String?> read() async => throw StateError('file unavailable');
+
+  @override
+  Future<void> write(String value) async => throw StateError('file unavailable');
+
+  @override
+  Future<void> delete() async => throw StateError('file unavailable');
+
+  @override
+  Future<int?> permissions() async => null;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -129,7 +144,10 @@ void main() {
     test('Keychain 完全不可用时抛 DekUnavailableException 且文案含恢复路径', () async {
       final service = KeychainService.instance;
       service.setKekManagerForTesting(
-        KekManager(bridge: _AlwaysFailBridge()),
+        KekManager(
+          bridge: _AlwaysFailBridge(),
+          fileBridge: _AlwaysFailFileBridge(),
+        ),
       );
       await service.init(customRootDir: tempDir);
 
@@ -141,7 +159,7 @@ void main() {
       }
     });
 
-    test('密文被篡改时抛完整性错误，不返回损坏数据', () async {
+    test('密文被篡改时旧数据不可读并触发失配自愈重建', () async {
       final service = freshService();
       await service.init(customRootDir: tempDir);
       await service.writeSecret('k1', 'secret-1');
@@ -154,10 +172,14 @@ void main() {
 
       // 模拟重启强制重读
       await service.init(customRootDir: tempDir);
-      expect(
-        () => service.readSecret('k1'),
-        throwsA(anything), // VaultCipherException 或其包装
-      );
+      // 篡改（GCM 认证失败）在新语义下按 DEK 失配处理：自愈重建，旧数据不可读
+      expect(await service.readSecret('k1'), isNull);
+      // 留下失配残件备份
+      final backups = tempDir
+          .listSync()
+          .where((f) => f.path.contains('.secrets.bin.mismatch-'))
+          .toList();
+      expect(backups.length, 1);
     });
   });
 

@@ -20,3 +20,10 @@ The application bundle SHALL include custom high-resolution macOS application ic
 - **WHEN** the user views the ActivityBar or About dialog
 - **THEN** the application renders the matching clean origami ribbon V8 brand symbol seamlessly integrated with the dark UI theme.
 
+
+### Requirement: Elevated button contrast default
+Elevated buttons rendered with the theme accent background SHALL default to high-contrast white text and icons under the dark theme, ensuring all primary action buttons remain readable.
+
+#### Scenario: Elevated button default contrast
+- **WHEN** an elevated button is rendered in the dark theme
+- **THEN** its text and icon foreground colors contrast against the accent background with visible white foreground.

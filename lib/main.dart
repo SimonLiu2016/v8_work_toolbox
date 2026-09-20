@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import 'services/ai_config_store.dart';
 import 'services/launcher_service.dart';
 import 'services/privacy_security_service.dart';
+import 'services/proxy_settings.dart';
 import 'services/scheduled_news_service.dart';
 import 'services/settings_store.dart';
 import 'services/unattended_service.dart';
@@ -74,6 +75,9 @@ Future<void> main(List<String> args) async {
 
   // 初始化统一配置存储与迁移
   await SettingsStore.instance.init();
+
+  // 初始化应用级代理通道配置（依赖 SettingsStore 已初始化）
+  await ProxySettings.instance.load();
 
   // 初始化 AI 平台级配置存储
   await AiConfigStore.instance.init();

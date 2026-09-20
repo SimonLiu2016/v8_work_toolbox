@@ -22,6 +22,30 @@ class TtsSynthesisCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 清空指定文档的音频缓存并取消正在进行的合成任务。
+  /// 用于"关闭文档并清空缓存"与"TTS 配置变更后重新合成"两条路径。
+  Future<void> clearDocCache(String docId) async {
+    _inFlightTasks.clear();
+    await cacheManager.clearDocCache(docId);
+  }
+
+  /// 判断新旧配置在合成相关字段上是否不同（mode/voiceId/customVoiceId/
+  /// systemProviderId/customModel/customEndpoint/customApiKey/useSystemAiConfig）。
+  /// 播放相关字段（speed/pitch）变更不触发缓存失效。
+  static bool synthesisFieldsChanged(
+    TtsSynthesisConfig oldConfig,
+    TtsSynthesisConfig newConfig,
+  ) {
+    return oldConfig.mode != newConfig.mode ||
+        oldConfig.voiceId != newConfig.voiceId ||
+        oldConfig.customVoiceId != newConfig.customVoiceId ||
+        oldConfig.systemProviderId != newConfig.systemProviderId ||
+        oldConfig.customModel != newConfig.customModel ||
+        oldConfig.customEndpoint != newConfig.customEndpoint ||
+        oldConfig.customApiKey != newConfig.customApiKey ||
+        oldConfig.useSystemAiConfig != newConfig.useSystemAiConfig;
+  }
+
   /// 正在合成的切片任务集合 (避免重复并发合成相同切片)
   final Map<int, Future<String?>> _inFlightTasks = {};
   bool _isDisposed = false;

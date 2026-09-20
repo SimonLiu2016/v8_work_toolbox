@@ -266,8 +266,9 @@ $toolDescs
           assistantMsg.content = '正在调用外部工具 [$toolName] 检索数据...';
           notifyListeners();
 
-          // 执行工具调用
-          final result = await McpService.instance.callTool(toolName, args);
+          // 执行工具调用。瞬时故障（连接重置/超时）重试有限次后再标记失败，
+          // 重试总耗时不超过工具调用配置的超时预算。
+          final result = await _callToolWithRetry(toolName, args);
 
           if (result.isError) {
             info.status = ToolCallStatus.failed;
@@ -289,5 +290,34 @@ $toolDescs
       assistantMsg.content = reply;
       break;
     }
+  }
+
+  /// 带有界重试的工具调用。仅对瞬时故障（连接重置/超时/Socket 异常）重试，
+  /// 重试总耗时不超过工具调用配置的超时预算。业务级错误（isError 且非瞬时）
+  /// 不重试。
+  Future<McpToolResult> _callToolWithRetry(
+    String toolName,
+    Map<String, dynamic> args, {
+    int maxRetries = 2,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 60));
+    McpToolResult lastResult;
+    int attempts = 0;
+    do {
+      attempts++;
+      lastResult = await McpService.instance.callTool(toolName, args);
+      if (!lastResult.isError) return lastResult;
+      final err = lastResult.rawError ?? '';
+      final transient = err.contains('ECONNRESET') ||
+          err.contains('SocketException') ||
+          err.contains('TimeoutException') ||
+          err.contains('timeout') ||
+          err.contains('EPIPE');
+      if (!transient) return lastResult;
+      if (attempts > maxRetries) return lastResult;
+      if (DateTime.now().isAfter(deadline)) return lastResult;
+      await Future.delayed(Duration(milliseconds: 800 * attempts));
+    } while (attempts <= maxRetries);
+    return lastResult;
   }
 }

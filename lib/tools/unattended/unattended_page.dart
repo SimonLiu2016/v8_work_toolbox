@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+import '../../services/allowlist_consolidation_service.dart';
 import '../../services/unattended_service.dart';
 import '../../theme/app_theme.dart';
 
@@ -696,9 +697,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
 
   void _showAllowlistRulesDialog(UnattendedState state) {
     final controller = TextEditingController(text: state.allowlist.join('\n'));
+    bool consolidating = false;
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
         backgroundColor: AppTheme.bgCard,
         title: const Text('白名单命令/正则规则管理'),
         content: SizedBox(
@@ -712,6 +715,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
               TextField(
                 controller: controller,
                 maxLines: 8,
+                enabled: !consolidating,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
@@ -723,25 +727,199 @@ class _UnattendedPageState extends State<UnattendedPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _service.clearAllowlist();
-            },
+            onPressed: consolidating
+                ? null
+                : () {
+                    Navigator.of(ctx).pop();
+                    _service.clearAllowlist();
+                  },
             child: const Text('清空白名单', style: TextStyle(color: AppTheme.error)),
           ),
+          TextButton.icon(
+            onPressed: consolidating
+                ? null
+                : () async {
+                    setDialogState(() => consolidating = true);
+                    await _runAllowlistConsolidation(ctx, controller);
+                    if (ctx.mounted) {
+                      setDialogState(() => consolidating = false);
+                    }
+                  },
+            icon: consolidating
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.auto_fix_high_rounded, size: 16),
+            label: Text(consolidating ? '整理中…' : 'AI整理'),
+          ),
           ElevatedButton(
-            onPressed: () {
-              final rules = controller.text
-                  .split('\n')
-                  .map((s) => s.trim())
-                  .where((s) => s.isNotEmpty)
-                  .toList();
-              Navigator.of(ctx).pop();
-              _service.updateAllowlist(rules);
-            },
+            onPressed: consolidating
+                ? null
+                : () {
+                    final rules = controller.text
+                        .split('\n')
+                        .map((s) => s.trim())
+                        .where((s) => s.isNotEmpty)
+                        .toList();
+                    Navigator.of(ctx).pop();
+                    _service.updateAllowlist(rules);
+                  },
             child: const Text('保存修改'),
           ),
         ],
+        ),
+      ),
+    );
+  }
+
+  /// A 路径：AI整理白名单规则（本地预整理 → 簇检测 → AI 合并 → 校验 → 预览确认 → 回填编辑框）。
+  Future<void> _runAllowlistConsolidation(
+    BuildContext dialogCtx,
+    TextEditingController controller,
+  ) async {
+    final rules = controller.text
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    if (rules.length < 2) {
+      _showSnackBar(dialogCtx, '规则不足两条，无需整理');
+      return;
+    }
+
+    // 1. 本地预整理（无条件第一步）
+    final tidied = AllowlistConsolidationService.localPreTidy(rules);
+    final clusters = AllowlistConsolidationService.clusterRules(tidied);
+
+    if (clusters.isEmpty) {
+      // 无相似簇：本地预整理若有变化则回填，否则提示空态
+      if (tidied.length < rules.length) {
+        controller.text = tidied.join('\n');
+        _showSnackBar(dialogCtx, '未发现相似规则簇，已完成本地去重整理（${rules.length} → ${tidied.length} 条）');
+      } else {
+        _showSnackBar(dialogCtx, '未发现可合并的相似规则');
+      }
+      return;
+    }
+
+    // 2. AI 合并（不可用/失败返回 null → 降级为本地预整理）
+    final plan = await AllowlistConsolidationService.consolidateWithAi(rules);
+    if (!dialogCtx.mounted) return;
+
+    if (plan == null || !plan.hasMerges) {
+      final reason = plan != null && plan.rejected.isNotEmpty
+          ? '（${plan.rejected.length} 组合并未通过安全校验，已保留原规则）'
+          : '';
+      if (tidied.length < rules.length) {
+        controller.text = tidied.join('\n');
+        _showSnackBar(dialogCtx, 'AI 整理不可用，已执行本地去重整理$reason');
+      } else {
+        _showSnackBar(dialogCtx, 'AI 整理不可用，规则保持不变$reason');
+      }
+      return;
+    }
+
+    // 3. 预览确认对话框
+    final confirmed = await _showConsolidationPreview(dialogCtx, plan);
+    if (!dialogCtx.mounted) return;
+    if (confirmed == true) {
+      controller.text = AllowlistConsolidationService.applyPlan(plan).join('\n');
+      _showSnackBar(
+        dialogCtx,
+        '已应用整理（${plan.tidiedRules.length} → ${AllowlistConsolidationService.applyPlan(plan).length} 条），确认无误后点击「保存修改」生效',
+      );
+    }
+  }
+
+  /// 合并预览：逐组展示「旧规则 ↔ 新宽规则」对照，返回用户是否确认应用。
+  Future<bool?> _showConsolidationPreview(BuildContext parentCtx, ConsolidationPlan plan) {
+    return showDialog<bool>(
+      context: parentCtx,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Text('AI 整理预览'),
+        content: SizedBox(
+          width: 620,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('以下规则簇将被合并为宽规则。未列出的规则保持不变：', style: AppTheme.fontCaption),
+                const SizedBox(height: AppTheme.space12),
+                ...plan.groups.map((g) {
+                  final oldRules = g.covers.map((i) => plan.tidiedRules[i]).toList();
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: AppTheme.space12),
+                    padding: const EdgeInsets.all(AppTheme.space12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgInput,
+                      borderRadius: AppTheme.borderRadiusSmall,
+                      border: Border.all(color: AppTheme.borderSubtle),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (g.summary.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Text('📦 ${g.summary}',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ...oldRules.map((r) => Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text('－ $r',
+                                  style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 10,
+                                      color: AppTheme.textTertiary,
+                                      decoration: TextDecoration.lineThrough)),
+                            )),
+                        const SizedBox(height: 2),
+                        Text('＋ ${g.mergedRule}',
+                            style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: AppTheme.accent,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  );
+                }),
+                if (plan.rejected.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '⚠️ ${plan.rejected.length} 组合并未通过安全校验（回验或黑名单交叉），已保留原规则',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.error),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('应用整理'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnackBar(BuildContext ctx, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -964,18 +1142,143 @@ class _UnattendedPageState extends State<UnattendedPage> {
         '加入白名单',
         style: TextStyle(fontSize: 11, color: AppTheme.accent, fontWeight: FontWeight.bold),
       ),
-      onPressed: () async {
-        await _service.addToAllowlist(command);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('已将命令加入白名单，后续将优先自动审批放行：$command'),
-              duration: const Duration(seconds: 3),
-              behavior: SnackBarBehavior.floating,
+      onPressed: () => _addToAllowlistSmart(command),
+    );
+  }
+
+  /// B 路径：加入白名单智能合并。
+  /// 覆盖检测 → 同簇检测 → AI 泛化确认 → 宽规则替换；失败静默退回精确规则。
+  Future<void> _addToAllowlistSmart(String command) async {
+    // 1. 已被现有规则覆盖
+    final covered = _service.findMatchingAllowlistRule(command);
+    if (covered != null) {
+      _showSnackBar(context, '该命令已被现有规则覆盖：$covered');
+      return;
+    }
+
+    // 2. 同簇检测：与现有规则明显相似才尝试 AI 合并
+    final exactRule = UnattendedService.buildExactRule(command);
+    final existing = _service.allowlistSnapshot;
+    final newAnchors = AllowlistConsolidationService.extractAnchors(exactRule);
+    final sameCluster = existing
+        .where((r) => AllowlistConsolidationService.isSameCluster(
+            newAnchors, AllowlistConsolidationService.extractAnchors(r)))
+        .toList();
+
+    if (sameCluster.isEmpty) {
+      // 无同簇规则 → 直接走精确路径
+      await _service.addToAllowlist(command);
+      if (mounted) {
+        _showSnackBar(context, '已将命令加入白名单，后续将优先自动审批放行：$command');
+      }
+      return;
+    }
+
+    // 3. AI 泛化（不可用/失败/校验未过 → null → 静默精确降级）
+    final suggestion =
+        await AllowlistConsolidationService.suggestMergeForCluster([exactRule, ...sameCluster]);
+    if (!mounted) return;
+
+    if (suggestion == null) {
+      await _service.addToAllowlist(command);
+      if (mounted) {
+        _showSnackBar(context, 'AI 整理不可用，已按精确规则加入白名单：$command');
+      }
+      return;
+    }
+
+    // 4. 用户确认：合并为宽规则 or 只加精确规则
+    final merge = await _showMergeConfirmDialog(suggestion, exactRule);
+    if (!mounted) return;
+    if (merge == true) {
+      await _service.replaceAllowlistRules(suggestion.coveredRules, suggestion.mergedRule);
+      if (mounted) {
+        _showSnackBar(context,
+            '已合并为宽规则（替换 ${suggestion.coveredRules.length} 条旧规则）：${suggestion.mergedRule}');
+      }
+    } else if (merge == false) {
+      await _service.addToAllowlist(command);
+      if (mounted) {
+        _showSnackBar(context, '已将命令按精确规则加入白名单：$command');
+      }
+    }
+    // merge == null（对话框被关闭）→ 不做任何改动
+  }
+
+  /// 合并确认对话框：true=合并为宽规则，false=只加精确规则，null=取消。
+  Future<bool?> _showMergeConfirmDialog(MergeGroup suggestion, String newExactRule) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgCard,
+        title: const Text('发现相似白名单规则'),
+        content: SizedBox(
+          width: 620,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (suggestion.summary.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('📦 ${suggestion.summary}',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+                const Text('AI 建议将以下规则合并为一条宽规则：', style: AppTheme.fontCaption),
+                const SizedBox(height: AppTheme.space8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppTheme.space12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.bgInput,
+                    borderRadius: AppTheme.borderRadiusSmall,
+                    border: Border.all(color: AppTheme.borderSubtle),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...suggestion.coveredRules.map((r) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              r == newExactRule ? '－ $r（本次新增）' : '－ $r',
+                              style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  color: AppTheme.textTertiary,
+                                  decoration: TextDecoration.lineThrough),
+                            ),
+                          )),
+                      const SizedBox(height: 2),
+                      Text('＋ ${suggestion.mergedRule}',
+                          style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              color: AppTheme.accent,
+                              fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppTheme.space8),
+                Text(
+                  '宽规则已校验通过（覆盖原有命令、不触及安全黑名单）。合并后同类命令将自动放行。',
+                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                ),
+              ],
             ),
-          );
-        }
-      },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('只加精确规则'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('合并为宽规则'),
+          ),
+        ],
+      ),
     );
   }
 }

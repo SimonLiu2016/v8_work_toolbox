@@ -265,21 +265,107 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
     }
   }
 
+  /// 关闭当前文档：弹三选一对话框（取消 / 仅关闭 / 关闭并清空缓存）
+  Future<void> _closeDocument() async {
+    final doc = _controller.document;
+    if (doc == null) return;
+
+    final action = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('关闭当前文档'),
+        content: Text('关闭「${doc.title}」？\n\n'
+            '选择「关闭并清空缓存」将删除该文档已合成的音频（${doc.chunks.length} 段），'
+            '释放磁盘空间但不影响其他文档。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(0), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(1), child: const Text('仅关闭')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(2),
+            child: const Text('关闭并清空缓存', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (action == null || action == 0) return; // 取消
+    await _controller.clearDocument(clearCache: action == 2);
+    if (mounted) setState(() {});
+  }
+
   /// 打开音色与合成配置弹窗
   void _showSettingsModal() {
+    final oldConfig = _coordinator.config;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => _SettingsModalContent(
-        initialConfig: _coordinator.config,
-        onConfigChanged: (newConfig) {
-          _coordinator.updateConfig(newConfig);
-          ReaderConfigStore.instance.saveConfig(newConfig);
-          setState(() {});
+        initialConfig: oldConfig,
+        onConfigChanged: (newConfig) async {
+          // 关闭 bottom sheet
+          if (ctx.mounted) Navigator.of(ctx).pop();
+          await _applyConfigChange(oldConfig, newConfig);
         },
       ),
     );
+  }
+
+  /// 应用 TTS 配置变更：合成字段变更且有文档时弹显式确认（customAi 付费安全）
+  Future<void> _applyConfigChange(
+    TtsSynthesisConfig oldConfig,
+    TtsSynthesisConfig newConfig,
+  ) async {
+    final doc = _controller.document;
+    final synthesisChanged =
+        TtsSynthesisCoordinator.synthesisFieldsChanged(oldConfig, newConfig);
+
+    if (doc == null || !synthesisChanged) {
+      // 无文档 或 仅播放字段变更 → 直接应用，不清缓存
+      _coordinator.updateConfig(newConfig);
+      await ReaderConfigStore.instance.saveConfig(newConfig);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // 合成字段变更 + 有文档 → 三选一确认
+    final action = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('音色配置已变更'),
+        content: const Text(
+          '新配置将与当前文档已有音频不同。\n\n'
+          '• 仅保存配置：当前文档仍用旧音频，下次新文档用新配置\n'
+          '• 清空并重新合成：删除当前文档缓存并立即用新配置重合成（customAi 为付费调用）',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(0), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(1),
+            child: const Text('仅保存配置'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(2),
+            child: const Text('清空并重新合成'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == null || action == 0) return; // 取消，不应用
+    if (action == 1) {
+      // 仅保存
+      _coordinator.updateConfig(newConfig);
+      await ReaderConfigStore.instance.saveConfig(newConfig);
+      if (mounted) setState(() {});
+    } else {
+      // 清空并重新合成
+      await _coordinator.clearDocCache(doc.id);
+      _coordinator.updateConfig(newConfig);
+      await ReaderConfigStore.instance.saveConfig(newConfig);
+      // 重新预合成当前段（不全量，按需推进）
+      if (mounted) setState(() {});
+    }
   }
 
   void _showErrorSnackBar(String msg) {
@@ -331,6 +417,12 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
             onPressed: doc != null ? _exportFullMp3 : null,
             icon: const Icon(Icons.download_rounded, size: 18),
             label: const Text('导出 MP3'),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: doc != null ? _closeDocument : null,
+            icon: const Icon(Icons.close_rounded),
+            tooltip: '关闭文档',
           ),
           const SizedBox(width: 8),
           IconButton(

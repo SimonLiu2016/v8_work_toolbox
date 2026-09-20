@@ -52,8 +52,8 @@ void main() {
       expect(
         () => cipher.decrypt(dek, sealed),
         throwsA(isA<VaultCipherException>().having(
-          (e) => e.isIntegrityError,
-          'isIntegrityError',
+          (e) => e.isAuthFailure,
+          'isAuthFailure',
           isTrue,
         )),
       );

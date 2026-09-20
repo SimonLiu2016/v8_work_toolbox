@@ -86,24 +86,53 @@ class KeychainService {
     final store = _store!;
 
     final dek = await _kekManager.getOrCreateDek();
-    final jsonStr = await store.readDecrypted(_cipher, dek);
-    if (jsonStr == null) {
-      _secrets = <String, String>{};
-      return _secrets!;
-    }
+    try {
+      final jsonStr = await store.readDecrypted(_cipher, dek);
+      if (jsonStr == null) {
+        _secrets = <String, String>{};
+        return _secrets!;
+      }
 
-    final decoded = jsonDecode(jsonStr);
-    final result = <String, String>{};
-    if (decoded is Map) {
-      decoded.forEach((k, v) {
-        if (v is String && v.isNotEmpty) {
-          result[k.toString()] = v;
-        }
-      });
+      final decoded = jsonDecode(jsonStr);
+      final result = <String, String>{};
+      if (decoded is Map) {
+        decoded.forEach((k, v) {
+          if (v is String && v.isNotEmpty) {
+            result[k.toString()] = v;
+          }
+        });
+      }
+      _secrets = result;
+      return result;
+    } on VaultCipherException catch (e) {
+      if (e.isAuthFailure) {
+        // DEK 与密文失配（旧 DEK 不可恢复）：备份残件 → 当前 DEK 重建空库 →
+        // 立即可写，并留下一次性信号供 UI 告知用户重填。
+        // _persist 失败时异常上抛——备份已在盘上，下次启动可重试。
+        final backup = await store.backupMismatch();
+        _secrets = <String, String>{};
+        await _persist();
+        _rebuildInfo = RebuildInfo(
+          backupPath: backup?.path ?? '(备份失败：原文件不存在)',
+          at: DateTime.now(),
+        );
+        return _secrets!;
+      }
+      // 布局损坏（isIntegrityError）：原样上抛，不备份不重建——
+      // 损坏文件可能部分可读，保留现场供检查。
+      rethrow;
     }
-    _secrets = result;
-    return result;
   }
+
+  /// 失配重建信号（一次性）：本次会话若发生过"DEK 失配 → 备份重建"，
+  /// 返回重建信息并清空；否则返回 null。
+  RebuildInfo? consumeRebuildInfo() {
+    final info = _rebuildInfo;
+    _rebuildInfo = null;
+    return info;
+  }
+
+  RebuildInfo? _rebuildInfo;
 
   Future<void> _persist() async {
     final store = _store ?? VaultFileStore(fileName: secretsFileName);
@@ -111,4 +140,15 @@ class KeychainService {
     final dek = await _kekManager.getOrCreateDek();
     await store.writeEncrypted(_cipher, dek, jsonEncode(_secrets ?? {}));
   }
+}
+
+/// 失配重建信息：DEK 与密文失配触发自愈后留下的一次性信号。
+class RebuildInfo {
+  const RebuildInfo({required this.backupPath, required this.at});
+
+  /// 失配密文的备份文件路径（`.secrets.bin.mismatch-*`）。
+  final String backupPath;
+
+  /// 重建发生时间。
+  final DateTime at;
 }

@@ -795,5 +795,47 @@ void main() {
       expect(content.contains('state.allowlist || []'), isTrue);
       expect(content.contains('matched_whitelist'), isTrue);
     });
+
+    test('addToAllowlist 返回覆盖规则：已被覆盖时不重复添加', () async {
+      // 先加入精确规则
+      final first = await service.addToAllowlist('git reset --hard');
+      expect(first, isNull); // 新增成功返回 null
+
+      // 再次添加同命令 → 返回命中的规则且不重复添加
+      final covered = await service.addToAllowlist('git reset --hard');
+      expect(covered, isNotNull);
+      expect(service.state.allowlist.length, 1);
+
+      // 被宽规则覆盖的新命令 → 返回宽规则
+      await service.updateAllowlist([r'^git push .*$']);
+      final coveredByWide = await service.addToAllowlist('git push origin feat');
+      expect(coveredByWide, r'^git push .*$');
+      expect(service.state.allowlist.length, 1);
+    });
+
+    test('buildExactRule 转义并锚定', () {
+      final rule = UnattendedService.buildExactRule('rm -rf /Applications/My.app');
+      expect(rule, r'^rm -rf /Applications/My\.app$');
+      expect(RegExp(rule).hasMatch('rm -rf /Applications/My.app'), isTrue);
+      expect(RegExp(rule).hasMatch('rm -rf /Applications/My.app && echo x'), isFalse);
+    });
+
+    test('replaceAllowlistRules 用宽规则替换多条旧规则', () async {
+      await service.updateAllowlist([
+        r'^git fetch origin main$',
+        r'^git fetch origin dev$',
+        r'^npm run build$',
+      ]);
+      await service.replaceAllowlistRules(
+        [r'^git fetch origin main$', r'^git fetch origin dev$'],
+        r'^git fetch origin (main|dev)$',
+      );
+      expect(service.state.allowlist.length, 2);
+      expect(service.state.allowlist, contains(r'^git fetch origin (main|dev)$'));
+      expect(service.state.allowlist, contains(r'^npm run build$'));
+      // 宽规则生效
+      expect(service.isCommandInAllowlist('git fetch origin main'), isTrue);
+      expect(service.isCommandInAllowlist('git fetch origin dev'), isTrue);
+    });
   });
 }
