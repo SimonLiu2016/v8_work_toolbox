@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'markdown_converter.dart';
@@ -286,6 +287,23 @@ class AppFlowyCodec {
   }
 
   /// 从 [Document] 提取全部纯文本
+  /// 从笔记存储的 JSON 提取纯文本的**唯一入口**。
+  ///
+  /// 笔记字段名为 `deltaJson`（历史遗留），但 AppFlowy 迁移后实际存的是
+  /// `{"document":{...}}` 对象。任何用 `jsonDecode(...) as List` 的 Quill Delta
+  /// 解析器（如 `MarkdownConverter.deltaToMarkdown`）对它都会抛异常并静默返回
+  /// 空串——曾导致 FTS 正文全空、RAG 片段全空。调用方一律走此方法，避免再次
+  /// 分叉出错误的解析假设。
+  static String jsonToPlainText(String? deltaJson) {
+    if (deltaJson == null || deltaJson.trim().isEmpty) return '';
+    try {
+      return documentToPlainText(parseToDocument(deltaJson));
+    } catch (e) {
+      debugPrint('笔记正文提取失败: $e');
+      return '';
+    }
+  }
+
   static String documentToPlainText(Document doc) {
     final sb = StringBuffer();
     for (final node in doc.root.children) {
@@ -336,3 +354,12 @@ class AppFlowyCodec {
     }
   }
 }
+
+/// 从笔记存储的 JSON 提取纯文本的**唯一入口**。
+///
+/// 笔记字段名为 `deltaJson`（历史遗留），但 AppFlowy 迁移后实际存的是
+/// `{"document":{...}}` 对象。任何用 `jsonDecode(...) as List` 的 Quill Delta
+/// 解析器（如 `MarkdownConverter.deltaToMarkdown`）对它都会抛异常并静默返回
+/// 空串——曾导致 FTS 正文全空、RAG 片段全空。
+///
+/// 调用方一律走此方法，避免再次分叉出错误的解析假设。

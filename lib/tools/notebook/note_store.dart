@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import 'note_database.dart';
+import 'appflowy_codec.dart';
 import '../../services/settings_store.dart';
 
 /// 笔记存储服务（单例）
@@ -36,10 +37,12 @@ class NoteStore {
     await _migrateFtsTokenizerIfNeeded();
   }
 
-  /// 当前 FTS 分词方案版本。变更此值会触发一次全量索引重建。
+  /// 当前 FTS 索引方案版本。变更此值会触发一次全量索引重建。
   /// v1 = 未分词原始文本（unicode61 直存）
   /// v2 = CJK bigram 分词
-  static const int ftsTokenizerVersion = 2;
+  /// v3 = 修复正文提取（v2 用 Quill 解析器读 AppFlowy 格式，正文全空，
+  ///      只有标题进索引；v3 改为 AppFlowyCodec.jsonToPlainText）
+  static const int ftsTokenizerVersion = 3;
 
   /// 检测分词方案变更并重建 FTS 索引。旧索引存的是未分词原始文本，
   /// `unicode61` 对中文整串当单 token，不重建则既有笔记搜不到。
@@ -683,23 +686,13 @@ class NoteStore {
     }
   }
 
-  String _extractPlainText(String deltaJson) {
-    try {
-      final ops = jsonDecode(deltaJson) as List<dynamic>;
-      final buffer = StringBuffer();
-      for (final op in ops) {
-        if (op is Map && op.containsKey('insert')) {
-          final insert = op['insert'];
-          if (insert is String) {
-            buffer.write(insert);
-          }
-        }
-      }
-      return buffer.toString();
-    } catch (_) {
-      return '';
-    }
-  }
+  /// 从笔记正文提取用于 FTS 索引的纯文本。
+  ///
+  /// 早期实现用 `jsonDecode(...) as List`（Quill Delta 解析器）解析，对 AppFlowy
+  /// 迁移后的 `{"document":{...}}` 格式必然抛异常并静默返回空串——后果是
+  /// **正文从未进过索引，只有标题可搜**。现统一走 [AppFlowyCodec.jsonToPlainText]。
+  String _extractPlainText(String deltaJson) =>
+      AppFlowyCodec.jsonToPlainText(deltaJson);
 }
 
 /// 笔记详情中的一条关联（已解析对方标题）。

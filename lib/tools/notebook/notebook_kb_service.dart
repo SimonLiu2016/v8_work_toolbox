@@ -6,8 +6,8 @@ import '../../services/agent_loop.dart';
 import '../../services/ai_logger.dart';
 import '../../services/ai_service.dart';
 import '../../services/web_search_service.dart';
+import 'appflowy_codec.dart';
 import 'cjk_tokenizer.dart';
-import 'markdown_converter.dart';
 import 'note_database.dart';
 import 'note_store.dart';
 
@@ -95,6 +95,12 @@ class NotebookKbService {
   /// 每条片段喂给 LLM 的最大字符数。个人笔记规模下 800 字足以覆盖上下文。
   static const int _snippetBudget = 800;
 
+  /// 取笔记正文纯文本。**不能**用 `MarkdownConverter.deltaToMarkdown`
+  /// （Quill 专用解析器，对 AppFlowy 格式返回空串）。统一走
+  /// [AppFlowyCodec.jsonToPlainText]。
+  static String _notePlainText(String deltaJson) =>
+      AppFlowyCodec.jsonToPlainText(deltaJson);
+
   /// 检索相关笔记。
   ///
   /// 步骤：FTS5 取 top-N（已按 bm25 相关性排序）→ 每条笔记取原文 →
@@ -110,7 +116,7 @@ class NotebookKbService {
 
     final fragments = <KbFragment>[];
     for (final note in notes.take(limit)) {
-      final markdown = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+      final markdown = _notePlainText(note.deltaJson);
       final snippet = _relevantSnippet(markdown, trimmed);
 
       var credentialFiles = const <String>[];
@@ -148,7 +154,7 @@ class NotebookKbService {
     final note = await NoteStore.instance.noteById(noteId);
     if (note == null) return const [];
 
-    final body = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+    final body = _notePlainText(note.deltaJson);
     final existing = await _existingTagNames();
     final existingOwn = await _tagsOfNote(noteId);
 
@@ -212,7 +218,7 @@ class NotebookKbService {
     final note = await NoteStore.instance.noteById(noteId);
     if (note == null) return const [];
 
-    final body = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+    final body = _notePlainText(note.deltaJson);
     // 用标题 + 正文开头做检索词，找同主题候选
     final candidates = await retrieve('${note.title} ${body.length > 120 ? body.substring(0, 120) : body}',
         limit: 8);
@@ -413,7 +419,7 @@ class NotebookKbService {
         if (extra.any((e) => e.noteId == id)) continue;
         final note = await NoteStore.instance.noteById(id);
         if (note == null || note.isDeleted) continue;
-        final md = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+        final md = _notePlainText(note.deltaJson);
         var creds = const <String>[];
         try {
           creds = (await NoteStore.instance.db.credentialsForNote(id))
