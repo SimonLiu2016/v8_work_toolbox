@@ -11,6 +11,7 @@ import '../appflowy_codec.dart';
 import '../note_database.dart';
 import '../note_store.dart';
 import 'asset_fields_panel.dart';
+import 'related_notes_section.dart';
 import 'components/attachment_block_component.dart';
 import 'components/note_code_block_component.dart';
 import 'components/note_editor_toolbar.dart';
@@ -25,6 +26,9 @@ class NoteEditor extends StatefulWidget {
   final VoidCallback? onRestore;
   final VoidCallback? onPermanentDelete;
 
+  /// 点击关联笔记时跳转（阶段三）。
+  final void Function(String noteId)? onOpenNote;
+
   const NoteEditor({
     super.key,
     this.note,
@@ -33,6 +37,7 @@ class NoteEditor extends StatefulWidget {
     this.onDelete,
     this.onRestore,
     this.onPermanentDelete,
+    this.onOpenNote,
   });
 
   @override
@@ -642,6 +647,24 @@ class _NoteEditorState extends State<NoteEditor> {
           // 资产 / 凭证面板（无资产数据的笔记默认折叠，不干扰编辑面）
           AssetFieldsPanel(
             note: widget.note!,
+            onChanged: () => widget.onSaved?.call(),
+          ),
+
+          // 关联笔记（有关联时才显示）+ AI 整理建议入口（始终可达）
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                AiTidyButton(
+                  note: widget.note!,
+                  onChanged: () => widget.onSaved?.call(),
+                ),
+              ],
+            ),
+          ),
+          RelatedNotesSection(
+            note: widget.note!,
+            onOpenNote: (id) => widget.onOpenNote?.call(id),
             onChanged: () => widget.onSaved?.call(),
           ),
 

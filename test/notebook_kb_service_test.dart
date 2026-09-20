@@ -57,6 +57,8 @@ void main() {
     });
   });
 
+  _stage3();
+
   group('检索边界', () {
     test('空查询返回空列表', () async {
       expect(await NotebookKbService.instance.retrieve(''), isEmpty);
@@ -71,6 +73,98 @@ void main() {
       final a = await NotebookKbService.instance.ask('');
       expect(a.noMatch, isTrue);
       expect(a.text, isNotEmpty);
+    });
+  });
+}
+
+/// 阶段三：AI 整理建议的解析层测试。
+///
+/// suggestTags/suggestLinks 依赖真实 LLM，此处只测**确定性解析**——
+/// 模型输出如何被解析成建议、以及"AI 不写库"这一契约的执行边界。
+void _stage3() {
+  group('parseTagSuggestions', () {
+    test('解析 JSON 数组', () {
+      final out = NotebookKbService.parseTagSuggestions('["延保","家电","凭证"]');
+      expect(out, ['延保', '家电', '凭证']);
+    });
+
+    test('剔除已有标签（不重复）', () {
+      final out = NotebookKbService.parseTagSuggestions(
+        '["延保","家电"]',
+        excluded: {'延保'},
+      );
+      expect(out, ['家电']);
+    });
+
+    test('结果内去重', () {
+      final out = NotebookKbService.parseTagSuggestions('["延保","延保","家电"]');
+      expect(out, ['延保', '家电']);
+    });
+
+    test('模型附带解释文字时仍能提取数组', () {
+      final out = NotebookKbService.parseTagSuggestions(
+        '我建议这些标签：\n["延保","家电"]\n希望有帮助。',
+      );
+      expect(out, ['延保', '家电']);
+    });
+
+    test('无数组返回空', () {
+      expect(NotebookKbService.parseTagSuggestions('不方便建议'), isEmpty);
+    });
+
+    test('非法 JSON 返回空而非抛异常', () {
+      expect(NotebookKbService.parseTagSuggestions('["未闭合'), isEmpty);
+    });
+  });
+
+  group('parseLinkSuggestions', () {
+    test('解析合法关联建议', () {
+      final out = NotebookKbService.parseLinkSuggestions(
+        '[{"noteId":"n2","reason":"同一订单"}]',
+        validIds: {'n2', 'n3'},
+        titleOf: {'n2': '豆浆机订单'},
+      );
+      expect(out.length, 1);
+      expect(out.first.noteId, 'n2');
+      expect(out.first.title, '豆浆机订单');
+      expect(out.first.reason, '同一订单');
+    });
+
+    test('剔除不在候选池中的 id（防模型臆造）', () {
+      final out = NotebookKbService.parseLinkSuggestions(
+        '[{"noteId":"不存在","reason":"x"}]',
+        validIds: {'n2'},
+      );
+      expect(out, isEmpty, reason: '模型可能臆造 id，必须按候选池白名单过滤');
+    });
+
+    test('剔除已有连接（不重复建边）', () {
+      final out = NotebookKbService.parseLinkSuggestions(
+        '[{"noteId":"n2","reason":"x"}]',
+        validIds: {'n2'},
+        excludedIds: {'n2'},
+      );
+      expect(out, isEmpty);
+    });
+
+    test('结果内去重', () {
+      final out = NotebookKbService.parseLinkSuggestions(
+        '[{"noteId":"n2","reason":"a"},{"noteId":"n2","reason":"b"}]',
+        validIds: {'n2'},
+      );
+      expect(out.length, 1);
+    });
+
+    test('模型返回空数组表示无相关', () {
+      final out = NotebookKbService.parseLinkSuggestions('[]', validIds: {'n2'});
+      expect(out, isEmpty);
+    });
+
+    test('非法 JSON 返回空而非抛异常', () {
+      expect(
+        NotebookKbService.parseLinkSuggestions('[{未闭合', validIds: {'n2'}),
+        isEmpty,
+      );
     });
   });
 }

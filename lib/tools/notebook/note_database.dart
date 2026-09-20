@@ -160,6 +160,12 @@ class NoteDatabase extends _$NoteDatabase {
         'FOREIGN KEY (target_note_id) REFERENCES notes(id) ON DELETE CASCADE'
         ');',
       ); } catch (_) {}
+      // SQLite 默认**忽略外键约束**——不开启此 pragma，声明在 attachments /
+      // note_tags / note_links 上的 ON DELETE CASCADE 全部不生效，删除笔记会
+      // 留下孤儿行。实测确认：删笔记后三张子表计数均不变。
+      try {
+        await customStatement('PRAGMA foreign_keys = ON;');
+      } catch (_) {}
       await _normalizeTextTimestamps();
     },
   );
@@ -349,6 +355,32 @@ class NoteDatabase extends _$NoteDatabase {
             ..where((t) => t.noteId.equals(noteId))
             ..where((t) => t.isCredential.equals(true)))
           .get();
+
+  // ---------------------------------------------------------------------------
+  // Note links（阶段三）
+  // ---------------------------------------------------------------------------
+
+  /// 某笔记的全部关联（**双向**：该笔记作为 source 或 target 均返回）。
+  /// 单行存储、双向可见，不双写——见 design D2。
+  Future<List<NoteLink>> linksForNote(String noteId) =>
+      (select(noteLinks)
+            ..where((t) =>
+                t.sourceNoteId.equals(noteId) | t.targetNoteId.equals(noteId)))
+          .get();
+
+  /// 建立关联。同向重复插入时忽略（复合主键冲突）。
+  Future<void> insertLink(NoteLinksCompanion entry) =>
+      into(noteLinks).insert(entry, mode: InsertMode.insertOrIgnore);
+
+  /// 删除指定有向关联。
+  Future<void> deleteLink(String sourceNoteId, String targetNoteId) =>
+      (delete(noteLinks)
+            ..where((t) => t.sourceNoteId.equals(sourceNoteId))
+            ..where((t) => t.targetNoteId.equals(targetNoteId)))
+          .go();
+
+  /// 全部关联（供星图视图使用）。
+  Future<List<NoteLink>> allLinks() => select(noteLinks).get();
 
   // ---------------------------------------------------------------------------
   // Tag CRUD

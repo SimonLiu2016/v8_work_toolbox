@@ -64,26 +64,26 @@
 
 ### 3.1 关联边存储
 
-- [ ] 3.1.1 `note_database.dart`：新建 `NoteLinks` 表（sourceNoteId / targetNoteId / relation 恒 'related_to' / reason 可空 / createdAt），复合主键 (source, target)；schemaVersion +1 迁移
-- [ ] 3.1.2 `NoteStore`：`createLink(sourceId, targetId, reason)`、`linksForNote(noteId)`（WHERE source=? OR target=?）、`deleteLink(...)`；永久删除笔记时级联删关联
-- [ ] 3.1.3 单测：存关联、双向查询、级联删除
+- [x] 3.1.1 `note_database.dart`：新建 `NoteLinks` 表（sourceNoteId / targetNoteId / relation 恒 'related_to' / reason 可空 / createdAt），复合主键 (source, target)；schemaVersion +1 迁移
+- [x] 3.1.2 `NoteStore`：`createLink(sourceId, targetId, reason)`、`linksForNote(noteId)`（WHERE source=? OR target=?）、`deleteLink(...)`；永久删除笔记时级联删关联
+- [x] 3.1.3 单测：存关联、双向查询、级联删除
 
 ### 3.2 AI 整理建议
 
-- [ ] 3.2.1 `NotebookKbService.suggestTags(noteId)`：取笔记正文 → `AiService.chat` → 解析建议标签列表（去重已有标签）
-- [ ] 3.2.2 `NotebookKbService.suggestLinks(noteId)`：取笔记正文 + 候选笔记标题列表 → `AiService.chat` → 解析建议关联 + reason
-- [ ] 3.2.3 单测：建议标签不重复已有；建议关联返回 reason；AI 不直接写库
+- [x] 3.2.1 `NotebookKbService.suggestTags(noteId)`：取笔记正文 → `AiService.chat` → 解析建议标签列表（去重已有标签）
+- [x] 3.2.2 `NotebookKbService.suggestLinks(noteId)`：取笔记正文 + 候选笔记标题列表 → `AiService.chat` → 解析建议关联 + reason
+- [x] 3.2.3 单测：建议标签不重复已有；建议关联返回 reason；AI 不直接写库
 
 ### 3.3 整理 UI 与确认
 
-- [ ] 3.3.1 笔记详情增加"AI 建议标签"与"AI 建议关联"按钮，弹窗呈现建议，用户勾选确认
-- [ ] 3.3.2 仅确认项写入 `NoteStore`（标签）与 `note_links`（关联）；AI 无直接写库权限
-- [ ] 3.3.3 单测：拒绝的建议不落库；接受的落库
+- [x] 3.3.1 笔记详情增加"AI 建议标签"与"AI 建议关联"按钮，弹窗呈现建议，用户勾选确认
+- [x] 3.3.2 仅确认项写入 `NoteStore`（标签）与 `note_links`（关联）；AI 无直接写库权限
+- [x] 3.3.3 单测：拒绝的建议不落库；接受的落库
 
 ### 3.4 关联视图
 
-- [ ] 3.4.1 笔记详情显示"关联笔记"区，列标题 + reason，点击跳转
-- [ ] 3.4.2 无关联时不显示占位
+- [x] 3.4.1 笔记详情显示"关联笔记"区，列标题 + reason，点击跳转
+- [x] 3.4.2 无关联时不显示占位
 - [ ] 3.4.3 手工验证：对两条相关笔记调 AI 建议关联，确认后详情互见
 
 ## 阶段四：知识星图可视化 + 增强

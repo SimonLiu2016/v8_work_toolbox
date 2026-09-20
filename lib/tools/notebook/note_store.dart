@@ -296,6 +296,51 @@ class NoteStore {
   Future<List<Attachment>> credentialsForNote(String noteId) =>
       _db.credentialsForNote(noteId);
 
+  // ---------------------------------------------------------------------------
+  // Note links（阶段三）
+  // ---------------------------------------------------------------------------
+
+  /// 建立两笔记间的泛化关联。自关联与重复关联被忽略。
+  Future<void> createLink(
+    String sourceId,
+    String targetId, {
+    String? reason,
+  }) async {
+    if (sourceId == targetId) return;
+    await _db.insertLink(NoteLinksCompanion.insert(
+      sourceNoteId: sourceId,
+      targetNoteId: targetId,
+      reason: Value(reason),
+      createdAt: DateTime.now(),
+    ));
+  }
+
+  Future<void> deleteLink(String sourceId, String targetId) =>
+      _db.deleteLink(sourceId, targetId);
+
+  /// 某笔记的关联，已解析出「对方笔记」的标题，供详情视图直接渲染。
+  /// 双向返回：自己作为 source 或 target 的关联都算。
+  Future<List<RelatedNote>> relatedNotes(String noteId) async {
+    final links = await _db.linksForNote(noteId);
+    final out = <RelatedNote>[];
+    for (final link in links) {
+      final isOutgoing = link.sourceNoteId == noteId;
+      final otherId = isOutgoing ? link.targetNoteId : link.sourceNoteId;
+      final other = await _db.noteById(otherId);
+      if (other == null || other.isDeleted) continue;
+      out.add(RelatedNote(
+        noteId: otherId,
+        title: other.title,
+        reason: link.reason,
+        outgoing: isOutgoing,
+      ));
+    }
+    return out;
+  }
+
+  /// 全部关联（供星图视图，阶段四）。
+  Future<List<NoteLink>> allLinks() => _db.allLinks();
+
   Future<void> softDeleteNote(String id) => _db.softDeleteNote(id);
 
   Future<void> batchSoftDeleteNotes(List<String> ids) =>
@@ -655,4 +700,23 @@ class NoteStore {
       return '';
     }
   }
+}
+
+/// 笔记详情中的一条关联（已解析对方标题）。
+class RelatedNote {
+  final String noteId;
+  final String title;
+
+  /// 关联理由（AI 建议时生成，用户手建可空）。
+  final String? reason;
+
+  /// 当前笔记是否为关联的 source 方（用于 UI 区分方向，可选展示）。
+  final bool outgoing;
+
+  const RelatedNote({
+    required this.noteId,
+    required this.title,
+    this.reason,
+    this.outgoing = true,
+  });
 }

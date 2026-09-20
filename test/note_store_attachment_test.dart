@@ -18,6 +18,20 @@ void main() {
       db = NoteDatabase.forTesting(NativeDatabase.memory());
     });
 
+    /// 附件外键引用 notes(id)。启用 `PRAGMA foreign_keys = ON` 后，为不存在的
+    /// 笔记插附件会违反约束——真实流程（编辑器/导入）都是先建笔记再插附件，
+    /// 故测试夹具也须先建笔记。
+    Future<void> seedNote(String noteId) async {
+      final now = DateTime.now();
+      await db.insertNote(NotesCompanion.insert(
+        id: noteId,
+        title: noteId,
+        deltaJson: '[]',
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
     tearDown(() async {
       await db.close();
       if (await tempDir.exists()) await tempDir.delete(recursive: true);
@@ -28,6 +42,7 @@ void main() {
       await sourceFile.writeAsBytes([0x25, 0x50, 0x44, 0x46]);
 
       final store = _TestNoteStore(db, attDir.path);
+      await seedNote('note1');
       final attId = await store.addAttachment(noteId: 'note1', sourceFile: sourceFile);
 
       expect(attId, isNotEmpty);
@@ -47,6 +62,7 @@ void main() {
       }
 
       final store = _TestNoteStore(db, attDir.path);
+      await seedNote('note2');
       final ids = await store.addAttachments(noteId: 'note2', files: files);
 
       expect(ids.length, 3);
@@ -61,6 +77,7 @@ void main() {
       final f = File('${tempDir.path}/doc.docx');
       await f.writeAsBytes([1, 2, 3]);
       final store = _TestNoteStore(db, attDir.path);
+      await seedNote('noteA');
       await store.addAttachment(noteId: 'noteA', sourceFile: f);
 
       final atts = await db.attachmentsForNote('noteA');
@@ -71,6 +88,7 @@ void main() {
       final f = File('${tempDir.path}/report.xlsx');
       await f.writeAsBytes([1, 2, 3]);
       final store = _TestNoteStore(db, attDir.path);
+      await seedNote('noteX');
       final id = await store.addAttachment(noteId: 'noteX', sourceFile: f);
 
       final att = await store.attachmentById(id);

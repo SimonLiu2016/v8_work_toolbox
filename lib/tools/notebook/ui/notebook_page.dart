@@ -1965,6 +1965,7 @@ class _NotebookPageState extends State<NotebookPage> {
               onDelete: () => _deleteNote(_selectedNote!.id),
               onRestore: () => _restoreNote(_selectedNote!.id),
               onPermanentDelete: () => _permanentlyDeleteNote(_selectedNote!.id),
+              onOpenNote: _openNoteById,
             ),
           ),
         ],

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../../services/agent_loop.dart';
@@ -116,6 +118,159 @@ class NotebookKbService {
       ));
     }
     return fragments;
+  }
+
+  /// 全部已有标签名（供建议去重）。
+  Future<List<String>> _existingTagNames() async {
+    try {
+      final tags = await NoteStore.instance.allTags();
+      return tags.map((t) => t.name).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// AI 建议标签。仅返回建议，**不写库**——由 UI 呈请用户确认后写入（design D7）。
+  Future<List<String>> suggestTags(String noteId) async {
+    final note = await NoteStore.instance.noteById(noteId);
+    if (note == null) return const [];
+
+    final body = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+    final existing = await _existingTagNames();
+    final existingOwn = await _tagsOfNote(noteId);
+
+    final res = await AiService.instance.chat(
+      slot: 'text',
+      messages: [
+        {
+          'role': 'system',
+          'content': '你是笔记整理助手。根据笔记内容建议 1~5 个简短标签（每个 2~6 字）。\n'
+              '只输出 JSON 数组，例如：["延保","家电","凭证"]。不要输出其他任何内容。\n'
+              '不要重复已有标签。',
+        },
+        {
+          'role': 'user',
+          'content': '已有标签（勿重复）：${existing.join("、")}\n'
+              '本笔记已有标签：${existingOwn.join("、")}\n\n'
+              '笔记标题：${note.title}\n笔记内容：\n$body',
+        },
+      ],
+      timeout: const Duration(seconds: 60),
+    );
+
+    return parseTagSuggestions(res.text, excluded: {...existing, ...existingOwn});
+  }
+
+  Future<List<String>> _tagsOfNote(String noteId) async {
+    try {
+      final tags = await NoteStore.instance.db.tagsForNote(noteId);
+      return tags.map((t) => t.name).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 解析模型返回的标签数组，去重并剔除 [excluded]。
+  @visibleForTesting
+  static List<String> parseTagSuggestions(
+    String reply, {
+    Set<String> excluded = const {},
+  }) {
+    final match = RegExp(r'\[[\s\S]*?\]').firstMatch(reply);
+    if (match == null) return const [];
+    try {
+      final list = jsonDecode(match.group(0)!) as List;
+      final out = <String>[];
+      for (final item in list) {
+        final name = item.toString().trim();
+        if (name.isEmpty || excluded.contains(name) || out.contains(name)) continue;
+        out.add(name);
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// AI 建议关联。仅返回建议（含理由），**不写库**。
+  ///
+  /// 候选来自 FTS 检索同主题笔记；不把全部笔记标题塞进 prompt 以免超长。
+  Future<List<LinkSuggestion>> suggestLinks(String noteId) async {
+    final note = await NoteStore.instance.noteById(noteId);
+    if (note == null) return const [];
+
+    final body = MarkdownConverter.deltaToMarkdown(note.deltaJson);
+    // 用标题 + 正文开头做检索词，找同主题候选
+    final candidates = await retrieve('${note.title} ${body.length > 120 ? body.substring(0, 120) : body}',
+        limit: 8);
+    final pool = candidates.where((c) => c.noteId != noteId).toList();
+    if (pool.isEmpty) return const [];
+
+    final already = await NoteStore.instance.relatedNotes(noteId);
+    final alreadyIds = already.map((r) => r.noteId).toSet();
+
+    final list = pool
+        .map((c) => '- id=${c.noteId}｜标题：${c.title}｜摘要：${c.snippet}')
+        .join('\n');
+
+    final res = await AiService.instance.chat(
+      slot: 'text',
+      messages: [
+        {
+          'role': 'system',
+          'content': '你是笔记整理助手。判断候选笔记与当前笔记是否真正相关（同一事物、'
+              '同一订单、同一主题的延续等）。\n'
+              '只输出 JSON 数组，每项形如 {"noteId":"...","reason":"简述关联理由（10字内）"}。\n'
+              '只列出确实相关的，最多 5 条。不相关就输出 []。不要输出其他任何内容。',
+        },
+        {
+          'role': 'user',
+          'content': '当前笔记标题：${note.title}\n当前笔记内容：\n$body\n\n'
+              '候选笔记：\n$list',
+        },
+      ],
+      timeout: const Duration(seconds: 60),
+    );
+
+    return parseLinkSuggestions(
+      res.text,
+      validIds: pool.map((c) => c.noteId).toSet(),
+      excludedIds: alreadyIds,
+      titleOf: {for (final c in pool) c.noteId: c.title},
+    );
+  }
+
+  /// 解析模型返回的关联建议，剔除无效 id 与已有/重复关联。
+  @visibleForTesting
+  static List<LinkSuggestion> parseLinkSuggestions(
+    String reply, {
+    required Set<String> validIds,
+    Set<String> excludedIds = const {},
+    Map<String, String> titleOf = const {},
+  }) {
+    final match = RegExp(r'\[[\s\S]*?\]').firstMatch(reply);
+    if (match == null) return const [];
+    try {
+      final list = jsonDecode(match.group(0)!) as List;
+      final out = <LinkSuggestion>[];
+      final seen = <String>{};
+      for (final item in list) {
+        if (item is! Map) continue;
+        final id = (item['noteId'] ?? '').toString().trim();
+        if (id.isEmpty || !validIds.contains(id)) continue;
+        if (excludedIds.contains(id) || seen.contains(id)) continue;
+        seen.add(id);
+        final reason = (item['reason'] as String?)?.trim();
+        out.add(LinkSuggestion(
+          noteId: id,
+          title: titleOf[id] ?? '',
+          reason: reason,
+        ));
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// 显式联网问答：跳过笔记检索，直接用 [WebSearchService] 取资料再让 LLM 作答。
@@ -369,4 +524,20 @@ ${AgentLoop.renderTools(kbTools)}
 
   @visibleForTesting
   String debugBuildContext(List<KbFragment> fragments) => _buildContext(fragments);
+}
+
+/// 一条 AI 建议的关联（尚未落库，待用户确认）。
+class LinkSuggestion {
+  final String noteId;
+  final String title;
+  final String? reason;
+
+  const LinkSuggestion({
+    required this.noteId,
+    required this.title,
+    this.reason,
+  });
+
+  @override
+  String toString() => 'LinkSuggestion($noteId, $title, $reason)';
 }
