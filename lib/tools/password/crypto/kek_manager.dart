@@ -1,7 +1,8 @@
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
+import 'dart:typed_data' show Uint8List;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -149,12 +150,51 @@ enum DekSource { keychain, file, ephemeral, none }
 
 /// DEK 生命周期管理：
 /// - DEK 是 32 字节 CSPRNG 随机数（不从密码派生，无 KDF）
-/// - 读取链：Keychain → 文件（0600）→ 生成（先尝试 Keychain 写，失败写文件）
+/// - 读取链：Keychain → 文件镜像（0600）→ 生成
+/// - 写入链：Keychain（写后回读验证）+ 文件镜像双写
 /// - 所有来源均不可用时 fail-fast 并指明恢复路径
+///
+/// 进程级单例：所有密钥消费者（AI 配置、密码库、设置面板）共享一个实例与
+/// 内存缓存。测试用 [setForTesting] 注入桥接，[resetForTesting] 清状态。
 class KekManager {
   KekManager({KeychainBridge? bridge, DekFileBridge? fileBridge})
       : _bridge = bridge ?? FlutterKeychainBridge(),
         _fileBridge = fileBridge ?? DefaultDekFileBridge();
+
+  /// 进程级单例。生产代码统一经此访问，消除多实例缓存分叉。
+  /// 测试如需隔离实例，直接 `KekManager(bridge:…, fileBridge:…)` 构造即可
+  /// （构造器公开），不走单例。
+  static final KekManager instance = KekManager._();
+
+  KekManager._({KeychainBridge? bridge, DekFileBridge? fileBridge})
+      : _bridge = bridge ?? FlutterKeychainBridge(),
+        _fileBridge = fileBridge ?? DefaultDekFileBridge();
+
+  /// 测试注入：替换单例的桥接实现（flutter test 无平台通道，真实 Keychain 不可用）。
+  /// 注入后单例的内存缓存与来源状态被重置。
+  @visibleForTesting
+  static void setForTesting({KeychainBridge? bridge, DekFileBridge? fileBridge}) {
+    instance._bridge = bridge ?? FlutterKeychainBridge();
+    instance._fileBridge = fileBridge ?? DefaultDekFileBridge();
+    instance._cachedDek = null;
+    instance._source = DekSource.none;
+  }
+
+  /// 测试注入辅助：把本实例的桥接应用到进程单例（供 [KeychainService.setKekManagerForTesting]
+  /// 等消费方在单例化后仍能以旧签名注入桥接）。仅测试使用。
+  void applyBridgesToSingleton() {
+    KekManager.instance._bridge = _bridge;
+    KekManager.instance._fileBridge = _fileBridge;
+    KekManager.instance._cachedDek = _cachedDek;
+    KekManager.instance._source = _source;
+  }
+
+  /// 测试清理：清内存缓存与来源状态，但保留注入的桥接（供下一组用例复用）。
+  @visibleForTesting
+  void resetForTesting() {
+    _cachedDek = null;
+    _source = DekSource.none;
+  }
 
   static const String defaultService = 'com.v8worktoolbox.vault.dek';
   static const String defaultAccount = 'dek';
@@ -163,8 +203,8 @@ class KekManager {
   /// Base64 编码的 DEK 在 Keychain 中的存储前缀（防误读其他数据）
   static const String _dekMarker = 'v8dek1:';
 
-  final KeychainBridge _bridge;
-  final DekFileBridge _fileBridge;
+  KeychainBridge _bridge;
+  DekFileBridge _fileBridge;
   final Random _random = Random.secure();
   Uint8List? _cachedDek;
   DekSource _source = DekSource.none;
@@ -172,7 +212,7 @@ class KekManager {
   /// 当前 DEK 来源（keychain / file / ephemeral / none）
   DekSource get source => _source;
 
-  /// 获取 DEK：内存缓存 → Keychain → 文件 → 首次生成
+  /// 获取 DEK：内存缓存 → Keychain → 文件镜像 → 首次生成
   Future<Uint8List> getOrCreateDek({
     String service = defaultService,
     String account = defaultAccount,
@@ -184,26 +224,27 @@ class KekManager {
     if (keychainDek != null) {
       _cachedDek = keychainDek;
       _source = DekSource.keychain;
+      // Keychain 可读，但文件镜像可能缺失或陈旧——补齐镜像，保证重启兜底。
+      await _ensureFileMirror(keychainDek);
       return keychainDek;
     }
 
-    // 2. 文件读
+    // 2. 文件镜像读
     final fileDek = await _tryReadFile();
     if (fileDek != null) {
       _cachedDek = fileDek;
       _source = DekSource.file;
-      // 若 Keychain 现在可写，自动迁移回去
+      // 若 Keychain 现在可写，自动迁移回去（并维护镜像）
       await _tryMigrateFileToKeychain(fileDek, service, account);
       return fileDek;
     }
 
-    // 3. 首次生成
+    // 3. 首次生成——双写 Keychain（写后回读验证）+ 文件镜像
     final fresh = _generateDek();
     final encoded = '$_dekMarker${_encodeBase64(fresh)}';
-    try {
-      await _bridge.write(service: service, account: account, value: encoded);
-      _source = DekSource.keychain;
-    } catch (_) {
+    final keychainOk = await _writeKeychainWithReadback(encoded, service, account);
+    if (!keychainOk) {
+      // Keychain 事实不可用（写后回读失败）——必须落文件镜像，否则重启即丢。
       try {
         await _fileBridge.write(encoded);
         _source = DekSource.file;
@@ -213,6 +254,10 @@ class KekManager {
           '请检查磁盘权限，或从密钥备份恢复（设置 → DEK 备份恢复）。',
         );
       }
+    } else {
+      _source = DekSource.keychain;
+      // Keychain 写后回读成功——同时维护文件镜像作为重启兜底。
+      await _ensureFileMirror(fresh);
     }
     _cachedDek = fresh;
     return fresh;
@@ -254,12 +299,13 @@ class KekManager {
       throw ArgumentError('DEK 必须为 $dekLengthBytes 字节');
     }
     final encoded = '$_dekMarker${_encodeBase64(dek)}';
-    try {
-      await _bridge.write(service: service, account: account, value: encoded);
-      _source = DekSource.keychain;
-    } catch (_) {
+    final keychainOk = await _writeKeychainWithReadback(encoded, service, account);
+    if (!keychainOk) {
+      // Keychain 事实不可用——落文件镜像兜底。
       await _fileBridge.write(encoded);
       _source = DekSource.file;
+    } else {
+      await _ensureFileMirror(dek);
     }
     _cachedDek = Uint8List.fromList(dek);
   }
@@ -319,16 +365,48 @@ class KekManager {
     String service,
     String account,
   ) async {
-    try {
-      await _bridge.write(
-        service: service,
-        account: account,
-        value: '$_dekMarker${_encodeBase64(dek)}',
-      );
-      await _fileBridge.delete();
+    final encoded = '$_dekMarker${_encodeBase64(dek)}';
+    final ok = await _writeKeychainWithReadback(encoded, service, account);
+    if (ok) {
       _source = DekSource.keychain;
+      // 迁移成功后仍保留文件镜像作为重启兜底（ad-hoc 签名下 Keychain 可能
+      // 再次对其他进程不可见）。不再删除文件——见 design D2。
+    }
+    // 不可写则保持文件来源；镜像已存在。
+  }
+
+  /// 写 Keychain 并立即回读验证。ad-hoc 签名下 `_bridge.write` 可能不抛异常
+  /// 但写入的 item 对后续读不可见（半成功状态）。回读比对是唯一能识别它的
+  /// 方法。返回 true 表示 Keychain 事实可用；false 表示应落文件镜像兜底。
+  Future<bool> _writeKeychainWithReadback(
+    String encoded,
+    String service,
+    String account,
+  ) async {
+    try {
+      await _bridge.write(service: service, account: account, value: encoded);
     } catch (_) {
-      // Keychain 仍不可写，保持文件来源
+      return false;
+    }
+    try {
+      final readBack = await _bridge.read(service: service, account: account);
+      return readBack == encoded;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 维护文件镜像：写入与给定 DEK 一致的编码值（0600 权限由 fileBridge 强制）。
+  /// 若文件已存在且内容一致则不重写，避免无谓 I/O。
+  Future<void> _ensureFileMirror(Uint8List dek) async {
+    final encoded = '$_dekMarker${_encodeBase64(dek)}';
+    try {
+      final existing = await _fileBridge.read();
+      if (existing == encoded) return;
+      await _fileBridge.write(encoded);
+    } catch (_) {
+      // 文件镜像写入失败不致命——Keychain 仍可用。但若两者都不可用则重启丢，
+      // 这是已知风险，由 _persist 失败时的上层路径处理。
     }
   }
 

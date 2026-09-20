@@ -33,8 +33,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
   Future<void> _loadDekSource() async {
     try {
-      await KekManager().getOrCreateDek();
-      if (mounted) setState(() => _dekSource = KekManager().source);
+      await KekManager.instance.getOrCreateDek();
+      if (mounted) setState(() => _dekSource = KekManager.instance.source);
     } catch (_) {
       if (mounted) setState(() => _dekSource = DekSource.none);
     }
@@ -69,7 +69,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     if (passphrase == null) return;
 
     try {
-      final dek = await KekManager().getDek();
+      final dek = await KekManager.instance.getDek();
       final backup = await DekBackup().exportDek(dek, passphrase);
 
       final path = await FilePicker.platform.saveFile(
@@ -104,7 +104,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
 
       final bytes = await File(path).readAsBytes();
       final dek = await DekBackup().importDek(bytes, passphrase);
-      await KekManager().importDek(dek);
+      await KekManager.instance.importDek(dek);
 
       // 校验 vault 可读
       await widget.store.load();

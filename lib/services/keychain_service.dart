@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../tools/password/crypto/kek_manager.dart';
 import '../tools/password/crypto/vault_cipher.dart';
@@ -23,17 +24,20 @@ class KeychainService {
 
   static const String secretsFileName = '.secrets.bin';
 
-  KekManager _kekManager = KekManager();
   final VaultCipher _cipher = VaultCipher();
   VaultFileStore? _store;
 
   /// 内存中的明文 secret map（解锁会话内常驻；null 表示尚未加载）
   Map<String, String>? _secrets;
 
-  /// 测试注入：替换 DEK 桥接（flutter test 无平台通道，真实 Keychain 不可用）
+  /// 进程级 DEK 生命周期管理器（单例）。所有密钥消费者共享同一缓存。
+  KekManager get _kekManager => KekManager.instance;
+
+  /// 测试注入：替换单例的 DEK 桥接（flutter test 无平台通道，真实 Keychain 不可用）。
+  /// 把传入 manager 的桥接应用到进程单例。
   @visibleForTesting
   void setKekManagerForTesting(KekManager manager) {
-    _kekManager = manager;
+    manager.applyBridgesToSingleton();
   }
 
   /// 初始化凭证存储目录
@@ -84,15 +88,41 @@ class KeychainService {
     if (_secrets != null) return _secrets!;
     _store ??= VaultFileStore(fileName: secretsFileName);
     final store = _store!;
+    // 确保底层 File 路径已解析，便于后续在同目录写/读自愈标记。
+    await store.ensureResolved();
 
     final dek = await _kekManager.getOrCreateDek();
+    Map<String, String>? loaded = await _tryDecrypt(store, dek);
+
+    // 失配自愈修正：GCM 认证失败时，先尝试从文件镜像重新取 DEK 解密——
+    // 现实中 Keychain 不可见会让 getOrCreateDek 生成新 DEK，但文件镜像里
+    // 可能还存着能解密旧密文的真 DEK。先试文件再自愈，避免误清空。
+    if (loaded == null) {
+      try {
+        final fileDek = await _kekManager.getDek();
+        if (!_listEquals(fileDek, dek)) {
+          loaded = await _tryDecrypt(store, fileDek);
+        }
+      } on DekUnavailableException {
+        // 文件镜像也没有可用的 DEK——走自愈。
+      }
+    }
+
+    if (loaded != null) {
+      _secrets = loaded;
+      return loaded;
+    }
+
+    // 真失配：Keychain 与文件 DEK 均无法认证密文 → 备份 + 重建空库 + 信号。
+    return _runMismatchRecovery(store);
+  }
+
+  /// 用给定 DEK 尝试解密。成功返回 map；密文为空返回空 map；认证失败返回 null
+  /// （由调用方决定是否试下一来源或进自愈）。
+  Future<Map<String, String>?> _tryDecrypt(VaultFileStore store, Uint8List dek) async {
     try {
       final jsonStr = await store.readDecrypted(_cipher, dek);
-      if (jsonStr == null) {
-        _secrets = <String, String>{};
-        return _secrets!;
-      }
-
+      if (jsonStr == null) return <String, String>{};
       final decoded = jsonDecode(jsonStr);
       final result = <String, String>{};
       if (decoded is Map) {
@@ -102,26 +132,36 @@ class KeychainService {
           }
         });
       }
-      _secrets = result;
       return result;
     } on VaultCipherException catch (e) {
-      if (e.isAuthFailure) {
-        // DEK 与密文失配（旧 DEK 不可恢复）：备份残件 → 当前 DEK 重建空库 →
-        // 立即可写，并留下一次性信号供 UI 告知用户重填。
-        // _persist 失败时异常上抛——备份已在盘上，下次启动可重试。
-        final backup = await store.backupMismatch();
-        _secrets = <String, String>{};
-        await _persist();
-        _rebuildInfo = RebuildInfo(
-          backupPath: backup?.path ?? '(备份失败：原文件不存在)',
-          at: DateTime.now(),
-        );
-        return _secrets!;
-      }
-      // 布局损坏（isIntegrityError）：原样上抛，不备份不重建——
-      // 损坏文件可能部分可读，保留现场供检查。
-      rethrow;
+      if (e.isAuthFailure) return null; // 失配，交由调用方处理
+      rethrow; // 布局损坏，原样上抛保留现场
     }
+  }
+
+  Future<Map<String, String>> _runMismatchRecovery(VaultFileStore store) async {
+    // DEK 与密文失配（旧 DEK 不可恢复）：备份残件 → 当前 DEK 重建空库 →
+    // 立即可写，并留下一次性信号供 UI 告知用户重填，同时写持久化标记文件
+    // 防止一次性信号被错过。
+    final backup = await store.backupMismatch();
+    _secrets = <String, String>{};
+    await _persist();
+    final info = RebuildInfo(
+      backupPath: backup?.path ?? '(备份失败：原文件不存在)',
+      at: DateTime.now(),
+    );
+    _rebuildInfo = info;
+    await _writeRebuildNoticeMarker(info);
+    return _secrets!;
+  }
+
+  bool _listEquals(Uint8List a, Uint8List b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// 失配重建信号（一次性）：本次会话若发生过"DEK 失配 → 备份重建"，
@@ -133,6 +173,52 @@ class KeychainService {
   }
 
   RebuildInfo? _rebuildInfo;
+
+  /// 持久化自愈标记：写一个 `.secrets.bin.rebuilt-<timestamp>` 空文件，
+  /// 使 UI 即便错过会话内的一次性信号也能在启动时察觉并提示用户。
+  Future<void> _writeRebuildNoticeMarker(RebuildInfo info) async {
+    try {
+      final store = _store;
+      if (store == null) return;
+      final file = store.file;
+      if (file == null) return;
+      // 用 VaultFileStore 同目录写标记文件，便于统一清理。
+      final dir = file.parent;
+      final marker = File(p.join(
+        dir.path,
+        '$secretsFileName.rebuilt-${_timestampForFile(info.at)}',
+      ));
+      if (!marker.existsSync()) await marker.create();
+    } catch (_) {
+      // 标记写入失败不致命——一次性信号仍可用。
+    }
+  }
+
+  /// 检查是否有未读的自愈标记文件。若存在则返回 true 并删除标记（一次性）。
+  /// UI 启动时调用以提示"密钥库此前被重置，已存密钥需重新填入"。
+  Future<bool> consumeRebuildNotice() async {
+    try {
+      final store = _store;
+      if (store == null) return false;
+      final file = store.file;
+      if (file == null) return false;
+      final dir = file.parent;
+      final entities = dir.listSync(followLinks: false);
+      for (final e in entities) {
+        final name = p.basename(e.path);
+        if (name.startsWith('$secretsFileName.rebuilt-')) {
+          try { await e.delete(); } catch (_) {}
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  String _timestampForFile(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${t.year}${two(t.month)}${two(t.day)}-${two(t.hour)}${two(t.minute)}${two(t.second)}';
+  }
 
   Future<void> _persist() async {
     final store = _store ?? VaultFileStore(fileName: secretsFileName);

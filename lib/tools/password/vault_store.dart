@@ -19,7 +19,7 @@ import 'vault_models.dart';
 /// 内存 secret 缓存（设计 D4）：解锁会话内常驻；lock() 清空。
 class VaultStore extends ChangeNotifier {
   VaultStore({KekManager? kekManager, Directory? customRootDir})
-      : _kekManager = kekManager ?? KekManager(),
+      : _kekManager = kekManager ?? KekManager.instance,
         _customRootDir = customRootDir;
 
   static const String metadataFileName = '.vault.meta.json';

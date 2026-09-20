@@ -126,7 +126,8 @@ void main() {
     test('首次生成 DEK 并持久化到 Keychain 桥', () async {
       final store = <String, String>{};
       final bridge = _FakeBridge(store);
-      final manager = KekManager(bridge: bridge);
+      final fileBridge = _NullFileBridge();
+      final manager = KekManager(bridge: bridge, fileBridge: fileBridge);
 
       final dek = await manager.getOrCreateDek();
 
@@ -134,12 +135,16 @@ void main() {
       expect(store['dek'], isNotNull);
       expect(store['dek'], startsWith('v8dek1:'));
       // 第二次读取应返回同一 DEK（来自持久化，而非重新生成）
-      final again = await KekManager(bridge: _FakeBridge(store)).getOrCreateDek();
+      final again = await KekManager(bridge: _FakeBridge(store), fileBridge: fileBridge)
+          .getOrCreateDek();
       expect(again, equals(dek));
     });
 
     test('DEK 缺失时 getDek 抛异常且文案含恢复路径', () async {
-      final manager = KekManager(bridge: _FakeBridge({}));
+      final manager = KekManager(
+        bridge: _FakeBridge({}),
+        fileBridge: _NullFileBridge(),
+      );
       expect(
         () => manager.getDek(),
         throwsA(isA<DekUnavailableException>().having(
@@ -152,7 +157,10 @@ void main() {
 
     test('损坏的 DEK 抛异常', () async {
       final store = {'dek': 'v8dek1:garbage!!'};
-      final manager = KekManager(bridge: _FakeBridge(store));
+      final manager = KekManager(
+        bridge: _FakeBridge(store),
+        fileBridge: _NullFileBridge(),
+      );
       expect(
         () => manager.getDek(),
         throwsA(isA<DekUnavailableException>()),
@@ -162,18 +170,20 @@ void main() {
     test('importDek 接受 32 字节并写回', () async {
       final store = <String, String>{};
       final bridge = _FakeBridge(store);
-      final manager = KekManager(bridge: bridge);
+      final fileBridge = _NullFileBridge();
+      final manager = KekManager(bridge: bridge, fileBridge: fileBridge);
       final dek = Uint8List.fromList(List<int>.generate(32, (i) => i));
 
       await manager.importDek(dek);
 
       expect(store['dek'], startsWith('v8dek1:'));
-      final readBack = await KekManager(bridge: _FakeBridge(store)).getDek();
+      final readBack = await KekManager(bridge: _FakeBridge(store), fileBridge: fileBridge)
+          .getDek();
       expect(readBack, equals(dek));
     });
 
     test('importDek 拒绝非 32 字节', () async {
-      final manager = KekManager(bridge: _FakeBridge({}));
+      final manager = KekManager(bridge: _FakeBridge({}), fileBridge: _NullFileBridge());
       expect(
         () => manager.importDek(Uint8List.fromList([1, 2, 3])),
         throwsA(isA<ArgumentError>()),
@@ -183,7 +193,8 @@ void main() {
     test('lock 清空内存缓存但不删除 Keychain 数据', () async {
       final store = <String, String>{};
       final bridge = _FakeBridge(store);
-      final manager = KekManager(bridge: bridge);
+      final fileBridge = _NullFileBridge();
+      final manager = KekManager(bridge: bridge, fileBridge: fileBridge);
 
       await manager.getOrCreateDek();
       expect(manager.hasCachedDek, isTrue);
@@ -221,4 +232,16 @@ class _FakeBridge implements KeychainBridge {
   Future<void> delete({required String service, required String account}) async {
     store.remove(account);
   }
+}
+
+/// 测试用文件桥：始终无内容，避免真实磁盘 I/O 与跨测试的状态泄漏。
+class _NullFileBridge implements DekFileBridge {
+  @override
+  Future<String?> read() async => null;
+  @override
+  Future<void> write(String value) async {}
+  @override
+  Future<void> delete() async {}
+  @override
+  Future<int?> permissions() async => null;
 }

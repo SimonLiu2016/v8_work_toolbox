@@ -155,4 +155,111 @@ void main() {
       expect(await File(binPath).length(), 5);
     });
   });
+
+  group('D2 文件镜像兜底：Keychain 不可见但文件 DEK 可解', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('v8_filemirror_test_');
+    });
+
+    tearDown(() async {
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    test('Keychain 读不到 + .dek 文件存在 + 密文有效 → 不触发自愈，密钥可读', () async {
+      // 用 Keychain 可写的桥写入一个密钥，使 .dek 文件镜像与 .secrets.bin 同时生成。
+      final memKeychain = _MemoryKeychainBridge();
+      final service1 = KeychainService.instance;
+      service1.setKekManagerForTesting(KekManager(
+        bridge: memKeychain,
+        fileBridge: DefaultDekFileBridge(customRootDir: tempDir),
+      ));
+      await service1.init(customRootDir: tempDir);
+      await service1.writeSecret('api_key', 'sk-persisted');
+      // .dek 文件镜像应已写入。
+      expect(await File('${tempDir.path}/.dek').exists(), isTrue);
+
+      // 模拟重启后 Keychain item 对新进程不可见（adhoc 签名下的现实故障）：
+      // 清空内存 Keychain store，但不删 .dek 文件。
+      memKeychain.store.clear();
+      // 清单例内存缓存以模拟新进程。
+      KekManager.instance.resetForTesting();
+
+      final service2 = KeychainService.instance;
+      await service2.init(customRootDir: tempDir);
+      // 文件镜像兜底：密钥仍可读，不触发自愈。
+      expect(await service2.readSecret('api_key'), 'sk-persisted');
+      expect(service2.consumeRebuildInfo(), isNull);
+
+      // 无 mismatch 备份产生。
+      final backups = await tempDir
+          .list()
+          .where((f) => f.path.contains('.secrets.bin.mismatch-'))
+          .toList();
+      expect(backups, isEmpty);
+    });
+  });
+
+  group('D5 自愈通知持久化', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('v8_rebuild_notice_');
+    });
+
+    tearDown(() async {
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    test('自愈触发后写持久化标记，consumeRebuildNotice 返回 true 并删除标记', () async {
+      // 用 DEK-A 写入密钥
+      final serviceA = freshService(tempDir);
+      await serviceA.init(customRootDir: tempDir);
+      await serviceA.writeSecret('api_key', 'sk-old');
+
+      // 删 .dek 模拟 DEK 丢失
+      await File('${tempDir.path}/.dek').delete();
+
+      // 重启 → 真失配自愈
+      final serviceB = freshService(tempDir);
+      await serviceB.init(customRootDir: tempDir);
+      await serviceB.readSecret('api_key'); // 触发自愈
+
+      // 持久化标记应存在
+      final markers = await tempDir
+          .list()
+          .where((f) => f.path.contains('.secrets.bin.rebuilt-'))
+          .toList();
+      expect(markers.length, 1);
+
+      // consumeRebuildNotice 返回 true 并删除标记（一次性）
+      expect(await serviceB.consumeRebuildNotice(), isTrue);
+      expect(await serviceB.consumeRebuildNotice(), isFalse);
+    });
+  });
+}
+
+/// 内存 Keychain 桥：模拟 Keychain 读写，可中途清空以模拟 item 对新进程不可见。
+class _MemoryKeychainBridge implements KeychainBridge {
+  final Map<String, String> store = {};
+
+  @override
+  Future<String?> read({required String service, required String account}) async {
+    return store[account];
+  }
+
+  @override
+  Future<void> write({
+    required String service,
+    required String account,
+    required String value,
+  }) async {
+    store[account] = value;
+  }
+
+  @override
+  Future<void> delete({required String service, required String account}) async {
+    store.remove(account);
+  }
 }

@@ -33,6 +33,22 @@ class _AiConfigPageState extends State<AiConfigPage> with SingleTickerProviderSt
     _healthRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) setState(() {});
     });
+    // 启动时检查密钥库是否曾被自愈重置（持久化标记）。若是，提示用户已存密钥需重填。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkRebuildNotice());
+  }
+
+  void _checkRebuildNotice() async {
+    final rebuilt = await KeychainService.instance.consumeRebuildNotice();
+    if (rebuilt && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('密钥库此前因密钥失配被重置，已存密钥（如 API Key）需重新填入。'
+              '残件备份见 ~/Library/Application Support/V8WorkToolbox/ 下的 .mismatch-* 文件。'),
+          backgroundColor: AppTheme.warning,
+          duration: Duration(seconds: 12),
+        ),
+      );
+    }
   }
 
   @override

@@ -145,7 +145,8 @@ void main() {
       expect(restored, equals(dek));
       expect(manager.source, DekSource.keychain);
       expect(okBridge.store['com.v8worktoolbox.vault.dek/dek'], startsWith('v8dek1:'));
-      expect(fileBridge.content, isNull); // 文件已删除
+      // D2 修正：迁移后保留文件镜像作为重启兜底（不再删除）。
+      expect(fileBridge.content, isNotNull);
     });
   });
 

@@ -23,6 +23,14 @@ class VaultFileStore {
   final String _fileName;
   File? _file;
 
+  /// 该密文文件预期所在的目录（用于在同目录下放置伴生文件，如自愈标记）。
+  /// 仅在已确保文件存在后有效；调用前若未触发 `_ensureFile`，返回 null。
+  File? get file => _file;
+
+  /// 确保 `_file` 已解析到真实路径（不创建文件内容，仅解析路径）。
+  /// 供消费方在读写前先确定目录，便于在同目录放置伴生文件。
+  Future<void> ensureResolved() async => _ensureFile();
+
   Future<File> _ensureFile() async {
     if (_file != null) return _file!;
     Directory dir;
