@@ -120,21 +120,26 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
               color: _titleColor,
             ),
           ),
-          const SizedBox(width: 8),
-          const Text(
-            '基于你笔记本的内容回答，必要时可联网兜底',
-            style: TextStyle(fontSize: 11, color: _subColor),
-          ),
           const Spacer(),
           if (_turns.isNotEmpty)
-            IconButton(
-              icon: const Icon(
-                Icons.delete_sweep_outlined,
-                size: 15,
-                color: _subColor,
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.delete_sweep_outlined,
+                  size: 15,
+                  color: _subColor,
+                ),
+                tooltip: '清空对话',
+                onPressed: () => setState(_turns.clear),
+                padding: EdgeInsets.zero,
+                // 收窄默认 48px 最小点击区：面板宽由父容器写死 360，header 的
+                // 横向余量必须留给将来可能新增的入口，而不是固定消耗在
+                // 一个 48px 的按钮上（曾因 48px + 一段不换行的说明文字
+                // 把本按钮挤出面板边界，只露出一半）。
+                constraints: const BoxConstraints(),
               ),
-              tooltip: '清空对话',
-              onPressed: () => setState(_turns.clear),
             ),
         ],
       ),
@@ -266,6 +271,9 @@ class _NotebookQaPanelState extends State<NotebookQaPanel> {
                   height: 1.5,
                   color: _titleColor,
                 ),
+                // 本面板是浅色容器：显式给浅色代码底色，避免共享组件的暗色默认值
+                // 把深灰底盖在浅色画布上、与近黑文字叠在一起看不清。
+                codeBlockColor: NotebookLightScope.codeSurface,
               ),
             if (turn.answer!.citations.isNotEmpty) ...[
               const SizedBox(height: 8),
