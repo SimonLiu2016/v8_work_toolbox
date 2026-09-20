@@ -1,12 +1,27 @@
 import 'dart:convert';
 
-/// Quill Delta ↔ Markdown 双向转换器
+/// Quill Delta ↔ Markdown 双向转换器。
+///
+/// ⚠️ **本转换器只认 Quill Delta 数组**（`[{"insert":...}]`）。它**不适用于
+/// 解析已存储的笔记正文**——那是 AppFlowy document JSON
+/// （`{"document":{"type":"page",...}}`），传进来会抛异常。
+///
+/// 需要从笔记正文取文本时，一律用 `AppFlowyCodec.jsonToPlainText`（内部兼容
+/// 两种格式）。历史上曾因用本方法解析笔记正文且吞掉异常，导致 FTS 正文索引
+/// 全空、RAG 片段全空。
+///
+/// 合法用途：markdown 导入路径（`AppFlowyCodec` 内部对 markdown 输入会调用），
+/// 以及明确已知是 Quill 数组的输入。
 class MarkdownConverter {
   // ---------------------------------------------------------------------------
   // Delta → Markdown
   // ---------------------------------------------------------------------------
 
-  /// 将 Quill Delta JSON 转换为 Markdown 字符串
+  /// 将 **Quill Delta** JSON 转换为 Markdown 字符串。
+  ///
+  /// ⚠️ 只接受 Quill 数组输入。解析已存储的笔记正文请用
+  /// `AppFlowyCodec.jsonToPlainText`——笔记存的是 AppFlowy document JSON，
+  /// 本方法对其会抛异常（且若被 catch 吞掉将静默返回空串）。
   static String deltaToMarkdown(String deltaJson) {
     try {
       final ops = jsonDecode(deltaJson) as List<dynamic>;
