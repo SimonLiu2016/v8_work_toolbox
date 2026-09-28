@@ -1,4 +1,15 @@
+/// 工具标识常量。
+///
+/// 工具 id 同时是代理通道（[ProxySettings.perToolEnabled]）与持久化配置的
+/// 键名，散落的字面量一旦漂移会让某个工具的代理静默失效且不报错。所有引用
+/// 统一走这里的常量；常量值与既有 `config/proxy.json` 中已持久化的键逐字
+/// 相同，因此无需数据迁移。
+library;
+
 import 'package:flutter/material.dart';
+
+const String kToolIdAiAssistant = 'ai-assistant';
+const String kToolIdDocAudioReader = 'doc-audio-reader';
 
 /// 工具分类枚举
 enum ToolCategory {

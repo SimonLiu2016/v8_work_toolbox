@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../components/app_components.dart';
 import '../../../components/markdown_view.dart';
-import '../../../services/mcp_service.dart';
 import '../../../services/proxy_settings.dart';
 import '../../../theme/app_theme.dart';
 import '../services/ai_assistant_service.dart';
+import '../../tool_definition.dart';
 import 'scheduled_tasks_drawer.dart';
 
 class AiAssistantPage extends StatefulWidget {
@@ -64,55 +64,6 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
     _focusNode.requestFocus();
   }
 
-  void _showMcpToolsDialog() async {
-    final tools = await McpService.instance.getAllTools();
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        title: Row(
-          children: [
-            const Icon(Icons.cable_outlined, color: AppTheme.accentLight, size: 20),
-            const SizedBox(width: AppTheme.space8),
-            Text('已加载的 MCP 外部工具 (${tools.length})', style: AppTheme.fontTitle),
-          ],
-        ),
-        content: SizedBox(
-          width: 580,
-          height: 400,
-          child: tools.isEmpty
-              ? const Center(
-                  child: Text('当前暂无启用的 MCP 工具，请先在 AI 设置中配置并启用。', style: TextStyle(color: AppTheme.textSecondary)),
-                )
-              : ListView.separated(
-                  itemCount: tools.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
-                  itemBuilder: (ctx, idx) {
-                    final t = tools[idx];
-                    return ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.bolt, size: 16, color: AppTheme.accentLight),
-                      title: Text(t.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      subtitle: Text(
-                        t.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-                      ),
-                      trailing: AppBadge(label: t.serverName),
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          AppButton.primary(label: '确定', onPressed: () => Navigator.pop(ctx)),
-        ],
-      ),
-    );
-  }
-
   void _openScheduledTasksDrawer() {
     showModalBottomSheet(
       context: context,
@@ -167,18 +118,12 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
             ],
           ),
           const Spacer(),
-          AppButton.secondary(
-            label: 'MCP 工具清单',
-            icon: Icons.cable_outlined,
-            onPressed: _showMcpToolsDialog,
-          ),
-          const SizedBox(width: AppTheme.space8),
           // 工具代理通道开关
           ListenableBuilder(
             listenable: ProxySettings.instance,
             builder: (context, _) {
               final isEnabled =
-                  ProxySettings.instance.isToolEnabled('ai-assistant');
+                  ProxySettings.instance.isToolEnabled(kToolIdAiAssistant);
               return Tooltip(
                 message: isEnabled ? 'AI 咨询使用系统代理' : 'AI 咨询直连网络',
                 child: Row(
@@ -199,7 +144,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                       activeTrackColor: AppTheme.accent,
                       onChanged: (val) async {
                         await ProxySettings.instance
-                            .setToolEnabled('ai-assistant', val);
+                            .setToolEnabled(kToolIdAiAssistant, val);
                       },
                     ),
                   ],

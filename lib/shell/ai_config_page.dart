@@ -9,6 +9,7 @@ import '../services/keychain_service.dart';
 import '../services/mcp_service.dart';
 import '../theme/app_theme.dart';
 import 'ai_log_dialog.dart';
+import 'mcp_tool_inventory_view.dart';
 
 class AiConfigPage extends StatefulWidget {
   const AiConfigPage({super.key});
@@ -140,7 +141,7 @@ class _AiConfigPageState extends State<AiConfigPage>
               children: [
                 _buildProvidersTab(),
                 _buildSlotsTab(),
-                _buildMcpTab(),
+                _buildMcpWithInventory(),
               ],
             ),
           ),
@@ -729,14 +730,22 @@ class _AiConfigPageState extends State<AiConfigPage>
   }
 
   // ---------------------------------------------------------------------------
-  // Tab 3: 外部 MCP 客户端
+  // Tab 3: 外部 MCP 客户端（客户端配置 + 已加载工具清单）
   // ---------------------------------------------------------------------------
-  Widget _buildMcpTab() {
+  Widget _buildMcpWithInventory() {
     final clients = store.mcpClients;
-
     return ListView(
       padding: const EdgeInsets.all(AppTheme.space24),
       children: [
+        ..._buildMcpClientCards(clients),
+        // 清单由独立 widget 承担，便于 widget 测试直接驱动。
+        McpToolInventoryView(clients: clients, probeResults: _mcpTestResults),
+      ],
+    );
+  }
+
+  List<Widget> _buildMcpClientCards(List<McpClientConfig> clients) {
+    return [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1017,9 +1026,9 @@ class _AiConfigPageState extends State<AiConfigPage>
               ),
             );
           }),
-      ],
-    );
+    ];
   }
+
 
   // ---------------------------------------------------------------------------
   // 弹窗与交互逻辑

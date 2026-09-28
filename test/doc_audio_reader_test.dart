@@ -10,6 +10,7 @@ import 'package:V8WorkToolbox/tools/reader/services/audio_reader_controller.dart
 import 'package:V8WorkToolbox/tools/reader/services/document_parser.dart';
 import 'package:V8WorkToolbox/tools/reader/services/reader_config_store.dart';
 import 'package:V8WorkToolbox/tools/reader/services/tts_engine.dart';
+import 'package:V8WorkToolbox/tools/tool_definition.dart';
 import 'package:V8WorkToolbox/tools/reader/services/tts_coordinator.dart';
 import 'package:V8WorkToolbox/tools/reader/ui/doc_audio_reader_page.dart';
 import 'package:V8WorkToolbox/tools/registry.dart';
@@ -288,7 +289,7 @@ Guide is very helpful.''';
 
   group('Tool Registry & Widget Tests', () {
     test('ToolRegistry 正确注册 doc-audio-reader', () {
-      final tool = ToolRegistry.findById('doc-audio-reader');
+      final tool = ToolRegistry.findById(kToolIdDocAudioReader);
       expect(tool, isNotNull);
       expect(tool!.title, '文档语音朗读');
       expect(tool.category, ToolCategory.file);

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/app_http_client.dart';
 import 'package:V8WorkToolbox/services/proxy_settings.dart';
 import 'package:V8WorkToolbox/tools/network_proxy/services/clash_subscription_parser.dart';
+import 'package:V8WorkToolbox/tools/tool_definition.dart';
 
 void main() {
   group('ClashSubscriptionParser', () {
@@ -118,13 +119,13 @@ rules:
         host: '127.0.0.1',
         port: 7890,
         enabled: true,
-        perToolEnabled: {'ai-assistant': true, 'doc-audio-reader': false},
+        perToolEnabled: {kToolIdAiAssistant: true, kToolIdDocAudioReader: false},
       );
     });
 
     test('正确读取工具开关状态，未设置时默认 false', () {
-      expect(proxy.isToolEnabled('ai-assistant'), isTrue);
-      expect(proxy.isToolEnabled('doc-audio-reader'), isFalse);
+      expect(proxy.isToolEnabled(kToolIdAiAssistant), isTrue);
+      expect(proxy.isToolEnabled(kToolIdDocAudioReader), isFalse);
       expect(proxy.isToolEnabled('unknown-tool'), isFalse);
     });
 
@@ -133,12 +134,12 @@ rules:
       expect(proxy.isConfigured, isTrue);
 
       // doc-audio-reader 关：直连客户端
-      final readerClient = AppHttpClient.create(toolId: 'doc-audio-reader');
+      final readerClient = AppHttpClient.create(toolId: kToolIdDocAudioReader);
       // 客户端创建无抛错
       expect(readerClient, isNotNull);
 
       // ai-assistant 开：代理客户端
-      final aiClient = AppHttpClient.create(toolId: 'ai-assistant');
+      final aiClient = AppHttpClient.create(toolId: kToolIdAiAssistant);
       expect(aiClient, isNotNull);
 
       readerClient.close();

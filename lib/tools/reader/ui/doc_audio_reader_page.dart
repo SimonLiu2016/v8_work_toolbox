@@ -12,6 +12,7 @@ import '../../../../services/ai_config_store.dart';
 import '../../../../services/proxy_settings.dart';
 import '../../../../shell/ai_config_page.dart';
 import '../../../../shell/ai_log_dialog.dart';
+import '../../tool_definition.dart';
 
 /// 文档与网页 AI 语音朗读助手页面
 class DocAudioReaderPage extends StatefulWidget {
@@ -436,7 +437,7 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
             listenable: ProxySettings.instance,
             builder: (context, _) {
               final isEnabled =
-                  ProxySettings.instance.isToolEnabled('doc-audio-reader');
+                  ProxySettings.instance.isToolEnabled(kToolIdDocAudioReader);
               return Tooltip(
                 message: isEnabled ? '文档阅读器使用系统代理' : '文档阅读器直连网络',
                 child: Row(
@@ -454,7 +455,7 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
                       activeColor: Colors.blueAccent,
                       onChanged: (val) async {
                         await ProxySettings.instance
-                            .setToolEnabled('doc-audio-reader', val);
+                            .setToolEnabled(kToolIdDocAudioReader, val);
                       },
                     ),
                   ],

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'app_http_client.dart';
 import 'mcp_service.dart';
 import 'proxy_settings.dart';
+import '../tools/tool_definition.dart';
 
 // ---------------------------------------------------------------------------
 // 数据类型
@@ -311,7 +312,7 @@ class BingSearchBackend implements SearchBackend {
   static List<String> get candidateHosts {
     final proxy = ProxySettings.instance;
     final isProxyActive =
-        proxy.isConfigured && proxy.isToolEnabled('ai-assistant');
+        proxy.isConfigured && proxy.isToolEnabled(kToolIdAiAssistant);
     if (isProxyActive) {
       return const [internationalHost, mainlandHost];
     } else {
@@ -327,7 +328,7 @@ class BingSearchBackend implements SearchBackend {
     for (final host in hosts) {
       // 针对每个端点，支持 1 次瞬态网络/握手重试
       for (var attempt = 0; attempt < 2; attempt++) {
-        final client = AppHttpClient.create(toolId: 'ai-assistant');
+        final client = AppHttpClient.create(toolId: kToolIdAiAssistant);
         try {
           final queryParams = {
             'q': query,
@@ -430,7 +431,7 @@ class BingSearchBackend implements SearchBackend {
   @override
   Future<bool> healthCheck() async {
     for (final host in candidateHosts) {
-      final client = AppHttpClient.create(toolId: 'ai-assistant');
+      final client = AppHttpClient.create(toolId: kToolIdAiAssistant);
       try {
         final resp = await client
             .get(Uri.parse('https://$host/search?q=test'),
@@ -465,7 +466,7 @@ class DuckDuckGoSearchBackend implements SearchBackend {
 
   @override
   Future<List<SearchResult>> search(String query, {int limit = 5}) async {
-    final client = AppHttpClient.create(toolId: 'ai-assistant');
+    final client = AppHttpClient.create(toolId: kToolIdAiAssistant);
     try {
       // 优先尝试 POST 请求（DuckDuckGo 经典表单搜索）
       var resp = await client.post(
@@ -573,7 +574,7 @@ class DuckDuckGoSearchBackend implements SearchBackend {
 
   @override
   Future<bool> healthCheck() async {
-    final client = AppHttpClient.create(toolId: 'ai-assistant');
+    final client = AppHttpClient.create(toolId: kToolIdAiAssistant);
     try {
       final resp = await client.post(
         Uri.parse('https://html.duckduckgo.com/html/'),

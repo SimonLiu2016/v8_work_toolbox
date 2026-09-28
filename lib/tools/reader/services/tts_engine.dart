@@ -8,7 +8,9 @@ import '../../../../services/ai_config_store.dart';
 import '../../../../services/ai_logger.dart';
 import '../../../../services/app_http_client.dart';
 import '../../../../services/keychain_service.dart';
+import '../../../tools/tool_definition.dart';
 import '../models/reader_models.dart';
+
 
 /// 抽象 TTS 语音合成引擎
 abstract class TtsEngine {
@@ -196,7 +198,7 @@ class OpenAiTtsEngine implements TtsEngine {
         _client = client ??
             (clientFactory != null
                 ? clientFactory()
-                : AppHttpClient.create(toolId: 'doc-audio-reader'));
+                : AppHttpClient.create(toolId: kToolIdDocAudioReader));
 
   @override
   Future<bool> isAvailable() async {
@@ -462,7 +464,7 @@ class OpenAiTtsEngine implements TtsEngine {
               _client.close();
             } catch (_) {}
             _client = _clientFactory?.call() ??
-                AppHttpClient.create(toolId: 'doc-audio-reader');
+                AppHttpClient.create(toolId: kToolIdDocAudioReader);
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }
@@ -576,7 +578,7 @@ class OpenAiTtsEngine implements TtsEngine {
               _client.close();
             } catch (_) {}
             _client = _clientFactory?.call() ??
-                AppHttpClient.create(toolId: 'doc-audio-reader');
+                AppHttpClient.create(toolId: kToolIdDocAudioReader);
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }

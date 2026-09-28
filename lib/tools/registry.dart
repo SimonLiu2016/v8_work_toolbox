@@ -161,7 +161,7 @@ class UnattendedApproverToolDefinition extends ToolDefinition {
 
 class DocAudioReaderToolDefinition extends ToolDefinition {
   @override
-  String get id => 'doc-audio-reader';
+  String get id => kToolIdDocAudioReader;
   @override
   String get title => '文档语音朗读';
   @override
@@ -191,7 +191,7 @@ class PrivateMediaPlayerToolDefinition extends ToolDefinition {
 
 class AiAssistantToolDefinition extends ToolDefinition {
   @override
-  String get id => 'ai-assistant';
+  String get id => kToolIdAiAssistant;
   @override
   String get title => 'AI资讯与检索';
   @override
