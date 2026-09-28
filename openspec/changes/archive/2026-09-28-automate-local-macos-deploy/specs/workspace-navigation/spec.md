@@ -1,16 +1,11 @@
-## Purpose
+## MODIFIED Requirements
 
-Provides a cohesive three-column workspace navigation architecture, immersive borderless window presentation on macOS, and reliable menu bar status item presence.
-## Requirements
-### Requirement: Immersive borderless window layout
-The application window on macOS SHALL display without the standard grey titlebar strip by configuring transparent titlebar and full-size content view, while retaining standard window control traffic lights overlaid seamlessly on the dark workspace canvas.
+### Requirement: Status bar tray presence and interactions
+The application SHALL maintain a permanent status item in the macOS system menu bar using `NSStatusItem.squareLength` and a dedicated template tray icon (without variable text labels to avoid notch or overflow truncation), supporting left-click toggle of the main window and right-click secondary menu for quick actions and quitting. Application shutdown SHALL be reachable from multiple entry points (window close, tray quit) and SHALL also run its cleanup when the process receives an OS termination signal, so that a signal-driven exit leaves no orphaned child processes.
 
 #### Scenario: Window appearance on launch
 - **WHEN** the application window is created and displayed
 - **THEN** the native grey titlebar is invisible, content extends to the top window edge, and window control buttons (close, minimize, zoom) float directly over the dark sidebar area with proper padding.
-
-### Requirement: Activity bar and tool panel split navigation
-The workspace SHALL divide navigation into an Activity Bar and a Tool Panel, and the content container SHALL lazily instantiate tool views on demand so tools are only mounted when navigated to by the user.
 
 #### Scenario: Switching tool categories
 - **WHEN** user clicks a category icon in the Activity Bar
@@ -18,14 +13,11 @@ The workspace SHALL divide navigation into an Activity Bar and a Tool Panel, and
 
 #### Scenario: Collapsing tool panel
 - **WHEN** user toggles panel collapse or double-clicks the separator
-- **THEN** the Tool Panel folds into an icon-only compact mode (~50px) to give maximum screen width to the tool content area.
+- **THEN** the Tool Panel folds into an icon-only compact mode (~50px) to give maximum screen width to the tool content.
 
 #### Scenario: Lazy tool mounting
 - **WHEN** the application starts up
 - **THEN** only the initially active tool view is instantiated in the content stack, preventing unselected heavy tools from blocking startup frames.
-
-### Requirement: Status bar tray presence and interactions
-The application SHALL maintain a permanent status item in the macOS system menu bar using `NSStatusItem.squareLength` and a dedicated template tray icon (without variable text labels to avoid notch or overflow truncation), supporting left-click toggle of the main window and right-click secondary menu for quick actions and quitting. Application shutdown SHALL be reachable from multiple entry points (window close, tray quit) and SHALL also run its cleanup when the process receives an OS termination signal, so that a signal-driven exit leaves no orphaned child processes.
 
 #### Scenario: Clicking menu bar icon when hidden
 - **WHEN** user clicks the menu bar tray icon while the main application window is hidden
@@ -47,4 +39,3 @@ The application SHALL maintain a permanent status item in the macOS system menu 
 - **WHEN** the application process receives an OS termination signal while running
 - **THEN** the application runs the same child-process cleanup as the tray quit path, then exits
 - **AND** no orphaned child process remains after the application process has exited.
-

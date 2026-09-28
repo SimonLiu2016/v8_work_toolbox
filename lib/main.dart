@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -251,8 +253,44 @@ Future<void> main(List<String> args) async {
   final hotKey = SettingsStore.instance.getHotKeyConfig();
   await LauncherService.instance.registerHotKey(hotKey);
 
+  // 进程级终止信号：与 [_MainWindowCloseListener] 收敛到同一清理逻辑。
+  // `onWindowClose` 只在窗口关闭时触发，`kill -TERM` 不会触发它——这正是
+  // 历史上 mihomo 子进程反复变成 PPID=1 孤儿的根因。清理失败不阻止退出。
+  ProcessSignal.sigterm.watch().listen((_) => runShutdownCleanup());
+
   runApp(const V8WorkToolboxApp());
 }
+
+/// 测试注入点：替代 `exit()`，使清理路径可在测试中驱动而不终止 test runner。
+/// 生产代码始终为 null（走真实 `exit(0)`）。
+@visibleForTesting
+void Function(int code)? exitOverride;
+
+/// SIGTERM / 测试共用的清理逻辑本体。[forTest] 为 true 时不调用 `exit()`——
+/// 测试进程只要调用 `exit()`，flutter_tester 就以 "Shell subprocess ended
+/// cleanly" 判负（实测 3 个用例全部 did not complete）。生产路径
+/// [forTest] = false，行为即真实退出。
+@visibleForTesting
+Future<void> runShutdownCleanup({bool forTest = false}) async {
+  // 守卫说明：清理抛异常时仍必须退出——信号方已要求进程终止，卡在清理上
+  // 会让子进程继续存活，比放弃清理更糟（spec: cleanup failure MUST NOT
+  // block exit）。
+  try {
+    await NetworkProxyService.instance.shutdown();
+  } catch (e, stack) {
+    debugPrint('[main] SIGTERM 清理失败（仍然退出）: $e\n$stack');
+  }
+  if (forTest) {
+    exitOverride?.call(0);
+    return;
+  }
+  exit(0);
+}
+
+/// SIGTERM 清理入口，测试可直接调用（真实信号会杀死测试进程自身，故不通过
+/// `ProcessSignal` 发送）。
+@visibleForTesting
+Future<void> gracefulShutdownForTesting() => runShutdownCleanup(forTest: true);
 
 /// Main app
 class V8WorkToolboxApp extends StatelessWidget {

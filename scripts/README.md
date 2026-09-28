@@ -4,6 +4,33 @@
 
 ## 脚本列表
 
+### deploy_local.sh
+**本地 macOS 一键部署脚本**——本机构建并替换 `/Applications` 下的应用。
+
+一条命令完成：清理构建产物 → release 构建 → 注入 mihomo 二进制 → 重新
+ad-hoc 签名 → SIGTERM 优雅退出旧实例 → 替换 → 签名与 AOT 快照校验 → 启动。
+
+任一步失败即整体中止，不留下半部署状态。
+
+**功能：**
+- `flutter clean` 规避增量构建残留失效 seal（该问题会导致 macOS 拒绝访问 Keychain，进而使 DEK 走文件兜底、旧密文全部解不开）
+- 自动从「上一版已部署 bundle」取回 mihomo（它在 `.gitignore`，构建系统不产出它）
+- 注入后重新 ad-hoc 签名（往已签名 bundle 加文件会破坏 seal）
+- 部署目标路径防呆断言，绝不误删
+- 部署前后比对 Dart AOT 快照 md5，确认代码真的更新了
+- 优雅退出 + 孤儿 mihomo 兜底清理（精确匹配本应用路径，不误杀 Clash Verge）
+
+**使用方法：**
+```bash
+# 完整部署
+./scripts/deploy_local.sh
+
+# 跳过 clean（仅调试用，有 seal 失效风险）
+./scripts/deploy_local.sh --skip-clean
+```
+
+> 注：本脚本不产出安装包。需要分发包（DMG/ZIP）时用 `build_installer.sh`。
+
 ### build_installer.sh
 构建 V8WorkToolbox 应用安装包的脚本。
 
