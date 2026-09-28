@@ -8,6 +8,7 @@ enum ActivityViewType {
   category, // 按特定分类过滤
   ai,       // AI 能力配置
   privacy,  // 隐私空间
+  proxy,    // 网络代理
 }
 
 class ActivityBar extends StatelessWidget {
@@ -114,6 +115,15 @@ class ActivityBar extends StatelessWidget {
           ),
 
           const Spacer(),
+
+          // 网络代理入口 (系统级代理管理)
+          _buildActivityItem(
+            icon: Icons.vpn_lock_outlined,
+            label: '网络代理',
+            isSelected: currentView == ActivityViewType.proxy,
+            onTap: () => onViewSelected(ActivityViewType.proxy),
+          ),
+          const SizedBox(height: AppTheme.space6),
 
           // AI 配置入口 (置于底部设置之上)
           _buildActivityItem(

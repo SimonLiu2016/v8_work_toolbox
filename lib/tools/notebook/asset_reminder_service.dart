@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import 'note_store.dart';
+import '../../../services/app_paths.dart';
 
 /// 资产到期提醒服务。
 ///
@@ -39,19 +40,11 @@ class AssetReminderService extends ChangeNotifier {
   Future<void> init({Directory? customRootDir}) async {
     if (_initialized) return;
     try {
-      Directory dir;
-      if (customRootDir != null) {
-        dir = customRootDir;
-      } else {
-        final home = Platform.environment['HOME'];
-        if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          dir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'));
-        } else {
-          dir = Directory.systemTemp;
-        }
-      }
+      final dir = customRootDir ?? AppPaths.root;
       if (!dir.existsSync()) dir.createSync(recursive: true);
-      _stateFile = File(p.join(dir.path, 'asset_reminders.json'));
+      _stateFile = customRootDir == null
+          ? AppPaths.assetRemindersFile
+          : File(p.join(dir.path, 'asset_reminders.json'));
       await _loadState();
       _initialized = true;
       _startTimer();

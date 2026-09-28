@@ -193,7 +193,10 @@ class OpenAiTtsEngine implements TtsEngine {
 
   OpenAiTtsEngine({http.Client? client, http.Client Function()? clientFactory})
       : _clientFactory = clientFactory,
-        _client = client ?? (clientFactory != null ? clientFactory() : AppHttpClient.create());
+        _client = client ??
+            (clientFactory != null
+                ? clientFactory()
+                : AppHttpClient.create(toolId: 'doc-audio-reader'));
 
   @override
   Future<bool> isAvailable() async {
@@ -458,7 +461,8 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory?.call() ?? AppHttpClient.create();
+            _client = _clientFactory?.call() ??
+                AppHttpClient.create(toolId: 'doc-audio-reader');
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }
@@ -571,7 +575,8 @@ class OpenAiTtsEngine implements TtsEngine {
             try {
               _client.close();
             } catch (_) {}
-            _client = _clientFactory?.call() ?? AppHttpClient.create();
+            _client = _clientFactory?.call() ??
+                AppHttpClient.create(toolId: 'doc-audio-reader');
             await Future.delayed(const Duration(milliseconds: 1500));
             continue;
           }

@@ -108,3 +108,6 @@ Icon?
 .claude/__pycache__/
 *.pyc
 .claude/settings.local.json
+
+# Bundled mihomo core binary (43MB, provisioned locally, not versioned)
+macos/Runner/Resources/

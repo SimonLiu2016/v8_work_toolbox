@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
+import 'app_paths.dart';
 
 /// 日志条目类型
 enum AiLogType {
@@ -79,14 +79,11 @@ class AiLogger {
     _writeQueue = _writeQueue.then((_) async {
       try {
         if (!_fileInitialized) {
-          final home = Platform.environment['HOME'];
-          final baseDir = (Platform.isMacOS && home != null && home.isNotEmpty)
-              ? Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox', 'logs'))
-              : Directory(p.join(Directory.systemTemp.path, 'V8WorkToolbox', 'logs'));
+          final baseDir = AppPaths.logsDir;
           if (!baseDir.existsSync()) {
             baseDir.createSync(recursive: true);
           }
-          _logFile = File(p.join(baseDir.path, 'ai.log'));
+          _logFile = AppPaths.aiLogFile;
           _fileInitialized = true;
         }
 

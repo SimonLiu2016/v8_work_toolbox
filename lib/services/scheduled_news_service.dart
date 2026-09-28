@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
+import '../../../services/app_paths.dart';
 import 'ai_service.dart';
 import 'web_search_service.dart';
 
@@ -121,22 +121,19 @@ class ScheduledNewsService extends ChangeNotifier {
 
   Future<void> init({Directory? customRootDir}) async {
     try {
-      Directory dir;
+      // customRootDir 是测试注入点，必须真正短路——传了它就不该触达 AppPaths，
+      // 否则测试环境没有 main()，AppPaths 未初始化会直接抛 StateError。
       if (customRootDir != null) {
-        dir = customRootDir;
+        if (!customRootDir.existsSync()) customRootDir.createSync(recursive: true);
+        _tasksFile = File(p.join(customRootDir.path, 'scheduled_news_tasks.json'));
+        _briefingsFile =
+            File(p.join(customRootDir.path, 'scheduled_news_briefings.json'));
       } else {
-        final home = Platform.environment['HOME'];
-        if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          dir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'));
-        } else {
-          final appSupport = await getApplicationSupportDirectory();
-          dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-        }
+        final root = AppPaths.root;
+        if (!root.existsSync()) root.createSync(recursive: true);
+        _tasksFile = AppPaths.newsTasksFile;
+        _briefingsFile = AppPaths.newsBriefingsFile;
       }
-
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      _tasksFile = File(p.join(dir.path, 'scheduled_news_tasks.json'));
-      _briefingsFile = File(p.join(dir.path, 'scheduled_news_briefings.json'));
 
       await _loadData();
       _startScheduler();

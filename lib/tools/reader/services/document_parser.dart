@@ -324,7 +324,7 @@ class DocumentParser {
       throw Exception('请输入有效的 HTTP / HTTPS 网页地址');
     }
 
-    final client = AppHttpClient.create();
+    final client = AppHttpClient.create(toolId: 'doc-audio-reader');
     try {
       final response = await client.get(
         uri,

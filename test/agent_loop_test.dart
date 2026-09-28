@@ -42,6 +42,54 @@ void main() {
       expect(call!['name'], 'scrape');
       expect((call['arguments'] as Map)['url'], 'https://example.com');
     });
+
+    test('解析 XML <tool_call> 标签格式', () {
+      const reply = '<tool_call>\n'
+          '{"name": "web_search", "arguments": {"query": "Google"}}\n'
+          '</tool_call>';
+      final call = AgentLoop.parseToolCall(reply);
+      expect(call, isNotNull);
+      expect(call!['name'], 'web_search');
+      expect((call['arguments'] as Map)['query'], 'Google');
+    });
+
+    test('解析省略闭合标签的 <tool_call> 格式 (实际线上模型输出)', () {
+      const reply = '<tool_call> { "name": "web_search", "arguments": { "query": "Google latest news 2025 AI products", "limit": 10 } }';
+      final call = AgentLoop.parseToolCall(reply);
+      expect(call, isNotNull);
+      expect(call!['name'], 'web_search');
+      expect((call['arguments'] as Map)['query'], 'Google latest news 2025 AI products');
+      expect((call['arguments'] as Map)['limit'], 10);
+    });
+
+    test('过滤 <think> 思考链内容并成功提取工具调用', () {
+      const reply = '<think>用户想了解最新新闻，我需要先搜索一下。</think>\n'
+          '<tool_call>{"name": "web_search", "arguments": {"query": "最新科技资讯"}}</tool_call>';
+      final call = AgentLoop.parseToolCall(reply);
+      expect(call, isNotNull);
+      expect(call!['name'], 'web_search');
+      expect((call['arguments'] as Map)['query'], '最新科技资讯');
+    });
+
+    test('归一化 parameters 与 args 别名为 arguments', () {
+      const reply1 = '<tool_call>{"name": "web_search", "parameters": {"query": "AI"}}</tool_call>';
+      final call1 = AgentLoop.parseToolCall(reply1);
+      expect(call1!['arguments'], isNotNull);
+      expect((call1['arguments'] as Map)['query'], 'AI');
+
+      const reply2 = '```json\n{"name": "web_search", "args": {"query": "Rust"}}\n```';
+      final call2 = AgentLoop.parseToolCall(reply2);
+      expect(call2!['arguments'], isNotNull);
+      expect((call2['arguments'] as Map)['query'], 'Rust');
+    });
+
+    test('解析裸 JSON 格式工具调用', () {
+      const reply = '好的，我帮您搜索：\n{"name": "web_search", "arguments": {"query": "Flutter"}}';
+      final call = AgentLoop.parseToolCall(reply);
+      expect(call, isNotNull);
+      expect(call!['name'], 'web_search');
+      expect((call['arguments'] as Map)['query'], 'Flutter');
+    });
   });
 
   group('AgentTool 与 prompt 渲染', () {

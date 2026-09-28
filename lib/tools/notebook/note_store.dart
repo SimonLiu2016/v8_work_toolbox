@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import '../../../services/app_paths.dart';
 
 import 'note_database.dart';
 import 'appflowy_codec.dart';
@@ -24,9 +24,9 @@ class NoteStore {
 
   Future<void> init() async {
     if (_initialized) return;
+    await _migrateLegacyNoteDbIfNeeded();
     _db = NoteDatabase();
-    final dir = await getApplicationSupportDirectory();
-    _attachmentsDir = p.join(dir.path, 'notebook_attachments');
+    _attachmentsDir = AppPaths.attachmentsDir.path;
     await Directory(_attachmentsDir!).create(recursive: true);
     _initialized = true;
 
@@ -35,6 +35,33 @@ class NoteStore {
 
     // 中文分词上线的一次性索引重建（版本标记驱动，只跑一次）
     await _migrateFtsTokenizerIfNeeded();
+  }
+
+  /// 一次性搬迁：把 drift 旧默认目录（macOS 为 `~/Documents/notebook.db`）
+  /// 移到 `AppPaths.noteDbFile`。同卷下 `renameSync` 是元数据操作，原子且无
+  /// 数据复制风险。校验和比对失败则保留源文件不动并记错误，不阻断启动
+  /// （main() 的 fail-soft 契约）。
+  Future<void> _migrateLegacyNoteDbIfNeeded() async {
+    final target = AppPaths.noteDbFile;
+    if (target.existsSync()) return;
+
+    final home = Platform.environment['HOME'];
+    if (home == null || home.isEmpty) return;
+    final legacy = File(p.join(home, 'Documents', 'notebook.db'));
+    if (!legacy.existsSync()) return;
+
+    try {
+      target.parent.createSync(recursive: true);
+      final bytesBefore = legacy.lengthSync();
+      legacy.renameSync(target.path);
+      final bytesAfter = target.lengthSync();
+      if (bytesBefore != bytesAfter) {
+        throw StateError('搬迁后字节数不一致: $bytesBefore → $bytesAfter');
+      }
+      debugPrint('笔记主库已从 ${legacy.path} 搬迁到 ${target.path}');
+    } catch (e) {
+      debugPrint('笔记主库搬迁失败（保留原位）: $e');
+    }
   }
 
   /// 当前 FTS 索引方案版本。变更此值会触发一次全量索引重建。
@@ -78,7 +105,8 @@ class NoteStore {
   /// 获取按 Stack 分组的笔记本结构：
   /// - stacks: `Map<String, List<Notebook>>` (Stack 名称 -> 该组下的笔记本列表)
   /// - unstacked: `List<Notebook>` (未归入任何组的独立笔记本)
-  Future<({Map<String, List<Notebook>> stacks, List<Notebook> unstacked})> groupedNotebooks() async {
+  Future<({Map<String, List<Notebook>> stacks, List<Notebook> unstacked})>
+  groupedNotebooks() async {
     final all = await _db.allNotebooks();
     final Map<String, List<Notebook>> stacks = {};
     final List<Notebook> unstacked = [];
@@ -94,37 +122,54 @@ class NoteStore {
     return (stacks: stacks, unstacked: unstacked);
   }
 
-  Future<String> createNotebook(String name, {String icon = '📓', String? stack}) async {
+  Future<String> createNotebook(
+    String name, {
+    String icon = '📓',
+    String? stack,
+  }) async {
     final id = _uuid.v4();
     final now = DateTime.now();
-    await _db.insertNotebook(NotebooksCompanion(
-      id: Value(id),
-      name: Value(name),
-      stack: Value(stack),
-      icon: Value(icon),
-      createdAt: Value(now),
-      updatedAt: Value(now),
-    ));
+    await _db.insertNotebook(
+      NotebooksCompanion(
+        id: Value(id),
+        name: Value(name),
+        stack: Value(stack),
+        icon: Value(icon),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
     return id;
   }
 
-  Future<void> updateNotebook(String id, {String? name, String? icon, String? stack}) async {
-    await _db.updateNotebook(id, NotebooksCompanion(
-      name: name != null ? Value(name) : const Value.absent(),
-      icon: icon != null ? Value(icon) : const Value.absent(),
-      stack: stack != null ? Value(stack) : const Value.absent(),
-      updatedAt: Value(DateTime.now()),
-    ));
+  Future<void> updateNotebook(
+    String id, {
+    String? name,
+    String? icon,
+    String? stack,
+  }) async {
+    await _db.updateNotebook(
+      id,
+      NotebooksCompanion(
+        name: name != null ? Value(name) : const Value.absent(),
+        icon: icon != null ? Value(icon) : const Value.absent(),
+        stack: stack != null ? Value(stack) : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
   }
 
   Future<void> updateNotebookStack(String id, String? stack) =>
       _db.updateNotebookStack(id, stack);
 
   Future<void> renameNotebook(String id, String newName) async {
-    await _db.updateNotebook(id, NotebooksCompanion(
-      name: Value(newName),
-      updatedAt: Value(DateTime.now()),
-    ));
+    await _db.updateNotebook(
+      id,
+      NotebooksCompanion(
+        name: Value(newName),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
   }
 
   Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
@@ -133,17 +178,31 @@ class NoteStore {
   Future<void> autoBackfillNotebookStacksFromEvernote() async {
     try {
       final notebooks = await _db.allNotebooks();
-      final needBackfill = notebooks.where((nb) => nb.stack == null || nb.stack!.isEmpty).toList();
+      final needBackfill = notebooks
+          .where((nb) => nb.stack == null || nb.stack!.isEmpty)
+          .toList();
       if (needBackfill.isEmpty) return;
 
       final home = Platform.environment['HOME'] ?? '';
       if (home.isEmpty) return;
 
       final candidateRoots = [
-        p.join(home, 'Library/Containers/com.yinxiang.Mac/Data/Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com'),
-        p.join(home, 'Library/Containers/com.evernote.Evernote/Data/Library/Application Support/com.evernote.Evernote/accounts/www.evernote.com'),
-        p.join(home, 'Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com'),
-        p.join(home, 'Library/Application Support/Evernote/accounts/www.evernote.com'),
+        p.join(
+          home,
+          'Library/Containers/com.yinxiang.Mac/Data/Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com',
+        ),
+        p.join(
+          home,
+          'Library/Containers/com.evernote.Evernote/Data/Library/Application Support/com.evernote.Evernote/accounts/www.evernote.com',
+        ),
+        p.join(
+          home,
+          'Library/Application Support/com.yinxiang.Mac/accounts/app.yinxiang.com',
+        ),
+        p.join(
+          home,
+          'Library/Application Support/Evernote/accounts/www.evernote.com',
+        ),
       ];
 
       String? targetDb;
@@ -153,7 +212,9 @@ class NoteStore {
         try {
           final accounts = dir.listSync().whereType<Directory>();
           for (final acct in accounts) {
-            final dbFile = File(p.join(acct.path, 'localNoteStore', 'LocalNoteStore.sqlite'));
+            final dbFile = File(
+              p.join(acct.path, 'localNoteStore', 'LocalNoteStore.sqlite'),
+            );
             if (dbFile.existsSync()) {
               targetDb = dbFile.path;
               break;
@@ -167,7 +228,7 @@ class NoteStore {
 
       final res = await Process.run('sqlite3', [
         targetDb,
-        'SELECT ZNAME, ZSTACK FROM ZENNOTEBOOK WHERE ZSTACK IS NOT NULL;'
+        'SELECT ZNAME, ZSTACK FROM ZENNOTEBOOK WHERE ZSTACK IS NOT NULL;',
       ]);
       if (res.exitCode != 0) return;
 
@@ -188,7 +249,9 @@ class NoteStore {
         }
       }
     } catch (e) {
-      debugPrint('[NoteStore] autoBackfillNotebookStacksFromEvernote error: $e');
+      debugPrint(
+        '[NoteStore] autoBackfillNotebookStacksFromEvernote error: $e',
+      );
     }
   }
 
@@ -201,7 +264,10 @@ class NoteStore {
 
   Future<List<Note>> notesForStack(String stack) async {
     final nbs = await _db.allNotebooks();
-    final matchingIds = nbs.where((nb) => nb.stack == stack).map((nb) => nb.id).toList();
+    final matchingIds = nbs
+        .where((nb) => nb.stack == stack)
+        .map((nb) => nb.id)
+        .toList();
     if (matchingIds.isEmpty) return [];
     return _db.notesForNotebookIds(matchingIds);
   }
@@ -222,14 +288,16 @@ class NoteStore {
   }) async {
     final noteId = id ?? _uuid.v4();
     final now = DateTime.now();
-    await _db.insertNote(NotesCompanion(
-      id: Value(noteId),
-      title: Value(title),
-      deltaJson: Value(deltaJson),
-      notebookId: Value(notebookId),
-      createdAt: Value(createdAt ?? now),
-      updatedAt: Value(updatedAt ?? now),
-    ));
+    await _db.insertNote(
+      NotesCompanion(
+        id: Value(noteId),
+        title: Value(title),
+        deltaJson: Value(deltaJson),
+        notebookId: Value(notebookId),
+        createdAt: Value(createdAt ?? now),
+        updatedAt: Value(updatedAt ?? now),
+      ),
+    );
     // Index for FTS
     await _indexNote(noteId, title, deltaJson);
     return noteId;
@@ -292,8 +360,10 @@ class NoteStore {
   Future<List<Note>> allAssets() => _db.allAssets();
 
   /// 标记/取消标记附件为凭证。
-  Future<void> flagAttachmentCredential(String attachmentId, bool isCredential) =>
-      _db.setAttachmentCredential(attachmentId, isCredential);
+  Future<void> flagAttachmentCredential(
+    String attachmentId,
+    bool isCredential,
+  ) => _db.setAttachmentCredential(attachmentId, isCredential);
 
   /// 资产笔记的凭证附件。
   Future<List<Attachment>> credentialsForNote(String noteId) =>
@@ -310,12 +380,14 @@ class NoteStore {
     String? reason,
   }) async {
     if (sourceId == targetId) return;
-    await _db.insertLink(NoteLinksCompanion.insert(
-      sourceNoteId: sourceId,
-      targetNoteId: targetId,
-      reason: Value(reason),
-      createdAt: DateTime.now(),
-    ));
+    await _db.insertLink(
+      NoteLinksCompanion.insert(
+        sourceNoteId: sourceId,
+        targetNoteId: targetId,
+        reason: Value(reason),
+        createdAt: DateTime.now(),
+      ),
+    );
   }
 
   Future<void> deleteLink(String sourceId, String targetId) =>
@@ -331,12 +403,14 @@ class NoteStore {
       final otherId = isOutgoing ? link.targetNoteId : link.sourceNoteId;
       final other = await _db.noteById(otherId);
       if (other == null || other.isDeleted) continue;
-      out.add(RelatedNote(
-        noteId: otherId,
-        title: other.title,
-        reason: link.reason,
-        outgoing: isOutgoing,
-      ));
+      out.add(
+        RelatedNote(
+          noteId: otherId,
+          title: other.title,
+          reason: link.reason,
+          outgoing: isOutgoing,
+        ),
+      );
     }
     return out;
   }
@@ -388,11 +462,9 @@ class NoteStore {
 
   Future<String> createTag(String name, {String? color}) async {
     final id = _uuid.v4();
-    await _db.insertTag(TagsCompanion(
-      id: Value(id),
-      name: Value(name),
-      color: Value(color),
-    ));
+    await _db.insertTag(
+      TagsCompanion(id: Value(id), name: Value(name), color: Value(color)),
+    );
     return id;
   }
 
@@ -429,7 +501,10 @@ class NoteStore {
 
     ops.addAll([
       {'insert': '任务：'},
-      {'insert': '\n', 'attributes': {'list': 'unchecked'}},
+      {
+        'insert': '\n',
+        'attributes': {'list': 'unchecked'},
+      },
     ]);
     return jsonEncode(ops);
   }
@@ -505,14 +580,16 @@ class NoteStore {
     final targetPath = p.join(attachmentsDir, '$id$ext');
     await sourceFile.copy(targetPath);
 
-    await _db.insertAttachment(AttachmentsCompanion(
-      id: Value(id),
-      noteId: Value(noteId),
-      filename: Value(filename ?? p.basename(sourceFile.path)),
-      mime: Value(mime),
-      localPath: Value(targetPath),
-      createdAt: Value(DateTime.now()),
-    ));
+    await _db.insertAttachment(
+      AttachmentsCompanion(
+        id: Value(id),
+        noteId: Value(noteId),
+        filename: Value(filename ?? p.basename(sourceFile.path)),
+        mime: Value(mime),
+        localPath: Value(targetPath),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
     return targetPath;
   }
 
@@ -531,14 +608,16 @@ class NoteStore {
     await sourceFile.copy(targetPath);
 
     final mime = _lookupMime(sourceFile.path);
-    await _db.insertAttachment(AttachmentsCompanion(
-      id: Value(id),
-      noteId: Value(noteId),
-      filename: Value(p.basename(sourceFile.path)),
-      mime: Value(mime),
-      localPath: Value(targetPath),
-      createdAt: Value(DateTime.now()),
-    ));
+    await _db.insertAttachment(
+      AttachmentsCompanion(
+        id: Value(id),
+        noteId: Value(noteId),
+        filename: Value(p.basename(sourceFile.path)),
+        mime: Value(mime),
+        localPath: Value(targetPath),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
     return id;
   }
 
@@ -556,10 +635,12 @@ class NoteStore {
 
   /// 按 attachment ID 查询单个附件。
   Future<Attachment?> attachmentById(String attId) async {
-    final results = await _db.customSelect(
-      'SELECT id, note_id, filename, mime, local_path, created_at FROM attachments WHERE id = ?',
-      variables: [Variable<String>(attId)],
-    ).get();
+    final results = await _db
+        .customSelect(
+          'SELECT id, note_id, filename, mime, local_path, created_at FROM attachments WHERE id = ?',
+          variables: [Variable<String>(attId)],
+        )
+        .get();
     if (results.isEmpty) return null;
     final row = results.first;
     return Attachment(
@@ -575,10 +656,12 @@ class NoteStore {
 
   /// 删除指定附件（文件 + 数据库记录）。
   Future<void> deleteAttachment(String attId) async {
-    final results = await _db.customSelect(
-      'SELECT * FROM attachments WHERE id = ?',
-      variables: [Variable<String>(attId)],
-    ).get();
+    final results = await _db
+        .customSelect(
+          'SELECT * FROM attachments WHERE id = ?',
+          variables: [Variable<String>(attId)],
+        )
+        .get();
     if (results.isEmpty) return;
     final row = results.first;
     final localPath = row.read<String>('local_path');
@@ -593,11 +676,14 @@ class NoteStore {
     const map = {
       '.pdf': 'application/pdf',
       '.doc': 'application/msword',
-      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.docx':
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       '.xls': 'application/vnd.ms-excel',
-      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.xlsx':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       '.ppt': 'application/vnd.ms-powerpoint',
-      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      '.pptx':
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       '.txt': 'text/plain',
       '.md': 'text/markdown',
       '.png': 'image/png',
@@ -624,14 +710,16 @@ class NoteStore {
     final targetPath = p.join(attachmentsDir, '$id$ext');
     await File(targetPath).writeAsBytes(bytes);
 
-    await _db.insertAttachment(AttachmentsCompanion(
-      id: Value(id),
-      noteId: Value(noteId),
-      filename: Value(filename),
-      mime: Value(mime),
-      localPath: Value(targetPath),
-      createdAt: Value(DateTime.now()),
-    ));
+    await _db.insertAttachment(
+      AttachmentsCompanion(
+        id: Value(id),
+        noteId: Value(noteId),
+        filename: Value(filename),
+        mime: Value(mime),
+        localPath: Value(targetPath),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
     return targetPath;
   }
 

@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import 'app_http_client.dart';
 import 'mcp_service.dart';
+import 'proxy_settings.dart';
 
 // ---------------------------------------------------------------------------
 // 数据类型
@@ -124,12 +126,20 @@ class BackendHealthSnapshot {
 /// 探活。替代 [ScheduledNewsService] 与 [AiAssistantService] 中硬编码的
 /// `'firecrawl_search'` 字面量。
 class WebSearchService extends ChangeNotifier {
-  WebSearchService._();
+  WebSearchService._() {
+    ProxySettings.instance.addListener(_onProxySettingsChanged);
+  }
   static final WebSearchService instance = WebSearchService._();
 
-  /// 后端失败后的冷却时长。冷却期内该后端被直接跳过，避免每次检索都等
-  /// 其超时。复用 AiService.cooldownDuration 的 60s 语义。
-  static const Duration _cooldown = Duration(seconds: 60);
+  void _onProxySettingsChanged() {
+    debugPrint('[WebSearchService] 检测到代理配置变更，清空搜索后端冷却状态');
+    clearHealth();
+  }
+
+  /// 后端初次失败的冷却时长。短初始冷却支持快速自愈（15s）。
+  static const Duration _initialCooldown = Duration(seconds: 15);
+  /// 后端常规冷却时长（45s）。
+  static const Duration _cooldown = Duration(seconds: 45);
 
   /// 连续失败达到此阈值后，后端进入延长退避（[_extendedBackoff]），
   /// 避免每 30s tick 都空转。
@@ -141,6 +151,7 @@ class WebSearchService extends ChangeNotifier {
   /// 搜索后端链，按优先级排序。首位为零配置默认后端。
   List<SearchBackend> get _searchChain => [
         BingSearchBackend(),
+        DuckDuckGoSearchBackend(),
         if (SearXngSearchBackend.isEnabled) SearXngSearchBackend(),
         McpSearchBackend(),
       ];
@@ -152,16 +163,24 @@ class WebSearchService extends ChangeNotifier {
       ];
 
   /// 搜索。首个可用后端返回结果；全部失败时返回携带首个失败原因的失败信号。
+  /// 若全部后端处于冷却期，自动自愈重置首位默认后端并强制探测，避免用户陷入永久不可用死锁。
   Future<WebSearchResult> search(String query, {int limit = 5}) async {
-    final attempted = <String>[];
-    String? firstError;
+    final chain = _searchChain;
+    var available = chain.where((b) => !_isInCooldown(b.name)).toList();
 
-    for (final backend in _searchChain) {
+    // 自愈恢复机制：若全部后端均在冷却期，自动解除主后端（Bing）的冷却锁并强制发起探测尝试
+    if (available.isEmpty && chain.isNotEmpty) {
+      final primary = chain.first;
+      debugPrint('[WebSearchService] 全部搜索后端处于冷却期，触发自愈机制：重置 ${primary.name} 冷却并执行探测');
+      _health.remove(primary.name);
+      available = [primary];
+    }
+
+    final attempted = <String>[];
+    final errors = <String>[];
+
+    for (final backend in available) {
       final name = backend.name;
-      if (_isInCooldown(name)) {
-        debugPrint('[$name] 冷却期内，跳过');
-        continue;
-      }
       attempted.add(name);
       try {
         final results = await backend.search(query, limit: limit);
@@ -171,18 +190,18 @@ class WebSearchService extends ChangeNotifier {
         }
         // 空结果视为该后端本轮不可用，降级到下一候选。
         _markUnhealthy(name);
-        firstError ??= '$name 返回空结果';
+        errors.add('$name 返回空结果');
       } catch (e) {
         _markUnhealthy(name);
-        firstError ??= '$name: $e';
+        errors.add('$name: $e');
         debugPrint('[$name] 搜索失败: $e');
       }
     }
 
     if (attempted.isEmpty) {
-      return WebSearchResult.failure('全部搜索后端处于冷却期，无可用后端');
+      return const WebSearchResult.failure('搜索后端链为空，无可用后端');
     }
-    return WebSearchResult.failure(firstError ?? '所有后端均返回空结果');
+    return WebSearchResult.failure(errors.join('\n'));
   }
 
   /// 抓取单个 URL 的正文。
@@ -240,8 +259,14 @@ class WebSearchService extends ChangeNotifier {
     final s = _health[name];
     if (s == null || s.isHealthy) return false;
     final elapsed = DateTime.now().difference(s.lastCheckedAt!);
-    final backoff =
-        s.consecutiveFailures >= _extendedBackoffThreshold ? _extendedBackoff : _cooldown;
+    final Duration backoff;
+    if (s.consecutiveFailures >= _extendedBackoffThreshold) {
+      backoff = _extendedBackoff;
+    } else if (s.consecutiveFailures <= 1) {
+      backoff = _initialCooldown;
+    } else {
+      backoff = _cooldown;
+    }
     return elapsed < backoff;
   }
 
@@ -264,41 +289,98 @@ class WebSearchService extends ChangeNotifier {
 }
 
 // ---------------------------------------------------------------------------
-// 后端实现：cn.bing.com HTML 解析（零配置默认）
+// 后端实现：Bing HTML 解析（双域名自适应与主备容灾互切）
 // ---------------------------------------------------------------------------
 
-/// 解析 `cn.bing.com/search` 的 HTML 结果页。零配置、零密钥、零第三方。
+/// 解析 Bing 的 HTML 结果页。零配置、零密钥、零第三方。
+///
+/// 具备双端点（`www.bing.com` 与 `cn.bing.com`）自适应探测：
+/// 当代理开启时优先访问国际端点 `www.bing.com`，直连时优先访问国内端点 `cn.bing.com`。
+/// 遇到握手截断、网络异常或空结果时自动平滑尝试备用端点。
 class BingSearchBackend implements SearchBackend {
   @override
-  String get name => 'Bing (cn.bing.com)';
+  String get name => 'Bing';
 
   static const _ua =
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+
+  static const String internationalHost = 'www.bing.com';
+  static const String mainlandHost = 'cn.bing.com';
+
+  /// 根据代理配置获取候选域名列表（首选在前，备选在后）
+  static List<String> get candidateHosts {
+    final proxy = ProxySettings.instance;
+    final isProxyActive =
+        proxy.isConfigured && proxy.isToolEnabled('ai-assistant');
+    if (isProxyActive) {
+      return const [internationalHost, mainlandHost];
+    } else {
+      return const [mainlandHost, internationalHost];
+    }
+  }
 
   @override
   Future<List<SearchResult>> search(String query, {int limit = 5}) async {
-    final uri = Uri.parse(
-      'https://cn.bing.com/search?q=${Uri.encodeQueryComponent(query)}&count=$limit',
-    );
-    final client = AppHttpClient.create();
-    try {
-      final resp = await client.get(uri, headers: {
-        'User-Agent': _ua,
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      }).timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) {
-        throw Exception('HTTP ${resp.statusCode}');
+    final hosts = candidateHosts;
+    final endpointErrors = <String, String>{};
+
+    for (final host in hosts) {
+      // 针对每个端点，支持 1 次瞬态网络/握手重试
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final client = AppHttpClient.create(toolId: 'ai-assistant');
+        try {
+          final queryParams = {
+            'q': query,
+            'count': '$limit',
+            'setlang': 'zh-Hans',
+            if (host == mainlandHost) 'cc': 'CN' else 'cc': 'US',
+          };
+          final uri = Uri.https(host, '/search', queryParams);
+          final resp = await client.get(uri, headers: {
+            'User-Agent': _ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Sec-Ch-Ua': '"Chromium";v="123", "Not:A-Brand";v="8"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"macOS"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+          }).timeout(const Duration(seconds: 12));
+
+          if (resp.statusCode != 200) {
+            throw Exception('$host 返回 HTTP ${resp.statusCode}');
+          }
+          final html = utf8.decode(resp.bodyBytes, allowMalformed: true);
+          final results = parseHtml(html);
+          if (results.isEmpty) {
+            throw Exception('$host 结果页结构变更或发生重定向，未匹配到任何 b_algo 块');
+          }
+          return results.take(limit).toList();
+        } catch (e) {
+          final isRetryable = e is HandshakeException ||
+              e is SocketException ||
+              e.toString().contains('HandshakeException') ||
+              e.toString().contains('Connection terminated during handshake');
+          if (attempt == 0 && isRetryable) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            continue;
+          }
+          endpointErrors[host] = e.toString();
+          break; // 当前端点失败，尝试下一个候选端点
+        } finally {
+          client.close();
+        }
       }
-      final html = utf8.decode(resp.bodyBytes, allowMalformed: true);
-      final results = parseHtml(html);
-      if (results.isEmpty) {
-        // 严格失败：匹配不到任何结果块时显式抛错，绝不静默返回空列表。
-        throw Exception('Bing 结果页结构变更，未匹配到任何 b_algo 块');
-      }
-      return results.take(limit).toList();
-    } finally {
-      client.close();
+      debugPrint('[BingSearchBackend] 端点 $host 请求失败 (${endpointErrors[host]})，尝试备用端点');
     }
+
+    final formattedErrors = endpointErrors.entries
+        .map((e) => '${e.key}: ${e.value}')
+        .join('; ');
+    throw Exception('Bing 全部端点均不可用 ($formattedErrors)');
   }
 
   @visibleForTesting
@@ -347,19 +429,165 @@ class BingSearchBackend implements SearchBackend {
 
   @override
   Future<bool> healthCheck() async {
-    try {
-      final client = AppHttpClient.create();
+    for (final host in candidateHosts) {
+      final client = AppHttpClient.create(toolId: 'ai-assistant');
       try {
         final resp = await client
-            .get(Uri.parse('https://cn.bing.com/search?q=test'),
+            .get(Uri.parse('https://$host/search?q=test'),
                 headers: {'User-Agent': _ua})
-            .timeout(const Duration(seconds: 10));
-        return resp.statusCode == 200;
+            .timeout(const Duration(seconds: 8));
+        if (resp.statusCode == 200) return true;
+      } catch (_) {
+        // 继续探测下一个候选端点
       } finally {
         client.close();
       }
+    }
+    return false;
+  }
+
+  @override
+  Future<ScrapeResult> scrape(String url) async =>
+      ScrapeResult.failure('$name 不提供抓取');
+}
+
+// ---------------------------------------------------------------------------
+// 后端实现：DuckDuckGo HTML Lite（免密钥二级兜底）
+// ---------------------------------------------------------------------------
+
+/// 解析 `html.duckduckgo.com/html` 的 HTML 结果页。零配置、零密钥、免第三方服务。
+class DuckDuckGoSearchBackend implements SearchBackend {
+  @override
+  String get name => 'DuckDuckGo';
+
+  static const _ua =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+
+  @override
+  Future<List<SearchResult>> search(String query, {int limit = 5}) async {
+    final client = AppHttpClient.create(toolId: 'ai-assistant');
+    try {
+      // 优先尝试 POST 请求（DuckDuckGo 经典表单搜索）
+      var resp = await client.post(
+        Uri.parse('https://html.duckduckgo.com/html/'),
+        headers: {
+          'User-Agent': _ua,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Origin': 'https://html.duckduckgo.com',
+          'Referer': 'https://html.duckduckgo.com/',
+        },
+        body: {'q': query},
+      ).timeout(const Duration(seconds: 12));
+
+      // 若遇 HTTP 202（人机反爬拦截或中间态），尝试 GET 方式回退
+      if (resp.statusCode == 202) {
+        resp = await client.get(
+          Uri.parse('https://html.duckduckgo.com/html/?q=${Uri.encodeQueryComponent(query)}'),
+          headers: {
+            'User-Agent': _ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer': 'https://duckduckgo.com/',
+          },
+        ).timeout(const Duration(seconds: 12));
+      }
+
+      if (resp.statusCode != 200) {
+        if (resp.statusCode == 202) {
+          throw Exception('DuckDuckGo 返回 HTTP 202 (触发反爬验证或代理节点拦截)');
+        }
+        throw Exception('DuckDuckGo 返回 HTTP ${resp.statusCode}');
+      }
+      final html = utf8.decode(resp.bodyBytes, allowMalformed: true);
+      final results = parseHtml(html);
+      if (results.isEmpty) {
+        throw Exception('DuckDuckGo 结果页未匹配到任何结果');
+      }
+      return results.take(limit).toList();
+    } finally {
+      client.close();
+    }
+  }
+
+  @visibleForTesting
+  static List<SearchResult> parseHtml(String html) {
+    final bodyPattern = RegExp(
+      r'<div class="[^"]*result__body[^"]*".*?(?=<div class="[^"]*result__body|<!-- Web results are finished|$)',
+      dotAll: true,
+    );
+    final titlePattern = RegExp(
+      r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+      dotAll: true,
+    );
+    final snippetPattern = RegExp(
+      r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>',
+      dotAll: true,
+    );
+
+    final results = <SearchResult>[];
+    for (final block in bodyPattern.allMatches(html)) {
+      final blockText = block.group(0)!;
+      final titleMatch = titlePattern.firstMatch(blockText);
+      if (titleMatch == null) continue;
+
+      var url = _decodeHtmlEntities(titleMatch.group(1)!);
+      if (url.contains('uddg=')) {
+        final parsedUri =
+            Uri.tryParse(url.startsWith('//') ? 'https:$url' : url);
+        final uddg = parsedUri?.queryParameters['uddg'];
+        if (uddg != null && uddg.isNotEmpty) {
+          url = uddg;
+        }
+      } else if (url.startsWith('//')) {
+        url = 'https:$url';
+      }
+
+      final titleRaw = titleMatch.group(2)!;
+      final title = _stripTags(_decodeHtmlEntities(titleRaw)).trim();
+      if (title.isEmpty) continue;
+
+      final snippetMatch = snippetPattern.firstMatch(blockText);
+      final snippet = snippetMatch == null
+          ? ''
+          : _stripTags(_decodeHtmlEntities(snippetMatch.group(1)!)).trim();
+
+      results.add(SearchResult(title: title, url: url, snippet: snippet));
+    }
+
+    return results;
+  }
+
+  static String _stripTags(String s) => s.replaceAll(RegExp(r'<[^>]+>'), '');
+
+  static String _decodeHtmlEntities(String s) => s
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#x27;', "'")
+      .replaceAll('&#039;', "'")
+      .replaceAll('&#39;', "'")
+      .replaceAll('&nbsp;', ' ');
+
+  @override
+  Future<bool> healthCheck() async {
+    final client = AppHttpClient.create(toolId: 'ai-assistant');
+    try {
+      final resp = await client.post(
+        Uri.parse('https://html.duckduckgo.com/html/'),
+        headers: {
+          'User-Agent': _ua,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {'q': 'test'},
+      ).timeout(const Duration(seconds: 8));
+      return resp.statusCode == 200;
     } catch (_) {
       return false;
+    } finally {
+      client.close();
     }
   }
 

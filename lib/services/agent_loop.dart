@@ -156,14 +156,110 @@ class AgentLoop {
     return AgentLoopResult(text: finalText, executions: executions);
   }
 
-  /// 从模型回复中解析工具调用。无调用或 JSON 非法时返回 null。
+  /// 从模型回复中解析工具调用。
+  ///
+  /// 兼容 Markdown (```tool_call / ```json)、XML 标签 (<tool_call>...</tool_call> 或省略闭合标签)
+  /// 以及裸 JSON 格式。自动剔除 <think> 思考链，并将 `parameters` 或 `args` 归一化为 `arguments`。
+  /// 无工具调用或 JSON 非法时返回 null。
   @visibleForTesting
   static Map<String, dynamic>? parseToolCall(String reply) {
-    final match = toolCallPattern.firstMatch(reply);
-    if (match == null) return null;
+    // 1. 过滤思考链（如 DeepSeek-R1 等模型的 <think>...</think>）
+    final text = reply.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), '').trim();
+
+    // 2. 依次匹配常见代码块与标签标记
+    final markerPatterns = [
+      RegExp(r'```tool_call'),
+      RegExp(r'<tool_call>'),
+      RegExp(r'```json'),
+    ];
+
+    for (final marker in markerPatterns) {
+      final match = marker.firstMatch(text);
+      if (match != null) {
+        final braceIndex = text.indexOf('{', match.end);
+        if (braceIndex != -1) {
+          final jsonStr = _extractBalancedJson(text, braceIndex);
+          if (jsonStr != null) {
+            final res = _tryDecodeToolCall(jsonStr);
+            if (res != null) return res;
+          }
+        }
+      }
+    }
+
+    // 3. 兜底匹配：裸 JSON 块（在文本中寻找包含 "name" 的顶级 JSON）
+    final nameIndex = text.indexOf('"name"');
+    if (nameIndex != -1) {
+      final lastBrace = text.lastIndexOf('{', nameIndex);
+      if (lastBrace != -1) {
+        final jsonStr = _extractBalancedJson(text, lastBrace);
+        if (jsonStr != null) {
+          final res = _tryDecodeToolCall(jsonStr);
+          if (res != null) return res;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  static String? _extractBalancedJson(String input, int startIndex) {
+    var depth = 0;
+    var inString = false;
+    var escape = false;
+
+    for (var i = startIndex; i < input.length; i++) {
+      final char = input[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char == r'\') {
+        escape = true;
+        continue;
+      }
+
+      if (char == '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char == '{') {
+          depth++;
+        } else if (char == '}') {
+          depth--;
+          if (depth == 0) {
+            return input.substring(startIndex, i + 1);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _tryDecodeToolCall(String jsonStr) {
     try {
-      final data = jsonDecode(match.group(1)!) as Map<String, dynamic>;
-      return data.containsKey('name') ? data : null;
+      final decoded = jsonDecode(jsonStr);
+      if (decoded is! Map) return null;
+      final name = decoded['name'];
+      if (name is! String || name.trim().isEmpty) return null;
+
+      final rawArgs =
+          decoded['arguments'] ?? decoded['parameters'] ?? decoded['args'];
+      final Map<String, dynamic>? args;
+      if (rawArgs is Map) {
+        args = Map<String, dynamic>.from(rawArgs);
+      } else {
+        args = null;
+      }
+
+      return {
+        'name': name.trim(),
+        'arguments': args,
+      };
     } catch (_) {
       return null;
     }

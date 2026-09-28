@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 
 import '../../../services/ai_config_store.dart';
 import '../models/reader_models.dart';
@@ -21,17 +21,9 @@ class ReaderConfigStore {
   Future<File> _resolveConfigFile({Directory? customRootDir}) async {
     if (_file != null && customRootDir == null) return _file!;
     Directory dir;
-    if (customRootDir != null) {
-      dir = Directory(p.join(customRootDir.path, 'config'));
-    } else {
-      final home = Platform.environment['HOME'];
-      if (Platform.isMacOS && home != null && home.isNotEmpty) {
-        dir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox', 'config'));
-      } else {
-        final appSupport = await getApplicationSupportDirectory();
-        dir = Directory(p.join(appSupport.path, 'V8WorkToolbox', 'config'));
-      }
-    }
+    dir = customRootDir != null
+        ? Directory(p.join(customRootDir.path, 'config'))
+        : AppPaths.configDir;
     if (!dir.existsSync()) {
       dir.createSync(recursive: true);
     }

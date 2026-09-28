@@ -86,6 +86,8 @@ class _NotebookPageState extends State<NotebookPage> {
   bool _isBatchMode = false;
   final Set<String> _selectedNoteIds = {};
 
+  final TextEditingController _searchController = TextEditingController();
+
   // 窗口焦点刷新回调（子窗口中的编辑感知）
   late VoidCallback _windowFocusCallback;
 
@@ -102,6 +104,7 @@ class _NotebookPageState extends State<NotebookPage> {
   @override
   void dispose() {
     NotebookFocusBridge.instance.unregister(_windowFocusCallback);
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -1381,17 +1384,45 @@ class _NotebookPageState extends State<NotebookPage> {
     );
   }
 
-  /// 从问答引用跳转到笔记：切换选中并关闭问答面板（避免遮挡）。
+  /// 从星图或问答引用跳转到笔记：自动切换导航分类并保持稳定选中。
   Future<void> _openNoteById(String noteId) async {
     try {
       final note = await _store.noteById(noteId);
       if (note == null) return;
       if (!mounted) return;
+
+      // 联动解析所属笔记本及分组
+      Notebook? targetNb;
+      if (note.notebookId != null) {
+        final allNb = await _store.allNotebooks();
+        for (final nb in allNb) {
+          if (nb.id == note.notebookId) {
+            targetNb = nb;
+            break;
+          }
+        }
+      }
+
+      _searchController.clear();
       setState(() {
-        _selectedNote = note;
+        _isTrashSelected = note.isDeleted;
+        _selectedNotebookId = note.notebookId;
+        _selectedStack = targetNb?.stack;
+        _selectedTagId = null;
+        _searchQuery = '';
+        _isBatchMode = false;
+        _selectedNoteIds.clear();
         _showQa = false;
+        _selectedNote = note;
       });
+
       await _refresh(silent: true);
+
+      if (mounted) {
+        setState(() {
+          _selectedNote = note;
+        });
+      }
     } catch (e) {
       debugPrint('跳转笔记失败: $e');
     }
@@ -1892,6 +1923,7 @@ class _NotebookPageState extends State<NotebookPage> {
               children: [
                 Expanded(
                   child: TextField(
+                    controller: _searchController,
                     style: const TextStyle(
                       fontSize: 13,
                       color: Color(0xFF1E293B),

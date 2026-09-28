@@ -31,6 +31,7 @@ class AppOrphanDetector {
     'microsoft': 'microsoft word',
     'defaultcompany': 'unity',
     'antigravity ide': 'antigravity ide',
+    'v8-video-downloader': 'v8worktoolbox',
   };
 
   /// 系统级非 com.apple. 前缀的原生受保护服务

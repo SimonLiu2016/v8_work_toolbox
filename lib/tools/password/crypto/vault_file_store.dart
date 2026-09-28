@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 
 import 'vault_cipher.dart';
 
@@ -33,20 +33,7 @@ class VaultFileStore {
 
   Future<File> _ensureFile() async {
     if (_file != null) return _file!;
-    Directory dir;
-    if (_customRootDir != null) {
-      dir = _customRootDir;
-    } else {
-      final home = Platform.environment['HOME'];
-      if (Platform.isMacOS && home != null && home.isNotEmpty) {
-        dir = Directory(
-          p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
-        );
-      } else {
-        final appSupport = await getApplicationSupportDirectory();
-        dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-      }
-    }
+    final dir = _customRootDir ?? AppPaths.root;
     if (!dir.existsSync()) {
       dir.createSync(recursive: true);
     }

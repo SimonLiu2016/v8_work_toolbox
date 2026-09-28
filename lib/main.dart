@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'services/ai_config_store.dart';
+import 'services/app_paths.dart';
 import 'services/launcher_service.dart';
 import 'services/privacy_security_service.dart';
 import 'services/proxy_settings.dart';
@@ -12,6 +13,7 @@ import 'services/scheduled_news_service.dart';
 import 'services/settings_store.dart';
 import 'services/unattended_service.dart';
 import 'shell/app_shell.dart';
+import 'tools/network_proxy/services/network_proxy_service.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
 import 'tools/notebook/asset_reminder_service.dart';
@@ -19,6 +21,7 @@ import 'tools/notebook/note_database.dart';
 import 'tools/notebook/note_store.dart';
 import 'tools/notebook/ui/note_editor.dart';
 import 'tools/notebook/ui/notebook_page.dart';
+import 'tools/ops_tool/ui/ops_tool_main_page.dart';
 import 'tools/password/ui/password_page.dart';
 import 'tools/private_player/services/media_history_store.dart';
 import 'tools/private_player/services/private_storage_manager.dart';
@@ -45,6 +48,9 @@ enum WindowKind {
 
   /// 单篇笔记独立窗口：仅编辑器，但编辑器可打开资产/整理弹窗，故需要 AI。
   singleNote,
+
+  /// 磐石运维工具独立窗口：DevOps、数据源与报告调度，复用 AI 配置。
+  opsTool,
 }
 
 /// 按窗口类型声明的必需服务。
@@ -54,6 +60,12 @@ enum WindowKind {
 /// `SettingsStore`，`AiConfigStore.init()` 内部初始化 `KeychainService`。
 class WindowServices {
   const WindowServices._();
+
+  /// 本地数据路径源必须最先就绪：其余服务（设置、AI 配置、笔记、运维工具）
+  /// 全部从 `AppPaths` 派生自己的落盘位置。
+  static const List<ServiceInit> _appPaths = [
+    ServiceInit('AppPaths', _initAppPaths),
+  ];
 
   static const List<ServiceInit> _settingsStore = [
     ServiceInit('SettingsStore', _initSettingsStore),
@@ -77,23 +89,34 @@ class WindowServices {
   /// （外加自己的独有服务）——主窗口既是所有工具的外壳，也是这些子窗口的超集。
   static Map<WindowKind, List<ServiceInit>> get required => {
     WindowKind.main: [
+      ..._appPaths,
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
       ..._noteStore,
     ],
     WindowKind.notebook: [
+      ..._appPaths,
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
       ..._noteStore,
     ],
-    WindowKind.passwordVault: const [],
+    WindowKind.passwordVault: [
+      ..._appPaths,
+    ],
     WindowKind.singleNote: [
+      ..._appPaths,
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
       ..._noteStore,
+    ],
+    WindowKind.opsTool: [
+      ..._appPaths,
+      ..._settingsStore,
+      ..._proxy,
+      ..._aiConfig,
     ],
   };
 
@@ -118,6 +141,7 @@ class WindowServices {
     }
   }
 
+  static Future<void> _initAppPaths() => AppPaths.init();
   static Future<void> _initSettingsStore() => SettingsStore.instance.init();
   static Future<void> _initProxySettings() => ProxySettings.instance.load();
   static Future<void> _initAiConfigStore() => AiConfigStore.instance.init();
@@ -164,6 +188,12 @@ Future<void> main(List<String> args) async {
     return;
   }
 
+  if (isSubWindow && subWindowArgument == 'ops-tool') {
+    await WindowServices.initFor(WindowKind.opsTool);
+    runApp(const _OpsToolWindowApp());
+    return;
+  }
+
   if (isSubWindow && subWindowArgument.startsWith('note:')) {
     // Sub-window mode for a single note.
     final noteId = subWindowArgument.substring('note:'.length);
@@ -174,6 +204,8 @@ Future<void> main(List<String> args) async {
 
   // 主窗口：注册窗口焦点监听，用于感知子窗口中的笔记编辑。
   windowManager.addListener(_notebookFocusListener);
+  // 主窗口：注册关闭监听，退出前清理 mihomo 进程。
+  windowManager.addListener(_mainWindowCloseListener);
 
   // Main window mode
   MediaKit.ensureInitialized();
@@ -194,6 +226,13 @@ Future<void> main(List<String> args) async {
 
   // 初始化无人值守服务状态与代理脚本
   await UnattendedService.instance.init();
+
+  // 初始化内嵌代理管理器（加载持久化状态，若有选中节点则启动 mihomo）
+  try {
+    await NetworkProxyService.instance.load();
+  } catch (e, stack) {
+    debugPrint('NetworkProxyService init failed: $e\n$stack');
+  }
 
   // 初始化隐私空间安全服务与私密存储。
   // 密钥/密文异常（DEK 不可用、密文损坏）时保持锁定并继续启动，
@@ -303,6 +342,18 @@ class _NotebookWindowFocusListener extends WindowListener {
 
 final _notebookFocusListener = _NotebookWindowFocusListener();
 
+/// 主窗口关闭监听：退出前停止 mihomo 子进程，避免孤儿进程。
+class _MainWindowCloseListener extends WindowListener {
+  @override
+  Future<void> onWindowClose() async {
+    try {
+      await NetworkProxyService.instance.shutdown();
+    } catch (_) {}
+  }
+}
+
+final _mainWindowCloseListener = _MainWindowCloseListener();
+
 /// 单篇笔记子窗口 app：仅渲染目标笔记的编辑器。
 class _SingleNoteWindowApp extends StatefulWidget {
   const _SingleNoteWindowApp({required this.noteId});
@@ -383,3 +434,29 @@ class _SingleNoteWindowAppState extends State<_SingleNoteWindowApp> {
     );
   }
 }
+
+class _OpsToolWindowApp extends StatelessWidget {
+  const _OpsToolWindowApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '磐石运维工具',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+      home: const Scaffold(
+        body: Padding(
+          padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+          child: OpsToolMainPage(),
+        ),
+      ),
+    );
+  }
+}
+

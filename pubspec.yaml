@@ -47,6 +47,9 @@ dependencies:
   flutter_svg: ^2.3.0
   appflowy_editor: ^6.2.0
   provider: ^6.1.2
+  mailer: ^6.1.2
+  cron: ^0.5.1
+  sqflite: ^2.4.1
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 

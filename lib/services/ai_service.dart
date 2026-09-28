@@ -6,6 +6,7 @@ import 'ai_config_store.dart';
 import 'ai_logger.dart';
 import 'app_http_client.dart';
 import 'keychain_service.dart';
+import 'proxy_settings.dart';
 
 // ---------------------------------------------------------------------------
 // 路由引擎数据类型
@@ -138,8 +139,16 @@ class ProviderHealthState {
 
 /// 统一 AI 能力服务
 class AiService {
-  AiService._();
+  AiService._() {
+    ProxySettings.instance.addListener(_onProxySettingsChanged);
+  }
   static final AiService instance = AiService._();
+
+  void _onProxySettingsChanged() {
+    debugPrint('[AiService] 检测到代理配置变更，重建 HTTP 客户端并重置健康冷却缓存');
+    rebuildHttpClient();
+    clearHealthCache();
+  }
 
   /// 默认对话请求超时时间（放宽至 90 秒，完美适配带思维链与长文本的推理大模型）
   static const Duration defaultChatTimeout = Duration(seconds: 90);
@@ -154,6 +163,11 @@ class AiService {
     _client.close();
     _client = AppHttpClient.create();
     clearResolvedChatEndpoints();
+  }
+
+  /// 清空供应商健康状态缓存（重置失败冷却与不可用状态）
+  void clearHealthCache() {
+    _healthCache.clear();
   }
 
   /// 供应商健康状态缓存（仅内存，应用重启后清空）

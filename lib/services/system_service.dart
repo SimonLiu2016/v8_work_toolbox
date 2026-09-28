@@ -488,6 +488,96 @@ class SystemService {
     }
   }
 
+  /// 清空 macOS 系统废纸篓
+  ///
+  /// 底层调用 AppleScript `tell application "Finder" to empty trash` 执行清空，
+  /// 并检查 ~/.Trash 目录确认项数与字节数已被清空。
+  Future<bool> emptyTrash() async {
+    if (!Platform.isMacOS) return false;
+    final home = Platform.environment['HOME'];
+    if (home == null || home.isEmpty) return false;
+
+    try {
+      // 1. AppleScript 清空废纸篓
+      await Process.run('osascript', [
+        '-e',
+        'tell application "Finder" to empty trash',
+      ]);
+
+      // 稍微等待操作系统元数据同步
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      final trashDir = Directory('$home/.Trash');
+      if (trashDir.existsSync()) {
+        final entries = trashDir.listSync(followLinks: false);
+        if (entries.isEmpty) {
+          return true;
+        }
+        // 若 AppleScript 因部分文件锁定遗留，回退尝试删除未锁定项目
+        for (final entry in entries) {
+          try {
+            if (entry is File) {
+              entry.deleteSync();
+            } else if (entry is Directory) {
+              entry.deleteSync(recursive: true);
+            }
+          } catch (_) {}
+        }
+        return trashDir.listSync(followLinks: false).isEmpty;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 获取 macOS 废纸篓统计指标（字节数与条目数）
+  Future<TrashMetrics> getTrashMetrics() async {
+    final home = Platform.environment['HOME'];
+    if (!Platform.isMacOS || home == null || home.isEmpty) {
+      return const TrashMetrics(totalBytes: 0, itemCount: 0);
+    }
+
+    final trashDir = Directory('$home/.Trash');
+    if (!trashDir.existsSync()) {
+      return const TrashMetrics(totalBytes: 0, itemCount: 0);
+    }
+
+    int bytes = 0;
+    int count = 0;
+    try {
+      final entries = trashDir.listSync(followLinks: false);
+      count = entries.length;
+      for (final entry in entries) {
+        try {
+          if (entry is File) {
+            bytes += entry.statSync().size;
+          } else if (entry is Directory) {
+            bytes += await _calcDirSize(entry);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return TrashMetrics(totalBytes: bytes, itemCount: count);
+  }
+
+  Future<int> _calcDirSize(Directory dir, {int depth = 0, int maxDepth = 6}) async {
+    if (depth > maxDepth) return 0;
+    int size = 0;
+    try {
+      final list = dir.listSync(followLinks: false);
+      for (final item in list) {
+        if (item is File) {
+          size += item.statSync().size;
+        } else if (item is Directory) {
+          size += await _calcDirSize(item, depth: depth + 1, maxDepth: maxDepth);
+        }
+      }
+    } catch (_) {}
+    return size;
+  }
+
   /// 在访达 (Finder) 中定位高亮显示指定路径
   Future<void> revealInFinder(String path) async {
     if (Platform.isMacOS) {
@@ -532,4 +622,13 @@ class DiskSpaceInfo {
 
   int get usedBytes => (totalBytes > freeBytes) ? (totalBytes - freeBytes) : 0;
   double get usedPercentage => totalBytes > 0 ? (usedBytes / totalBytes) : 0.0;
+}
+
+class TrashMetrics {
+  final int totalBytes;
+  final int itemCount;
+
+  const TrashMetrics({required this.totalBytes, required this.itemCount});
+
+  bool get isEmpty => itemCount == 0 && totalBytes == 0;
 }

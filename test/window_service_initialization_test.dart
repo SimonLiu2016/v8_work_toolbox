@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/main.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
+import 'package:V8WorkToolbox/services/app_paths.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
 import 'package:V8WorkToolbox/tools/password/crypto/kek_manager.dart';
+import 'package:V8WorkToolbox/tools/password/vault_store.dart';
 
 /// 窗口服务初始化清单测试。
 ///
@@ -127,13 +129,45 @@ void main() {
       );
     });
 
-    test('密码工具子窗口不声明 AI 服务（本地密码库不消费 AI）', () {
-      expect(WindowServices.requiredNames(WindowKind.passwordVault), isEmpty);
+    test('密码工具子窗口不声明 AI 服务（本地密码库不消费 AI），但声明基础设施 AppPaths', () {
+      final names = WindowServices.requiredNames(WindowKind.passwordVault);
+      expect(names, ['AppPaths']);
+      expect(names, isNot(contains('AiConfigStore')));
+      expect(names, isNot(contains('ProxySettings')));
+      expect(names, isNot(contains('NoteStore')));
+    });
+
+    test('密码工具子窗口 initFor 后 AppPaths 就绪且 VaultStore.load 可正常执行', () async {
+      AppPaths.resetForTesting();
+      expect(AppPaths.isInitialized, isFalse);
+
+      await WindowServices.initFor(WindowKind.passwordVault);
+
+      expect(AppPaths.isInitialized, isTrue);
+      expect(() => AppPaths.root, returnsNormally);
+
+      final vaultDir = await Directory.systemTemp.createTemp('v8_vault_subwindow_test_');
+      try {
+        AppPaths.overrideRootForTesting(vaultDir);
+        final store = VaultStore();
+        await store.load();
+        expect(store.isLoaded, isTrue);
+      } finally {
+        AppPaths.resetForTesting();
+        if (await vaultDir.exists()) {
+          await vaultDir.delete(recursive: true);
+        }
+      }
     });
 
     test('主窗口清单是各子窗口清单的超集', () {
       final mainNames = WindowServices.requiredNames(WindowKind.main);
-      for (final kind in [WindowKind.notebook, WindowKind.singleNote]) {
+      for (final kind in [
+        WindowKind.notebook,
+        WindowKind.singleNote,
+        WindowKind.passwordVault,
+        WindowKind.opsTool,
+      ]) {
         for (final name in WindowServices.requiredNames(kind)) {
           expect(mainNames, contains(name), reason: '主窗口缺少 $name');
         }

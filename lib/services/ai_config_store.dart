@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_paths.dart';
 
 import 'keychain_service.dart';
 
@@ -310,26 +310,18 @@ class AiConfigStore {
     // `_load()` 遇到配置损坏会重新记录更具体的原因。
     _lastInitError = null;
     try {
-      Directory dir;
+      // customRootDir 是测试注入点，必须真正短路——传了它就不该触达 AppPaths，
+      // 否则测试环境没有 main()，AppPaths 未初始化会直接抛 StateError。
+      final Directory dir;
       if (customRootDir != null) {
         dir = customRootDir;
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        _configFile = File(p.join(dir.path, 'ai_config.json'));
       } else {
-        final home = Platform.environment['HOME'];
-        if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          dir = Directory(
-            p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
-          );
-        } else {
-          final appSupport = await getApplicationSupportDirectory();
-          dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-        }
+        dir = AppPaths.root;
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        _configFile = AppPaths.aiConfigFile;
       }
-
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
-
-      _configFile = File(p.join(dir.path, 'ai_config.json'));
       await KeychainService.instance.init(customRootDir: dir);
       await _load();
       _isInitialized = true;
@@ -391,12 +383,14 @@ class AiConfigStore {
         _slotBindings.putIfAbsent(slot, () => <SlotCandidate>[]);
       }
 
-      final mcps = (json['mcpServers'] as List<dynamic>?) ?? [];
-      _mcpClients = mcps
-          .map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>))
-          .toList();
-      if (_mcpClients.isEmpty) {
-        _mcpClients.add(McpClientConfig.firecrawlPreset());
+      if (json.containsKey('mcpServers')) {
+        final mcps = (json['mcpServers'] as List<dynamic>?) ?? [];
+        _mcpClients = mcps
+            .map((e) => McpClientConfig.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } else {
+        // 旧版本配置兼容：未曾配置过 mcpServers 时注入初始预置
+        _mcpClients = [McpClientConfig.firecrawlPreset()];
         await _save();
       }
 

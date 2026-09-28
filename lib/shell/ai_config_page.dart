@@ -7,7 +7,6 @@ import '../services/ai_service.dart';
 import '../services/app_http_client.dart';
 import '../services/keychain_service.dart';
 import '../services/mcp_service.dart';
-import '../services/proxy_settings.dart';
 import '../theme/app_theme.dart';
 import 'ai_log_dialog.dart';
 
@@ -29,7 +28,7 @@ class _AiConfigPageState extends State<AiConfigPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     // 每 10 秒刷新健康状态指示器
     _healthRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) setState(() {});
@@ -127,10 +126,6 @@ class _AiConfigPageState extends State<AiConfigPage>
                       icon: Icon(Icons.cable_outlined, size: 16),
                       text: '外部 MCP 客户端',
                     ),
-                    Tab(
-                      icon: Icon(Icons.vpn_lock_outlined, size: 16),
-                      text: '网络代理',
-                    ),
                   ],
                 ),
               ],
@@ -146,7 +141,6 @@ class _AiConfigPageState extends State<AiConfigPage>
                 _buildProvidersTab(),
                 _buildSlotsTab(),
                 _buildMcpTab(),
-                _buildProxyTab(),
               ],
             ),
           ),
@@ -1025,213 +1019,6 @@ class _AiConfigPageState extends State<AiConfigPage>
           }),
       ],
     );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Tab 4: 网络代理
-  // ---------------------------------------------------------------------------
-
-  Widget _buildProxyTab() {
-    final proxy = ProxySettings.instance;
-    final hostCtrl = TextEditingController(text: proxy.host);
-    final portCtrl = TextEditingController(
-      text: proxy.port > 0 ? proxy.port.toString() : '',
-    );
-    bool enabled = proxy.enabled;
-
-    return StatefulBuilder(
-      builder: (context, setLocalState) {
-        return ListView(
-          padding: const EdgeInsets.all(AppTheme.space24),
-          children: [
-            Text('网络代理通道', style: AppTheme.fontTitle),
-            const SizedBox(height: AppTheme.space8),
-            Text(
-              '配置应用级 HTTP(S) 代理，统一覆盖 AI 对话、语音合成、文档解析与外部 MCP 子进程。'
-              '未启用时应用直连，与系统 TUN 代理互不干扰。代理地址非密钥，仅存明文配置文件。',
-              style: AppTheme.fontCaption.copyWith(
-                color: AppTheme.textSecondary,
-              ),
-            ),
-            const SizedBox(height: AppTheme.space16),
-            AppCard(
-              child: Padding(
-                padding: const EdgeInsets.all(AppTheme.space16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Switch(
-                          value: enabled,
-                          activeTrackColor: AppTheme.accent,
-                          onChanged: (v) => setLocalState(() => enabled = v),
-                        ),
-                        const SizedBox(width: AppTheme.space8),
-                        Text('启用代理通道', style: AppTheme.fontBody),
-                      ],
-                    ),
-                    const SizedBox(height: AppTheme.space16),
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: TextField(
-                            controller: hostCtrl,
-                            decoration: const InputDecoration(
-                              labelText: '代理主机',
-                              hintText: '例如 127.0.0.1',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: AppTheme.space12),
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: portCtrl,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: '端口',
-                              hintText: '例如 7897',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppTheme.space16),
-                    Row(
-                      children: [
-                        AppButton.primary(
-                          label: '保存配置',
-                          icon: Icons.save_outlined,
-                          onPressed: () async {
-                            final port = int.tryParse(portCtrl.text.trim());
-                            try {
-                              await proxy.save(
-                                host: hostCtrl.text,
-                                port: port ?? 0,
-                                enabled: enabled,
-                              );
-                              AiService.instance.rebuildHttpClient();
-                              if (mounted) {
-                                ScaffoldMessenger.of(this.context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('代理配置已保存并立即生效。'),
-                                    backgroundColor: AppTheme.success,
-                                  ),
-                                );
-                              }
-                            } catch (e) {
-                              if (mounted) {
-                                ScaffoldMessenger.of(this.context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('保存失败: $e'),
-                                    backgroundColor: AppTheme.error,
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                        ),
-                        const SizedBox(width: AppTheme.space12),
-                        AppButton.secondary(
-                          label: '检测通道',
-                          icon: Icons.network_check,
-                          onPressed: () => _testProxyChannel(
-                            hostCtrl.text,
-                            int.tryParse(portCtrl.text.trim()) ?? 0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: AppTheme.space16),
-            Text(
-              '提示：代理通道不可用时，AI 对话、TTS、文档解析与 MCP 子进程的联网请求会同时失败。'
-              '检测按钮会区分「代理未配置」「代理不可达」与「远端服务故障」三种原因。',
-              style: AppTheme.fontCaption.copyWith(
-                color: AppTheme.textTertiary,
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _testProxyChannel(String host, int port) async {
-    final h = host.trim();
-    if (h.isEmpty || port <= 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('代理未配置：请填写主机与端口后再检测。'),
-            backgroundColor: AppTheme.warning,
-          ),
-        );
-      }
-      return;
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('正在检测 $h:$port ...')));
-    }
-    try {
-      // 第一步：代理端口本身是否可建立 TCP 连接
-      final socket = await Socket.connect(
-        h,
-        port,
-        timeout: const Duration(seconds: 8),
-      );
-      socket.destroy();
-      // 第二步：经代理访问一个目标站点，验证通道可用且远端可达
-      final probeClient = AppHttpClient.create();
-      try {
-        final resp = await probeClient
-            .get(Uri.parse('https://www.example.com'))
-            .timeout(const Duration(seconds: 15));
-        if (resp.statusCode != 200) {
-          throw Exception('远端返回 HTTP ${resp.statusCode}');
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('代理通道可用，远端站点可达。'),
-              backgroundColor: AppTheme.success,
-            ),
-          );
-        }
-      } finally {
-        probeClient.close();
-      }
-    } catch (e) {
-      final msg = e.toString();
-      String reason;
-      if (msg.contains('SocketException') ||
-          msg.contains('Connection refused') ||
-          msg.contains('timeout')) {
-        reason = '代理不可达：$msg';
-      } else if (msg.contains('Handshake') ||
-          msg.contains('TLS') ||
-          msg.contains('CERT')) {
-        reason = '代理通道建立但 TLS 握手失败：$msg';
-      } else {
-        reason = '代理通道可用但远端服务故障：$msg';
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(reason), backgroundColor: AppTheme.error),
-        );
-      }
-    }
   }
 
   // ---------------------------------------------------------------------------

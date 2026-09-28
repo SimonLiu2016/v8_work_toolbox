@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import '../../../components/app_components.dart';
 import '../../../components/markdown_view.dart';
 import '../../../services/mcp_service.dart';
+import '../../../services/proxy_settings.dart';
 import '../../../theme/app_theme.dart';
 import '../services/ai_assistant_service.dart';
 import 'scheduled_tasks_drawer.dart';
@@ -170,6 +171,41 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
             label: 'MCP 工具清单',
             icon: Icons.cable_outlined,
             onPressed: _showMcpToolsDialog,
+          ),
+          const SizedBox(width: AppTheme.space8),
+          // 工具代理通道开关
+          ListenableBuilder(
+            listenable: ProxySettings.instance,
+            builder: (context, _) {
+              final isEnabled =
+                  ProxySettings.instance.isToolEnabled('ai-assistant');
+              return Tooltip(
+                message: isEnabled ? 'AI 咨询使用系统代理' : 'AI 咨询直连网络',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.vpn_lock_outlined,
+                      size: 16,
+                      color: isEnabled
+                          ? AppTheme.accentLight
+                          : AppTheme.textTertiary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text('代理', style: AppTheme.fontCaption),
+                    Switch(
+                      value: isEnabled,
+                      activeColor: AppTheme.accentLight,
+                      activeTrackColor: AppTheme.accent,
+                      onChanged: (val) async {
+                        await ProxySettings.instance
+                            .setToolEnabled('ai-assistant', val);
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
           const SizedBox(width: AppTheme.space8),
           AppButton.secondary(

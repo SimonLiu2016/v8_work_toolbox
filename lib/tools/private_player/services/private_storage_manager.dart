@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 
 /// 隐私空间私密媒体与数据存储管理器
 class PrivateStorageManager {
@@ -22,17 +22,11 @@ class PrivateStorageManager {
 
   /// 初始化并创建私密存储目录树
   Future<void> init({Directory? customRoot}) async {
-    if (customRoot != null) {
-      _rootDir = customRoot;
-    } else {
-      final home = Platform.environment['HOME'];
-      if (Platform.isMacOS && home != null && home.isNotEmpty) {
-        _rootDir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox', 'PrivateMedia'));
-      } else {
-        final appSupport = await getApplicationSupportDirectory();
-        _rootDir = Directory(p.join(appSupport.path, 'V8WorkToolbox', 'PrivateMedia'));
-      }
-    }
+    // customRoot 是测试注入点，必须真正短路：传了它就不该触达 AppPaths，
+    // 否则测试环境没有 main()，AppPaths 未初始化会直接抛 StateError。
+    // 已初始化过时同样直接返回，避免无参 init() 把测试目录冲掉。
+    if (customRoot == null && _rootDir != null) return;
+    _rootDir = customRoot ?? AppPaths.privateMediaDir;
 
     if (!_rootDir!.existsSync()) {
       _rootDir!.createSync(recursive: true);

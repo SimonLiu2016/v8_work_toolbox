@@ -18,14 +18,20 @@ class AppHttpClient extends http.BaseClient {
 
   final http.Client _inner;
 
-  /// 按当前代理设置构造受控 HTTP 客户端。代理未启用时直连。
+  /// 按当前代理设置构造受控 HTTP 客户端。
+  ///
+  /// 若指定了 [toolId]，且该工具未在 [ProxySettings] 中启用代理（[isToolEnabled]
+  /// 返回 false），即使全局代理已配置，也会返回直连客户端。
   ///
   /// 保留 `HttpClient` 默认的 `autoUncompress = true`，与既有裸
   /// `http.Client()` 行为一致——调用方（如 [document_parser] 用
   /// `utf8.decode(response.bodyBytes)`）依赖已解压的响应体。
-  factory AppHttpClient.create() {
+  factory AppHttpClient.create({String? toolId}) {
     final proxy = ProxySettings.instance;
     if (!proxy.isConfigured) {
+      return AppHttpClient._(http.Client());
+    }
+    if (toolId != null && !proxy.isToolEnabled(toolId)) {
       return AppHttpClient._(http.Client());
     }
     final ioClient = HttpClient()..findProxy = proxy.findProxyFor;

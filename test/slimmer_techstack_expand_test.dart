@@ -1,9 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/tools/slimmer/slimmer_models.dart';
 import 'package:V8WorkToolbox/tools/slimmer/smart_disk_slimmer_page.dart';
+import 'package:V8WorkToolbox/services/app_paths.dart';
 
 void main() {
+  // 页面 initState 会拉 SettingsStore 的分项配置，而 SettingsStore 走惰性 init
+  // 且没有注入点，只能就绪全局根目录。见 change tasks 5.2 的遗留说明。
+  AppPaths.overrideRootForTesting(
+    Directory.systemTemp.createTempSync('v8_slimmer_techstack_'),
+  );
+
   testWidgets(
       '技术栈分组：勾选复选框后展开态保持（不因父级 rebuild 蒸发）',
       (tester) async {

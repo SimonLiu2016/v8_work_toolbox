@@ -17,6 +17,10 @@ enum ProjectTechStack {
 }
 
 enum SlimmerCategory {
+  dailyAppCache('日常应用与系统', '正在使用的应用产生的临时缓存与系统日志'),
+  installers('废弃安装包', '下载目录、桌面等处留存的 .dmg, .pkg, .iso 安装包'),
+  largeFiles('超大文件排行', '单体体积超过 100MB 的文件，按大小降序'),
+  systemTrash('系统废纸篓', '废纸篓中待永久清空的文件与目录'),
   orphanApp('已卸载残留', '应用已从系统删除，但配置或缓存仍然遗留'),
   multiVersion('多版本与升级遗留', 'IDE 或语言运行时的多个历史版本，旧版本大多废弃'),
   buildCache('开发构建缓存', 'Xcode DerivedData、依赖仓库等跨项目共享缓存，删除后不影响任何单个项目'),

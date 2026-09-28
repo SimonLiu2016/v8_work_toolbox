@@ -1,20 +1,25 @@
 import 'dart:async';
 import 'dart:io';
 import '../../services/settings_store.dart';
+import '../../services/system_service.dart';
 import 'app_orphan_detector.dart';
+import 'daily_app_cache_detector.dart';
+import 'installer_detector.dart';
+import 'large_file_scanner.dart';
 import 'multi_version_scanner.dart';
 import 'project_artifact_detector.dart';
 import 'slimmer_models.dart';
 
 /// 扫描进度状态
 class ScanProgress {
-  final int stage; // 1, 2, 3
+  final int stage; // 1, 2, 3, 4, 5
   final String stageName;
   final double progress; // 0.0 - 1.0
   final int itemsFound;
   final int totalReclaimableBytes;
   final bool isCompleted;
   final bool hasPermissionError;
+  final TrashMetrics? trashMetrics;
 
   const ScanProgress({
     required this.stage,
@@ -24,6 +29,7 @@ class ScanProgress {
     required this.totalReclaimableBytes,
     this.isCompleted = false,
     this.hasPermissionError = false,
+    this.trashMetrics,
   });
 }
 
@@ -31,12 +37,18 @@ class ScanProgress {
 class DiskScannerService {
   final AppOrphanDetector _orphanDetector = AppOrphanDetector();
   final MultiVersionScanner _versionScanner = MultiVersionScanner();
+  final DailyAppCacheDetector _cacheDetector = DailyAppCacheDetector();
+  final InstallerDetector _installerDetector = InstallerDetector();
+  final LargeFileScanner _largeFileScanner = LargeFileScanner();
+
+  TrashMetrics? _trashMetrics;
+  TrashMetrics? get trashMetrics => _trashMetrics;
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
   bool get hasPermissionError => _orphanDetector.hasPermissionError;
 
-  /// 开始执行三阶段渐进式扫描
+  /// 开始执行分级渐进式扫描
   Stream<List<SlimCandidateItem>> startScan({
     void Function(ScanProgress progress)? onProgress,
   }) async* {
@@ -55,6 +67,7 @@ class DiskScannerService {
         totalReclaimableBytes: totalBytes,
         isCompleted: done,
         hasPermissionError: _orphanDetector.hasPermissionError,
+        trashMetrics: _trashMetrics,
       ));
     }
 
@@ -62,43 +75,67 @@ class DiskScannerService {
       final home = Platform.environment['HOME'] ?? '';
 
       // ─────────────────────────────────────────────────────────────
-      // 阶段 1: 瞬时定向扫描 (<3秒) - 高发重灾区与大型构建缓存
+      // 阶段 1: 瞬时定向扫描 (<3秒) - 高发构建缓存、废弃安装包与废纸篓
       // ─────────────────────────────────────────────────────────────
-      notify(1, '正在定向扫描高发构建缓存与超大下载包...', 0.1);
+      notify(1, '正在探测废纸篓与构建依赖缓存...', 0.05);
+      try {
+        _trashMetrics = await SystemService.instance.getTrashMetrics();
+      } catch (_) {}
+
       final instantItems = await _scanInstantTargets(home);
       allItems.addAll(instantItems);
+
+      final installerItems = await _installerDetector.scanInstallers();
+      allItems.addAll(installerItems);
+
       totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
-      notify(1, '阶段 1 完成，发现 ${instantItems.length} 个立竿见影项', 0.35);
+      notify(1, '阶段 1 完成，发现 ${instantItems.length + installerItems.length} 个立竿见影项', 0.25);
       yield List.of(allItems);
 
       // ─────────────────────────────────────────────────────────────
       // 阶段 2: 开发运行时与 IDE 多版本矩阵探测 (<10秒)
       // ─────────────────────────────────────────────────────────────
-      notify(2, '正在探测开发环境与 IDE 升级遗留多版本...', 0.45);
+      notify(2, '正在探测开发环境与 IDE 升级遗留多版本...', 0.35);
       final versionItems = await _versionScanner.scanMultiVersions();
       allItems.addAll(versionItems);
       totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
-      notify(2, '阶段 2 完成，发现 ${versionItems.length} 个版本项', 0.70);
+      notify(2, '阶段 2 完成，发现 ${versionItems.length} 个版本项', 0.50);
       yield List.of(allItems);
 
       // ─────────────────────────────────────────────────────────────
-      // 阶段 3: 深度孤立卸载残留匹配
+      // 阶段 3: 日常活跃应用缓存、系统日志与孤立卸载残留匹配
       // ─────────────────────────────────────────────────────────────
-      notify(3, '正在比对已安装应用，查找已卸载软件残留...', 0.70);
+      notify(3, '正在比对已安装应用，查找活跃缓存与系统日志...', 0.55);
+      await _cacheDetector.initialize();
+      final dailyItems = await _cacheDetector.scanDailyCaches();
+      allItems.addAll(dailyItems);
+
+      notify(3, '正在比对应用白名单，查找已卸载软件残留...', 0.65);
       await _orphanDetector.initialize();
-      notify(3, '正在分析 ~/Library 孤立目录与容器...', 0.74);
       final orphanItems = await _orphanDetector.scanOrphans();
       allItems.addAll(orphanItems);
       totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
+      notify(3, '阶段 3 完成，发现活跃缓存与残留', 0.72);
+      yield List.of(allItems);
 
       // ─────────────────────────────────────────────────────────────
-      // 阶段 4: 项目构建产物（manifest 门控 + 发现预算）
+      // 阶段 4: 超大单体文件 (>100MB) 排行探测
       // ─────────────────────────────────────────────────────────────
-      notify(4, '正在发现项目根...', 0.80);
+      notify(4, '正在检索超大单体文件排行榜...', 0.78);
+      final largeFiles = await _largeFileScanner.scanLargeFiles();
+      allItems.addAll(largeFiles);
+      totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
+      notify(4, '阶段 4 完成，发现 ${largeFiles.length} 个超大文件', 0.85);
+      yield List.of(allItems);
+
+      // ─────────────────────────────────────────────────────────────
+      // 阶段 5: 项目构建产物（manifest 门控 + 发现预算）
+      // ─────────────────────────────────────────────────────────────
+      notify(5, '正在发现项目根...', 0.88);
       final artifactItems = await _scanProjectArtifacts(onProgress: notify);
       allItems.addAll(artifactItems);
       totalBytes = allItems.fold(0, (sum, it) => sum + it.sizeBytes);
-      notify(4, '全盘分级扫描完成', 1.0, done: true);
+      notify(5, '全盘分级扫描完成', 1.0, done: true);
       yield List.of(allItems);
 
     } finally {
@@ -106,7 +143,7 @@ class DiskScannerService {
     }
   }
 
-  /// 阶段 4：项目构建产物。
+  /// 阶段 5：项目构建产物。
   ///
   /// Tier A 浅层 manifest 发现项目根（秒级，不读大小）；Tier B 仅在识别出的
   /// 项目根内做剪枝收集，按根设预算，超预算标记"未完整"而非静默丢弃。
@@ -199,37 +236,6 @@ class DiskScannerService {
           isSelected: true,
         ));
       }
-    }
-
-    // 4. 用户下载目录中的大安装包 (>100MB .dmg, .pkg, .iso, .zip)
-    final downloads = Directory('$home/Downloads');
-    if (downloads.existsSync()) {
-      try {
-        final entries = downloads.listSync(followLinks: false);
-        for (final entry in entries) {
-          if (entry is File) {
-            final name = entry.uri.pathSegments.last.toLowerCase();
-            if (name.endsWith('.dmg') || name.endsWith('.pkg') || name.endsWith('.iso') || name.endsWith('.zip')) {
-              final stat = entry.statSync();
-              if (stat.size > 100 * 1024 * 1024) { // >100MB
-                final daysAgo = DateTime.now().difference(stat.modified).inDays;
-                list.add(SlimCandidateItem(
-                  id: 'download_${entry.path.hashCode}',
-                  path: entry.path,
-                  title: entry.uri.pathSegments.last,
-                  subtitle: '位于下载目录 (${daysAgo > 0 ? "$daysAgo 天前" : "今天"})，软件安装后安装包通常可安全清理',
-                  sizeBytes: stat.size,
-                  lastModified: stat.modified,
-                  category: SlimmerCategory.largeDownloads,
-                  safety: SafetyRating.safe,
-                  appName: 'Finder',
-                  isSelected: daysAgo > 7, // 超过 7 天默认勾选
-                ));
-              }
-            }
-          }
-        }
-      } catch (_) {}
     }
 
     return list;

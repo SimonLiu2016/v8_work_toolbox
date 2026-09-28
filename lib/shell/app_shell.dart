@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/privacy_security_service.dart';
 import '../theme/app_theme.dart';
+import '../tools/network_proxy/ui/network_proxy_page.dart';
 import '../tools/registry.dart';
 import 'activity_bar.dart';
 import 'ai_config_page.dart';
@@ -210,7 +211,8 @@ class AppShellState extends State<AppShell> {
             )
           else ...[
             // 2. 中间工具分类面板 (在非全屏配置页时展示)
-            if (_currentView != ActivityViewType.ai) ...[
+            if (_currentView != ActivityViewType.ai &&
+                _currentView != ActivityViewType.proxy) ...[
               ToolPanel(
                 title: _getPanelTitle(),
                 tools: _getToolsForCurrentView(),
@@ -257,7 +259,9 @@ class AppShellState extends State<AppShell> {
             Expanded(
               child: _currentView == ActivityViewType.ai
                   ? const AiConfigPage()
-                  : Container(
+                  : _currentView == ActivityViewType.proxy
+                      ? const NetworkProxyPage()
+                      : Container(
                       color: AppTheme.bgContent,
                       child: IndexedStack(
                         index: activeToolIndex,

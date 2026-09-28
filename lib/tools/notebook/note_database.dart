@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:drift_sqflite/drift_sqflite.dart';
 
 import 'cjk_tokenizer.dart';
+import '../../../services/app_paths.dart';
 
 part 'note_database.g.dart';
 
@@ -53,8 +54,10 @@ class Tags extends Table {
 }
 
 class NoteTags extends Table {
-  TextColumn get noteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
-  TextColumn get tagId => text().references(Tags, #id, onDelete: KeyAction.cascade)();
+  TextColumn get noteId =>
+      text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get tagId =>
+      text().references(Tags, #id, onDelete: KeyAction.cascade)();
 
   @override
   Set<Column> get primaryKey => {noteId, tagId};
@@ -62,7 +65,8 @@ class NoteTags extends Table {
 
 class Attachments extends Table {
   TextColumn get id => text()();
-  TextColumn get noteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get noteId =>
+      text().references(Notes, #id, onDelete: KeyAction.cascade)();
   TextColumn get filename => text().nullable()();
   TextColumn get mime => text().nullable()();
   TextColumn get localPath => text()();
@@ -81,8 +85,10 @@ class Attachments extends Table {
 /// 笔记间泛化关联（B 方案：relation 恒 'related_to'，语义由 reason 自由文本承载）。
 /// 双向可见通过查询（WHERE source=? OR target=?），不双写。
 class NoteLinks extends Table {
-  TextColumn get sourceNoteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
-  TextColumn get targetNoteId => text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get sourceNoteId =>
+      text().references(Notes, #id, onDelete: KeyAction.cascade)();
+  TextColumn get targetNoteId =>
+      text().references(Notes, #id, onDelete: KeyAction.cascade)();
   TextColumn get relation => text().withDefault(const Constant('related_to'))();
   TextColumn get reason => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
@@ -95,7 +101,9 @@ class NoteLinks extends Table {
 // Database
 // ---------------------------------------------------------------------------
 
-@DriftDatabase(tables: [Notebooks, Notes, Tags, NoteTags, Attachments, NoteLinks])
+@DriftDatabase(
+  tables: [Notebooks, Notes, Tags, NoteTags, Attachments, NoteLinks],
+)
 class NoteDatabase extends _$NoteDatabase {
   NoteDatabase() : super(_openConnection());
 
@@ -124,12 +132,24 @@ class NoteDatabase extends _$NoteDatabase {
       }
       if (from < 3) {
         // 资产字段 + 凭证标识 + 关联边表
-        try { await m.addColumn(notes, notes.assetCategory); } catch (_) {}
-        try { await m.addColumn(notes, notes.assetPurchaseDate); } catch (_) {}
-        try { await m.addColumn(notes, notes.assetServiceUntil); } catch (_) {}
-        try { await m.addColumn(notes, notes.assetExpiryDate); } catch (_) {}
-        try { await m.addColumn(attachments, attachments.isCredential); } catch (_) {}
-        try { await m.createTable(noteLinks); } catch (_) {}
+        try {
+          await m.addColumn(notes, notes.assetCategory);
+        } catch (_) {}
+        try {
+          await m.addColumn(notes, notes.assetPurchaseDate);
+        } catch (_) {}
+        try {
+          await m.addColumn(notes, notes.assetServiceUntil);
+        } catch (_) {}
+        try {
+          await m.addColumn(notes, notes.assetExpiryDate);
+        } catch (_) {}
+        try {
+          await m.addColumn(attachments, attachments.isCredential);
+        } catch (_) {}
+        try {
+          await m.createTable(noteLinks);
+        } catch (_) {}
       }
     },
     beforeOpen: (details) async {
@@ -146,20 +166,24 @@ class NoteDatabase extends _$NoteDatabase {
         'ALTER TABLE notes ADD COLUMN asset_expiry_date INTEGER;',
         'ALTER TABLE attachments ADD COLUMN is_credential INTEGER DEFAULT 0;',
       ]) {
-        try { await customStatement(stmt); } catch (_) {}
+        try {
+          await customStatement(stmt);
+        } catch (_) {}
       }
-      try { await customStatement(
-        'CREATE TABLE IF NOT EXISTS note_links ('
-        'source_note_id TEXT NOT NULL, '
-        'target_note_id TEXT NOT NULL, '
-        'relation TEXT NOT NULL DEFAULT \'related_to\', '
-        'reason TEXT, '
-        'created_at INTEGER NOT NULL, '
-        'PRIMARY KEY (source_note_id, target_note_id), '
-        'FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE, '
-        'FOREIGN KEY (target_note_id) REFERENCES notes(id) ON DELETE CASCADE'
-        ');',
-      ); } catch (_) {}
+      try {
+        await customStatement(
+          'CREATE TABLE IF NOT EXISTS note_links ('
+          'source_note_id TEXT NOT NULL, '
+          'target_note_id TEXT NOT NULL, '
+          'relation TEXT NOT NULL DEFAULT \'related_to\', '
+          'reason TEXT, '
+          'created_at INTEGER NOT NULL, '
+          'PRIMARY KEY (source_note_id, target_note_id), '
+          'FOREIGN KEY (source_note_id) REFERENCES notes(id) ON DELETE CASCADE, '
+          'FOREIGN KEY (target_note_id) REFERENCES notes(id) ON DELETE CASCADE'
+          ');',
+        );
+      } catch (_) {}
       // SQLite 默认**忽略外键约束**——不开启此 pragma，声明在 attachments /
       // note_tags / note_links 上的 ON DELETE CASCADE 全部不生效，删除笔记会
       // 留下孤儿行。实测确认：删笔记后三张子表计数均不变。
@@ -199,8 +223,9 @@ class NoteDatabase extends _$NoteDatabase {
   // Notebook CRUD
   // ---------------------------------------------------------------------------
 
-  Future<List<Notebook>> allNotebooks() =>
-      (select(notebooks)..orderBy([(t) => OrderingTerm.asc(t.sortOrder)])).get();
+  Future<List<Notebook>> allNotebooks() => (select(
+    notebooks,
+  )..orderBy([(t) => OrderingTerm.asc(t.sortOrder)])).get();
 
   Future<Notebook?> notebookById(String id) =>
       (select(notebooks)..where((t) => t.id.equals(id))).getSingleOrNull();
@@ -213,7 +238,10 @@ class NoteDatabase extends _$NoteDatabase {
 
   Future<void> updateNotebookStack(String id, String? stack) =>
       (update(notebooks)..where((t) => t.id.equals(id))).write(
-        NotebooksCompanion(stack: Value(stack), updatedAt: Value(DateTime.now())),
+        NotebooksCompanion(
+          stack: Value(stack),
+          updatedAt: Value(DateTime.now()),
+        ),
       );
 
   Future<void> deleteNotebook(String id) =>
@@ -223,7 +251,10 @@ class NoteDatabase extends _$NoteDatabase {
   // Note CRUD
   // ---------------------------------------------------------------------------
 
-  Future<List<Note>> notesForNotebook(String? notebookId, {bool includeDeleted = false}) {
+  Future<List<Note>> notesForNotebook(
+    String? notebookId, {
+    bool includeDeleted = false,
+  }) {
     final query = select(notes);
     if (!includeDeleted) {
       query.where((t) => t.isDeleted.equals(false));
@@ -238,7 +269,10 @@ class NoteDatabase extends _$NoteDatabase {
     return query.get();
   }
 
-  Future<List<Note>> notesForNotebookIds(List<String> notebookIds, {bool includeDeleted = false}) {
+  Future<List<Note>> notesForNotebookIds(
+    List<String> notebookIds, {
+    bool includeDeleted = false,
+  }) {
     final query = select(notes);
     if (!includeDeleted) {
       query.where((t) => t.isDeleted.equals(false));
@@ -254,9 +288,9 @@ class NoteDatabase extends _$NoteDatabase {
   }
 
   Future<List<Note>> notesForTag(String tagId, {bool includeDeleted = false}) {
-    final query = select(notes).join([
-      innerJoin(noteTags, noteTags.noteId.equalsExp(notes.id)),
-    ]);
+    final query = select(
+      notes,
+    ).join([innerJoin(noteTags, noteTags.noteId.equalsExp(notes.id))]);
     if (!includeDeleted) {
       query.where(notes.isDeleted.equals(false));
     }
@@ -276,25 +310,37 @@ class NoteDatabase extends _$NoteDatabase {
 
   Future<void> softDeleteNote(String id) =>
       (update(notes)..where((t) => t.id.equals(id))).write(
-        NotesCompanion(isDeleted: const Value(true), updatedAt: Value(DateTime.now())),
+        NotesCompanion(
+          isDeleted: const Value(true),
+          updatedAt: Value(DateTime.now()),
+        ),
       );
 
   Future<void> batchSoftDeleteNotes(List<String> ids) async {
     if (ids.isEmpty) return;
     await (update(notes)..where((t) => t.id.isIn(ids))).write(
-      NotesCompanion(isDeleted: const Value(true), updatedAt: Value(DateTime.now())),
+      NotesCompanion(
+        isDeleted: const Value(true),
+        updatedAt: Value(DateTime.now()),
+      ),
     );
   }
 
   Future<void> restoreNote(String id) =>
       (update(notes)..where((t) => t.id.equals(id))).write(
-        NotesCompanion(isDeleted: const Value(false), updatedAt: Value(DateTime.now())),
+        NotesCompanion(
+          isDeleted: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ),
       );
 
   Future<void> batchRestoreNotes(List<String> ids) async {
     if (ids.isEmpty) return;
     await (update(notes)..where((t) => t.id.isIn(ids))).write(
-      NotesCompanion(isDeleted: const Value(false), updatedAt: Value(DateTime.now())),
+      NotesCompanion(
+        isDeleted: const Value(false),
+        updatedAt: Value(DateTime.now()),
+      ),
     );
   }
 
@@ -334,20 +380,24 @@ class NoteDatabase extends _$NoteDatabase {
   Future<List<Note>> allAssets() {
     final query = select(notes)
       ..where((t) => t.isDeleted.equals(false))
-      ..where((t) =>
-          t.assetCategory.isNotNull() |
-          t.assetPurchaseDate.isNotNull() |
-          t.assetServiceUntil.isNotNull() |
-          t.assetExpiryDate.isNotNull())
+      ..where(
+        (t) =>
+            t.assetCategory.isNotNull() |
+            t.assetPurchaseDate.isNotNull() |
+            t.assetServiceUntil.isNotNull() |
+            t.assetExpiryDate.isNotNull(),
+      )
       ..orderBy([(t) => OrderingTerm.asc(t.assetExpiryDate)]);
     return query.get();
   }
 
   /// 标记/取消标记附件为凭证。
-  Future<void> setAttachmentCredential(String attachmentId, bool isCredential) =>
-      (update(attachments)..where((t) => t.id.equals(attachmentId))).write(
-        AttachmentsCompanion(isCredential: Value(isCredential)),
-      );
+  Future<void> setAttachmentCredential(
+    String attachmentId,
+    bool isCredential,
+  ) => (update(attachments)..where((t) => t.id.equals(attachmentId))).write(
+    AttachmentsCompanion(isCredential: Value(isCredential)),
+  );
 
   /// 资产笔记的凭证附件。
   Future<List<Attachment>> credentialsForNote(String noteId) =>
@@ -363,9 +413,10 @@ class NoteDatabase extends _$NoteDatabase {
   /// 某笔记的全部关联（**双向**：该笔记作为 source 或 target 均返回）。
   /// 单行存储、双向可见，不双写——见 design D2。
   Future<List<NoteLink>> linksForNote(String noteId) =>
-      (select(noteLinks)
-            ..where((t) =>
-                t.sourceNoteId.equals(noteId) | t.targetNoteId.equals(noteId)))
+      (select(noteLinks)..where(
+            (t) =>
+                t.sourceNoteId.equals(noteId) | t.targetNoteId.equals(noteId),
+          ))
           .get();
 
   /// 建立关联。同向重复插入时忽略（复合主键冲突）。
@@ -396,9 +447,9 @@ class NoteDatabase extends _$NoteDatabase {
 
   // Note-Tag associations
   Future<List<Tag>> tagsForNote(String noteId) {
-    final query = select(tags).join([
-      innerJoin(noteTags, noteTags.tagId.equalsExp(tags.id)),
-    ]);
+    final query = select(
+      tags,
+    ).join([innerJoin(noteTags, noteTags.tagId.equalsExp(tags.id))]);
     query.where(noteTags.noteId.equals(noteId));
     return query.map((row) => row.readTable(tags)).get();
   }
@@ -406,10 +457,9 @@ class NoteDatabase extends _$NoteDatabase {
   Future<void> setNoteTags(String noteId, List<String> tagIds) async {
     await (delete(noteTags)..where((t) => t.noteId.equals(noteId))).go();
     for (final tagId in tagIds) {
-      await into(noteTags).insert(NoteTagsCompanion(
-        noteId: Value(noteId),
-        tagId: Value(tagId),
-      ));
+      await into(
+        noteTags,
+      ).insert(NoteTagsCompanion(noteId: Value(noteId), tagId: Value(tagId)));
     }
   }
 
@@ -451,9 +501,9 @@ class NoteDatabase extends _$NoteDatabase {
 
     // 保持 bm25 的相关性顺序，而非按 updatedAt 重排。
     final notesById = <String, Note>{};
-    for (final n in await (select(notes)
-          ..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false)))
-        .get()) {
+    for (final n in await (select(
+      notes,
+    )..where((t) => t.id.isIn(ids) & t.isDeleted.equals(false))).get()) {
       notesById[n.id] = n;
     }
     return ids.map((id) => notesById[id]).whereType<Note>().toList();
@@ -461,12 +511,13 @@ class NoteDatabase extends _$NoteDatabase {
 
   /// 写入 FTS 索引。title 与 content 均经 CJK bigram 化后存储，
   /// 与 [searchNotes] 的查询侧分词保持一致。
-  Future<void> indexNote(String noteId, String title, String plainContent) async {
+  Future<void> indexNote(
+    String noteId,
+    String title,
+    String plainContent,
+  ) async {
     // Remove old index entry
-    await customStatement(
-      "DELETE FROM notes_fts WHERE note_id = ?",
-      [noteId],
-    );
+    await customStatement("DELETE FROM notes_fts WHERE note_id = ?", [noteId]);
     // Insert new index entry（bigram 化后的文本）
     await customStatement(
       "INSERT INTO notes_fts (title, content, note_id) VALUES (?1, ?2, ?3)",
@@ -485,7 +536,10 @@ class NoteDatabase extends _$NoteDatabase {
   // Stats
   // ---------------------------------------------------------------------------
 
-  Future<int> noteCount({String? notebookId, bool includeDeleted = false}) async {
+  Future<int> noteCount({
+    String? notebookId,
+    bool includeDeleted = false,
+  }) async {
     final query = selectOnly(notes)..addColumns([notes.id.count()]);
     if (!includeDeleted) {
       query.where(notes.isDeleted.equals(false));
@@ -498,8 +552,16 @@ class NoteDatabase extends _$NoteDatabase {
   }
 }
 
+/// 笔记主库落盘位置。
+///
+/// 历史上用 `inDatabaseFolder`（= sqflite 的 `getDatabasesPath()`，macOS 上落在
+/// `~/Documents/`），属本项目第三套路径解析。现改为显式指向 `AppPaths`，与 AI
+/// 配置、密码库、运维工具同根——「本地数据存放在同一稳定目录」才真正成立。
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    return SqfliteQueryExecutor.inDatabaseFolder(path: 'notebook.db');
+    final file = AppPaths.noteDbFile;
+    final dir = file.parent;
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return SqfliteQueryExecutor(path: file.path);
   });
 }

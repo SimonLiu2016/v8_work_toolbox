@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 
 /// 迁移结果
 class LegacyMigrationResult {
@@ -76,20 +76,8 @@ class LegacyImporter {
     }
   }
 
-  static Future<File> _legacyFile() async {
-    final home = Platform.environment['HOME'];
-    if (Platform.isMacOS && home != null && home.isNotEmpty) {
-      return File(p.join(
-        home,
-        'Library',
-        'Application Support',
-        'V8WorkToolbox',
-        _legacyFileName,
-      ));
-    }
-    final dir = await getApplicationSupportDirectory();
-    return File(p.join(dir.path, 'V8WorkToolbox', _legacyFileName));
-  }
+  static Future<File> _legacyFile() async =>
+      File(p.join(AppPaths.root.path, _legacyFileName));
 
   /// XOR 混淆变换（与 v1 实现完全一致；迁移完成后删除）
   static Uint8List _xorTransform(List<int> input) {

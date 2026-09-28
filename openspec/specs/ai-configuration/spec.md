@@ -68,11 +68,16 @@ The application SHALL allow discovering available models via authentic provider 
 - **THEN** each legacy binding is automatically migrated to a single-element candidate list, and the config is re-saved in the new format without data loss
 
 ### Requirement: External MCP client configuration
-The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting.
+The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting. The application SHALL persist modifications and deletions of MCP servers, honoring empty client configurations across application restarts without automatically re-injecting deleted presets.
 
 #### Scenario: Registering external MCP server
 - **WHEN** user provides MCP server identifier, display name, transport type (stdio or SSE), launch command, argument list, and environment variable key-value pairs (such as `FIRECRAWL_API_URL` and `FIRECRAWL_API_KEY`)
 - **THEN** the configuration is persisted in `ai_config.json` with all fields preserved and registered in the active runtime MCP service.
+
+#### Scenario: Deleting external MCP server and persisting across restarts
+- **WHEN** user deletes an MCP server (including the default Firecrawl preset) from the configuration interface
+- **THEN** the server is removed from `ai_config.json` and in-memory stores.
+- **AND** upon application relaunch or configuration reload, the system SHALL NOT automatically re-add the deleted server or preset, and SHALL preserve the empty list if all servers were deleted.
 
 #### Scenario: Testing MCP connection and discovering available tools
 - **WHEN** user clicks "Test Connection" for an active MCP server in the AI configuration interface

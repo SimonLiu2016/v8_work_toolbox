@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_paths.dart';
 
 import 'launcher_service.dart';
 import '../tools/slimmer/slimmer_models.dart';
@@ -44,19 +44,7 @@ class SettingsStore {
   /// 初始化存储与目录结构，并执行一次性迁移
   Future<void> init({Directory? rootDir, List<MigrationEntry>? customMigrations}) async {
     try {
-      if (rootDir != null) {
-        _rootDir = rootDir;
-      } else {
-        final home = Platform.environment['HOME'];
-        if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          _rootDir = Directory(
-            p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
-          );
-        } else {
-          final appSupport = await getApplicationSupportDirectory();
-          _rootDir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-        }
-      }
+      _rootDir = rootDir ?? AppPaths.root;
 
       if (!_rootDir!.existsSync()) {
         _rootDir!.createSync(recursive: true);

@@ -357,5 +357,13 @@ void main() {
       expect(fromJson.toolCalls.first.toolName, equals('firecrawl_scrape'));
       expect(fromJson.toolCalls.first.status, equals(ToolCallStatus.success));
     });
+
+    test('AiAssistantService includes web_search and web_scrape in system prompt', () {
+      final prompt = AiAssistantService.instance.buildSystemPromptForTesting([]);
+      expect(prompt.contains('web_search: 全网实时搜索引擎检索'), isTrue);
+      expect(prompt.contains('web_scrape: 抓取指定网址的正文内容'), isTrue);
+      expect(prompt.contains('绝对不要声称自己“无法脱离 MCP 工具访问互联网或 Google”'), isTrue);
+    });
   });
 }
+

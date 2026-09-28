@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 import 'package:uuid/uuid.dart';
 
 import 'crypto/kek_manager.dart';
@@ -42,17 +42,7 @@ class VaultStore extends ChangeNotifier {
   // 路径
   // ---------------------------------------------------------------------------
 
-  Future<Directory> _rootDir() async {
-    if (_customRootDir != null) return _customRootDir;
-    final home = Platform.environment['HOME'];
-    if (Platform.isMacOS && home != null && home.isNotEmpty) {
-      return Directory(
-        p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
-      );
-    }
-    final dir = await getApplicationSupportDirectory();
-    return Directory(p.join(dir.path, 'V8WorkToolbox'));
-  }
+  Future<Directory> _rootDir() async => _customRootDir ?? AppPaths.root;
 
   Future<File> _metadataFile() async {
     final dir = await _rootDir();

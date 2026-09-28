@@ -9,6 +9,7 @@ import '../services/reader_config_store.dart';
 import '../services/tts_coordinator.dart';
 import '../services/tts_engine.dart';
 import '../../../../services/ai_config_store.dart';
+import '../../../../services/proxy_settings.dart';
 import '../../../../shell/ai_config_page.dart';
 import '../../../../shell/ai_log_dialog.dart';
 
@@ -429,6 +430,37 @@ class _DocAudioReaderPageState extends State<DocAudioReaderPage> {
             onPressed: () => AiLogDialog.show(context),
             icon: const Icon(Icons.receipt_long_rounded),
             tooltip: 'AI 实时调用日志',
+          ),
+          // 代理通道开关
+          ListenableBuilder(
+            listenable: ProxySettings.instance,
+            builder: (context, _) {
+              final isEnabled =
+                  ProxySettings.instance.isToolEnabled('doc-audio-reader');
+              return Tooltip(
+                message: isEnabled ? '文档阅读器使用系统代理' : '文档阅读器直连网络',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.vpn_lock_outlined,
+                      size: 16,
+                      color: isEnabled ? Colors.blueAccent : Colors.grey,
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('代理', style: TextStyle(fontSize: 12)),
+                    Switch(
+                      value: isEnabled,
+                      activeColor: Colors.blueAccent,
+                      onChanged: (val) async {
+                        await ProxySettings.instance
+                            .setToolEnabled('doc-audio-reader', val);
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
           IconButton(
             onPressed: _showSettingsModal,

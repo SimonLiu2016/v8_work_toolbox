@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 import '../../../../services/agent_loop.dart';
 import '../../../../services/mcp_service.dart';
+import '../../../../services/web_search_service.dart';
 
 enum ToolCallStatus { running, success, failed }
 
@@ -102,21 +103,11 @@ class AiAssistantService extends ChangeNotifier {
 
   Future<void> init({Directory? customRootDir}) async {
     try {
-      Directory dir;
-      if (customRootDir != null) {
-        dir = customRootDir;
-      } else {
-        final home = Platform.environment['HOME'];
-        if (Platform.isMacOS && home != null && home.isNotEmpty) {
-          dir = Directory(p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'));
-        } else {
-          final appSupport = await getApplicationSupportDirectory();
-          dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-        }
-      }
-
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      _historyFile = File(p.join(dir.path, 'ai_assistant_history.json'));
+      final root = customRootDir ?? AppPaths.root;
+      if (!root.existsSync()) root.createSync(recursive: true);
+      _historyFile = customRootDir == null
+          ? AppPaths.aiAssistantHistoryFile
+          : File(p.join(customRootDir.path, 'ai_assistant_history.json'));
       await _loadHistory();
     } catch (e) {
       debugPrint('初始化 AI 助手历史失败: $e');
@@ -188,20 +179,35 @@ class AiAssistantService extends ChangeNotifier {
   }
 
   /// 构建 ReAct 系统 Prompt
-  String _buildSystemPrompt(List<McpToolDefinition> tools) {
-    final toolDescs = tools.map((t) {
+  String _buildSystemPrompt(List<McpToolDefinition> mcpTools) {
+    // 1. 内置通用网络检索与网页抓取工具（基于 WebSearchService，零配置免外部依赖）
+    final builtInToolDescs = [
+      '- web_search: 全网实时搜索引擎检索（支持 Bing / SearXNG）。当需要获取最新外部资讯、新闻、技术文档或事实信息时调用。\n  参数模式: {"query":"string","limit":"int"}',
+      '- web_scrape: 抓取指定网址的正文内容（转为纯净 Markdown 格式）。当需要阅读具体网页、文章正文、官方页面详情时调用。\n  参数模式: {"url":"string"}',
+    ].join('\n\n');
+
+    // 2. 外部 MCP 工具（如 Firecrawl 等高级扩展）
+    final mcpToolDescs = mcpTools.map((t) {
       return '- ${t.name}: ${t.description}\n  参数模式: ${jsonEncode(t.inputSchema)}';
     }).join('\n\n');
 
+    final toolDescs = mcpTools.isEmpty
+        ? builtInToolDescs
+        : '$builtInToolDescs\n\n$mcpToolDescs';
+
     return '''
-你是一个集成了全网实时爬虫与检索工具的专业 AI 资讯助手。
-你可以使用以下外部 MCP 工具获取最新的互联网资讯、抓取特定网页内容或提取结构化数据：
+你是一个集成了全网实时检索与爬虫工具的专业 AI 资讯助手。
+你已内置开箱即用的实时网络检索（web_search）与网页正文抓取（web_scrape）能力，并支持外部高级 MCP 工具：
 
 $toolDescs
 
-【工具调用规则】
-1. 当用户的提问需要实时信息、新闻资讯、最新动态或具体网址的内容时，请自主调用合适的工具（如 firecrawl_search 或 firecrawl_scrape）。
-2. 调用工具时，请严格输出且仅输出如下 JSON 代码块（不要附加多余的开头问候）：
+【工具调用与联网规则】
+1. 当用户的提问需要实时资讯、最新动态、客观事实或特定网址内容时，请自主调用合适的工具：
+   - 通用实时联网查询优先调用 `web_search`；
+   - 提取指定网址或链接的完整正文时调用 `web_scrape`；
+   - 若用户指定或启用了外部 MCP 爬虫（如 firecrawl 系列），亦可调用对应 MCP 工具。
+2. 你具备脱离外部 MCP 直接访问互联网的能力（通过内置的 `web_search` 与 `web_scrape` 工具）。绝对不要声称自己“无法脱离 MCP 工具访问互联网或 Google”。
+3. 调用工具时，请严格输出且仅输出如下 JSON 格式（不要附加多余的开头问候），支持 ```tool_call 代码块或 <tool_call> 标签：
 ```tool_call
 {
   "name": "工具名称",
@@ -210,20 +216,20 @@ $toolDescs
   }
 }
 ```
-3. 系统在执行工具后会将真实的工具结果以【工具返回结果】提供给你。
-4. 获取到工具返回内容后，请对信息进行严谨、清晰、详实的总结，注明信息来源与网页链接，使用美观的 Markdown 格式输出。
-5. 如果用户只是进行普通技术交流或无需联网的问题，请直接回答，不要调用工具。
-6. 如果工具调用报错（例如 502 Bad Gateway），请向用户说明可能由于远程服务未启动，并基于已有常识尽可能解答。
+4. 系统在执行工具后会将真实的工具结果以【工具返回结果】提供给你。
+5. 获取到工具返回内容后，请对信息进行严谨、清晰、详实的总结，注明信息来源与网页链接，使用美观的 Markdown 格式输出。
+6. 如果用户只是进行普通技术交流或无需联网的问题，请直接回答，不要调用工具。
+7. 如果工具调用报错，请根据返回信息向用户说明，并结合已有常识尽可能解答。
 ''';
   }
 
   /// 智能体循环执行。
   ///
   /// 循环逻辑已提取到共享组件 [AgentLoop]（笔记本问答复用同一循环），此处
-  /// 只提供 AI 助手自己的工具集（MCP 工具）与执行方式（带重试的 MCP 调用）。
+  /// 提供 AI 助手自己的工具集（内置 web_search / web_scrape + MCP 工具）。
   Future<void> _runAgentLoop(ChatMessage assistantMsg) async {
-    final tools = await McpService.instance.getAllTools();
-    final systemPrompt = _buildSystemPrompt(tools);
+    final mcpTools = await McpService.instance.getAllTools();
+    final systemPrompt = _buildSystemPrompt(mcpTools);
 
     final historyContext = StringBuffer();
     // 纳入最近的对话上下文（最多保留 6 条）
@@ -238,8 +244,30 @@ $toolDescs
       systemPrompt: systemPrompt,
       initialPrompt: initialPrompt,
       execute: (name, args) async {
-        // 瞬时故障（连接重置/超时）重试有限次后再标记失败，
-        // 重试总耗时不超过工具调用配置的超时预算。
+        // 1. 分流内置网络搜索与抓取工具
+        if (name == 'web_search') {
+          final q = (args['query'] ?? args['q'] ?? '').toString().trim();
+          if (q.isEmpty) return const AgentToolOutcome.failure('搜索关键词不能为空');
+          final limit = (args['limit'] as num?)?.toInt() ?? 5;
+          final res = await WebSearchService.instance.search(q, limit: limit);
+          if (res.isError) {
+            return AgentToolOutcome.failure(res.error ?? '搜索失败');
+          }
+          final text = res.results.map((r) => '### ${r.title}\n链接: ${r.url}\n${r.snippet}').join('\n\n');
+          return AgentToolOutcome.success(text.isEmpty ? '（未搜索到匹配结果）' : text);
+        }
+
+        if (name == 'web_scrape') {
+          final url = (args['url'] ?? '').toString().trim();
+          if (url.isEmpty) return const AgentToolOutcome.failure('抓取 URL 不能为空');
+          final res = await WebSearchService.instance.scrape(url);
+          if (res.isError) {
+            return AgentToolOutcome.failure(res.error ?? '网页抓取失败');
+          }
+          return AgentToolOutcome.success(res.content.isEmpty ? '（网页内容为空）' : res.content);
+        }
+
+        // 2. 外部 MCP 工具调用（带有限重试）
         final r = await _callToolWithRetry(name, args);
         return r.isError
             ? AgentToolOutcome.failure(r.rawError ?? '未知错误')
@@ -247,7 +275,7 @@ $toolDescs
                 r.text.isEmpty ? '（工具返回了空内容）' : r.text);
       },
       onToolCallStart: (name, args) {
-        assistantMsg.content = '正在调用外部工具 [$name] 检索数据...';
+        assistantMsg.content = '正在调用工具 [$name] 检索数据...';
         notifyListeners();
       },
       onToolExecuted: (execution) {
@@ -302,4 +330,7 @@ $toolDescs
     } while (attempts <= maxRetries);
     return lastResult;
   }
+
+  @visibleForTesting
+  String buildSystemPromptForTesting(List<McpToolDefinition> mcpTools) => _buildSystemPrompt(mcpTools);
 }

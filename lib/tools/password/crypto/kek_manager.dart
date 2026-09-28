@@ -1,11 +1,10 @@
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../../services/app_paths.dart';
 
 /// Keychain 桥接抽象（测试 mock 注入点）
 abstract class KeychainBridge {
@@ -36,20 +35,7 @@ class DefaultDekFileBridge implements DekFileBridge {
 
   Future<File> _ensureFile() async {
     if (_file != null) return _file!;
-    Directory dir;
-    if (customRootDir != null) {
-      dir = customRootDir!;
-    } else {
-      final home = Platform.environment['HOME'];
-      if (Platform.isMacOS && home != null && home.isNotEmpty) {
-        dir = Directory(
-          p.join(home, 'Library', 'Application Support', 'V8WorkToolbox'),
-        );
-      } else {
-        final appSupport = await getApplicationSupportDirectory();
-        dir = Directory(p.join(appSupport.path, 'V8WorkToolbox'));
-      }
-    }
+    final dir = customRootDir ?? AppPaths.root;
     if (!dir.existsSync()) dir.createSync(recursive: true);
     _file = File(p.join(dir.path, fileName));
     return _file!;

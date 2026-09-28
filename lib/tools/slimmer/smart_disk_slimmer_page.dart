@@ -27,6 +27,7 @@ class SmartDiskSlimmerPage extends StatefulWidget {
 class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   final DiskScannerService _scanner = DiskScannerService();
   DiskSpaceInfo _diskSpace = const DiskSpaceInfo(totalBytes: 0, freeBytes: 0);
+  TrashMetrics? _trashMetrics;
 
   List<SlimCandidateItem> _items = [];
   SlimmerCategory? _selectedCategory;
@@ -113,8 +114,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   Future<void> _loadDiskSpace() async {
     final info = await SystemService.instance.getRootDiskSpace();
+    final trash = await SystemService.instance.getTrashMetrics();
     if (mounted) {
-      setState(() => _diskSpace = info);
+      setState(() {
+        _diskSpace = info;
+        _trashMetrics = trash;
+      });
     }
   }
 
@@ -129,7 +134,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     _scanner.startScan(
       onProgress: (progress) {
         if (mounted) {
-          setState(() => _scanProgress = progress);
+          setState(() {
+            _scanProgress = progress;
+            if (progress.trashMetrics != null) {
+              _trashMetrics = progress.trashMetrics;
+            }
+          });
         }
       },
     ).listen((items) {
@@ -742,6 +752,8 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
           children: [
             // 顶部总览卡片
             _buildDiskOverviewCard(selectedTotalBytes),
+            if (_trashMetrics != null && !_trashMetrics!.isEmpty)
+              _buildTrashCard(),
             const SizedBox(height: AppTheme.space16),
 
             // 完全磁盘访问权限 (FDA) 受限警示横幅
@@ -1021,6 +1033,135 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     );
   }
 
+  Widget _buildTrashCard() {
+    final metrics = _trashMetrics;
+    if (metrics == null || metrics.isEmpty) return const SizedBox.shrink();
+
+    final sizeStr = _formatSize(metrics.totalBytes);
+    return Container(
+      margin: const EdgeInsets.only(top: AppTheme.space12),
+      padding: const EdgeInsets.all(AppTheme.space12),
+      decoration: BoxDecoration(
+        color: AppTheme.error.withOpacity(0.06),
+        borderRadius: AppTheme.borderRadiusMedium,
+        border: Border.all(color: AppTheme.error.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.delete_forever_rounded, color: AppTheme.error, size: 24),
+          const SizedBox(width: AppTheme.space12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text('系统废纸篓', style: AppTheme.fontTitle),
+                    const SizedBox(width: AppTheme.space8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        '永久清空不可撤销',
+                        style: TextStyle(fontSize: 11, color: AppTheme.error, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '待清空: $sizeStr (${metrics.itemCount} 项)，已放入废纸篓的文件仍占用磁盘空间',
+                  style: AppTheme.fontBodySecondary,
+                ),
+              ],
+            ),
+          ),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.delete_forever_rounded, size: 16, color: AppTheme.error),
+            label: const Text('清空废纸篓', style: TextStyle(color: AppTheme.error)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppTheme.error),
+            ),
+            onPressed: _showEmptyTrashDialog,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showEmptyTrashDialog() async {
+    final metrics = _trashMetrics;
+    if (metrics == null || metrics.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppTheme.error, size: 24),
+            SizedBox(width: AppTheme.space8),
+            Text('确认永久清空废纸篓？'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('废纸篓中包含 ${metrics.itemCount} 项文件，共 ${_formatSize(metrics.totalBytes)}。'),
+            const SizedBox(height: AppTheme.space12),
+            Container(
+              padding: const EdgeInsets.all(AppTheme.space12),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withOpacity(0.08),
+                borderRadius: AppTheme.borderRadiusSmall,
+                border: Border.all(color: AppTheme.error.withOpacity(0.2)),
+              ),
+              child: const Text(
+                '⚠️ 警告：清空废纸篓将永久抹除所有内容，无法再次还原，请确认无重要误丢文件后再继续。',
+                style: TextStyle(fontSize: 12, color: AppTheme.error, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('彻底清空'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final success = await SystemService.instance.emptyTrash();
+      if (!mounted) return;
+      if (success) {
+        setState(() {
+          _trashMetrics = const TrashMetrics(totalBytes: 0, itemCount: 0);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已成功彻底清空废纸篓！')),
+        );
+        _loadDiskSpace();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('清空废纸篓遇到权限限制或部分文件被系统占用。')),
+        );
+      }
+    }
+  }
+
   Widget _buildScanProgressBar() {
     return Container(
       margin: const EdgeInsets.only(bottom: AppTheme.space12),
@@ -1161,11 +1302,13 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         children: [
           _buildFilterChip(null, '全部 (${_items.length})'),
           for (final cat in SlimmerCategory.values) ...[
-            const SizedBox(width: AppTheme.space8),
-            _buildFilterChip(
-              cat,
-              '${cat.label} (${_items.where((it) => it.category == cat).length})',
-            ),
+            if (cat != SlimmerCategory.systemTrash && _items.any((it) => it.category == cat)) ...[
+              const SizedBox(width: AppTheme.space8),
+              _buildFilterChip(
+                cat,
+                '${cat.label} (${_items.where((it) => it.category == cat).length})',
+              ),
+            ],
           ],
         ],
       ),
