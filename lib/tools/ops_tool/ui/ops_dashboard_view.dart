@@ -41,7 +41,7 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
     final recent = (_stats?['recent_reports'] as List<dynamic>?) ?? [];
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppTheme.space24),
+      padding: EdgeInsets.all(AppTheme.space24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -51,11 +51,11 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('仪表盘与概览', style: AppTheme.fontHeadline),
-                  const SizedBox(height: 4),
+                  Text('仪表盘与概览', style: AppTheme.fontHeadline),
+                  SizedBox(height: 4),
                   Text('查看系统关键运行指标、DevOps 自动化状态与近期运营报告',
                       style: AppTheme.fontCaption
-                          .copyWith(color: AppTheme.textSecondary)),
+                          .copyWith(color: context.textSecondary)),
                 ],
               ),
               IconButton(
@@ -78,7 +78,7 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
                   title: '报告总数',
                   value: '${_stats?['report_count'] ?? 0}',
                   icon: Icons.description_outlined,
-                  color: AppTheme.accent,
+                  color: context.accentText,
                   width: cardWidth,
                   onTap: () => widget.onNavigate('report'),
                 ),
@@ -86,7 +86,7 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
                   title: '已配置数据源',
                   value: '${_stats?['data_source_count'] ?? 0}',
                   icon: Icons.storage_rounded,
-                  color: AppTheme.info,
+                  color: context.infoText,
                   width: cardWidth,
                   onTap: () => widget.onNavigate('datasource'),
                 ),
@@ -95,7 +95,7 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
                   value:
                       '${_stats?['enabled_task_count'] ?? 0} / ${_stats?['task_count'] ?? 0}',
                   icon: Icons.schedule_rounded,
-                  color: AppTheme.warning,
+                  color: context.warningText,
                   width: cardWidth,
                   onTap: () => widget.onNavigate('scheduler'),
                 ),
@@ -105,8 +105,8 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
                       '${_stats?['task_success_count'] ?? 0} / ${_stats?['task_fail_count'] ?? 0}',
                   icon: Icons.history_rounded,
                   color: (_stats?['task_fail_count'] ?? 0) > 0
-                      ? AppTheme.error
-                      : AppTheme.success,
+                      ? context.errorSolid
+                      : context.successSolid,
                   width: cardWidth,
                   onTap: () => widget.onNavigate('scheduler'),
                 ),
@@ -151,18 +151,18 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
             ],
           ),
 
-          const SizedBox(height: AppTheme.space32),
+          SizedBox(height: AppTheme.space32),
 
           // 最近生成的报告
-          const Text('近期生成的报告', style: AppTheme.fontTitle),
-          const SizedBox(height: AppTheme.space12),
+          Text('近期生成的报告', style: AppTheme.fontTitle),
+          SizedBox(height: AppTheme.space12),
           if (recent.isEmpty)
             Container(
-              padding: const EdgeInsets.all(AppTheme.space32),
+              padding: EdgeInsets.all(AppTheme.space32),
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: context.bgCard,
                 borderRadius: AppTheme.borderRadiusMedium,
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               alignment: Alignment.center,
               child: Text('暂无历史报告，可在「报告中心」或「导入 Excel」生成',
@@ -171,21 +171,21 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
           else
             Container(
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: context.bgCard,
                 borderRadius: AppTheme.borderRadiusMedium,
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               child: ListView.separated(
                 shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
+                physics: NeverScrollableScrollPhysics(),
                 itemCount: recent.length,
                 separatorBuilder: (_, __) =>
-                    const Divider(height: 1, color: AppTheme.borderSubtle),
+                    Divider(height: 1, color: context.borderSubtle),
                 itemBuilder: (context, index) {
                   final item = recent[index] as Map<String, dynamic>;
                   return ListTile(
-                    leading: const Icon(Icons.article_rounded,
-                        color: AppTheme.accent),
+                    leading: Icon(Icons.article_rounded,
+                        color: context.accentText),
                     title: Text(item['title'] as String? ?? '未命名报告',
                         style: AppTheme.fontBody),
                     trailing: Text(item['date'] as String? ?? '',
@@ -213,11 +213,11 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
       borderRadius: AppTheme.borderRadiusMedium,
       child: Container(
         width: width,
-        padding: const EdgeInsets.all(AppTheme.space16),
+        padding: EdgeInsets.all(AppTheme.space16),
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: context.bgCard,
           borderRadius: AppTheme.borderRadiusMedium,
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -227,13 +227,13 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
               children: [
                 Text(title,
                     style: AppTheme.fontCaption
-                        .copyWith(color: AppTheme.textSecondary)),
+                        .copyWith(color: context.textSecondary)),
                 Icon(icon, color: color, size: 20),
               ],
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
             Text(value,
-                style: AppTheme.fontHeadline.copyWith(color: AppTheme.textPrimary)),
+                style: AppTheme.fontHeadline.copyWith(color: context.textPrimary)),
           ],
         ),
       ),
@@ -251,20 +251,20 @@ class _OpsDashboardViewState extends State<OpsDashboardView> {
         onTap: onTap,
         borderRadius: AppTheme.borderRadiusMedium,
         child: Container(
-          padding: const EdgeInsets.all(AppTheme.space16),
+          padding: EdgeInsets.all(AppTheme.space16),
           decoration: BoxDecoration(
-            color: AppTheme.bgCard,
+            color: context.bgCard,
             borderRadius: AppTheme.borderRadiusMedium,
-            border: Border.all(color: AppTheme.borderSubtle),
+            border: Border.all(color: context.borderSubtle),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, color: AppTheme.accent, size: 22),
-              const SizedBox(height: AppTheme.space8),
+              Icon(icon, color: context.accentText, size: 22),
+              SizedBox(height: AppTheme.space8),
               Text(title, style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text(desc, style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+              SizedBox(height: 2),
+              Text(desc, style: AppTheme.fontCaption.copyWith(color: context.textSecondary)),
             ],
           ),
         ),

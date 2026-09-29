@@ -64,9 +64,9 @@ class AppTextField extends StatelessWidget {
       onChanged: onChanged,
       onSubmitted: onSubmitted,
       style: AppTheme.fontBody.copyWith(
-        color: enabled ? AppTheme.textPrimary : AppTheme.textDisabled,
+        color: enabled ? context.textPrimary : context.textDisabled,
       ),
-      cursorColor: AppTheme.accent,
+      cursorColor: context.accentSolid,
       cursorWidth: 1.5,
       decoration: InputDecoration(
         hintText: hintText,
@@ -93,7 +93,7 @@ class AppTextField extends StatelessWidget {
         Text(
           label!,
           style: AppTheme.fontCaption.copyWith(
-            color: AppTheme.textSecondary,
+            color: context.textSecondary,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -183,29 +183,29 @@ class _AppButtonState extends State<AppButton> {
     switch (widget.variant) {
       case AppButtonVariant.primary:
         bg = isEnabled
-            ? (_isHovered ? AppTheme.accentLight : AppTheme.accent)
-            : AppTheme.accent.withValues(alpha: 0.35);
+            ? (_isHovered ? context.accentSolid : context.accentSolid)
+            : context.accentSolid.withValues(alpha: 0.35);
         fg = Colors.white;
         border = null;
         break;
       case AppButtonVariant.secondary:
         bg = isEnabled
-            ? (_isHovered ? AppTheme.bgCardHover : AppTheme.bgCard)
-            : AppTheme.bgCard.withValues(alpha: 0.5);
-        fg = isEnabled ? AppTheme.textPrimary : AppTheme.textDisabled;
+            ? (_isHovered ? context.bgCardHover : context.bgCard)
+            : context.bgCard.withValues(alpha: 0.5);
+        fg = isEnabled ? context.textPrimary : context.textDisabled;
         border = Border.all(
-          color: _isHovered ? AppTheme.borderStrong : AppTheme.borderSubtle,
+          color: _isHovered ? context.borderStrong : context.borderSubtle,
         );
         break;
       case AppButtonVariant.ghost:
-        bg = isEnabled && _isHovered ? AppTheme.bgCardHover : Colors.transparent;
-        fg = isEnabled ? AppTheme.textPrimary : AppTheme.textDisabled;
+        bg = isEnabled && _isHovered ? context.bgCardHover : Colors.transparent;
+        fg = isEnabled ? context.textPrimary : context.textDisabled;
         border = null;
         break;
       case AppButtonVariant.danger:
         bg = isEnabled
-            ? (_isHovered ? AppTheme.error.withValues(alpha: 0.85) : AppTheme.error)
-            : AppTheme.error.withValues(alpha: 0.35);
+            ? (_isHovered ? context.errorSolid.withValues(alpha: 0.85) : context.errorSolid)
+            : context.errorSolid.withValues(alpha: 0.35);
         fg = Colors.white;
         border = null;
         break;
@@ -283,9 +283,9 @@ class AppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final decoration = BoxDecoration(
-      color: backgroundColor ?? AppTheme.bgCard,
+      color: backgroundColor ?? context.bgCard,
       borderRadius: AppTheme.borderRadiusMedium,
-      border: border ?? Border.all(color: AppTheme.borderSubtle, width: 1),
+      border: border ?? Border.all(color: context.borderSubtle, width: 1),
     );
 
     if (onTap == null) {
@@ -301,7 +301,7 @@ class AppCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: AppTheme.borderRadiusMedium,
-        hoverColor: AppTheme.bgCardHover,
+        hoverColor: context.bgCardHover,
         child: Ink(
           decoration: decoration,
           padding: padding,
@@ -350,9 +350,9 @@ class _AppListItemState extends State<AppListItem> {
   Widget build(BuildContext context) {
     Color bg;
     if (widget.isSelected) {
-      bg = AppTheme.bgSelected;
+      bg = context.bgSelected;
     } else if (_isHovered) {
-      bg = AppTheme.bgCardHover;
+      bg = context.bgCardHover;
     } else {
       bg = Colors.transparent;
     }
@@ -370,7 +370,7 @@ class _AppListItemState extends State<AppListItem> {
             color: bg,
             borderRadius: AppTheme.borderRadiusSmall,
             border: widget.isSelected
-                ? Border.all(color: AppTheme.accent.withValues(alpha: 0.35), width: 1)
+                ? Border.all(color: context.accentSolid.withValues(alpha: 0.35), width: 1)
                 : Border.all(color: Colors.transparent, width: 1),
           ),
           child: Row(
@@ -387,7 +387,9 @@ class _AppListItemState extends State<AppListItem> {
                     Text(
                       widget.title,
                       style: AppTheme.fontBody.copyWith(
-                        color: widget.isSelected ? Colors.white : AppTheme.textPrimary,
+                        color: widget.isSelected
+                            ? (context.isDarkMode ? Colors.white : context.accentSolid)
+                            : context.textPrimary,
                         fontWeight: widget.isSelected ? FontWeight.w600 : FontWeight.normal,
                       ),
                       maxLines: 1,
@@ -398,7 +400,7 @@ class _AppListItemState extends State<AppListItem> {
                       Text(
                         widget.subtitle!,
                         style: AppTheme.fontCaption.copyWith(
-                          color: AppTheme.textTertiary,
+                          color: context.textTertiary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -448,27 +450,28 @@ class AppBanner extends StatelessWidget {
 
     switch (type) {
       case AppBannerType.info:
-        bg = AppTheme.infoSubtle;
-        border = AppTheme.info.withValues(alpha: 0.3);
-        iconColor = AppTheme.info;
+        // 弱强调底：半透明派生而非实底。实底配深色正文对比度仅 2.05。
+        bg = context.infoText.withValues(alpha: 0x1F / 255);
+        border = context.infoText.withValues(alpha: 0x1F / 255);
+        iconColor = context.infoText;
         iconData = Icons.info_outline;
         break;
       case AppBannerType.success:
-        bg = AppTheme.successSubtle;
-        border = AppTheme.success.withValues(alpha: 0.3);
-        iconColor = AppTheme.success;
+        bg = context.successText.withValues(alpha: 0x1F / 255);
+        border = context.successText.withValues(alpha: 0x1F / 255);
+        iconColor = context.successText;
         iconData = Icons.check_circle_outline;
         break;
       case AppBannerType.warning:
-        bg = AppTheme.warningSubtle;
-        border = AppTheme.warning.withValues(alpha: 0.3);
-        iconColor = AppTheme.warning;
+        bg = context.warningText.withValues(alpha: 0x1F / 255);
+        border = context.warningText.withValues(alpha: 0x1F / 255);
+        iconColor = context.warningText;
         iconData = Icons.warning_amber_outlined;
         break;
       case AppBannerType.error:
-        bg = AppTheme.errorSubtle;
-        border = AppTheme.error.withValues(alpha: 0.3);
-        iconColor = AppTheme.error;
+        bg = context.errorText.withValues(alpha: 0x1F / 255);
+        border = context.errorText.withValues(alpha: 0x1F / 255);
+        iconColor = context.errorText;
         iconData = Icons.error_outline;
         break;
     }
@@ -491,7 +494,7 @@ class AppBanner extends StatelessWidget {
             child: Text(
               message,
               style: AppTheme.fontBody.copyWith(
-                color: AppTheme.textPrimary,
+                color: context.textPrimary,
                 fontSize: 12.5,
               ),
             ),
@@ -504,7 +507,7 @@ class AppBanner extends StatelessWidget {
             const SizedBox(width: AppTheme.space4),
             IconButton(
               icon: const Icon(Icons.close, size: 14),
-              color: AppTheme.textTertiary,
+              color: context.textTertiary,
               splashRadius: 12,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
@@ -535,15 +538,15 @@ class AppBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = color ?? AppTheme.bgCardHover;
-    final fg = textColor ?? AppTheme.textSecondary;
+    final bg = color ?? context.bgCardHover;
+    final fg = textColor ?? context.textSecondary;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: AppTheme.borderSubtle, width: 1),
+        border: Border.all(color: context.borderSubtle, width: 1),
       ),
       child: Text(
         label,
@@ -583,7 +586,7 @@ class AppSectionHeader extends StatelessWidget {
           Text(
             title.toUpperCase(),
             style: AppTheme.fontCaption.copyWith(
-              color: AppTheme.textTertiary,
+              color: context.textTertiary,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.5,
             ),

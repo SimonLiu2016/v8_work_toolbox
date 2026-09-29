@@ -57,13 +57,13 @@ class _PasswordDisplayState extends State<PasswordDisplay> {
                       vertical: AppTheme.space8,
                     ),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgInput,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      color: context.bgInput,
+                      border: Border.all(color: context.borderSubtle),
                       borderRadius: AppTheme.borderRadiusSmall,
                     ),
                     child: Text(
                       widget.encryptionPassword,
-                      style: AppTheme.fontMono.copyWith(color: AppTheme.accentLight),
+                      style: AppTheme.fontMono.copyWith(color: context.accentText),
                     ),
                   ),
                 ),
@@ -71,7 +71,7 @@ class _PasswordDisplayState extends State<PasswordDisplay> {
                 ElevatedButton(
                   onPressed: _copyPasswordToClipboard,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.accent,
+                    backgroundColor: context.accentSolid,
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('复制'),
@@ -81,7 +81,7 @@ class _PasswordDisplayState extends State<PasswordDisplay> {
             const SizedBox(height: 10),
             Text(
               '注意：密码已固定为 "!QAZ2wsx#EDC\$#@!"，解密此工具生成的包需使用相同密码。',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
+              style: AppTheme.fontCaption.copyWith(color: context.warningText),
             ),
           ],
         ),

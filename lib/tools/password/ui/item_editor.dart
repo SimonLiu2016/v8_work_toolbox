@@ -164,10 +164,10 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
   Widget build(BuildContext context) {
     final isEdit = widget.existing != null;
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       title: Text(
         isEdit ? '编辑条目' : '新建条目',
-        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 16),
+        style: TextStyle(color: context.textPrimary, fontSize: 16),
       ),
       content: SizedBox(
         width: 440,
@@ -206,7 +206,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
                 const SizedBox(height: 12),
                 Text(_error!,
                     style:
-                        const TextStyle(color: AppTheme.error, fontSize: 12)),
+                        TextStyle(color: context.errorText, fontSize: 12)),
               ],
             ],
           ),
@@ -218,7 +218,7 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: AppTheme.accent),
+          style: FilledButton.styleFrom(backgroundColor: context.accentSolid),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? '保存中…' : '保存'),
         ),
@@ -236,20 +236,20 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
         ])
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
+              padding: EdgeInsets.symmetric(horizontal: 2),
               child: ChoiceChip(
                 avatar: Icon(icon,
                     size: 16,
                     color: _type == type
                         ? Colors.white
-                        : AppTheme.textSecondary),
+                        : context.textSecondary),
                 label: Text(label),
                 selected: _type == type,
-                selectedColor: AppTheme.accent,
-                backgroundColor: AppTheme.bgInput,
+                selectedColor: context.accentSolid,
+                backgroundColor: context.bgInput,
                 labelStyle: TextStyle(
                   color:
-                      _type == type ? Colors.white : AppTheme.textSecondary,
+                      _type == type ? Colors.white : context.textSecondary,
                   fontSize: 12,
                 ),
                 onSelected: (_) => setState(() => _type = type),
@@ -272,13 +272,13 @@ class _ItemEditorDialogState extends State<ItemEditorDialog> {
       obscureText: obscure && maxLines == 1,
       maxLines: maxLines,
       onChanged: onChanged,
-      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+      style: TextStyle(color: context.textPrimary, fontSize: 13),
       decoration: InputDecoration(
         labelText: label,
         labelStyle:
-            const TextStyle(color: AppTheme.textTertiary, fontSize: 12),
+            TextStyle(color: context.textTertiary, fontSize: 12),
         filled: true,
-        fillColor: AppTheme.bgInput,
+        fillColor: context.bgInput,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         border: OutlineInputBorder(
@@ -349,7 +349,7 @@ class _ItemDetailViewState extends State<ItemDetailView> {
   Widget build(BuildContext context) {
     final item = widget.item;
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -358,22 +358,22 @@ class _ItemDetailViewState extends State<ItemDetailView> {
               Expanded(
                 child: Text(
                   item.title.isEmpty ? '（无标题）' : item.title,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
+                  style: TextStyle(
+                    color: context.textPrimary,
                     fontSize: 20,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.edit_outlined,
-                    color: AppTheme.textSecondary, size: 20),
+                icon: Icon(Icons.edit_outlined,
+                    color: context.textSecondary, size: 20),
                 tooltip: '编辑',
                 onPressed: widget.onEdit,
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    color: AppTheme.error, size: 20),
+                icon: Icon(Icons.delete_outline,
+                    color: context.errorText, size: 20),
                 tooltip: '删除',
                 onPressed: widget.onDelete,
               ),
@@ -388,7 +388,7 @@ class _ItemDetailViewState extends State<ItemDetailView> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(_error!,
-                  style: const TextStyle(color: AppTheme.error, fontSize: 12)),
+                  style: TextStyle(color: context.errorText, fontSize: 12)),
             ),
           if (_secret != null) ...[
             if (item.type != VaultEntryType.totp && _secret!.secret.isNotEmpty)
@@ -407,8 +407,8 @@ class _ItemDetailViewState extends State<ItemDetailView> {
               children: [
                 for (final tag in item.tags)
                   Chip(
-                    label: Text(tag, style: const TextStyle(fontSize: 11)),
-                    backgroundColor: AppTheme.accentSubtle,
+                    label: Text(tag, style: TextStyle(fontSize: 11)),
+                    backgroundColor: context.accentSubtle,
                     side: BorderSide.none,
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
@@ -417,19 +417,19 @@ class _ItemDetailViewState extends State<ItemDetailView> {
             ),
           ],
           if (item.notes.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const Text('备注',
+            SizedBox(height: 16),
+            Text('备注',
                 style:
-                    TextStyle(color: AppTheme.textTertiary, fontSize: 11)),
-            const SizedBox(height: 4),
+                    TextStyle(color: context.textTertiary, fontSize: 11)),
+            SizedBox(height: 4),
             Text(item.notes,
-                style: const TextStyle(
-                    color: AppTheme.textSecondary, fontSize: 13)),
+                style: TextStyle(
+                    color: context.textSecondary, fontSize: 13)),
           ],
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           Text(
             '更新于 ${_fmt(item.updatedAt)} · 密码修改于 ${_fmt(item.passwordUpdatedAt)}',
-            style: const TextStyle(color: AppTheme.textTertiary, fontSize: 11),
+            style: TextStyle(color: context.textTertiary, fontSize: 11),
           ),
         ],
       ),
@@ -441,7 +441,7 @@ class _ItemDetailViewState extends State<ItemDetailView> {
 
   Widget _row(String label, String value, {VoidCallback? onCopy}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -449,20 +449,20 @@ class _ItemDetailViewState extends State<ItemDetailView> {
             width: 64,
             child: Text(label,
                 style:
-                    const TextStyle(color: AppTheme.textTertiary, fontSize: 12)),
+                    TextStyle(color: context.textTertiary, fontSize: 12)),
           ),
           Expanded(
             child: Text(value,
-                style: const TextStyle(
-                    color: AppTheme.textPrimary, fontSize: 13)),
+                style: TextStyle(
+                    color: context.textPrimary, fontSize: 13)),
           ),
           if (onCopy != null)
             InkWell(
               onTap: onCopy,
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(4),
                 child: Icon(Icons.copy_rounded,
-                    size: 14, color: AppTheme.textTertiary),
+                    size: 14, color: context.textTertiary),
               ),
             ),
         ],
@@ -472,7 +472,7 @@ class _ItemDetailViewState extends State<ItemDetailView> {
 
   Widget _secretRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -480,13 +480,13 @@ class _ItemDetailViewState extends State<ItemDetailView> {
             width: 64,
             child: Text(label,
                 style:
-                    const TextStyle(color: AppTheme.textTertiary, fontSize: 12)),
+                    TextStyle(color: context.textTertiary, fontSize: 12)),
           ),
           Expanded(
             child: Text(
               _revealed ? value : '●' * (value.length.clamp(6, 16)),
               style: TextStyle(
-                color: AppTheme.textPrimary,
+                color: context.textPrimary,
                 fontSize: 13,
                 fontFamily: _revealed ? null : 'monospace',
               ),
@@ -495,22 +495,22 @@ class _ItemDetailViewState extends State<ItemDetailView> {
           InkWell(
             onTap: () => setState(() => _revealed = !_revealed),
             child: Padding(
-              padding: const EdgeInsets.all(4),
+              padding: EdgeInsets.all(4),
               child: Icon(
                 _revealed
                     ? Icons.visibility_off_outlined
                     : Icons.visibility_outlined,
                 size: 14,
-                color: AppTheme.textTertiary,
+                color: context.textTertiary,
               ),
             ),
           ),
           InkWell(
             onTap: () => _copy(value, label),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.all(4),
               child: Icon(Icons.copy_rounded,
-                  size: 14, color: AppTheme.textTertiary),
+                  size: 14, color: context.textTertiary),
             ),
           ),
         ],

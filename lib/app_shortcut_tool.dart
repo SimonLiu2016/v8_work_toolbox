@@ -70,11 +70,11 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                   child: Container(
                     width: 520,
                     height: 480,
-                    padding: const EdgeInsets.all(AppTheme.space16),
+                    padding: EdgeInsets.all(AppTheme.space16),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderStrong),
+                      border: Border.all(color: context.borderStrong),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withValues(alpha: 0.5),
@@ -87,43 +87,43 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.apps, size: 18, color: AppTheme.accent),
-                            const SizedBox(width: AppTheme.space8),
-                            const Text('选择运行中的应用', style: AppTheme.fontTitle),
-                            const Spacer(),
+                            Icon(Icons.apps, size: 18, color: context.accentText),
+                            SizedBox(width: AppTheme.space8),
+                            Text('选择运行中的应用', style: AppTheme.fontTitle),
+                            Spacer(),
                             IconButton(
-                              icon: const Icon(Icons.close, size: 16),
-                              color: AppTheme.textTertiary,
+                              icon: Icon(Icons.close, size: 16),
+                              color: context.textTertiary,
                               splashRadius: 14,
                               padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                              constraints: BoxConstraints(minWidth: 24, minHeight: 24),
                               onPressed: () => Navigator.pop(context),
                             ),
                           ],
                         ),
-                        const SizedBox(height: AppTheme.space12),
+                        SizedBox(height: AppTheme.space12),
                         AppTextField(
                           hintText: '过滤应用名称或 Bundle ID...',
-                          prefixIcon: const Icon(Icons.search, size: 14, color: AppTheme.textTertiary),
+                          prefixIcon: Icon(Icons.search, size: 14, color: context.textTertiary),
                           onChanged: (val) {
                             setDialogState(() => filter = val);
                           },
                         ),
-                        const SizedBox(height: AppTheme.space12),
-                        const Divider(height: 1, color: AppTheme.borderSubtle),
+                        SizedBox(height: AppTheme.space12),
+                        Divider(height: 1, color: context.borderSubtle),
                         Expanded(
                           child: filtered.isEmpty
                               ? Center(
                                   child: Text(
                                     '无匹配应用',
-                                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                    style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                                   ),
                                 )
                               : ListView.separated(
-                                  padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
+                                  padding: EdgeInsets.symmetric(vertical: AppTheme.space8),
                                   itemCount: filtered.length,
                                   separatorBuilder: (_, __) =>
-                                      const Divider(height: 1, color: AppTheme.borderSubtle),
+                                      Divider(height: 1, color: context.borderSubtle),
                                   itemBuilder: (context, index) {
                                     final app = filtered[index];
                                     return AppListItem(
@@ -131,7 +131,7 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                                       subtitle: 'Bundle ID: ${app['bundleId'] ?? ''}',
                                       trailing: Text(
                                         app['executableName'] ?? '',
-                                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                        style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                                       ),
                                       onTap: () => Navigator.pop(context, app['name']),
                                     );
@@ -319,7 +319,7 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -328,22 +328,22 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
             // 标题
             Row(
               children: [
-                const Icon(Icons.keyboard, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('应用快捷键获取', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.keyboard, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('应用快捷键获取', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_shortcuts.isNotEmpty)
                   AppBadge(
                     label: '已提取 ${_shortcuts.length} 项',
-                    color: AppTheme.accentSubtle,
-                    textColor: AppTheme.accentLight,
+                    color: context.accentSubtle,
+                    textColor: context.accentText,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '通过 macOS 辅助功能接口提取运行中应用的全部菜单快捷键并导出为文本',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -429,27 +429,27 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                 type: _statusType,
               ),
 
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 快捷键预览列表
             Expanded(
               child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: AppTheme.bgCard,
+                  color: context.bgCard,
                   borderRadius: AppTheme.borderRadiusMedium,
-                  border: Border.all(color: AppTheme.borderSubtle),
+                  border: Border.all(color: context.borderSubtle),
                 ),
                 child: _shortcuts.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.keyboard_outlined, size: 36, color: AppTheme.textDisabled),
-                            const SizedBox(height: AppTheme.space8),
+                            Icon(Icons.keyboard_outlined, size: 36, color: context.textDisabled),
+                            SizedBox(height: AppTheme.space8),
                             Text(
                               '暂无提取结果',
-                              style: AppTheme.fontBody.copyWith(color: AppTheme.textTertiary),
+                              style: AppTheme.fontBody.copyWith(color: context.textTertiary),
                             ),
                           ],
                         ),
@@ -470,24 +470,24 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                                   '快捷键列表 (${_shortcuts.length} 项)',
                                   style: AppTheme.fontTitle.copyWith(fontSize: 13),
                                 ),
-                                const Spacer(),
+                                Spacer(),
                                 Text(
                                   '格式: 功能描述 | 键位 | 菜单分类',
-                                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                  style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                                 ),
                               ],
                             ),
                           ),
-                          const Divider(height: 1, color: AppTheme.borderSubtle),
+                          Divider(height: 1, color: context.borderSubtle),
                           Expanded(
                             child: ListView.separated(
-                              padding: const EdgeInsets.symmetric(
+                              padding: EdgeInsets.symmetric(
                                 horizontal: AppTheme.space8,
                                 vertical: AppTheme.space4,
                               ),
                               itemCount: _shortcuts.length,
                               separatorBuilder: (_, __) =>
-                                  const Divider(height: 1, color: AppTheme.borderSubtle),
+                                  Divider(height: 1, color: context.borderSubtle),
                               itemBuilder: (context, index) {
                                 final s = _shortcuts[index];
                                 final shortcutKey = s['shortcut'] ?? '';
@@ -505,34 +505,34 @@ class _AppShortcutToolPageState extends State<AppShortcutToolPage> {
                                           style: AppTheme.fontBody,
                                         ),
                                       ),
-                                      const SizedBox(width: AppTheme.space8),
+                                      SizedBox(width: AppTheme.space8),
                                       if (shortcutKey.isNotEmpty)
                                         Container(
-                                          padding: const EdgeInsets.symmetric(
+                                          padding: EdgeInsets.symmetric(
                                             horizontal: 8,
                                             vertical: 2,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: AppTheme.bgInput,
+                                            color: context.bgInput,
                                             borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(color: AppTheme.borderStrong),
+                                            border: Border.all(color: context.borderStrong),
                                           ),
                                           child: Text(
                                             shortcutKey,
                                             style: AppTheme.fontMono.copyWith(
-                                              color: AppTheme.accentLight,
+                                              color: context.accentText,
                                               fontSize: 11.5,
                                               fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ),
-                                      const SizedBox(width: AppTheme.space16),
+                                      SizedBox(width: AppTheme.space16),
                                       SizedBox(
                                         width: 120,
                                         child: Text(
                                           s['category'] ?? '',
                                           style: AppTheme.fontCaption.copyWith(
-                                            color: AppTheme.textTertiary,
+                                            color: context.textTertiary,
                                           ),
                                           textAlign: TextAlign.right,
                                           overflow: TextOverflow.ellipsis,

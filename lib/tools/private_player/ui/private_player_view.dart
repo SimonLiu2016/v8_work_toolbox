@@ -165,22 +165,22 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.fullscreen_rounded, color: AppTheme.accent, size: 54),
-                  const SizedBox(height: 12),
-                  const Text(
+                  Icon(Icons.fullscreen_rounded, color: context.accentText, size: 54),
+                  SizedBox(height: 12),
+                  Text(
                     '当前正在全屏播放',
-                    style: TextStyle(color: AppTheme.textPrimary, fontSize: 14, fontWeight: FontWeight.w600),
+                    style: TextStyle(color: context.textPrimary, fontSize: 14, fontWeight: FontWeight.w600),
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
+                  SizedBox(height: 6),
+                  Text(
                     '可在全屏窗口按 Esc 退出全屏，或点击下方按钮恢复',
-                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                    style: TextStyle(color: context.textSecondary, fontSize: 12),
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: 16),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white,
-                      side: const BorderSide(color: AppTheme.borderSubtle),
+                      side: BorderSide(color: context.borderSubtle),
                     ),
                     icon: const Icon(Icons.fullscreen_exit_rounded, size: 16),
                     label: const Text('恢复窗口播放'),
@@ -267,8 +267,8 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
 
                     // 2. 缓冲动画
                     if (ctrl.isBuffering)
-                      const Center(
-                        child: CircularProgressIndicator(color: AppTheme.accent),
+                      Center(
+                        child: CircularProgressIndicator(color: context.accentText),
                       ),
 
                     // 3. 实时字幕悬浮图层
@@ -451,9 +451,9 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
             data: SliderTheme.of(context).copyWith(
               trackHeight: 3.5,
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-              activeTrackColor: AppTheme.accent,
+              activeTrackColor: context.accentSolid,
               inactiveTrackColor: Colors.white24,
-              thumbColor: AppTheme.accent,
+              thumbColor: context.accentSolid,
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
             ),
             child: Slider(
@@ -540,7 +540,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
               IconButton(
                 icon: Icon(
                   ctrl.showSubtitles ? Icons.subtitles_rounded : Icons.subtitles_off_rounded,
-                  color: ctrl.showSubtitles ? AppTheme.accent : Colors.white38,
+                  color: ctrl.showSubtitles ? context.accentText : Colors.white38,
                   size: 20,
                 ),
                 tooltip: ctrl.showSubtitles
@@ -565,7 +565,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
                 itemBuilder: (context) => [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
                     .map((r) => PopupMenuItem(
                           value: r,
-                          child: Text('${r}x', style: TextStyle(color: r == ctrl.rate ? AppTheme.accent : null)),
+                          child: Text('${r}x', style: TextStyle(color: r == ctrl.rate ? context.accentText : null)),
                         ))
                     .toList(),
                 child: Padding(
@@ -613,7 +613,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
                   children: [
                     Icon(
                       ctrl.volume == 0 ? Icons.volume_off : Icons.volume_up,
-                      color: AppTheme.textSecondary,
+                      color: context.textSecondary,
                       size: 18,
                     ),
                     Expanded(
@@ -621,7 +621,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
                         value: ctrl.volume,
                         min: 0,
                         max: 100,
-                        activeColor: AppTheme.accent,
+                        activeColor: context.accentSolid,
                         onChanged: (v) {
                           setVolState(() {});
                           ctrl.setVolume(v);
@@ -658,31 +658,31 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: AppTheme.accent.withValues(alpha: 0.12),
+                color: context.accentText.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
-                border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+                border: Border.all(color: context.accentSolid.withValues(alpha: 0.3)),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.play_circle_outline_rounded,
                 size: 38,
-                color: AppTheme.accent,
+                color: context.accentText,
               ),
             ),
-            const SizedBox(height: AppTheme.space20),
+            SizedBox(height: AppTheme.space20),
             Text(
               '私密影音播放器',
               style: AppTheme.fontTitle.copyWith(fontSize: 18),
             ),
-            const SizedBox(height: AppTheme.space8),
+            SizedBox(height: AppTheme.space8),
             Text(
               '支持播放本地各种格式音视频，或在“在线解析”栏目解析在线流媒体直接播放',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppTheme.space24),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.accent,
+                backgroundColor: context.accentSolid,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -711,8 +711,8 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('已成功挂载字幕: ${path.split('/').last} (共 $count 句)'),
-          backgroundColor: AppTheme.bgCard,
-          duration: const Duration(seconds: 3),
+          backgroundColor: context.bgCard,
+          duration: Duration(seconds: 3),
         ),
       );
     } catch (e) {
@@ -720,7 +720,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('字幕挂载失败: $e'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
         ),
       );
     }
@@ -729,28 +729,28 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
   Future<void> _triggerFastSubtitleGeneration(BuildContext context, PrivatePlayerController ctrl) async {
     if (ctrl.currentSource == null || ctrl.currentSource!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('请先播放视频，然后再点击生成字幕'),
-          backgroundColor: AppTheme.warning,
+          backgroundColor: context.warningSolid,
         ),
       );
       return;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Row(
           children: [
             SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+              child: CircularProgressIndicator(strokeWidth: 2, color: context.accentText),
             ),
             SizedBox(width: 12),
             Text('正在以极速方式生成/提取字幕 (优先直取原生或内嵌轨)...'),
           ],
         ),
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         duration: Duration(seconds: 4),
       ),
     );
@@ -765,9 +765,9 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
       if (segments.isEmpty) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text('未能在该媒体中提取或生成有效字幕'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
         return;
@@ -780,8 +780,8 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('字幕提取/生成完成！已加载 ${segments.length} 条字幕并自动上屏'),
-          backgroundColor: AppTheme.bgCard,
-          duration: const Duration(seconds: 3),
+          backgroundColor: context.bgCard,
+          duration: Duration(seconds: 3),
         ),
       );
     } catch (e) {
@@ -789,7 +789,7 @@ class _PrivatePlayerViewState extends State<PrivatePlayerView> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('字幕生成失败: $e'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
         ),
       );
     }

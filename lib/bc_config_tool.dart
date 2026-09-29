@@ -244,7 +244,7 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -253,22 +253,22 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
             // 标题
             Row(
               children: [
-                const Icon(Icons.tune, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('BC 配置工具', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.tune, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('BC 配置工具', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_bcLaunched)
-                  const AppBadge(
+                  AppBadge(
                     label: '已完成并启动',
-                    color: AppTheme.successSubtle,
-                    textColor: AppTheme.success,
+                    color: context.successText.withValues(alpha: 0x1F / 255),
+                    textColor: context.successSolid,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '一键重置 Beyond Compare 试用状态与会话标记（自动备份原配置文件）',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -336,56 +336,56 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
             const SizedBox(height: AppTheme.space12),
 
             // 权限说明提示条
-            const AppBanner(
+            AppBanner(
               message: '首次在 macOS 上操作可能需要授予此工具访问 Application Support 文件夹的权限。若遭遇权限阻拦，会自动调用本地终端脚本协助完成。',
               type: AppBannerType.info,
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 执行日志
             Expanded(
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(AppTheme.space12),
+                padding: EdgeInsets.all(AppTheme.space12),
                 decoration: BoxDecoration(
-                  color: AppTheme.bgInput,
+                  color: context.bgInput,
                   borderRadius: AppTheme.borderRadiusMedium,
-                  border: Border.all(color: AppTheme.borderSubtle),
+                  border: Border.all(color: context.borderSubtle),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-                        const SizedBox(width: AppTheme.space6),
+                        Icon(Icons.terminal, size: 14, color: context.textTertiary),
+                        SizedBox(width: AppTheme.space6),
                         Text(
                           '操作日志',
                           style: AppTheme.fontCaption.copyWith(
-                            color: AppTheme.textTertiary,
+                            color: context.textTertiary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const Spacer(),
+                        Spacer(),
                         if (_logMessages.isNotEmpty)
                           GestureDetector(
                             onTap: () => setState(() => _logMessages.clear()),
                             child: Text(
                               '清空日志',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                              style: AppTheme.fontCaption.copyWith(color: context.accentText),
                             ),
                           ),
                       ],
                     ),
-                    const SizedBox(height: AppTheme.space8),
-                    const Divider(height: 1, color: AppTheme.borderSubtle),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
+                    Divider(height: 1, color: context.borderSubtle),
+                    SizedBox(height: AppTheme.space8),
                     Expanded(
                       child: _logMessages.isEmpty
                           ? Center(
                               child: Text(
                                 '暂无日志记录',
-                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                               ),
                             )
                           : ListView.builder(
@@ -414,12 +414,12 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
 
   Widget _buildStepChip(String label, bool isDone) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isDone ? AppTheme.successSubtle : AppTheme.bgInput,
+        color: isDone ? context.successText.withValues(alpha: 0x1F / 255) : context.bgInput,
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: isDone ? AppTheme.success.withValues(alpha: 0.4) : AppTheme.borderSubtle,
+          color: isDone ? context.successText.withValues(alpha: 0.4) : context.borderSubtle,
         ),
       ),
       child: Row(
@@ -428,13 +428,13 @@ class _BcConfigHomePageState extends State<BcConfigHomePage> {
           Icon(
             isDone ? Icons.check_circle : Icons.radio_button_unchecked,
             size: 12,
-            color: isDone ? AppTheme.success : AppTheme.textTertiary,
+            color: isDone ? context.successText : context.textTertiary,
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: 6),
           Text(
             label,
             style: AppTheme.fontCaption.copyWith(
-              color: isDone ? AppTheme.success : AppTheme.textSecondary,
+              color: isDone ? context.successText : context.textSecondary,
               fontWeight: isDone ? FontWeight.w600 : FontWeight.normal,
             ),
           ),

@@ -89,7 +89,7 @@ class _PasswordPageState extends State<PasswordPage> {
   void _showGenerator() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       isScrollControlled: true,
       builder: (ctx) => const GeneratorPanel(),
     );
@@ -119,11 +119,11 @@ class _PasswordPageState extends State<PasswordPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        title: const Text('删除条目', style: TextStyle(color: AppTheme.textPrimary)),
+        backgroundColor: context.bgCard,
+        title: Text('删除条目', style: TextStyle(color: context.textPrimary)),
         content: Text(
           '确定删除「${item.title}」？此操作不可撤销。',
-          style: const TextStyle(color: AppTheme.textSecondary),
+          style: TextStyle(color: context.textSecondary),
         ),
         actions: [
           TextButton(
@@ -131,7 +131,7 @@ class _PasswordPageState extends State<PasswordPage> {
             child: const Text('取消'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
+            style: FilledButton.styleFrom(backgroundColor: context.errorSolid),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('删除'),
           ),
@@ -151,15 +151,15 @@ class _PasswordPageState extends State<PasswordPage> {
   @override
   Widget build(BuildContext context) {
     if (_checkingMigration) {
-      return const Scaffold(
-        backgroundColor: AppTheme.bgContent,
+      return Scaffold(
+        backgroundColor: context.bgContent,
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_migrationNeeded) {
       return Scaffold(
-        backgroundColor: AppTheme.bgContent,
+        backgroundColor: context.bgContent,
         body: MigrationWizard(
           onComplete: () {
             setState(() {
@@ -176,25 +176,24 @@ class _PasswordPageState extends State<PasswordPage> {
 
     if (_loadError != null) {
       return Scaffold(
-        backgroundColor: AppTheme.bgContent,
+        backgroundColor: context.bgContent,
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: EdgeInsets.all(32),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline,
-                    color: AppTheme.error, size: 48),
-                const SizedBox(height: 16),
-                const Text(
+                Icon(Icons.error_outline, color: context.errorText, size: 48),
+                SizedBox(height: 16),
+                Text(
                   '密码库加载失败',
-                  style: TextStyle(color: AppTheme.textPrimary, fontSize: 18),
+                  style: TextStyle(color: context.textPrimary, fontSize: 18),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 Text(
                   _loadError!,
-                  style: const TextStyle(
-                      color: AppTheme.textSecondary, fontSize: 13),
+                  style: TextStyle(
+                      color: context.textSecondary, fontSize: 13),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
@@ -206,7 +205,7 @@ class _PasswordPageState extends State<PasswordPage> {
                     });
                     _bootstrap();
                   },
-                  child: const Text('重试'),
+                  child: Text('重试'),
                 ),
               ],
             ),
@@ -216,7 +215,7 @@ class _PasswordPageState extends State<PasswordPage> {
     }
 
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Column(
         children: [
           _buildHeader(),
@@ -224,9 +223,9 @@ class _PasswordPageState extends State<PasswordPage> {
             child: Row(
               children: [
                 _buildSidebar(),
-                Container(width: 1, color: AppTheme.borderSubtle),
+                Container(width: 1, color: context.borderSubtle),
                 _buildItemList(),
-                Container(width: 1, color: AppTheme.borderSubtle),
+                Container(width: 1, color: context.borderSubtle),
                 Expanded(child: _buildDetail()),
               ],
             ),
@@ -239,39 +238,39 @@ class _PasswordPageState extends State<PasswordPage> {
   Widget _buildHeader() {
     return Container(
       height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: const BoxDecoration(
-        color: AppTheme.bgSidebar,
-        border: Border(bottom: BorderSide(color: AppTheme.borderSubtle)),
+      padding: EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: context.bgSidebar,
+        border: Border(bottom: BorderSide(color: context.borderSubtle)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.lock_rounded, color: AppTheme.accent, size: 22),
-          const SizedBox(width: 8),
-          const Text(
+          Icon(Icons.lock_rounded, color: context.accentText, size: 22),
+          SizedBox(width: 8),
+          Text(
             '密码工具',
             style: TextStyle(
-              color: AppTheme.textPrimary,
+              color: context.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(width: 24),
+          SizedBox(width: 24),
           Expanded(
             child: SizedBox(
               height: 36,
               child: TextField(
                 controller: _searchController,
-                style: const TextStyle(
-                    color: AppTheme.textPrimary, fontSize: 13),
+                style: TextStyle(
+                    color: context.textPrimary, fontSize: 13),
                 decoration: InputDecoration(
                   hintText: '搜索标题、用户名或网址…',
                   hintStyle:
-                      const TextStyle(color: AppTheme.textTertiary, fontSize: 13),
-                  prefixIcon: const Icon(Icons.search,
-                      color: AppTheme.textTertiary, size: 18),
+                      TextStyle(color: context.textTertiary, fontSize: 13),
+                  prefixIcon: Icon(Icons.search,
+                      color: context.textTertiary, size: 18),
                   filled: true,
-                  fillColor: AppTheme.bgInput,
+                  fillColor: context.bgInput,
                   contentPadding: EdgeInsets.zero,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(6),
@@ -295,27 +294,27 @@ class _PasswordPageState extends State<PasswordPage> {
             label: '体检',
             onPressed: _showHealthReport,
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8),
           _headerButton(
             icon: Icons.password_rounded,
             label: '生成器',
             onPressed: _showGenerator,
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.lock_outline,
-                color: AppTheme.textSecondary, size: 20),
+            icon: Icon(Icons.lock_outline,
+                color: context.textSecondary, size: 20),
             tooltip: '立即锁定',
             onPressed: () {
               _store.lock();
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已锁定：内存中的密钥已清空')),
+                SnackBar(content: Text('已锁定：内存中的密钥已清空')),
               );
             },
           ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined,
-                color: AppTheme.textSecondary, size: 20),
+            icon: Icon(Icons.settings_outlined,
+                color: context.textSecondary, size: 20),
             tooltip: '设置',
             onPressed: _showSettings,
           ),
@@ -333,25 +332,25 @@ class _PasswordPageState extends State<PasswordPage> {
     if (primary) {
       return FilledButton.icon(
         style: FilledButton.styleFrom(
-          backgroundColor: AppTheme.accent,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          backgroundColor: context.accentSolid,
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           minimumSize: Size.zero,
         ),
         onPressed: onPressed,
         icon: Icon(icon, size: 16),
-        label: Text(label, style: const TextStyle(fontSize: 13)),
+        label: Text(label, style: TextStyle(fontSize: 13)),
       );
     }
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(
-        foregroundColor: AppTheme.textSecondary,
-        side: const BorderSide(color: AppTheme.borderStrong),
+        foregroundColor: context.textSecondary,
+        side: BorderSide(color: context.borderStrong),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         minimumSize: Size.zero,
       ),
       onPressed: onPressed,
       icon: Icon(icon, size: 16),
-      label: Text(label, style: const TextStyle(fontSize: 13)),
+      label: Text(label, style: TextStyle(fontSize: 13)),
     );
   }
 
@@ -362,9 +361,9 @@ class _PasswordPageState extends State<PasswordPage> {
 
     return Container(
       width: 180,
-      color: AppTheme.bgSidebar,
+      color: context.bgSidebar,
       child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: 8),
         children: [
           _sidebarEntry(
             icon: Icons.apps_rounded,
@@ -373,11 +372,11 @@ class _PasswordPageState extends State<PasswordPage> {
             selected: _selectedTag == null,
             onTap: () => setState(() => _selectedTag = null),
           ),
-          const Padding(
+          Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
             child: Text(
               '标签',
-              style: TextStyle(color: AppTheme.textTertiary, fontSize: 11),
+              style: TextStyle(color: context.textTertiary, fontSize: 11),
             ),
           ),
           for (final tag in tags)
@@ -403,20 +402,20 @@ class _PasswordPageState extends State<PasswordPage> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: selected ? AppTheme.bgSelected : Colors.transparent,
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: selected ? context.bgSelected : Colors.transparent,
         child: Row(
           children: [
             Icon(icon,
                 size: 16,
-                color: selected ? AppTheme.accent : AppTheme.textSecondary),
-            const SizedBox(width: 8),
+                color: selected ? context.accentText : context.textSecondary),
+            SizedBox(width: 8),
             Expanded(
               child: Text(
                 label,
                 style: TextStyle(
                   color:
-                      selected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                      selected ? context.textPrimary : context.textSecondary,
                   fontSize: 13,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -425,7 +424,7 @@ class _PasswordPageState extends State<PasswordPage> {
             Text(
               '$count',
               style:
-                  const TextStyle(color: AppTheme.textTertiary, fontSize: 11),
+                  TextStyle(color: context.textTertiary, fontSize: 11),
             ),
           ],
         ),
@@ -437,13 +436,13 @@ class _PasswordPageState extends State<PasswordPage> {
     final items = _visibleItems;
     return Container(
       width: 280,
-      color: AppTheme.bgContent,
+      color: context.bgContent,
       child: items.isEmpty
           ? Center(
               child: Text(
                 _store.items.isEmpty ? '暂无条目，点击「新建」开始' : '无匹配条目',
-                style: const TextStyle(
-                    color: AppTheme.textTertiary, fontSize: 13),
+                style: TextStyle(
+                    color: context.textTertiary, fontSize: 13),
               ),
             )
           : ListView.builder(
@@ -463,27 +462,27 @@ class _PasswordPageState extends State<PasswordPage> {
     return InkWell(
       onTap: () => _selectItem(item),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: selected ? AppTheme.bgSelected : Colors.transparent,
-          border: const Border(
-            bottom: BorderSide(color: AppTheme.borderSubtle, width: 0.5),
+          color: selected ? context.bgSelected : Colors.transparent,
+          border: Border(
+            bottom: BorderSide(color: context.borderSubtle, width: 0.5),
           ),
         ),
         child: Row(
           children: [
             Icon(icon,
                 size: 18,
-                color: selected ? AppTheme.accent : AppTheme.textSecondary),
-            const SizedBox(width: 12),
+                color: selected ? context.accentText : context.textSecondary),
+            SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     item.title.isEmpty ? '（无标题）' : item.title,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
+                    style: TextStyle(
+                      color: context.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
                     ),
@@ -492,8 +491,8 @@ class _PasswordPageState extends State<PasswordPage> {
                   if (item.username.isNotEmpty)
                     Text(
                       item.username,
-                      style: const TextStyle(
-                          color: AppTheme.textTertiary, fontSize: 11),
+                      style: TextStyle(
+                          color: context.textTertiary, fontSize: 11),
                       overflow: TextOverflow.ellipsis,
                     ),
                 ],
@@ -508,10 +507,10 @@ class _PasswordPageState extends State<PasswordPage> {
   Widget _buildDetail() {
     final item = _selectedItem;
     if (item == null) {
-      return const Center(
+      return Center(
         child: Text(
           '选择左侧条目查看详情',
-          style: TextStyle(color: AppTheme.textTertiary, fontSize: 13),
+          style: TextStyle(color: context.textTertiary, fontSize: 13),
         ),
       );
     }

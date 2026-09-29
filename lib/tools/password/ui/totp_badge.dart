@@ -64,17 +64,17 @@ class _TotpBadgeState extends State<TotpBadge> {
   @override
   Widget build(BuildContext context) {
     if (_invalid) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Text('TOTP Seed 无效',
-            style: TextStyle(color: AppTheme.error, fontSize: 12)),
+            style: TextStyle(color: context.errorText, fontSize: 12)),
       );
     }
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.bgInput,
+        color: context.bgInput,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -83,24 +83,24 @@ class _TotpBadgeState extends State<TotpBadge> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('两步验证码',
+                Text('两步验证码',
                     style:
-                        TextStyle(color: AppTheme.textTertiary, fontSize: 11)),
-                const SizedBox(height: 4),
+                        TextStyle(color: context.textTertiary, fontSize: 11)),
+                SizedBox(height: 4),
                 Text(
                   '${_current.substring(0, 3)} ${_current.substring(3)}',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
+                  style: TextStyle(
+                    color: context.textPrimary,
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 2,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   '上一码 $_prev · 下一码 $_next',
-                  style: const TextStyle(
-                      color: AppTheme.textTertiary, fontSize: 10),
+                  style: TextStyle(
+                      color: context.textTertiary, fontSize: 10),
                 ),
               ],
             ),
@@ -117,14 +117,14 @@ class _TotpBadgeState extends State<TotpBadge> {
                       value: _remaining / 30,
                       strokeWidth: 3,
                       color: _remaining <= 5
-                          ? AppTheme.error
-                          : AppTheme.accent,
-                      backgroundColor: AppTheme.borderSubtle,
+                          ? context.errorSolid
+                          : context.accentSolid,
+                      backgroundColor: context.borderSubtle,
                     ),
                     Text(
                       '$_remaining',
-                      style: const TextStyle(
-                          color: AppTheme.textSecondary, fontSize: 11),
+                      style: TextStyle(
+                          color: context.textSecondary, fontSize: 11),
                     ),
                   ],
                 ),
@@ -135,17 +135,17 @@ class _TotpBadgeState extends State<TotpBadge> {
                   await ClipboardHygieneService.instance.copySecret(_current);
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
+                      SnackBar(
                         content: Text('验证码已复制'),
                         duration: Duration(seconds: 2),
                       ),
                     );
                   }
                 },
-                child: const Padding(
+                child: Padding(
                   padding: EdgeInsets.all(4),
                   child: Icon(Icons.copy_rounded,
-                      size: 16, color: AppTheme.textSecondary),
+                      size: 16, color: context.textSecondary),
                 ),
               ),
             ],

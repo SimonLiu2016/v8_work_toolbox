@@ -158,9 +158,9 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
             constraints: const BoxConstraints(maxWidth: 420),
             padding: const EdgeInsets.all(AppTheme.space32),
             decoration: BoxDecoration(
-              color: AppTheme.bgCard,
+              color: context.bgCard,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.borderSubtle),
+              border: Border.all(color: context.borderSubtle),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.4),
@@ -177,16 +177,16 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.12),
+                    color: context.accentText.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: AppTheme.accent.withValues(alpha: 0.3),
+                      color: context.accentText.withValues(alpha: 0.3),
                       width: 1.5,
                     ),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.lock_outline_rounded,
-                    color: AppTheme.accent,
+                    color: context.accentText,
                     size: 32,
                   ),
                 ),
@@ -207,7 +207,7 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
                       ? (_isConfirming ? '请再次输入 6 位数字以完成设置' : '请输入 6 位纯数字安全密码')
                       : '此空间受密码保护，请输入 6 位 PIN 码以继续',
                   style: AppTheme.fontCaption.copyWith(
-                    color: AppTheme.textSecondary,
+                    color: context.textSecondary,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -242,12 +242,12 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
                         width: 42,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: AppTheme.bgCard,
+                          color: context.bgCard,
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
                             color: hasDigit
-                                ? AppTheme.accent
-                                : AppTheme.borderSubtle,
+                                ? context.accentSolid
+                                : context.borderSubtle,
                             width: hasDigit ? 1.5 : 1.0,
                           ),
                         ),
@@ -256,8 +256,8 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
                               ? Container(
                                   width: 14,
                                   height: 14,
-                                  decoration: const BoxDecoration(
-                                    color: AppTheme.accent,
+                                  decoration: BoxDecoration(
+                                    color: context.accentText,
                                     shape: BoxShape.circle,
                                   ),
                                 )
@@ -273,8 +273,8 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
                   const SizedBox(height: AppTheme.space12),
                   Text(
                     _errorMessage,
-                    style: const TextStyle(
-                      color: AppTheme.error,
+                    style: TextStyle(
+                      color: context.errorText,
                       fontSize: 13,
                     ),
                   ),
@@ -338,17 +338,17 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
         width: 64,
         height: 64,
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: context.bgCard,
           shape: BoxShape.circle,
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
         child: Center(
           child: Text(
             num,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w600,
-              color: AppTheme.textPrimary,
+              color: context.textPrimary,
             ),
           ),
         ),
@@ -372,7 +372,7 @@ class _PrivacyLockViewState extends State<PrivacyLockView>
         child: Center(
           child: Icon(
             icon,
-            color: AppTheme.textSecondary,
+            color: context.textSecondary,
             size: 22,
           ),
         ),

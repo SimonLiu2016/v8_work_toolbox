@@ -93,7 +93,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('已添加 ${lines.length} 个下载任务至队列'),
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
       ),
     );
 
@@ -107,16 +107,16 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
         // 顶部 Tab 栏
         Container(
           height: 44,
-          color: AppTheme.bgCard,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          color: context.bgCard,
+          padding: EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               TabBar(
                 controller: _tabController,
                 isScrollable: true,
-                indicatorColor: AppTheme.accent,
-                labelColor: AppTheme.accent,
-                unselectedLabelColor: AppTheme.textSecondary,
+                indicatorColor: context.accentSolid,
+                labelColor: context.accentText,
+                unselectedLabelColor: context.textSecondary,
                 tabs: [
                   const Tab(text: '单链接解析'),
                   const Tab(text: '批量下载'),
@@ -136,7 +136,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.accent,
+                                  color: context.accentText,
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                                 child: Text(
@@ -152,12 +152,12 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                   ),
                 ],
               ),
-              const Spacer(),
+              Spacer(),
               // 快速打开下载文件夹
               TextButton.icon(
-                icon: const Icon(Icons.folder_open_rounded, size: 16),
-                label: const Text('下载目录', style: TextStyle(fontSize: 12)),
-                style: TextButton.styleFrom(foregroundColor: AppTheme.textSecondary),
+                icon: Icon(Icons.folder_open_rounded, size: 16),
+                label: Text('下载目录', style: TextStyle(fontSize: 12)),
+                style: TextButton.styleFrom(foregroundColor: context.textSecondary),
                 onPressed: () {
                   PrivateStorageManager.instance.revealInFinder(
                     PrivateStorageManager.instance.downloadsDir,
@@ -185,7 +185,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
 
   Widget _buildSingleParseTab() {
     return ListView(
-      padding: const EdgeInsets.all(AppTheme.space20),
+      padding: EdgeInsets.all(AppTheme.space20),
       children: [
         // 输入框与解析按钮
         Row(
@@ -193,14 +193,14 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
             Expanded(
               child: TextField(
                 controller: _urlController,
-                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+                style: TextStyle(color: context.textPrimary, fontSize: 13),
                 decoration: InputDecoration(
                   hintText: '输入 B站 / YouTube / Pornhub / PornLulu / MissAV 等视频链接',
-                  hintStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                  prefixIcon: const Icon(Icons.link_rounded, size: 18, color: AppTheme.textSecondary),
+                  hintStyle: TextStyle(color: context.textSecondary, fontSize: 13),
+                  prefixIcon: Icon(Icons.link_rounded, size: 18, color: context.textSecondary),
                   suffixIcon: _urlController.text.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(Icons.clear, size: 16),
+                          icon: Icon(Icons.clear, size: 16),
                           onPressed: () {
                             setState(() {
                               _urlController.clear();
@@ -210,19 +210,19 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                         )
                       : null,
                   filled: true,
-                  fillColor: AppTheme.bgCard,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  fillColor: context.bgCard,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.borderSubtle),
+                    borderSide: BorderSide(color: context.borderSubtle),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.borderSubtle),
+                    borderSide: BorderSide(color: context.borderSubtle),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppTheme.accent),
+                    borderSide: BorderSide(color: context.accentSolid),
                   ),
                 ),
                 onSubmitted: (_) => _handleParse(),
@@ -231,7 +231,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
             const SizedBox(width: 12),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.accent,
+                backgroundColor: context.accentSolid,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -254,19 +254,19 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
           Container(
             padding: const EdgeInsets.all(AppTheme.space12),
             decoration: BoxDecoration(
-              color: AppTheme.errorSubtle,
+              color: context.errorText.withValues(alpha: 0x1F / 255),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+              border: Border.all(color: context.errorText.withValues(alpha: 0.3)),
             ),
             child: Text(
               _parseError,
-              style: const TextStyle(color: AppTheme.error, fontSize: 13),
+              style: TextStyle(color: context.errorText, fontSize: 13),
             ),
           ),
         ],
 
         if (_parsedInfo != null) ...[
-          const SizedBox(height: AppTheme.space20),
+          SizedBox(height: AppTheme.space20),
           _buildParsedInfoCard(_parsedInfo!),
         ],
       ],
@@ -275,11 +275,11 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
 
   Widget _buildParsedInfoCard(ParsedVideoInfo info) {
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -299,8 +299,8 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                     errorBuilder: (_, __, ___) => Container(
                       width: 160,
                       height: 96,
-                      color: AppTheme.bgCard,
-                      child: const Icon(Icons.movie_outlined, color: AppTheme.textSecondary),
+                      color: context.bgCard,
+                      child: Icon(Icons.movie_outlined, color: context.textSecondary),
                     ),
                   ),
                 ),
@@ -313,27 +313,27 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppTheme.accent.withValues(alpha: 0.15),
+                            color: context.accentText.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             info.platform,
-                            style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.bold),
+                            style: TextStyle(color: context.accentText, fontSize: 11, fontWeight: FontWeight.bold),
                           ),
                         ),
                         if (info.author != null) ...[
-                          const SizedBox(width: 8),
+                          SizedBox(width: 8),
                           Text(
                             info.author!,
-                            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                            style: TextStyle(color: context.textSecondary, fontSize: 12),
                           ),
                         ],
-                        const Spacer(),
+                        Spacer(),
                         Text(
                           '时长: ${info.duration.inMinutes}:${(info.duration.inSeconds % 60).toString().padLeft(2, '0')}',
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                          style: TextStyle(color: context.textSecondary, fontSize: 12),
                         ),
                       ],
                     ),
@@ -351,12 +351,12 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                         if (info.directStreamUrl != null)
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.accent,
+                              backgroundColor: context.accentSolid,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                             ),
-                            icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                            label: const Text('立即在线播放'),
+                            icon: Icon(Icons.play_arrow_rounded, size: 18),
+                            label: Text('立即在线播放'),
                             onPressed: () {
                               widget.onPlayMedia(
                                 info.directStreamUrl!,
@@ -365,12 +365,12 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                               );
                             },
                           ),
-                        const SizedBox(width: 12),
+                        SizedBox(width: 12),
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: AppTheme.textPrimary,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            side: const BorderSide(color: AppTheme.borderSubtle),
+                            foregroundColor: context.textPrimary,
+                            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            side: BorderSide(color: context.borderSubtle),
                           ),
                           icon: const Icon(Icons.download_rounded, size: 18),
                           label: const Text('添加至下载队列'),
@@ -394,22 +394,22 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
 
           // 清晰度与格式选择
           if (info.formats.isNotEmpty) ...[
-            const Divider(color: AppTheme.borderSubtle, height: 28),
-            const Text(
+            Divider(color: context.borderSubtle, height: 28),
+            Text(
               '选择下载画质规格：',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.bold),
+              style: TextStyle(color: context.textSecondary, fontSize: 12, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: info.formats.map((fmt) {
                 final isSelected = _selectedFormat?.formatId == fmt.formatId;
                 return ChoiceChip(
-                  label: Text(fmt.displayName, style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : AppTheme.textPrimary)),
+                  label: Text(fmt.displayName, style: TextStyle(fontSize: 12, color: isSelected ? context.onAccentSolid : context.textPrimary)),
                   selected: isSelected,
-                  selectedColor: AppTheme.accent,
-                  backgroundColor: AppTheme.bgCard,
+                  selectedColor: context.accentSolid,
+                  backgroundColor: context.bgCard,
                   onSelected: (val) {
                     if (val) {
                       setState(() {
@@ -428,30 +428,30 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
 
   Widget _buildBatchTab() {
     return Padding(
-      padding: const EdgeInsets.all(AppTheme.space20),
+      padding: EdgeInsets.all(AppTheme.space20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('批量视频链接下载', style: AppTheme.fontTitle.copyWith(fontSize: 15)),
-          const SizedBox(height: 4),
+          SizedBox(height: 4),
           Text(
             '每行粘贴一个视频链接，点击“加入批量下载”将自动加入并发调度队列中',
-            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
           ),
-          const SizedBox(height: AppTheme.space16),
+          SizedBox(height: AppTheme.space16),
           Expanded(
             child: TextField(
               controller: _batchController,
               maxLines: null,
               expands: true,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontFamily: 'monospace'),
+              style: TextStyle(color: context.textPrimary, fontSize: 13, fontFamily: 'monospace'),
               decoration: InputDecoration(
                 hintText: 'https://www.youtube.com/watch?v=...\nhttps://www.bilibili.com/video/BV...\nhttps://missav.ws/...',
-                hintStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                hintStyle: TextStyle(color: context.textSecondary, fontSize: 13),
                 filled: true,
-                fillColor: AppTheme.bgCard,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
+                fillColor: context.bgCard,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: context.borderSubtle)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: context.borderSubtle)),
               ),
             ),
           ),
@@ -460,7 +460,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
             alignment: Alignment.centerRight,
             child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.accent,
+                backgroundColor: context.accentSolid,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -486,9 +486,9 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.inbox_outlined, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
-                const SizedBox(height: 12),
-                const Text('暂无下载任务', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                Icon(Icons.inbox_outlined, size: 48, color: context.textSecondary.withValues(alpha: 0.5)),
+                SizedBox(height: 12),
+                Text('暂无下载任务', style: TextStyle(color: context.textSecondary, fontSize: 13)),
               ],
             ),
           );
@@ -498,15 +498,15 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
           children: [
             // 队列顶栏操作
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: AppTheme.bgCard,
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: context.bgCard,
               child: Row(
                 children: [
-                  Text('共 ${tasks.length} 个任务', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                  const Spacer(),
+                  Text('共 ${tasks.length} 个任务', style: TextStyle(color: context.textSecondary, fontSize: 12)),
+                  Spacer(),
                   TextButton.icon(
-                    icon: const Icon(Icons.clear_all_rounded, size: 16),
-                    label: const Text('清空已完成', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.clear_all_rounded, size: 16),
+                    label: Text('清空已完成', style: TextStyle(fontSize: 12)),
                     onPressed: () => _queue.clearFinished(),
                   ),
                 ],
@@ -515,7 +515,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
             Expanded(
               child: ListView.separated(
                 itemCount: tasks.length,
-                separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+                separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
                 itemBuilder: (context, idx) {
                   final task = tasks[idx];
                   return _buildTaskTile(task);
@@ -561,7 +561,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                   ),
                 ],
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: 14),
 
               // 标题与进度
               Expanded(
@@ -570,15 +570,15 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                   children: [
                     Text(
                       task.title,
-                      style: const TextStyle(
-                        color: AppTheme.textPrimary,
+                      style: TextStyle(
+                        color: context.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 6),
+                    SizedBox(height: 6),
                     // 进度条
                     ClipRRect(
                       borderRadius: BorderRadius.circular(3),
@@ -586,11 +586,11 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                         value: task.status == DownloadStatus.completed
                             ? 1.0
                             : (task.progress > 0 ? task.progress : null),
-                        backgroundColor: AppTheme.bgCard,
+                        backgroundColor: context.bgCard,
                         valueColor: AlwaysStoppedAnimation(
                           task.status == DownloadStatus.failed
-                              ? AppTheme.error
-                              : AppTheme.accent,
+                              ? context.errorSolid
+                              : context.accentSolid,
                         ),
                         minHeight: 4,
                       ),
@@ -603,26 +603,26 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                           style: TextStyle(
                             fontSize: 11,
                             color: task.status == DownloadStatus.failed
-                                ? AppTheme.error
+                                ? context.errorSolid
                                 : (task.status == DownloadStatus.completed
-                                    ? AppTheme.success
-                                    : AppTheme.accent),
+                                    ? context.successSolid
+                                    : context.accentSolid),
                           ),
                         ),
                         if (task.speed.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Text('速度: ${task.speed}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                          SizedBox(width: 8),
+                          Text('速度: ${task.speed}', style: TextStyle(color: context.textSecondary, fontSize: 11)),
                         ],
                         if (task.eta.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Text('剩余: ${task.eta}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+                          SizedBox(width: 8),
+                          Text('剩余: ${task.eta}', style: TextStyle(color: context.textSecondary, fontSize: 11)),
                         ],
                         if (task.errorMessage != null && task.errorMessage!.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               task.errorMessage!,
-                              style: const TextStyle(color: AppTheme.error, fontSize: 11),
+                              style: TextStyle(color: context.errorText, fontSize: 11),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -639,19 +639,19 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
               // 操作按钮 (播放 / 离线生成中文字幕 / 访达 / 取消 / 重试)
               if (task.status == DownloadStatus.completed && task.outputPath != null) ...[
                 IconButton(
-                  icon: const Icon(Icons.play_circle_fill_rounded, color: AppTheme.accent, size: 24),
+                  icon: Icon(Icons.play_circle_fill_rounded, color: context.accentText, size: 24),
                   tooltip: '在播放器中播放',
                   onPressed: () {
                     widget.onPlayMedia(task.outputPath!, title: task.title, thumbnail: task.thumbnailUrl);
                   },
                 ),
                 IconButton(
-                  icon: const Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
+                  icon: Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
                   tooltip: '离线生成并翻译中文字幕',
                   onPressed: () => _handleGenerateChineseSubtitles(task),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.folder_open_rounded, color: AppTheme.textSecondary, size: 20),
+                  icon: Icon(Icons.folder_open_rounded, color: context.textSecondary, size: 20),
                   tooltip: '在访达中显示',
                   onPressed: () {
                     PrivateStorageManager.instance.revealInFinder();
@@ -681,9 +681,9 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
     final path = task.outputPath;
     if (path == null || !File(path).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('本地视频文件不存在，无法生成字幕'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
         ),
       );
       return;
@@ -703,12 +703,12 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
   Widget _buildStatusIcon(DownloadStatus status) {
     switch (status) {
       case DownloadStatus.completed:
-        return const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 14);
+        return Icon(Icons.check_circle_rounded, color: context.successText, size: 14);
       case DownloadStatus.downloading:
-        return const SizedBox(
+        return SizedBox(
           width: 12,
           height: 12,
-          child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.accent),
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: context.accentText),
         );
       case DownloadStatus.merging:
         return const SizedBox(
@@ -717,7 +717,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
           child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.amber),
         );
       case DownloadStatus.failed:
-        return const Icon(Icons.error_outline_rounded, color: AppTheme.error, size: 14);
+        return Icon(Icons.error_outline_rounded, color: context.errorText, size: 14);
       case DownloadStatus.cancelled:
         return const Icon(Icons.cancel_outlined, color: Colors.white38, size: 14);
       case DownloadStatus.queued:
@@ -794,10 +794,10 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: AppTheme.borderSubtle),
+        side: BorderSide(color: context.borderSubtle),
       ),
       child: Container(
         width: 480,
@@ -815,20 +815,20 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
                     color: Colors.amber.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
+                  child: Icon(Icons.subtitles_rounded, color: Colors.amber, size: 20),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         '离线生成中文字幕',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.textPrimary),
                       ),
                       Text(
                         widget.title,
-                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        style: TextStyle(fontSize: 12, color: context.textSecondary),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -837,48 +837,48 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
                 ),
                 if (!_isProcessing)
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 20, color: AppTheme.textSecondary),
+                    icon: Icon(Icons.close_rounded, size: 20, color: context.textSecondary),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space20),
+            SizedBox(height: AppTheme.space20),
             if (_isProcessing) ...[
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: _progress,
-                  backgroundColor: AppTheme.bgCard,
-                  valueColor: const AlwaysStoppedAnimation(Colors.amber),
+                  backgroundColor: context.bgCard,
+                  valueColor: AlwaysStoppedAnimation(Colors.amber),
                   minHeight: 6,
                 ),
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: 12),
               Text(
                 _statusText,
-                style: const TextStyle(fontSize: 13, color: AppTheme.accent),
+                style: TextStyle(fontSize: 13, color: context.accentText),
               ),
-              const SizedBox(height: 6),
-              const Text(
+              SizedBox(height: 6),
+              Text(
                 '全自动流水线：轻量音频切片 -> 并发语音转录 -> AI 文本大模型翻译为双语字幕',
-                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                style: TextStyle(fontSize: 11, color: context.textSecondary),
               ),
             ] else if (_errorText.isNotEmpty) ...[
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.error.withValues(alpha: 0.1),
+                  color: context.errorText.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                  border: Border.all(color: context.errorText.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline_rounded, color: AppTheme.error, size: 20),
+                    Icon(Icons.error_outline_rounded, color: context.errorText, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         _errorText,
-                        style: const TextStyle(fontSize: 12, color: AppTheme.error),
+                        style: TextStyle(fontSize: 12, color: context.errorText),
                       ),
                     ),
                   ],
@@ -894,7 +894,7 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+                    style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
                     onPressed: () {
                       setState(() {
                         _isProcessing = true;
@@ -911,27 +911,27 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.success.withValues(alpha: 0.1),
+                  color: context.successText.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.success.withValues(alpha: 0.3)),
+                  border: Border.all(color: context.successText.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 20),
-                    const SizedBox(width: 8),
+                    Icon(Icons.check_circle_rounded, color: context.successText, size: 20),
+                    SizedBox(width: 8),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _statusText,
-                            style: const TextStyle(fontSize: 13, color: AppTheme.success, fontWeight: FontWeight.w500),
+                            style: TextStyle(fontSize: 13, color: context.successText, fontWeight: FontWeight.w500),
                           ),
                           if (_savedSubtitlePath != null) ...[
-                            const SizedBox(height: 4),
+                            SizedBox(height: 4),
                             Text(
                               '已保存至: ${p.basename(_savedSubtitlePath!)}',
-                              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                              style: TextStyle(fontSize: 11, color: context.textSecondary),
                             ),
                           ],
                         ],
@@ -951,7 +951,7 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
+                      backgroundColor: context.accentSolid,
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.play_circle_fill_rounded, size: 18),

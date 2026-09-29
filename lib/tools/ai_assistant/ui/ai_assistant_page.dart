@@ -69,7 +69,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => const ScheduledTasksDrawer(),
+      builder: (ctx) => ScheduledTasksDrawer(),
     );
   }
 
@@ -78,7 +78,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
     final messages = _service.messages;
 
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Column(
         children: [
           // 顶部标题与功能操作栏
@@ -98,22 +98,22 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24, vertical: AppTheme.space16),
-      decoration: const BoxDecoration(
-        color: AppTheme.bgCard,
-        border: Border(bottom: BorderSide(color: AppTheme.borderSubtle)),
+      padding: EdgeInsets.symmetric(horizontal: AppTheme.space24, vertical: AppTheme.space16),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        border: Border(bottom: BorderSide(color: context.borderSubtle)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.assistant_outlined, color: AppTheme.accentLight, size: 24),
-          const SizedBox(width: AppTheme.space12),
+          Icon(Icons.assistant_outlined, color: context.accentText, size: 24),
+          SizedBox(width: AppTheme.space12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('AI 资讯与检索助手', style: AppTheme.fontTitle),
+              Text('AI 资讯与检索助手', style: AppTheme.fontTitle),
               Text(
                 '结合全网实时爬虫与检索 MCP，探索深度情报并跟踪最新资讯',
-                style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
               ),
             ],
           ),
@@ -133,15 +133,15 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                       Icons.vpn_lock_outlined,
                       size: 16,
                       color: isEnabled
-                          ? AppTheme.accentLight
-                          : AppTheme.textTertiary,
+                          ? context.accentText
+                          : context.textTertiary,
                     ),
                     const SizedBox(width: 4),
                     Text('代理', style: AppTheme.fontCaption),
                     Switch(
                       value: isEnabled,
-                      activeColor: AppTheme.accentLight,
-                      activeTrackColor: AppTheme.accent,
+                      activeColor: context.accentText,
+                      activeTrackColor: context.accentSolid,
                       onChanged: (val) async {
                         await ProxySettings.instance
                             .setToolEnabled(kToolIdAiAssistant, val);
@@ -152,21 +152,21 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
               );
             },
           ),
-          const SizedBox(width: AppTheme.space8),
+          SizedBox(width: AppTheme.space8),
           AppButton.secondary(
             label: '定时资讯任务',
             icon: Icons.notifications_active_outlined,
             onPressed: _openScheduledTasksDrawer,
           ),
-          const SizedBox(width: AppTheme.space8),
+          SizedBox(width: AppTheme.space8),
           IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined, size: 20, color: AppTheme.textSecondary),
+            icon: Icon(Icons.delete_sweep_outlined, size: 20, color: context.textSecondary),
             tooltip: '清空会话历史',
             onPressed: () async {
               final ok = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  backgroundColor: AppTheme.bgCard,
+                  backgroundColor: context.bgCard,
                   title: const Text('确认清空会话', style: AppTheme.fontTitle),
                   content: const Text('清空后所有历史问答和检索记录将无法恢复。'),
                   actions: [
@@ -193,19 +193,19 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppTheme.accentLight.withAlpha(20),
+                color: context.accentText.withAlpha(20),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.auto_awesome, size: 48, color: AppTheme.accentLight),
+              child: Icon(Icons.auto_awesome, size: 48, color: context.accentText),
             ),
-            const SizedBox(height: AppTheme.space16),
-            const Text('全网数据检索与智能问答', style: AppTheme.fontTitle),
-            const SizedBox(height: AppTheme.space8),
+            SizedBox(height: AppTheme.space16),
+            Text('全网数据检索与智能问答', style: AppTheme.fontTitle),
+            SizedBox(height: AppTheme.space8),
             Text(
               '你可以直接提问，助手会自主选择 Firecrawl 等 MCP 工具进行实时搜索与网页抓取',
-              style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontBody.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space24),
             Wrap(
@@ -230,13 +230,13 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
       borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
       onTap: () => _handleSend(text),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: context.bgCard,
           borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
-        child: Text(text, style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+        child: Text(text, style: TextStyle(fontSize: 13, color: context.textPrimary)),
       ),
     );
   }
@@ -263,23 +263,23 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
           children: [
             Flexible(
               child: Container(
-                padding: const EdgeInsets.all(AppTheme.space12),
+                padding: EdgeInsets.all(AppTheme.space12),
                 decoration: BoxDecoration(
-                  color: AppTheme.accentLight.withAlpha(40),
+                  color: context.accentText.withAlpha(40),
                   borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                  border: Border.all(color: AppTheme.accentLight.withAlpha(80)),
+                  border: Border.all(color: context.accentText.withAlpha(80)),
                 ),
                 child: SelectableText(
                   msg.content,
-                  style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14, height: 1.5),
+                  style: TextStyle(color: context.textPrimary, fontSize: 14, height: 1.5),
                 ),
               ),
             ),
-            const SizedBox(width: AppTheme.space10),
-            const CircleAvatar(
+            SizedBox(width: AppTheme.space10),
+            CircleAvatar(
               radius: 16,
-              backgroundColor: AppTheme.bgCard,
-              child: Icon(Icons.person, size: 18, color: AppTheme.textPrimary),
+              backgroundColor: context.bgCard,
+              child: Icon(Icons.person, size: 18, color: context.textPrimary),
             ),
           ],
         ),
@@ -292,12 +292,12 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const CircleAvatar(
+          CircleAvatar(
             radius: 16,
-            backgroundColor: AppTheme.accentLight,
-            child: Icon(Icons.smart_toy_outlined, size: 18, color: Colors.white),
+            backgroundColor: context.accentSolid,
+            child: Icon(Icons.smart_toy_outlined, size: 18, color: context.onAccentSolid),
           ),
-          const SizedBox(width: AppTheme.space10),
+          SizedBox(width: AppTheme.space10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -305,30 +305,30 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                 // 工具调用徽章
                 if (msg.toolCalls.isNotEmpty) ...[
                   ...msg.toolCalls.map((t) => _buildToolCallBadge(t)),
-                  const SizedBox(height: AppTheme.space8),
+                  SizedBox(height: AppTheme.space8),
                 ],
                 Container(
-                  padding: const EdgeInsets.all(AppTheme.space16),
+                  padding: EdgeInsets.all(AppTheme.space16),
                   decoration: BoxDecoration(
-                    color: AppTheme.bgCard,
+                    color: context.bgCard,
                     borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                    border: Border.all(color: AppTheme.borderSubtle),
+                    border: Border.all(color: context.borderSubtle),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       AppMarkdownView(
                         data: msg.content,
-                        baseStyle: const TextStyle(color: AppTheme.textPrimary, fontSize: 14, height: 1.6),
+                        baseStyle: TextStyle(color: context.textPrimary, fontSize: 14, height: 1.6),
                         // 超长回答在气泡内部滚动，避免顶高整个对话列表、淹没输入栏
                         maxHeight: MediaQuery.of(context).size.height * 0.6,
                       ),
-                      const SizedBox(height: AppTheme.space8),
+                      SizedBox(height: AppTheme.space8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.copy_outlined, size: 14, color: AppTheme.textTertiary),
+                            icon: Icon(Icons.copy_outlined, size: 14, color: context.textTertiary),
                             tooltip: '复制回答',
                             onPressed: () {
                               Clipboard.setData(ClipboardData(text: msg.content));
@@ -358,17 +358,17 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
     switch (t.status) {
       case ToolCallStatus.running:
         icon = Icons.hourglass_top;
-        color = AppTheme.warning;
+        color = context.warningSolid;
         statusText = '正在调用...';
         break;
       case ToolCallStatus.success:
         icon = Icons.check_circle_outline;
-        color = AppTheme.success;
+        color = context.successSolid;
         statusText = '执行成功';
         break;
       case ToolCallStatus.failed:
         icon = Icons.error_outline;
-        color = AppTheme.error;
+        color = context.errorSolid;
         statusText = '执行受阻';
         break;
     }
@@ -395,7 +395,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
             Flexible(
               child: Text(
                 t.error!,
-                style: const TextStyle(fontSize: 11, color: AppTheme.error),
+                style: TextStyle(fontSize: 11, color: context.errorText),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -408,10 +408,10 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
 
   Widget _buildInputBar() {
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
-      decoration: const BoxDecoration(
-        color: AppTheme.bgCard,
-        border: Border(top: BorderSide(color: AppTheme.borderSubtle)),
+      padding: EdgeInsets.all(AppTheme.space16),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        border: Border(top: BorderSide(color: context.borderSubtle)),
       ),
       child: Column(
         children: [
@@ -420,9 +420,9 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: AppTheme.bgContent,
+                    color: context.bgContent,
                     borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                    border: Border.all(color: AppTheme.borderSubtle),
+                    border: Border.all(color: context.borderSubtle),
                   ),
                   child: TextField(
                     controller: _textCtrl,
@@ -431,10 +431,10 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                     minLines: 1,
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _handleSend(),
-                    style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary),
-                    decoration: const InputDecoration(
+                    style: TextStyle(fontSize: 14, color: context.textPrimary),
+                    decoration: InputDecoration(
                       hintText: '输入提问或指令，Enter 发送，Shift+Enter 换行...',
-                      hintStyle: TextStyle(fontSize: 13, color: AppTheme.textTertiary),
+                      hintStyle: TextStyle(fontSize: 13, color: context.textTertiary),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     ),
@@ -457,8 +457,8 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                   : IconButton.filled(
                       icon: const Icon(Icons.send_rounded, size: 20),
                       style: IconButton.styleFrom(
-                        backgroundColor: AppTheme.accentLight,
-                        foregroundColor: Colors.white,
+                        backgroundColor: context.accentSolid,
+                        foregroundColor: context.onAccentSolid,
                         minimumSize: const Size(44, 44),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusMedium)),
                       ),

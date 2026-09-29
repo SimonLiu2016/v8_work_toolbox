@@ -1,8 +1,10 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:drift_sqflite/drift_sqflite.dart';
 
 import 'cjk_tokenizer.dart';
-import '../../../services/app_paths.dart';
+import '../../services/app_paths.dart';
 
 part 'note_database.g.dart';
 
@@ -16,6 +18,7 @@ class Notebooks extends Table {
   TextColumn get stack => text().nullable()();
   TextColumn get icon => text().withDefault(const Constant('📓'))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+  IntColumn get isDefaultForCapture => integer().withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -101,8 +104,26 @@ class NoteLinks extends Table {
 // Database
 // ---------------------------------------------------------------------------
 
+class VocabEntries extends Table {
+  TextColumn get id => text()();
+  TextColumn get word => text()();
+  TextColumn get phonetic => text().nullable()();
+  TextColumn get audioUrl => text().nullable()();
+  TextColumn get partOfSpeech => text().nullable()();
+  TextColumn get definitions => text().withDefault(const Constant('[]'))(); // JSON array
+  TextColumn get examples => text().withDefault(const Constant('[]'))();    // JSON array
+  TextColumn get phrases => text().withDefault(const Constant('[]'))();     // JSON array
+  TextColumn get sourceContext => text().nullable()();
+  IntColumn get masteryLevel => integer().withDefault(const Constant(0))();
+  TextColumn get tags => text().withDefault(const Constant('[]'))();        // JSON array
+  DateTimeColumn get addedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
-  tables: [Notebooks, Notes, Tags, NoteTags, Attachments, NoteLinks],
+  tables: [Notebooks, Notes, Tags, NoteTags, Attachments, NoteLinks, VocabEntries],
 )
 class NoteDatabase extends _$NoteDatabase {
   NoteDatabase() : super(_openConnection());
@@ -111,7 +132,7 @@ class NoteDatabase extends _$NoteDatabase {
   NoteDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -151,6 +172,14 @@ class NoteDatabase extends _$NoteDatabase {
           await m.createTable(noteLinks);
         } catch (_) {}
       }
+      if (from < 4) {
+        try {
+          await m.addColumn(notebooks, notebooks.isDefaultForCapture);
+        } catch (_) {}
+        try {
+          await m.createTable(vocabEntries);
+        } catch (_) {}
+      }
     },
     beforeOpen: (details) async {
       try {
@@ -184,6 +213,28 @@ class NoteDatabase extends _$NoteDatabase {
           ');',
         );
       } catch (_) {}
+      // 生词本表与笔记本默认捕获字段（v4 新增）
+      try {
+        await customStatement('ALTER TABLE notebooks ADD COLUMN is_default_for_capture INTEGER DEFAULT 0;');
+      } catch (_) {}
+      try {
+        await customStatement(
+          'CREATE TABLE IF NOT EXISTS vocab_entries ('
+          'id TEXT NOT NULL PRIMARY KEY, '
+          'word TEXT NOT NULL, '
+          'phonetic TEXT, '
+          'audio_url TEXT, '
+          'part_of_speech TEXT, '
+          'definitions TEXT NOT NULL DEFAULT \'[]\', '
+          'examples TEXT NOT NULL DEFAULT \'[]\', '
+          'phrases TEXT NOT NULL DEFAULT \'[]\', '
+          'source_context TEXT, '
+          'mastery_level INTEGER NOT NULL DEFAULT 0, '
+          'tags TEXT NOT NULL DEFAULT \'[]\', '
+          'added_at INTEGER NOT NULL'
+          ');',
+        );
+      } catch (_) {}
       // SQLite 默认**忽略外键约束**——不开启此 pragma，声明在 attachments /
       // note_tags / note_links 上的 ON DELETE CASCADE 全部不生效，删除笔记会
       // 留下孤儿行。实测确认：删笔记后三张子表计数均不变。
@@ -193,6 +244,7 @@ class NoteDatabase extends _$NoteDatabase {
       await _normalizeTextTimestamps();
     },
   );
+
 
   /// 自愈：把 TEXT 形式的日期时间戳归一化为 drift 期望的 unix 秒整数。
   ///
@@ -550,7 +602,57 @@ class NoteDatabase extends _$NoteDatabase {
     final result = await query.getSingle();
     return result.read(notes.id.count()) ?? 0;
   }
+
+  // ---------------------------------------------------------------------------
+  // VocabEntry CRUD
+  // ---------------------------------------------------------------------------
+
+  Future<List<VocabEntry>> allVocabEntries() =>
+      (select(vocabEntries)..orderBy([(t) => OrderingTerm.desc(t.addedAt)])).get();
+
+  Future<VocabEntry?> vocabEntryByWord(String word) =>
+      (select(vocabEntries)..where((t) => t.word.lower().equals(word.toLowerCase()))).getSingleOrNull();
+
+  Future<bool> vocabEntryExists(String word) async {
+    final entry = await vocabEntryByWord(word);
+    return entry != null;
+  }
+
+  Future<void> insertVocabEntry(VocabEntriesCompanion entry) =>
+      into(vocabEntries).insert(entry, mode: InsertMode.insertOrReplace);
+
+  Future<void> updateVocabEntry(String id, VocabEntriesCompanion entry) =>
+      (update(vocabEntries)..where((t) => t.id.equals(id))).write(entry);
+
+  Future<void> deleteVocabEntry(String id) =>
+      (delete(vocabEntries)..where((t) => t.id.equals(id))).go();
+
+  Future<void> deleteVocabEntries(List<String> ids) async {
+    if (ids.isEmpty) return;
+    await (delete(vocabEntries)..where((t) => t.id.isIn(ids))).go();
+  }
+
+  Future<List<VocabEntry>> vocabEntriesByTag(String tag) async {
+    final all = await allVocabEntries();
+    return all.where((e) {
+      try {
+        final list = (jsonDecode(e.tags) as List).cast<String>();
+        return list.contains(tag);
+      } catch (_) { return false; }
+    }).toList();
+  }
+
+  Future<void> setDefaultCaptureNotebook(String notebookId) async {
+    await (update(notebooks)).write(NotebooksCompanion(isDefaultForCapture: const Value(0)));
+    await (update(notebooks)..where((t) => t.id.equals(notebookId))).write(
+      NotebooksCompanion(isDefaultForCapture: const Value(1), updatedAt: Value(DateTime.now())),
+    );
+  }
+
+  Future<Notebook?> defaultCaptureNotebook() =>
+      (select(notebooks)..where((t) => t.isDefaultForCapture.equals(1))).getSingleOrNull();
 }
+
 
 /// 笔记主库落盘位置。
 ///

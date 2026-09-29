@@ -62,8 +62,8 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
-          title: const Text('添加数据源', style: AppTheme.fontTitle),
+          backgroundColor: context.bgCard,
+          title: Text('添加数据源', style: AppTheme.fontTitle),
           content: SizedBox(
             width: 450,
             child: SingleChildScrollView(
@@ -72,7 +72,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                 children: [
                   DropdownButtonFormField<String>(
                     value: type,
-                    dropdownColor: AppTheme.bgCard,
+                    dropdownColor: context.bgCard,
                     decoration: const InputDecoration(labelText: '数据源类型'),
                     items: const [
                       DropdownMenuItem(
@@ -103,7 +103,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                     decoration: const InputDecoration(labelText: '服务基础 URL'),
                   ),
                   if (type == 'grafana') ...[
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextField(
                       controller: keyCtrl,
                       obscureText: !keyVisible,
@@ -115,7 +115,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                                 ? Icons.visibility
                                 : Icons.visibility_off,
                             size: 16,
-                            color: AppTheme.textSecondary,
+                            color: context.textSecondary,
                           ),
                           tooltip: keyVisible ? '隐藏 Token' : '显示 Token',
                           onPressed: () =>
@@ -127,9 +127,9 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                     const SizedBox(height: 10),
                     TextField(
                       controller: userCtrl,
-                      decoration: const InputDecoration(labelText: '用户名 / 账号'),
+                      decoration: InputDecoration(labelText: '用户名 / 账号'),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextField(
                       controller: passCtrl,
                       obscureText: !passVisible,
@@ -141,7 +141,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                                 ? Icons.visibility
                                 : Icons.visibility_off,
                             size: 16,
-                            color: AppTheme.textSecondary,
+                            color: context.textSecondary,
                           ),
                           tooltip: passVisible ? '隐藏密码' : '显示密码',
                           onPressed: () =>
@@ -160,7 +160,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
               child: const Text('取消'),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+              style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
               onPressed: () async {
                 final cfg = {
                   'url': urlCtrl.text.trim(),
@@ -196,7 +196,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text(
           q == null ? '添加 SQL 查询模板' : '编辑 SQL 查询',
           style: AppTheme.fontTitle,
@@ -234,7 +234,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+            style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
             onPressed: () async {
               final item = SqlQuery(
                 id: q?.id,
@@ -293,7 +293,7 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('查询执行失败: $e'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
       }
@@ -318,24 +318,24 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('数据源列表', style: AppTheme.fontTitle),
+                    Text('数据源列表', style: AppTheme.fontTitle),
                     IconButton(
-                      icon: const Icon(Icons.add, size: 20),
+                      icon: Icon(Icons.add, size: 20),
                       onPressed: _showAddSourceDialog,
                       tooltip: '添加数据源',
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _dataSources.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               '暂无数据源',
                               style: AppTheme.fontBodySecondary,
@@ -343,16 +343,16 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                           )
                         : ListView.separated(
                             itemCount: _dataSources.length,
-                            separatorBuilder: (_, __) => const Divider(
+                            separatorBuilder: (_, __) => Divider(
                               height: 1,
-                              color: AppTheme.borderSubtle,
+                              color: context.borderSubtle,
                             ),
                             itemBuilder: (context, idx) {
                               final ds = _dataSources[idx];
                               final isSelected = _selectedSource?.id == ds.id;
                               return ListTile(
                                 selected: isSelected,
-                                selectedTileColor: AppTheme.bgSelected,
+                                selectedTileColor: context.bgSelected,
                                 leading: Icon(
                                   ds.sourceType == 'grafana'
                                       ? Icons.show_chart_rounded
@@ -360,8 +360,8 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                                       ? Icons.task_alt_rounded
                                       : Icons.storage_rounded,
                                   color: isSelected
-                                      ? AppTheme.accent
-                                      : AppTheme.textSecondary,
+                                      ? context.accentSolid
+                                      : context.textSecondary,
                                 ),
                                 title: Text(ds.name, style: AppTheme.fontBody),
                                 subtitle: Text(
@@ -396,26 +396,26 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                     ),
                     if (_selectedSource != null)
                       ElevatedButton.icon(
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('新增 SQL 模板'),
+                        icon: Icon(Icons.add, size: 18),
+                        label: Text('新增 SQL 模板'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accent,
+                          backgroundColor: context.accentSolid,
                         ),
                         onPressed: () => _showAddQueryDialog(),
                       ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 SizedBox(
                   height: 180,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _queries.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               '暂无已保存的 SQL 查询模板',
                               style: AppTheme.fontBodySecondary,
@@ -423,9 +423,9 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                           )
                         : ListView.separated(
                             itemCount: _queries.length,
-                            separatorBuilder: (_, __) => const Divider(
+                            separatorBuilder: (_, __) => Divider(
                               height: 1,
-                              color: AppTheme.borderSubtle,
+                              color: context.borderSubtle,
                             ),
                             itemBuilder: (context, idx) {
                               final q = _queries[idx];
@@ -450,9 +450,9 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
-                                      icon: const Icon(
+                                      icon: Icon(
                                         Icons.play_circle_fill_rounded,
-                                        color: AppTheme.success,
+                                        color: context.successText,
                                         size: 22,
                                       ),
                                       tooltip: '执行查询',
@@ -468,9 +468,9 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                                       onPressed: () => _showAddQueryDialog(q),
                                     ),
                                     IconButton(
-                                      icon: const Icon(
+                                      icon: Icon(
                                         Icons.delete_outline,
-                                        color: AppTheme.error,
+                                        color: context.errorText,
                                         size: 18,
                                       ),
                                       onPressed: () async {
@@ -488,16 +488,16 @@ class _OpsDataSourceViewState extends State<OpsDataSourceView> {
                           ),
                   ),
                 ),
-                const SizedBox(height: AppTheme.space16),
+                SizedBox(height: AppTheme.space16),
 
-                const Text('查询结果预览', style: AppTheme.fontTitle),
-                const SizedBox(height: 12),
+                Text('查询结果预览', style: AppTheme.fontTitle),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _executing
                         ? const Center(child: CircularProgressIndicator())

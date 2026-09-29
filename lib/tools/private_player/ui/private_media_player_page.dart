@@ -72,22 +72,22 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
       onPointerDown: (_) => _privacyService.recordActivity(),
       onPointerSignal: (_) => _privacyService.recordActivity(),
       child: Scaffold(
-        backgroundColor: AppTheme.bgWindow,
+        backgroundColor: context.bgWindow,
         body: Column(
         children: [
           // 顶部应用导航栏
           Container(
             height: 48,
-            color: AppTheme.bgSidebar,
+            color: context.bgSidebar,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                const Icon(Icons.shield_rounded, color: AppTheme.accent, size: 20),
+                Icon(Icons.shield_rounded, color: context.accentText, size: 20),
                 const SizedBox(width: 8),
-                const Text(
+                Text(
                   '私密影音播放器',
                   style: TextStyle(
-                    color: AppTheme.textPrimary,
+                    color: context.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
@@ -97,9 +97,9 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                 TabBar(
                   controller: _mainTabController,
                   isScrollable: true,
-                  indicatorColor: AppTheme.accent,
-                  labelColor: AppTheme.accent,
-                  unselectedLabelColor: AppTheme.textSecondary,
+                  indicatorColor: context.accentSolid,
+                  labelColor: context.accentText,
+                  unselectedLabelColor: context.textSecondary,
                   tabs: const [
                     Tab(icon: Icon(Icons.play_circle_outline, size: 16), text: '正在播放'),
                     Tab(icon: Icon(Icons.download_rounded, size: 16), text: '在线解析与下载'),
@@ -112,19 +112,19 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                 TextButton.icon(
                   icon: const Icon(Icons.folder_open_rounded, size: 16),
                   label: const Text('私密目录', style: TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(foregroundColor: AppTheme.textSecondary),
+                  style: TextButton.styleFrom(foregroundColor: context.textSecondary),
                   onPressed: () => PrivateStorageManager.instance.revealInFinder(),
                 ),
                 const SizedBox(width: 8),
                 // 立即锁定
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.bgCard,
+                    backgroundColor: context.bgCard,
                     foregroundColor: Colors.white70,
-                    side: const BorderSide(color: AppTheme.borderSubtle),
+                    side: BorderSide(color: context.borderSubtle),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
-                  icon: const Icon(Icons.lock_rounded, size: 14, color: AppTheme.accent),
+                  icon: Icon(Icons.lock_rounded, size: 14, color: context.accentText),
                   label: const Text('锁定', style: TextStyle(fontSize: 12)),
                   onPressed: () => PrivacySecurityService.instance.lock(),
                 ),
@@ -174,9 +174,9 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.history_toggle_off_rounded, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
+                Icon(Icons.history_toggle_off_rounded, size: 48, color: context.textSecondary.withValues(alpha: 0.5)),
                 const SizedBox(height: 12),
-                const Text('暂无播放历史记录', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                Text('暂无播放历史记录', style: TextStyle(color: context.textSecondary, fontSize: 13)),
               ],
             ),
           );
@@ -186,10 +186,10 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: AppTheme.bgCard,
+              color: context.bgCard,
               child: Row(
                 children: [
-                  Text('共 ${history.length} 条播放记录', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  Text('共 ${history.length} 条播放记录', style: TextStyle(color: context.textSecondary, fontSize: 12)),
                   const Spacer(),
                   TextButton.icon(
                     icon: const Icon(Icons.delete_sweep_rounded, size: 16),
@@ -202,7 +202,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
             Expanded(
               child: ListView.separated(
                 itemCount: history.length,
-                separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+                separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
                 itemBuilder: (context, idx) {
                   final item = history[idx];
                   return ListTile(
@@ -217,7 +217,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                     ),
                     title: Text(
                       item.title,
-                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                      style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -229,12 +229,12 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                           children: [
                             Text(
                               '上次播放至: ${_formatDuration(item.lastPosition)} / ${_formatDuration(item.duration)}',
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                              style: TextStyle(color: context.textSecondary, fontSize: 11),
                             ),
                             const SizedBox(width: 12),
                             Text(
                               '${item.lastPlayedAt.year}-${item.lastPlayedAt.month.toString().padLeft(2, '0')}-${item.lastPlayedAt.day.toString().padLeft(2, '0')} ${item.lastPlayedAt.hour.toString().padLeft(2, '0')}:${item.lastPlayedAt.minute.toString().padLeft(2, '0')}',
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                              style: TextStyle(color: context.textSecondary, fontSize: 11),
                             ),
                           ],
                         ),
@@ -243,8 +243,8 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                           LinearProgressIndicator(
                             value: item.progress,
                             minHeight: 2.5,
-                            backgroundColor: AppTheme.bgCard,
-                            valueColor: const AlwaysStoppedAnimation(AppTheme.accent),
+                            backgroundColor: context.bgCard,
+                            valueColor: AlwaysStoppedAnimation(context.accentSolid),
                           ),
                         ],
                       ],
@@ -255,7 +255,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                         IconButton(
                           icon: Icon(
                             item.isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
-                            color: item.isFavorite ? Colors.amber : AppTheme.textSecondary,
+                            color: item.isFavorite ? Colors.amber : context.textSecondary,
                             size: 20,
                           ),
                           onPressed: () => _historyStore.toggleFavorite(
@@ -264,7 +264,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.play_arrow_rounded, color: AppTheme.accent, size: 24),
+                          icon: Icon(Icons.play_arrow_rounded, color: context.accentText, size: 24),
                           tooltip: '继续播放',
                           onPressed: () => _playMedia(item.urlOrPath, title: item.title, thumbnail: item.thumbnailUrl),
                         ),
@@ -294,9 +294,9 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.star_border_rounded, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
+                Icon(Icons.star_border_rounded, size: 48, color: context.textSecondary.withValues(alpha: 0.5)),
                 const SizedBox(height: 12),
-                const Text('暂无收藏内容', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                Text('暂无收藏内容', style: TextStyle(color: context.textSecondary, fontSize: 13)),
               ],
             ),
           );
@@ -304,7 +304,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
 
         return ListView.separated(
           itemCount: favs.length,
-          separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+          separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
           itemBuilder: (context, idx) {
             final item = favs[idx];
             return ListTile(
@@ -324,13 +324,13 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
               ),
               title: Text(
                 item.title,
-                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
                 item.urlOrPath,
-                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+                style: TextStyle(color: context.textSecondary, fontSize: 11),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -338,7 +338,7 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.play_arrow_rounded, color: AppTheme.accent, size: 24),
+                    icon: Icon(Icons.play_arrow_rounded, color: context.accentText, size: 24),
                     tooltip: '播放',
                     onPressed: () => _playMedia(item.urlOrPath, title: item.title, thumbnail: item.thumbnailUrl),
                   ),

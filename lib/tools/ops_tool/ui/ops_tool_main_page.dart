@@ -52,13 +52,13 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgWindow,
+      backgroundColor: context.bgWindow,
       body: Row(
         children: [
           // 左侧主导航侧边栏
           Container(
             width: 200,
-            color: AppTheme.bgSidebar,
+            color: context.bgSidebar,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -69,25 +69,25 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
                       Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: AppTheme.accent.withAlpha(40),
+                          color: context.accentText.withAlpha(40),
                           borderRadius: AppTheme.borderRadiusSmall,
                         ),
-                        child: const Icon(Icons.cloud_sync_rounded,
-                            color: AppTheme.accent, size: 20),
+                        child: Icon(Icons.cloud_sync_rounded,
+                            color: context.accentText, size: 20),
                       ),
                       const SizedBox(width: 10),
-                      const Text(
+                      Text(
                         '磐石运维',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
+                          color: context.textPrimary,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: AppTheme.borderSubtle),
+                Divider(height: 1, color: context.borderSubtle),
                 const SizedBox(height: 8),
                 _buildNavItem(
                   keyId: 'dashboard',
@@ -129,24 +129,24 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      const Icon(Icons.auto_awesome_rounded,
-                          size: 14, color: AppTheme.accent),
+                      Icon(Icons.auto_awesome_rounded,
+                          size: 14, color: context.accentText),
                       const SizedBox(width: 6),
                       Text('已连接宿主全局 AI',
                           style: AppTheme.fontCaption
-                              .copyWith(color: AppTheme.textSecondary)),
+                              .copyWith(color: context.textSecondary)),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-          const VerticalDivider(width: 1, color: AppTheme.borderSubtle),
+          VerticalDivider(width: 1, color: context.borderSubtle),
 
           // 右侧内容工作区
           Expanded(
             child: Container(
-              color: AppTheme.bgContent,
+              color: context.bgContent,
               child: _buildCurrentView(),
             ),
           ),
@@ -200,7 +200,7 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected ? AppTheme.bgSelected : Colors.transparent,
+            color: isSelected ? context.bgSelected : Colors.transparent,
             borderRadius: AppTheme.borderRadiusSmall,
           ),
           child: Row(
@@ -208,7 +208,7 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
               Icon(
                 icon,
                 size: 18,
-                color: isSelected ? AppTheme.accent : AppTheme.textSecondary,
+                color: isSelected ? context.accentText : context.textSecondary,
               ),
               const SizedBox(width: 12),
               Text(
@@ -216,7 +216,7 @@ class _OpsToolMainPageState extends State<OpsToolMainPage> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                  color: isSelected ? context.textPrimary : context.textSecondary,
                 ),
               ),
             ],

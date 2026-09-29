@@ -236,19 +236,19 @@ echo "所有操作已完成！"
       barrierColor: Colors.black.withValues(alpha: 0.6),
       builder: (BuildContext context) {
         return AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           shape: RoundedRectangleBorder(
             borderRadius: AppTheme.borderRadiusMedium,
-            side: const BorderSide(color: AppTheme.borderStrong),
+            side: BorderSide(color: context.borderStrong),
           ),
-          title: const Text('指定 Beyond Compare 目录执行', style: AppTheme.fontTitle),
+          title: Text('指定 Beyond Compare 目录执行', style: AppTheme.fontTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 '请输入包含 BCState.xml 与 BCSessions.xml 的配置目录:',
-                style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
               ),
               const SizedBox(height: AppTheme.space8),
               AppTextField(
@@ -281,7 +281,7 @@ echo "所有操作已完成！"
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -290,24 +290,24 @@ echo "所有操作已完成！"
             // 标题
             Row(
               children: [
-                const Icon(Icons.terminal, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('BC 脚本管理', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.terminal, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('BC 脚本管理', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_scriptPath != null)
-                  const AppBadge(
+                  AppBadge(
                     label: 'Shell 工具',
-                    color: AppTheme.accentSubtle,
-                    textColor: AppTheme.accentLight,
+                    color: context.accentSubtle,
+                    textColor: context.accentText,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '管理并独立运行终端修复脚本，解决应用沙盒限制下的 Beyond Compare 配置修改',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
-            const SizedBox(height: AppTheme.space16),
+            SizedBox(height: AppTheme.space16),
 
             // 操作卡片
             AppCard(
@@ -317,21 +317,21 @@ echo "所有操作已完成！"
                   Text(
                     '脚本存放路径',
                     style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textSecondary,
+                      color: context.textSecondary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: AppTheme.space6),
+                  SizedBox(height: AppTheme.space6),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppTheme.space12,
                       vertical: AppTheme.space8,
                     ),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgInput,
+                      color: context.bgInput,
                       borderRadius: AppTheme.borderRadiusSmall,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Text(
                       _scriptPath ?? '正在初始化路径...',
@@ -373,52 +373,52 @@ echo "所有操作已完成！"
                 ],
               ),
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 日志终端
             Expanded(
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(AppTheme.space12),
+                padding: EdgeInsets.all(AppTheme.space12),
                 decoration: BoxDecoration(
-                  color: AppTheme.bgInput,
+                  color: context.bgInput,
                   borderRadius: AppTheme.borderRadiusMedium,
-                  border: Border.all(color: AppTheme.borderSubtle),
+                  border: Border.all(color: context.borderSubtle),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-                        const SizedBox(width: AppTheme.space6),
+                        Icon(Icons.terminal, size: 14, color: context.textTertiary),
+                        SizedBox(width: AppTheme.space6),
                         Text(
                           '终端执行日志',
                           style: AppTheme.fontCaption.copyWith(
-                            color: AppTheme.textTertiary,
+                            color: context.textTertiary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const Spacer(),
+                        Spacer(),
                         if (_logMessages.isNotEmpty)
                           GestureDetector(
                             onTap: () => setState(() => _logMessages.clear()),
                             child: Text(
                               '清空日志',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                              style: AppTheme.fontCaption.copyWith(color: context.accentText),
                             ),
                           ),
                       ],
                     ),
-                    const SizedBox(height: AppTheme.space8),
-                    const Divider(height: 1, color: AppTheme.borderSubtle),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
+                    Divider(height: 1, color: context.borderSubtle),
+                    SizedBox(height: AppTheme.space8),
                     Expanded(
                       child: _logMessages.isEmpty
                           ? Center(
                               child: Text(
                                 '暂无输出日志',
-                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                               ),
                             )
                           : ListView.builder(

@@ -42,7 +42,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.bgContent,
+      color: context.bgContent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -65,7 +65,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                     Text(
                       '通过 Clash 订阅拉取代理节点，由内嵌代理内核提供本地 HTTP 通道。仅本软件工具生效，不影响外部其他应用。',
                       style: AppTheme.fontCaption.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: context.textSecondary,
                       ),
                     ),
                   ],
@@ -78,16 +78,16 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                       _proxySettings.enabled ? '全局代理通道已启用' : '全局代理通道已停用',
                       style: AppTheme.fontBody.copyWith(
                         color: _proxySettings.enabled
-                            ? AppTheme.accentLight
-                            : AppTheme.textTertiary,
+                            ? context.accentText
+                            : context.textTertiary,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     const SizedBox(width: AppTheme.space8),
                     Switch(
                       value: _proxySettings.enabled,
-                      activeColor: AppTheme.accentLight,
-                      activeTrackColor: AppTheme.accent,
+                      activeColor: context.accentText,
+                      activeTrackColor: context.accentSolid,
                       onChanged: (val) async {
                         try {
                           await _service.setGlobalEnabled(val);
@@ -95,7 +95,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(_service.lastError!),
-                                backgroundColor: AppTheme.error,
+                                backgroundColor: context.errorSolid,
                               ),
                             );
                           }
@@ -104,7 +104,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text('设置代理开关失败: $e'),
-                                backgroundColor: AppTheme.error,
+                                backgroundColor: context.errorSolid,
                               ),
                             );
                           }
@@ -116,7 +116,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          Divider(height: 1, color: context.borderSubtle),
 
           // 主体内容滚动区
           Expanded(
@@ -132,20 +132,20 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                   Container(
                     padding: const EdgeInsets.all(AppTheme.space12),
                     decoration: BoxDecoration(
-                      color: AppTheme.error.withValues(alpha: 0.1),
+                      color: context.errorText.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: AppTheme.error.withValues(alpha: 0.3),
+                        color: context.errorText.withValues(alpha: 0.3),
                       ),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, color: AppTheme.error, size: 18),
+                        Icon(Icons.error_outline, color: context.errorText, size: 18),
                         const SizedBox(width: AppTheme.space8),
                         Expanded(
                           child: Text(
                             _service.lastError!,
-                            style: AppTheme.fontBody.copyWith(color: AppTheme.error),
+                            style: AppTheme.fontBody.copyWith(color: context.errorText),
                           ),
                         ),
                       ],
@@ -169,13 +169,13 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
-                              color: AppTheme.accent.withValues(alpha: 0.2),
+                              color: context.accentText.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: AppTheme.accent.withValues(alpha: 0.5)),
+                              border: Border.all(color: context.accentSolid.withValues(alpha: 0.5)),
                             ),
                             child: Text(
                               '当前生效: ${_service.selectedNodeName}',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                              style: AppTheme.fontCaption.copyWith(color: context.accentText),
                             ),
                           ),
                         ],
@@ -195,7 +195,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(_service.lastError!),
-                                        backgroundColor: AppTheme.error,
+                                        backgroundColor: context.errorSolid,
                                       ),
                                     );
                                   }
@@ -229,7 +229,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
           children: [
             Row(
               children: [
-                const Icon(Icons.cloud_download_outlined, size: 20, color: AppTheme.accent),
+                Icon(Icons.cloud_download_outlined, size: 20, color: context.accentText),
                 const SizedBox(width: AppTheme.space8),
                 Text('订阅地址配置', style: AppTheme.fontTitle),
                 const Spacer(),
@@ -237,12 +237,12 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.accent.withValues(alpha: 0.15),
+                      color: context.accentText.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       _service.trafficInfo!,
-                      style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                      style: AppTheme.fontCaption.copyWith(color: context.accentText),
                     ),
                   ),
                   const SizedBox(width: AppTheme.space12),
@@ -250,7 +250,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                 if (_service.lastRefreshTime != null)
                   Text(
                     '上次更新: ${_formatTime(_service.lastRefreshTime!)}',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                   ),
               ],
             ),
@@ -278,9 +278,9 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                       await _service.saveSubscriptionUrl(_urlCtrl.text);
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
+                          SnackBar(
                             content: Text('订阅地址已保存'),
-                            backgroundColor: AppTheme.success,
+                            backgroundColor: context.successSolid,
                           ),
                         );
                       }
@@ -289,7 +289,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(e.toString()),
-                            backgroundColor: AppTheme.error,
+                            backgroundColor: context.errorSolid,
                           ),
                         );
                       }
@@ -316,7 +316,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                                   content: Text(
                                     '订阅更新成功，已获取 ${_service.nodes.length} 个代理节点',
                                   ),
-                                  backgroundColor: AppTheme.success,
+                                  backgroundColor: context.successSolid,
                                 ),
                               );
                             }
@@ -325,7 +325,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text('刷新失败: $e'),
-                                  backgroundColor: AppTheme.error,
+                                  backgroundColor: context.errorSolid,
                                 ),
                               );
                             }
@@ -347,18 +347,18 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
         height: 200,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: context.bgCard,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.dns_outlined, size: 40, color: AppTheme.textTertiary),
+            Icon(Icons.dns_outlined, size: 40, color: context.textTertiary),
             const SizedBox(height: AppTheme.space8),
             Text(
               '暂无可用代理节点，请先配置订阅地址并点击「更新代理列表」',
-              style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontBody.copyWith(color: context.textSecondary),
             ),
           ],
         ),
@@ -377,8 +377,8 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
 
         return AppCard(
           backgroundColor: isSelected
-              ? AppTheme.accent.withValues(alpha: 0.1)
-              : AppTheme.bgCard,
+              ? context.accentSolid.withValues(alpha: 0.1)
+              : context.bgCard,
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () async {
@@ -395,7 +395,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                     isSelected
                         ? Icons.radio_button_checked_rounded
                         : Icons.radio_button_unchecked_rounded,
-                    color: isSelected ? AppTheme.accentLight : AppTheme.textTertiary,
+                    color: isSelected ? context.accentText : context.textTertiary,
                     size: 18,
                   ),
                   const SizedBox(width: AppTheme.space12),
@@ -403,13 +403,13 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.borderSubtle,
+                      color: context.borderSubtle,
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       node.type.toUpperCase(),
                       style: AppTheme.fontCaption.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: context.textSecondary,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
@@ -422,7 +422,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                       node.name,
                       style: AppTheme.fontBody.copyWith(
                         fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                        color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                        color: isSelected ? context.textPrimary : context.textSecondary,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -435,7 +435,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                   IconButton(
                     icon: const Icon(Icons.flash_on_outlined, size: 16),
                     tooltip: '测试该节点延迟',
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                     onPressed: () => _service.testNodeDelay(node.name),
                   ),
                 ],
@@ -449,17 +449,17 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
 
   Widget _buildDelayBadge(int? delay) {
     if (delay == null) {
-      return Text('-', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary));
+      return Text('-', style: AppTheme.fontCaption.copyWith(color: context.textTertiary));
     }
     Color color;
     if (delay <= 0) {
-      return Text('超时', style: AppTheme.fontCaption.copyWith(color: AppTheme.error));
+      return Text('超时', style: AppTheme.fontCaption.copyWith(color: context.errorText));
     } else if (delay < 200) {
-      color = AppTheme.success;
+      color = context.successSolid;
     } else if (delay < 500) {
-      color = AppTheme.warning;
+      color = context.warningSolid;
     } else {
-      color = AppTheme.error;
+      color = context.errorSolid;
     }
 
     return Container(
@@ -484,16 +484,16 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
         horizontal: AppTheme.space24,
         vertical: AppTheme.space12,
       ),
-      decoration: const BoxDecoration(
-        color: AppTheme.bgSidebar,
-        border: Border(top: BorderSide(color: AppTheme.borderSubtle)),
+      decoration: BoxDecoration(
+        color: context.bgSidebar,
+        border: Border(top: BorderSide(color: context.borderSubtle)),
       ),
       child: Row(
         children: [
           Icon(
             isRunning ? Icons.check_circle_rounded : Icons.pause_circle_outline_rounded,
             size: 16,
-            color: isRunning && isConfigured ? AppTheme.success : AppTheme.textTertiary,
+            color: isRunning && isConfigured ? context.successText : context.textTertiary,
           ),
           const SizedBox(width: AppTheme.space8),
           Text(
@@ -503,7 +503,7 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                     : '内核已启动 (127.0.0.1:7890) - 但全局开关已关闭，当前直连')
                 : '代理内核未运行 (选择节点以启动)',
             style: AppTheme.fontCaption.copyWith(
-              color: isRunning && isConfigured ? AppTheme.textPrimary : AppTheme.textSecondary,
+              color: isRunning && isConfigured ? context.textPrimary : context.textSecondary,
             ),
           ),
         ],

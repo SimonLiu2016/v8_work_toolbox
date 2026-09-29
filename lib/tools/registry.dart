@@ -17,6 +17,7 @@ import 'reader/ui/doc_audio_reader_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
+import 'vocab_book/ui/vocab_book_page.dart';
 
 export 'tool_definition.dart';
 
@@ -244,6 +245,21 @@ class NotebookToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const NotebookPage();
 }
 
+class VocabBookToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'vocab-book';
+  @override
+  String get title => '生词本';
+  @override
+  String get subtitle => '划词查询积累与掌握程度复习';
+  @override
+  IconData get icon => Icons.menu_book_rounded;
+  @override
+  ToolCategory get category => ToolCategory.system;
+  @override
+  Widget buildPage(BuildContext context) => const VocabBookPage();
+}
+
 class PasswordVaultToolDefinition extends ToolDefinition {
   @override
   String get id => 'password-vault';
@@ -347,6 +363,7 @@ class ToolRegistry {
     AiAssistantToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
     NotebookToolDefinition(),
+    VocabBookToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),
     BcConfigShellToolDefinition(),

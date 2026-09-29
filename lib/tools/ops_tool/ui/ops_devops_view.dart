@@ -36,14 +36,14 @@ class _OpsDevOpsViewState extends State<OpsDevOpsView>
     return Column(
       children: [
         Container(
-          color: AppTheme.bgSidebar,
-          padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
+          color: context.bgSidebar,
+          padding: EdgeInsets.symmetric(horizontal: AppTheme.space24),
           child: TabBar(
             controller: _tabController,
             isScrollable: true,
-            indicatorColor: AppTheme.accent,
-            labelColor: AppTheme.accent,
-            unselectedLabelColor: AppTheme.textSecondary,
+            indicatorColor: context.accentSolid,
+            labelColor: context.accentText,
+            unselectedLabelColor: context.textSecondary,
             tabs: const [
               Tab(
                 icon: Icon(Icons.settings_input_component_rounded),
@@ -124,7 +124,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           return AlertDialog(
-            backgroundColor: AppTheme.bgCard,
+            backgroundColor: context.bgCard,
             title: Text(
               conn == null ? '添加 DevOps 连接' : '编辑连接',
               style: AppTheme.fontTitle,
@@ -137,7 +137,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                   children: [
                     DropdownButtonFormField<String>(
                       value: connType,
-                      dropdownColor: AppTheme.bgCard,
+                      dropdownColor: context.bgCard,
                       decoration: const InputDecoration(labelText: '服务类型'),
                       items: const [
                         DropdownMenuItem(
@@ -185,7 +185,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                                 ? Icons.visibility
                                 : Icons.visibility_off,
                             size: 16,
-                            color: AppTheme.textSecondary,
+                            color: context.textSecondary,
                           ),
                           tooltip: passVisible ? '隐藏密码' : '显示密码',
                           onPressed: () =>
@@ -194,7 +194,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                       ),
                     ),
                     if (connType == 'gitlab') ...[
-                      const SizedBox(height: 12),
+                      SizedBox(height: 12),
                       TextField(
                         controller: tokenCtrl,
                         obscureText: !tokenVisible,
@@ -207,7 +207,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                                   ? Icons.visibility
                                   : Icons.visibility_off,
                               size: 16,
-                              color: AppTheme.textSecondary,
+                              color: context.textSecondary,
                             ),
                             tooltip: tokenVisible ? '隐藏 Token' : '显示 Token',
                             onPressed: () => setDialogState(
@@ -228,7 +228,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                 ),
                 child: const Text('保存'),
                 onPressed: () async {
@@ -301,7 +301,7 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('连接测试失败: $e'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
       }
@@ -323,23 +323,23 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
               const Text('GitLab / Jenkins 连接实例', style: AppTheme.fontTitle),
               ElevatedButton.icon(
                 icon: const Icon(Icons.add, size: 18),
-                label: const Text('添加连接'),
+                label: Text('添加连接'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                 ),
                 onPressed: () => _showEditDialog(),
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space16),
+          SizedBox(height: AppTheme.space16),
           if (_connections.isEmpty)
             Container(
-              padding: const EdgeInsets.all(AppTheme.space32),
+              padding: EdgeInsets.all(AppTheme.space32),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: context.bgCard,
                 borderRadius: AppTheme.borderRadiusMedium,
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               child: const Text(
                 '尚未添加任何 DevOps 实例，请点击右上角添加。',
@@ -350,16 +350,16 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
             Expanded(
               child: ListView.separated(
                 itemCount: _connections.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                separatorBuilder: (_, __) => SizedBox(height: 12),
                 itemBuilder: (context, idx) {
                   final conn = _connections[idx];
                   final cfg = conn.getConfigMap();
                   return Container(
-                    padding: const EdgeInsets.all(AppTheme.space16),
+                    padding: EdgeInsets.all(AppTheme.space16),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Row(
                       children: [
@@ -367,20 +367,20 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                           conn.connType == 'gitlab'
                               ? Icons.source_rounded
                               : Icons.build_circle_outlined,
-                          color: AppTheme.accent,
+                          color: context.accentText,
                           size: 28,
                         ),
-                        const SizedBox(width: AppTheme.space16),
+                        SizedBox(width: AppTheme.space16),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(conn.name, style: AppTheme.fontTitle),
-                              const SizedBox(height: 4),
+                              SizedBox(height: 4),
                               Text(
                                 '类型: ${conn.connType.toUpperCase()} | URL: ${cfg['url']} | 用户: ${cfg['username']}',
                                 style: AppTheme.fontCaption.copyWith(
-                                  color: AppTheme.textSecondary,
+                                  color: context.textSecondary,
                                 ),
                               ),
                             ],
@@ -395,9 +395,9 @@ class _ConnectionConfigTabState extends State<_ConnectionConfigTab> {
                           onPressed: () => _showEditDialog(conn),
                         ),
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.delete_outline,
-                            color: AppTheme.error,
+                            color: context.errorText,
                             size: 20,
                           ),
                           onPressed: () async {
@@ -496,7 +496,7 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('获取项目失败: $e'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
       }
@@ -539,7 +539,7 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
     }).toList();
 
     return Padding(
-      padding: const EdgeInsets.all(AppTheme.space24),
+      padding: EdgeInsets.all(AppTheme.space24),
       child: Column(
         children: [
           Row(
@@ -548,7 +548,7 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
                 width: 220,
                 child: DropdownButtonFormField<DevOpsConnection>(
                   value: _selectedConn,
-                  dropdownColor: AppTheme.bgCard,
+                  dropdownColor: context.bgCard,
                   decoration: const InputDecoration(labelText: 'GitLab 实例'),
                   items: _gitlabConns
                       .map(
@@ -573,7 +573,7 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
                 icon: const Icon(Icons.search_rounded, size: 18),
                 label: const Text('查询项目'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                 ),
                 onPressed: _searching ? null : _fetchProjects,
               ),
@@ -609,27 +609,27 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
               ),
               const SizedBox(width: AppTheme.space12),
               ElevatedButton.icon(
-                icon: const Icon(Icons.save_rounded, size: 18),
+                icon: Icon(Icons.save_rounded, size: 18),
                 label: Text('确认选中 (${_selectedIds.length})'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.success,
+                  backgroundColor: context.successSolid,
                 ),
                 onPressed: _selectedIds.isEmpty ? null : _saveSelected,
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space16),
+          SizedBox(height: AppTheme.space16),
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: context.bgCard,
                 borderRadius: AppTheme.borderRadiusMedium,
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               child: _searching
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         '暂无匹配的项目，请选择实例并输入 Group 查询。',
                         style: AppTheme.fontBodySecondary,
@@ -637,21 +637,21 @@ class _GitLabProjectsTabState extends State<_GitLabProjectsTab> {
                     )
                   : ListView.separated(
                       itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const Divider(
+                      separatorBuilder: (_, __) => Divider(
                         height: 1,
-                        color: AppTheme.borderSubtle,
+                        color: context.borderSubtle,
                       ),
                       itemBuilder: (context, idx) {
                         final p = filtered[idx];
                         final isChecked = _selectedIds.contains(p.id);
                         return CheckboxListTile(
                           value: isChecked,
-                          activeColor: AppTheme.accent,
+                          activeColor: context.accentSolid,
                           title: Text(p.name, style: AppTheme.fontBody),
                           subtitle: Text(
                             p.pathWithNamespace,
                             style: AppTheme.fontCaption.copyWith(
-                              color: AppTheme.textSecondary,
+                              color: context.textSecondary,
                             ),
                           ),
                           onChanged: (val) {
@@ -863,15 +863,15 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
                     '当前已选中 ${_selectedProjects.length} 个项目',
                     style: AppTheme.fontTitle,
                   ),
-                  const SizedBox(height: AppTheme.space16),
+                  SizedBox(height: AppTheme.space16),
 
                   // 分支操作
                   Container(
-                    padding: const EdgeInsets.all(AppTheme.space16),
+                    padding: EdgeInsets.all(AppTheme.space16),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -907,22 +907,22 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
                           icon: const Icon(Icons.fork_right_rounded, size: 18),
                           label: const Text('执行批量建分支'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.accent,
+                            backgroundColor: context.accentSolid,
                           ),
                           onPressed: _operating ? null : _batchCreateBranch,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppTheme.space16),
+                  SizedBox(height: AppTheme.space16),
 
                   // pom.xml 操作
                   Container(
-                    padding: const EdgeInsets.all(AppTheme.space16),
+                    padding: EdgeInsets.all(AppTheme.space16),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -958,22 +958,22 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
                           icon: const Icon(Icons.edit_document, size: 18),
                           label: const Text('执行版本修改并 Commit'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.warning,
+                            backgroundColor: context.warningSolid,
                           ),
                           onPressed: _operating ? null : _batchUpdatePom,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppTheme.space16),
+                  SizedBox(height: AppTheme.space16),
 
                   // Jenkins 操作
                   Container(
-                    padding: const EdgeInsets.all(AppTheme.space16),
+                    padding: EdgeInsets.all(AppTheme.space16),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -995,7 +995,7 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
                           icon: const Icon(Icons.play_arrow_rounded, size: 18),
                           label: const Text('触发批量构建'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.info,
+                            backgroundColor: context.infoSolid,
                           ),
                           onPressed: _operating ? null : _batchTriggerJenkins,
                         ),
@@ -1006,18 +1006,18 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
               ),
             ),
           ),
-          const SizedBox(width: AppTheme.space24),
+          SizedBox(width: AppTheme.space24),
 
           // 右侧：实时日志输出控制台
           Expanded(
             flex: 4,
             child: Container(
               height: 520,
-              padding: const EdgeInsets.all(AppTheme.space16),
+              padding: EdgeInsets.all(AppTheme.space16),
               decoration: BoxDecoration(
-                color: const Color(0xFF141416),
+                color: Color(0xFF141416),
                 borderRadius: AppTheme.borderRadiusMedium,
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1025,15 +1025,15 @@ class _BatchOperationsTabState extends State<_BatchOperationsTab> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('流水线执行日志', style: AppTheme.fontTitle),
+                      Text('流水线执行日志', style: AppTheme.fontTitle),
                       IconButton(
-                        icon: const Icon(Icons.clear_all_rounded, size: 18),
+                        icon: Icon(Icons.clear_all_rounded, size: 18),
                         onPressed: () => setState(() => _logs.clear()),
                         tooltip: '清空日志',
                       ),
                     ],
                   ),
-                  const Divider(color: AppTheme.borderSubtle),
+                  Divider(color: context.borderSubtle),
                   Expanded(
                     child: ListView.builder(
                       itemCount: _logs.length,
@@ -1297,7 +1297,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           return AlertDialog(
-            backgroundColor: AppTheme.bgCard,
+            backgroundColor: context.bgCard,
             title: Text(
               env == null ? '新建环境' : '编辑环境',
               style: AppTheme.fontTitle,
@@ -1328,7 +1328,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                         labelText: 'GitLab 用户名',
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextField(
                       controller: passCtrl,
                       obscureText: !passVisible,
@@ -1341,7 +1341,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                                 ? Icons.visibility
                                 : Icons.visibility_off,
                             size: 16,
-                            color: AppTheme.textSecondary,
+                            color: context.textSecondary,
                           ),
                           tooltip: passVisible ? '隐藏密码' : '显示密码',
                           onPressed: () =>
@@ -1349,7 +1349,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextField(
                       controller: tokenCtrl,
                       obscureText: !tokenVisible,
@@ -1363,7 +1363,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                                 ? Icons.visibility
                                 : Icons.visibility_off,
                             size: 16,
-                            color: AppTheme.textSecondary,
+                            color: context.textSecondary,
                           ),
                           tooltip: tokenVisible ? '隐藏 Token' : '显示 Token',
                           onPressed: () => setDialogState(
@@ -1372,18 +1372,18 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     TextField(
                       controller: pathCtrl,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: '配置仓项目路径',
                         hintText: '/tree/master/argocd/projects',
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       value: mode,
-                      dropdownColor: AppTheme.bgCard,
+                      dropdownColor: context.bgCard,
                       decoration: const InputDecoration(labelText: '监控模式'),
                       items: const [
                         DropdownMenuItem(
@@ -1399,10 +1399,10 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                         if (v != null) setDialogState(() => mode = v);
                       },
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       value: cron,
-                      dropdownColor: AppTheme.bgCard,
+                      dropdownColor: context.bgCard,
                       decoration: const InputDecoration(labelText: '检查频率'),
                       items: _intervalOptions
                           .map(
@@ -1434,7 +1434,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                 ),
                 onPressed: () async {
                   final trimmedPath = pathCtrl.text.trim();
@@ -1504,7 +1504,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                   if (mounted) setState(() => _tags = list);
                   _toast(env == null ? '环境已保存' : '环境已更新');
                 },
-                child: const Text('保存'),
+                child: Text('保存'),
               ),
             ],
           );
@@ -1517,7 +1517,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('删除监控环境', style: AppTheme.fontTitle),
         content: Text(
           '确认删除环境「${env.name}」？该操作将同时清除其名下全部 Tag 配置行，且不可恢复。',
@@ -1529,7 +1529,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            style: ElevatedButton.styleFrom(backgroundColor: context.errorSolid),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('删除'),
           ),
@@ -1580,7 +1580,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: isError ? AppTheme.error : null,
+        backgroundColor: isError ? context.errorSolid : null,
       ),
     );
   }
@@ -1640,9 +1640,9 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
               const Spacer(),
               ElevatedButton.icon(
                 icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('新建环境'),
+                label: Text('新建环境'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                 ),
                 onPressed: () => _showEnvDialog(),
               ),
@@ -1650,13 +1650,13 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
           ),
 
           // 环境标签列表
-          const SizedBox(height: AppTheme.space16),
+          SizedBox(height: AppTheme.space16),
           Container(
-            padding: const EdgeInsets.all(AppTheme.space12),
+            padding: EdgeInsets.all(AppTheme.space12),
             decoration: BoxDecoration(
-              color: AppTheme.bgCard,
+              color: context.bgCard,
               borderRadius: AppTheme.borderRadiusMedium,
-              border: Border.all(color: AppTheme.borderSubtle),
+              border: Border.all(color: context.borderSubtle),
             ),
             child: _envs.isEmpty
                 ? const Text(
@@ -1684,12 +1684,12 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
   Widget _envChip(ArgoCDEnvironment env) {
     final selected = _selectedEnv?.id == env.id;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: selected ? AppTheme.accentSubtle : AppTheme.bgCard,
+        color: selected ? context.accentSubtle : context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
         border: Border.all(
-          color: selected ? AppTheme.accent : AppTheme.borderSubtle,
+          color: selected ? context.accentText : context.borderSubtle,
         ),
       ),
       child: Row(
@@ -1723,17 +1723,17 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
             ),
           ),
           // 右段：编辑 + 启停 + 删除
-          const SizedBox(width: AppTheme.space12),
+          SizedBox(width: AppTheme.space12),
           OutlinedButton.icon(
-            icon: const Icon(Icons.edit_outlined, size: 16),
-            label: const Text('编辑环境'),
+            icon: Icon(Icons.edit_outlined, size: 16),
+            label: Text('编辑环境'),
             onPressed: () => _showEnvDialog(env),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: 8),
           Switch(
             value: env.enabled,
-            activeThumbColor: AppTheme.bgSidebar,
-            activeTrackColor: AppTheme.accent,
+            activeThumbColor: context.bgSidebar,
+            activeTrackColor: context.accentSolid,
             onChanged: (v) => _toggleEnv(env, v),
           ),
           InkWell(
@@ -1741,12 +1741,12 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
             onTap: () => _deleteEnv(env),
             child: Tooltip(
               message: '删除环境',
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(3),
                 child: Icon(
                   Icons.close_rounded,
                   size: 16,
-                  color: AppTheme.textSecondary,
+                  color: context.textSecondary,
                 ),
               ),
             ),
@@ -1761,7 +1761,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: isMonitor ? AppTheme.accentSubtle : AppTheme.warningSubtle,
+        color: isMonitor ? context.accentSubtle : context.warningText.withValues(alpha: 0x1F / 255),
         borderRadius: AppTheme.borderRadiusSmall,
       ),
       child: Row(
@@ -1770,13 +1770,13 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
           Icon(
             isMonitor ? Icons.visibility_rounded : Icons.lock_rounded,
             size: 14,
-            color: isMonitor ? AppTheme.accent : AppTheme.warning,
+            color: isMonitor ? context.accentText : context.warningText,
           ),
           const SizedBox(width: 5),
           Text(
             isMonitor ? '监控模式' : '锁定模式',
             style: AppTheme.fontCaption.copyWith(
-              color: isMonitor ? AppTheme.accent : AppTheme.warning,
+              color: isMonitor ? context.accentText : context.warningText,
             ),
           ),
         ],
@@ -1799,10 +1799,10 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('暂无 Tag 配置', style: AppTheme.fontBodySecondary),
-            const SizedBox(height: 12),
+            SizedBox(height: 12),
             OutlinedButton.icon(
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('刷新 Tag'),
+              icon: Icon(Icons.refresh_rounded, size: 18),
+              label: Text('刷新 Tag'),
               onPressed: _refreshTags,
             ),
           ],
@@ -1813,13 +1813,13 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
     Widget statusCell(ArgoCDTag t) {
       final target = t.targetTag ?? '';
       if (target.isEmpty) {
-        return _pill('-', AppTheme.textTertiary, AppTheme.bgInput);
+        return _pill('-', context.textTertiary, context.bgInput);
       }
       final matched = (t.currentTag ?? '') == target;
       return _pill(
         matched ? '一致' : '不一致',
-        matched ? AppTheme.success : AppTheme.error,
-        matched ? AppTheme.successSubtle : AppTheme.errorSubtle,
+        matched ? context.successSolid : context.errorSolid,
+        matched ? context.successText.withValues(alpha: 0x1F / 255) : context.errorText.withValues(alpha: 0x1F / 255),
       );
     }
 
@@ -1827,8 +1827,8 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
       final target = t.targetTag ?? '';
       final mismatch = target.isNotEmpty && (t.currentTag ?? '') != target;
       final bg = mismatch
-          ? (_blink ? const Color(0x33EF4444) : AppTheme.bgCard)
-          : AppTheme.bgCard;
+          ? (_blink ? Color(0x33EF4444) : context.bgCard)
+          : context.bgCard;
 
       final cells = <Widget>[
         Padding(
@@ -1843,21 +1843,21 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: SizedBox(
             width: 210,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: AppTheme.bgInput,
+                color: context.bgInput,
                 borderRadius: AppTheme.borderRadiusSmall,
               ),
               child: Text(
                 t.currentTag?.isNotEmpty == true ? t.currentTag! : '-',
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 12,
-                  color: AppTheme.textPrimary,
+                  color: context.textPrimary,
                 ),
               ),
             ),
@@ -1891,7 +1891,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
               children: [
                 Checkbox(
                   value: t.muted,
-                  activeColor: AppTheme.warning,
+                  activeColor: context.warningSolid,
                   onChanged: (v) =>
                       _updateTag(t.projectName, muted: v ?? false),
                 ),
@@ -1899,7 +1899,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                   child: Text(
                     '关闭提醒',
                     style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textSecondary,
+                      color: context.textSecondary,
                     ),
                   ),
                 ),
@@ -1908,15 +1908,15 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: SizedBox(width: 80, child: statusCell(t)),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Switch(
             value: t.enabled,
-            activeThumbColor: AppTheme.bgSidebar,
-            activeTrackColor: AppTheme.accent,
+            activeThumbColor: context.bgSidebar,
+            activeTrackColor: context.accentSolid,
             onChanged: (v) => _updateTag(t.projectName, enabled: v),
           ),
         ),
@@ -1945,7 +1945,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                   ? Icons.warning_amber_rounded
                   : Icons.check_circle_outline_rounded,
               size: 16,
-              color: hasMismatch ? AppTheme.warning : AppTheme.success,
+              color: hasMismatch ? context.warningText : context.successText,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -1954,33 +1954,33 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                     ? '存在 Tag 与目标不一致的项目，已高亮闪烁提示。'
                     : '${_tags.length} 个项目 Tag 配置正常。',
                 style: AppTheme.fontCaption.copyWith(
-                  color: hasMismatch ? AppTheme.warning : AppTheme.success,
+                  color: hasMismatch ? context.warningText : context.successText,
                 ),
               ),
             ),
             Text('${_tags.length} 个项目', style: AppTheme.fontCaption),
           ],
         ),
-        const SizedBox(height: AppTheme.space12),
+        SizedBox(height: AppTheme.space12),
         Expanded(
           child: Container(
             decoration: BoxDecoration(
-              color: AppTheme.bgCard,
+              color: context.bgCard,
               borderRadius: AppTheme.borderRadiusMedium,
-              border: Border.all(color: AppTheme.borderSubtle),
+              border: Border.all(color: context.borderSubtle),
             ),
             child: ClipRRect(
               borderRadius: AppTheme.borderRadiusMedium,
               child: SingleChildScrollView(
                 child: Table(
                   border: TableBorder.all(
-                    color: AppTheme.borderSubtle,
+                    color: context.borderSubtle,
                     width: 0.5,
                   ),
                   // 前三列（文字）跟窗口弹性伸缩，后三列（控件）保持固有宽度。
                   // 曾全部用 FixedColumnWidth（合计 944px）：1200 窗口右侧留白 256px，
                   // 更窄窗口则溢出。IntrinsicWidth 也已移除（117 行全量测量会让首帧卡）。
-                  columnWidths: const {
+                  columnWidths: {
                     0: FlexColumnWidth(2),
                     1: FlexColumnWidth(2),
                     2: FlexColumnWidth(2),
@@ -1991,7 +1991,7 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
                   defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                   children: [
                     TableRow(
-                      decoration: const BoxDecoration(color: AppTheme.bgInput),
+                      decoration: BoxDecoration(color: context.bgInput),
                       children: const [
                         Text('项目', style: AppTheme.fontBodySecondary),
                         Text('当前 Tag', style: AppTheme.fontBodySecondary),

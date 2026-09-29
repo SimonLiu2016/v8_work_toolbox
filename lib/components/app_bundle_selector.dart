@@ -16,7 +16,7 @@ class AppBundleSelector extends StatelessWidget {
       icon: const Icon(Icons.folder_outlined, size: 16),
       label: const Text('解析应用'),
       style: ElevatedButton.styleFrom(
-        backgroundColor: AppTheme.accent,
+        backgroundColor: context.accentSolid,
         foregroundColor: Colors.white,
       ),
     );

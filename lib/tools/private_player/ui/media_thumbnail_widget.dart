@@ -96,12 +96,12 @@ class _MediaThumbnailWidgetState extends State<MediaThumbnailWidget> {
       content = Container(
         width: widget.width,
         height: widget.height,
-        color: AppTheme.bgCard,
-        child: const Center(
+        color: context.bgCard,
+        child: Center(
           child: SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.accent),
+            child: CircularProgressIndicator(strokeWidth: 1.5, color: context.accentText),
           ),
         ),
       );
@@ -114,7 +114,7 @@ class _MediaThumbnailWidgetState extends State<MediaThumbnailWidget> {
       child: Container(
         width: widget.width,
         height: widget.height,
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -130,11 +130,11 @@ class _MediaThumbnailWidgetState extends State<MediaThumbnailWidget> {
     return Container(
       width: widget.width,
       height: widget.height,
-      color: AppTheme.bgCard,
+      color: context.bgCard,
       child: Center(
         child: Icon(
           widget.isOnline ? Icons.public_rounded : Icons.video_file_rounded,
-          color: AppTheme.accent.withValues(alpha: 0.7),
+          color: context.accentText.withValues(alpha: 0.7),
           size: widget.height * 0.45,
         ),
       ),

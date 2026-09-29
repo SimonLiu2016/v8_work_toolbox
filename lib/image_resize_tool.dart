@@ -98,10 +98,10 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
       barrierColor: Colors.black.withValues(alpha: 0.6),
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           shape: RoundedRectangleBorder(
             borderRadius: AppTheme.borderRadiusMedium,
-            side: const BorderSide(color: AppTheme.borderStrong),
+            side: BorderSide(color: context.borderStrong),
           ),
           title: const Text('确认转换', style: AppTheme.fontTitle),
           content: Text(
@@ -268,7 +268,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -277,22 +277,22 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
             // 标题
             Row(
               children: [
-                const Icon(Icons.photo_size_select_large, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('图片尺寸修改', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.photo_size_select_large, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('图片尺寸修改', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_isProcessing)
-                  const AppBadge(
+                  AppBadge(
                     label: '正在处理',
-                    color: AppTheme.warningSubtle,
-                    textColor: AppTheme.warning,
+                    color: context.warningText.withValues(alpha: 0x1F / 255),
+                    textColor: context.warningSolid,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '批量修改目录下图片尺寸，支持预设高清档位与自定义宽高，不覆盖原图',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -313,7 +313,7 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                       ),
                       const SizedBox(width: AppTheme.space8),
                       Padding(
-                        padding: const EdgeInsets.only(top: 18),
+                        padding: EdgeInsets.only(top: 18),
                         child: AppButton.secondary(
                           label: '选择文件夹',
                           icon: Icons.folder_open,
@@ -323,11 +323,11 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppTheme.space16),
+                  SizedBox(height: AppTheme.space16),
                   Text(
                     '目标尺寸预设',
                     style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textSecondary,
+                      color: context.textSecondary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -347,15 +347,15 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                               },
                         borderRadius: AppTheme.borderRadiusSmall,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
+                          padding: EdgeInsets.symmetric(
                             horizontal: AppTheme.space12,
                             vertical: AppTheme.space8,
                           ),
                           decoration: BoxDecoration(
-                            color: isSelected ? AppTheme.bgSelected : AppTheme.bgInput,
+                            color: isSelected ? context.bgSelected : context.bgInput,
                             borderRadius: AppTheme.borderRadiusSmall,
                             border: Border.all(
-                              color: isSelected ? AppTheme.accent : AppTheme.borderSubtle,
+                              color: isSelected ? context.accentText : context.borderSubtle,
                               width: isSelected ? 1.5 : 1,
                             ),
                           ),
@@ -367,13 +367,15 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                                     ? Icons.radio_button_checked
                                     : Icons.radio_button_off,
                                 size: 14,
-                                color: isSelected ? AppTheme.accent : AppTheme.textTertiary,
+                                color: isSelected ? context.accentText : context.textTertiary,
                               ),
-                              const SizedBox(width: AppTheme.space8),
+                              SizedBox(width: AppTheme.space8),
                               Text(
                                 entry.value,
                                 style: AppTheme.fontBody.copyWith(
-                                  color: isSelected ? Colors.white : AppTheme.textPrimary,
+                                  color: isSelected
+                                      ? (context.isDarkMode ? Colors.white : context.accentText)
+                                      : context.textPrimary,
                                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                                 ),
                               ),
@@ -425,52 +427,52 @@ class _ImageResizeHomePageState extends State<ImageResizeHomePage> {
                 ],
               ),
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 执行日志
             Expanded(
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(AppTheme.space12),
+                padding: EdgeInsets.all(AppTheme.space12),
                 decoration: BoxDecoration(
-                  color: AppTheme.bgInput,
+                  color: context.bgInput,
                   borderRadius: AppTheme.borderRadiusMedium,
-                  border: Border.all(color: AppTheme.borderSubtle),
+                  border: Border.all(color: context.borderSubtle),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-                        const SizedBox(width: AppTheme.space6),
+                        Icon(Icons.terminal, size: 14, color: context.textTertiary),
+                        SizedBox(width: AppTheme.space6),
                         Text(
                           '处理日志',
                           style: AppTheme.fontCaption.copyWith(
-                            color: AppTheme.textTertiary,
+                            color: context.textTertiary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const Spacer(),
+                        Spacer(),
                         if (_logMessages.isNotEmpty)
                           GestureDetector(
                             onTap: () => setState(() => _logMessages.clear()),
                             child: Text(
                               '清空日志',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                              style: AppTheme.fontCaption.copyWith(color: context.accentText),
                             ),
                           ),
                       ],
                     ),
-                    const SizedBox(height: AppTheme.space8),
-                    const Divider(height: 1, color: AppTheme.borderSubtle),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
+                    Divider(height: 1, color: context.borderSubtle),
+                    SizedBox(height: AppTheme.space8),
                     Expanded(
                       child: _logMessages.isEmpty
                           ? Center(
                               child: Text(
                                 '暂无日志记录',
-                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                               ),
                             )
                           : ListView.builder(

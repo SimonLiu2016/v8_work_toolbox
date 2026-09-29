@@ -54,7 +54,7 @@ class _ToolPanelState extends State<ToolPanel> {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeInOut,
       width: width,
-      color: AppTheme.bgSidebar,
+      color: context.bgSidebar,
       child: widget.isCollapsed ? _buildCollapsedPanel() : _buildExpandedPanel(),
     );
   }
@@ -65,11 +65,11 @@ class _ToolPanelState extends State<ToolPanel> {
         const SizedBox(height: 38), // 顶部安全高度
         IconButton(
           icon: const Icon(Icons.chevron_right, size: 18),
-          color: AppTheme.textSecondary,
+          color: context.textSecondary,
           tooltip: '展开面板',
           onPressed: widget.onToggleCollapse,
         ),
-        const Divider(height: 1, color: AppTheme.borderSubtle),
+        Divider(height: 1, color: context.borderSubtle),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
@@ -91,17 +91,17 @@ class _ToolPanelState extends State<ToolPanel> {
                     child: Container(
                       height: 38,
                       decoration: BoxDecoration(
-                        color: isSelected ? AppTheme.bgSelected : Colors.transparent,
+                        color: isSelected ? context.bgSelected : Colors.transparent,
                         borderRadius: BorderRadius.circular(6),
                         border: isSelected
-                            ? Border.all(color: AppTheme.accent.withValues(alpha: 0.4))
+                            ? Border.all(color: context.accentSolid.withValues(alpha: 0.4))
                             : null,
                       ),
                       child: Center(
                         child: Icon(
                           tool.icon,
                           size: 18,
-                          color: isSelected ? AppTheme.accentLight : AppTheme.textSecondary,
+                          color: isSelected ? context.accentText : context.textSecondary,
                         ),
                       ),
                     ),
@@ -134,7 +134,7 @@ class _ToolPanelState extends State<ToolPanel> {
               Expanded(
                 child: Text(
                   widget.title,
-                  style: AppTheme.fontTitle.copyWith(fontSize: 13),
+                  style: AppTheme.fontTitle.copyWith(fontSize: 13, color: context.textPrimary),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -147,7 +147,7 @@ class _ToolPanelState extends State<ToolPanel> {
               const SizedBox(width: AppTheme.space6),
               IconButton(
                 icon: const Icon(Icons.chevron_left, size: 18),
-                color: AppTheme.textSecondary,
+                color: context.textSecondary,
                 tooltip: '折叠面板',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
@@ -168,15 +168,15 @@ class _ToolPanelState extends State<ToolPanel> {
           child: AppTextField(
             controller: _searchController,
             hintText: '过滤工具...',
-            prefixIcon: const Icon(
+            prefixIcon: Icon(
               Icons.search,
               size: 14,
-              color: AppTheme.textTertiary,
+              color: context.textTertiary,
             ),
             suffixIcon: _filterQuery.isNotEmpty
                 ? IconButton(
                     icon: const Icon(Icons.clear, size: 12),
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                     onPressed: () {
                       setState(() {
                         _searchController.clear();
@@ -193,7 +193,7 @@ class _ToolPanelState extends State<ToolPanel> {
           ),
         ),
 
-        const Divider(height: 1, color: AppTheme.borderSubtle),
+        Divider(height: 1, color: context.borderSubtle),
 
         // 工具条目列表
         Expanded(
@@ -201,7 +201,7 @@ class _ToolPanelState extends State<ToolPanel> {
               ? Center(
                   child: Text(
                     '无匹配项',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                   ),
                 )
               : ListView.builder(
@@ -221,7 +221,7 @@ class _ToolPanelState extends State<ToolPanel> {
                         leading: Icon(
                           tool.icon,
                           size: 16,
-                          color: isSelected ? AppTheme.accentLight : AppTheme.textSecondary,
+                          color: isSelected ? context.accentText : context.textSecondary,
                         ),
                         isSelected: isSelected,
                         onTap: () => widget.onSelectTool(tool.id),

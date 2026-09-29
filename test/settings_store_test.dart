@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:V8WorkToolbox/services/settings_store.dart';
@@ -117,6 +118,33 @@ void main() {
       // 重新读取持久化状态
       await store.init(rootDir: tempRootDir);
       expect(store.getRecentToolIds(), ['bc-config', 'batch-rename']);
+    });
+
+    test('全局主题配置：默认跟随系统，修改并持久化到 app.json', () async {
+      final store = SettingsStore.instance;
+      await store.init(rootDir: tempRootDir);
+
+      // 默认值为 system
+      expect(store.themeMode, ThemeMode.system);
+      expect(store.themeModeString, 'system');
+
+      // 修改为 light
+      await store.setThemeMode(ThemeMode.light);
+      expect(store.themeMode, ThemeMode.light);
+      expect(store.themeModeString, 'light');
+
+      // 验证重新 init 后恢复 light
+      await store.init(rootDir: tempRootDir);
+      expect(store.themeMode, ThemeMode.light);
+
+      // 修改为 dark
+      await store.setThemeModeString('dark');
+      expect(store.themeMode, ThemeMode.dark);
+      expect(store.themeModeString, 'dark');
+
+      // 重新 init 后恢复 dark
+      await store.init(rootDir: tempRootDir);
+      expect(store.themeMode, ThemeMode.dark);
     });
   });
 }

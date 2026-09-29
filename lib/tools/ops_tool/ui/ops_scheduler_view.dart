@@ -69,7 +69,7 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Text(existing == null ? '添加定时调度任务' : '编辑定时任务', style: AppTheme.fontTitle),
           content: SizedBox(
             width: 480,
@@ -77,11 +77,11 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: '任务名称')),
-                  const SizedBox(height: 12),
+                  TextField(controller: nameCtrl, decoration: InputDecoration(labelText: '任务名称')),
+                  SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: type,
-                    dropdownColor: AppTheme.bgCard,
+                    dropdownColor: context.bgCard,
                     decoration: const InputDecoration(labelText: '任务类型'),
                     items: const [
                       DropdownMenuItem(value: 'generate_report', child: Text('定时生成运营报告')),
@@ -106,7 +106,7 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                       ),
                       const SizedBox(width: 8),
                       PopupMenuButton<String>(
-                        icon: const Icon(Icons.timer_outlined),
+                        icon: Icon(Icons.timer_outlined),
                         tooltip: '选择预设频率',
                         onSelected: (expr) => cronCtrl.text = expr,
                         itemBuilder: (_) => _cronPresets
@@ -116,29 +116,29 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                     ],
                   ),
                   if (type == 'generate_report') ...[
-                    const SizedBox(height: 12),
+                    SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: templateId,
-                      dropdownColor: AppTheme.bgCard,
+                      dropdownColor: context.bgCard,
                       decoration: const InputDecoration(labelText: '绑定报告模板'),
                       items: _templates
                           .map((t) => DropdownMenuItem(value: t.id, child: Text(t.name)))
                           .toList(),
                       onChanged: (v) => setDialogState(() => templateId = v),
                     ),
-                    const SizedBox(height: 12),
+                    SizedBox(height: 12),
                     SwitchListTile(
-                      title: const Text('生成后自动发送邮件'),
+                      title: Text('生成后自动发送邮件'),
                       value: autoEmail,
-                      activeColor: AppTheme.accent,
+                      activeColor: context.accentSolid,
                       onChanged: (v) => setDialogState(() => autoEmail = v),
                     ),
                   ],
                   if (type == 'send_email' || autoEmail) ...[
-                    const SizedBox(height: 12),
+                    SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: accountId,
-                      dropdownColor: AppTheme.bgCard,
+                      dropdownColor: context.bgCard,
                       decoration: const InputDecoration(labelText: '发信邮件账户'),
                       items: _emailAccounts
                           .map((a) => DropdownMenuItem(value: a.id, child: Text(a.name)))
@@ -153,7 +153,7 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+              style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
               onPressed: () async {
                 final task = ScheduledTask(
                   id: existing?.id,
@@ -198,28 +198,28 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Cron 定时任务管理', style: AppTheme.fontTitle),
+                    Text('Cron 定时任务管理', style: AppTheme.fontTitle),
                     ElevatedButton.icon(
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('添加任务'),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+                      icon: Icon(Icons.add, size: 18),
+                      label: Text('添加任务'),
+                      style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
                       onPressed: _showTaskDialog,
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _tasks.isEmpty
-                        ? const Center(child: Text('暂无定时任务，点击上方添加。', style: AppTheme.fontBodySecondary))
+                        ? Center(child: Text('暂无定时任务，点击上方添加。', style: AppTheme.fontBodySecondary))
                         : ListView.separated(
                             itemCount: _tasks.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+                            separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
                             itemBuilder: (context, idx) {
                               final task = _tasks[idx];
                               return ListTile(
@@ -229,16 +229,16 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                                       : task.taskType == 'send_email'
                                           ? Icons.email_outlined
                                           : Icons.sync_rounded,
-                                  color: AppTheme.accent,
+                                  color: context.accentText,
                                 ),
                                 title: Text(task.name, style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600)),
                                 subtitle: Text('Cron: ${task.cronExpr} | 上次执行: ${task.lastRun ?? "未执行"}',
-                                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+                                    style: AppTheme.fontCaption.copyWith(color: context.textSecondary)),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
-                                      icon: const Icon(Icons.play_circle_fill_rounded, color: AppTheme.success, size: 22),
+                                      icon: Icon(Icons.play_circle_fill_rounded, color: context.successText, size: 22),
                                       tooltip: '立即手动执行一次',
                                       onPressed: () async {
                                         await SchedulerService.instance.executeTask(task);
@@ -247,7 +247,7 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                                     ),
                                     Switch(
                                       value: task.enabled,
-                                      activeColor: AppTheme.accent,
+                                      activeColor: context.accentSolid,
                                       onChanged: (val) async {
                                         await OpsDatabase.instance.toggleScheduledTask(task.id, val);
                                         await SchedulerService.instance.reloadTasks();
@@ -255,7 +255,7 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                                       },
                                     ),
                                     IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 18),
+                                      icon: Icon(Icons.delete_outline, color: context.errorText, size: 18),
                                       onPressed: () async {
                                         await OpsDatabase.instance.deleteScheduledTask(task.id);
                                         await SchedulerService.instance.reloadTasks();
@@ -283,27 +283,27 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('任务执行日志', style: AppTheme.fontTitle),
+                    Text('任务执行日志', style: AppTheme.fontTitle),
                     IconButton(
-                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      icon: Icon(Icons.refresh_rounded, size: 18),
                       onPressed: _loadAll,
                       tooltip: '刷新日志',
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _logs.isEmpty
-                        ? const Center(child: Text('暂无任务执行日志', style: AppTheme.fontBodySecondary))
+                        ? Center(child: Text('暂无任务执行日志', style: AppTheme.fontBodySecondary))
                         : ListView.separated(
                             itemCount: _logs.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+                            separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
                             itemBuilder: (context, idx) {
                               final log = _logs[idx];
                               return ListTile(
@@ -314,10 +314,10 @@ class _OpsSchedulerViewState extends State<OpsSchedulerView> {
                                           ? Icons.error_rounded
                                           : Icons.timelapse_rounded,
                                   color: log.status == 'success'
-                                      ? AppTheme.success
+                                      ? context.successSolid
                                       : log.status == 'failed'
-                                          ? AppTheme.error
-                                          : AppTheme.warning,
+                                          ? context.errorSolid
+                                          : context.warningSolid,
                                   size: 20,
                                 ),
                                 title: Text(log.message ?? log.taskType, style: AppTheme.fontBody),

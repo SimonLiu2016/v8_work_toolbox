@@ -130,10 +130,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              backgroundColor: AppTheme.bgCard,
+              backgroundColor: context.bgCard,
               title: Text(title,
-                  style: const TextStyle(
-                      color: AppTheme.textPrimary, fontSize: 15)),
+                  style: TextStyle(
+                      color: context.textPrimary, fontSize: 15)),
               content: SizedBox(
                 width: 360,
                 child: Column(
@@ -141,8 +141,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(hint,
-                        style: const TextStyle(
-                            color: AppTheme.textSecondary, fontSize: 12)),
+                        style: TextStyle(
+                            color: context.textSecondary, fontSize: 12)),
                     const SizedBox(height: 12),
                     _passField(controller, '口令'),
                     if (confirm) ...[
@@ -152,8 +152,8 @@ class _SettingsPanelState extends State<SettingsPanel> {
                     if (error != null) ...[
                       const SizedBox(height: 8),
                       Text(error!,
-                          style: const TextStyle(
-                              color: AppTheme.error, fontSize: 11)),
+                          style: TextStyle(
+                              color: context.errorText, fontSize: 11)),
                     ],
                   ],
                 ),
@@ -165,7 +165,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 ),
                 FilledButton(
                   style:
-                      FilledButton.styleFrom(backgroundColor: AppTheme.accent),
+                      FilledButton.styleFrom(backgroundColor: context.accentSolid),
                   onPressed: () {
                     final p = controller.text;
                     if (p.length < 8) {
@@ -195,13 +195,13 @@ class _SettingsPanelState extends State<SettingsPanel> {
     return TextField(
       controller: c,
       obscureText: true,
-      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+      style: TextStyle(color: context.textPrimary, fontSize: 13),
       decoration: InputDecoration(
         labelText: label,
         labelStyle:
-            const TextStyle(color: AppTheme.textTertiary, fontSize: 12),
+            TextStyle(color: context.textTertiary, fontSize: 12),
         filled: true,
-        fillColor: AppTheme.bgInput,
+        fillColor: context.bgInput,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(6),
           borderSide: BorderSide.none,
@@ -213,18 +213,18 @@ class _SettingsPanelState extends State<SettingsPanel> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
-      title: const Text('设置',
-          style: TextStyle(color: AppTheme.textPrimary, fontSize: 16)),
+      backgroundColor: context.bgCard,
+      title: Text('设置',
+          style: TextStyle(color: context.textPrimary, fontSize: 16)),
       content: SizedBox(
         width: 400,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('剪贴板自动清空',
+            Text('剪贴板自动清空',
                 style: TextStyle(
-                    color: AppTheme.textPrimary,
+                    color: context.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
@@ -234,67 +234,67 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 for (final s in ClipboardHygieneService.delayOptions)
                   ChoiceChip(
                     label: Text(s == 0 ? '禁用' : '$s 秒',
-                        style: const TextStyle(fontSize: 12)),
+                        style: TextStyle(fontSize: 12)),
                     selected: _clipboard.delaySeconds == s,
-                    selectedColor: AppTheme.accentSubtle,
+                    selectedColor: context.accentSubtle,
                     onSelected: (_) {
                       setState(() => _clipboard.setDelaySeconds(s));
                     },
                   ),
               ],
             ),
-            const SizedBox(height: 20),
-            const Text('密钥来源',
+            SizedBox(height: 20),
+            Text('密钥来源',
                 style: TextStyle(
-                    color: AppTheme.textPrimary,
+                    color: context.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
+            SizedBox(height: 4),
             Text(
               _dekSource == null ? '检测中…' : _dekSourceLabel(_dekSource!),
               style: TextStyle(
                 color: _dekSource == DekSource.keychain
-                    ? AppTheme.success
-                    : AppTheme.warning,
+                    ? context.successSolid
+                    : context.warningSolid,
                 fontSize: 11,
               ),
             ),
-            const SizedBox(height: 20),
-            const Text('密钥备份（跨机器迁移）',
+            SizedBox(height: 20),
+            Text('密钥备份（跨机器迁移）',
                 style: TextStyle(
-                    color: AppTheme.textPrimary,
+                    color: context.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
             Row(
               children: [
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                    side: const BorderSide(color: AppTheme.borderStrong),
+                    foregroundColor: context.textSecondary,
+                    side: BorderSide(color: context.borderStrong),
                   ),
                   onPressed: _exportDek,
-                  icon: const Icon(Icons.upload_rounded, size: 16),
-                  label: const Text('导出密钥备份',
+                  icon: Icon(Icons.upload_rounded, size: 16),
+                  label: Text('导出密钥备份',
                       style: TextStyle(fontSize: 12)),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                    side: const BorderSide(color: AppTheme.borderStrong),
+                    foregroundColor: context.textSecondary,
+                    side: BorderSide(color: context.borderStrong),
                   ),
                   onPressed: _restoreDek,
-                  icon: const Icon(Icons.download_rounded, size: 16),
-                  label: const Text('恢复密钥备份',
+                  icon: Icon(Icons.download_rounded, size: 16),
+                  label: Text('恢复密钥备份',
                       style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            const Text(
+            SizedBox(height: 8),
+            Text(
               '备份文件经口令加密，不含密码明文。口令不存储、不可恢复，请妥善记忆。',
-              style: TextStyle(color: AppTheme.textTertiary, fontSize: 11),
+              style: TextStyle(color: context.textTertiary, fontSize: 11),
             ),
             if (_message != null) ...[
               const SizedBox(height: 16),
@@ -303,16 +303,16 @@ class _SettingsPanelState extends State<SettingsPanel> {
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: _messageIsError
-                      ? AppTheme.errorSubtle
-                      : AppTheme.successSubtle,
+                      ? context.errorText.withValues(alpha: 0x1F / 255)
+                      : context.successText.withValues(alpha: 0x1F / 255),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   _message!,
                   style: TextStyle(
                     color: _messageIsError
-                        ? AppTheme.error
-                        : AppTheme.success,
+                        ? context.errorSolid
+                        : context.successSolid,
                     fontSize: 12,
                   ),
                 ),

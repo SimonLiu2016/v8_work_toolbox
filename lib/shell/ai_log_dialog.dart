@@ -69,9 +69,9 @@ class _AiLogDialogState extends State<AiLogDialog> {
         width: 760,
         height: 560,
         decoration: BoxDecoration(
-          color: AppTheme.bgWindow,
+          color: context.bgWindow,
           borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          border: Border.all(color: AppTheme.borderStrong),
+          border: Border.all(color: context.borderStrong),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.5),
@@ -83,9 +83,9 @@ class _AiLogDialogState extends State<AiLogDialog> {
         child: Column(
           children: [
             _buildHeader(context),
-            const Divider(height: 1, color: AppTheme.borderSubtle),
+            Divider(height: 1, color: context.borderSubtle),
             Expanded(child: _buildLogList()),
-            const Divider(height: 1, color: AppTheme.borderSubtle),
+            Divider(height: 1, color: context.borderSubtle),
             _buildFooter(),
           ],
         ),
@@ -101,10 +101,10 @@ class _AiLogDialogState extends State<AiLogDialog> {
           Container(
             padding: const EdgeInsets.all(AppTheme.space6),
             decoration: BoxDecoration(
-              color: AppTheme.accentSubtle,
+              color: context.accentSubtle,
               borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
             ),
-            child: const Icon(Icons.terminal_rounded, size: 20, color: AppTheme.accentLight),
+            child: Icon(Icons.terminal_rounded, size: 20, color: context.accentText),
           ),
           const SizedBox(width: AppTheme.space12),
           Column(
@@ -117,7 +117,7 @@ class _AiLogDialogState extends State<AiLogDialog> {
                 builder: (context, entries, _) {
                   return Text(
                     '内存缓冲实时捕获 · 最近 ${entries.length}/${AiLogger.maxEntries} 条记录',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                   );
                 },
               ),
@@ -126,12 +126,12 @@ class _AiLogDialogState extends State<AiLogDialog> {
           const Spacer(),
           IconButton(
             tooltip: '复制全部日志',
-            icon: const Icon(Icons.copy_all_rounded, size: 18, color: AppTheme.textSecondary),
+            icon: Icon(Icons.copy_all_rounded, size: 18, color: context.textSecondary),
             onPressed: () => _copyAllLogs(context),
           ),
           IconButton(
             tooltip: '清空内存日志',
-            icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.textSecondary),
+            icon: Icon(Icons.delete_outline_rounded, size: 18, color: context.textSecondary),
             onPressed: () {
               setState(() {
                 _expandedIndices.clear();
@@ -142,7 +142,7 @@ class _AiLogDialogState extends State<AiLogDialog> {
           const SizedBox(width: AppTheme.space4),
           IconButton(
             tooltip: '关闭',
-            icon: const Icon(Icons.close_rounded, size: 20, color: AppTheme.textSecondary),
+            icon: Icon(Icons.close_rounded, size: 20, color: context.textSecondary),
             onPressed: () => Navigator.of(context).pop(),
           ),
         ],
@@ -159,13 +159,13 @@ class _AiLogDialogState extends State<AiLogDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.receipt_long_outlined, size: 48, color: AppTheme.textTertiary),
+                Icon(Icons.receipt_long_outlined, size: 48, color: context.textTertiary),
                 const SizedBox(height: AppTheme.space12),
-                Text('暂无 AI 调用记录', style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary)),
+                Text('暂无 AI 调用记录', style: AppTheme.fontBody.copyWith(color: context.textSecondary)),
                 const SizedBox(height: AppTheme.space4),
                 Text(
                   '当发起模型连接测试或批量诊断时，请求和响应报文将在此实时呈现。',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                 ),
               ],
             ),
@@ -203,27 +203,27 @@ class _AiLogDialogState extends State<AiLogDialog> {
 
     switch (entry.type) {
       case AiLogType.request:
-        badgeColor = AppTheme.info;
-        badgeBg = AppTheme.infoSubtle;
+        badgeColor = context.infoSolid;
+        badgeBg = context.infoSolid;
         badgeIcon = Icons.arrow_upward_rounded;
         badgeText = 'REQUEST';
         break;
       case AiLogType.response:
         final isOk = (entry.statusCode ?? 200) < 400;
-        badgeColor = isOk ? AppTheme.success : AppTheme.error;
-        badgeBg = isOk ? AppTheme.successSubtle : AppTheme.errorSubtle;
+        badgeColor = isOk ? context.successSolid : context.errorSolid;
+        badgeBg = isOk ? context.successText.withValues(alpha: 0x1F / 255) : context.errorText.withValues(alpha: 0x1F / 255);
         badgeIcon = Icons.arrow_downward_rounded;
         badgeText = 'RESP ${entry.statusCode ?? 200}';
         break;
       case AiLogType.warning:
-        badgeColor = AppTheme.warning;
-        badgeBg = AppTheme.warningSubtle;
+        badgeColor = context.warningSolid;
+        badgeBg = context.warningText.withValues(alpha: 0x1F / 255);
         badgeIcon = Icons.warning_amber_rounded;
         badgeText = 'WARNING';
         break;
       case AiLogType.error:
-        badgeColor = AppTheme.error;
-        badgeBg = AppTheme.errorSubtle;
+        badgeColor = context.errorSolid;
+        badgeBg = context.errorText.withValues(alpha: 0x1F / 255);
         badgeIcon = Icons.error_outline_rounded;
         badgeText = 'ERROR';
         break;
@@ -233,9 +233,9 @@ class _AiLogDialogState extends State<AiLogDialog> {
 
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       padding: const EdgeInsets.all(AppTheme.space10),
       child: Column(
@@ -245,10 +245,10 @@ class _AiLogDialogState extends State<AiLogDialog> {
             children: [
               Text(
                 entry.formattedTime,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 11,
-                  color: AppTheme.textTertiary,
+                  color: context.textTertiary,
                 ),
               ),
               const SizedBox(width: AppTheme.space8),
@@ -277,34 +277,34 @@ class _AiLogDialogState extends State<AiLogDialog> {
               const SizedBox(width: AppTheme.space8),
               Text(
                 entry.providerName,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: AppTheme.textPrimary,
+                  color: context.textPrimary,
                 ),
               ),
               if (entry.protocol != null) ...[
                 const SizedBox(width: 4),
                 Text(
                   '· ${entry.protocol}',
-                  style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                  style: TextStyle(fontSize: 11, color: context.textSecondary),
                 ),
               ],
               if (entry.model != null) ...[
                 const SizedBox(width: 4),
                 Text(
                   '(${entry.model})',
-                  style: const TextStyle(fontSize: 11, color: AppTheme.accentLight),
+                  style: TextStyle(fontSize: 11, color: context.accentText),
                 ),
               ],
               if (entry.durationMs != null) ...[
                 const Spacer(),
                 Text(
                   '${entry.durationMs}ms',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 11,
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                   ),
                 ),
               ] else
@@ -313,7 +313,7 @@ class _AiLogDialogState extends State<AiLogDialog> {
                 visualDensity: VisualDensity.compact,
                 iconSize: 14,
                 tooltip: '复制此条',
-                icon: const Icon(Icons.copy_rounded, color: AppTheme.textTertiary),
+                icon: Icon(Icons.copy_rounded, color: context.textTertiary),
                 onPressed: () => _copySingleLog(context, entry),
               ),
             ],
@@ -322,21 +322,21 @@ class _AiLogDialogState extends State<AiLogDialog> {
             const SizedBox(height: 4),
             Text(
               entry.endpoint!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 10,
-                color: AppTheme.textTertiary,
+                color: context.textTertiary,
               ),
             ),
           ],
           const SizedBox(height: 6),
           Text(
             isExpanded && entry.fullContent != null ? entry.fullContent! : entry.message,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'monospace',
               fontSize: 12,
               height: 1.4,
-              color: AppTheme.textSecondary,
+              color: context.textSecondary,
             ),
           ),
           if (hasMore) ...[
@@ -353,7 +353,7 @@ class _AiLogDialogState extends State<AiLogDialog> {
               },
               child: Text(
                 isExpanded ? '收起完整内容 ▲' : '展开查看全部 (${entry.fullContent!.length} 字符) ▼',
-                style: const TextStyle(fontSize: 11, color: AppTheme.accentLight),
+                style: TextStyle(fontSize: 11, color: context.accentText),
               ),
             ),
           ],
@@ -379,13 +379,13 @@ class _AiLogDialogState extends State<AiLogDialog> {
                 Icon(
                   _autoScroll ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
                   size: 16,
-                  color: _autoScroll ? AppTheme.accentLight : AppTheme.textTertiary,
+                  color: _autoScroll ? context.accentText : context.textTertiary,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   '自动滚动到底部',
                   style: AppTheme.fontCaption.copyWith(
-                    color: _autoScroll ? AppTheme.textPrimary : AppTheme.textTertiary,
+                    color: _autoScroll ? context.textPrimary : context.textTertiary,
                   ),
                 ),
               ],
@@ -394,7 +394,7 @@ class _AiLogDialogState extends State<AiLogDialog> {
           const Spacer(),
           Text(
             '仅在本次运行会话中保留，退出后自动清空',
-            style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary, fontSize: 11),
+            style: AppTheme.fontCaption.copyWith(color: context.textTertiary, fontSize: 11),
           ),
         ],
       ),

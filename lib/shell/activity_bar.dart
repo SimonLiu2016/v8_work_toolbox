@@ -31,7 +31,7 @@ class ActivityBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 56,
-      color: AppTheme.bgActivityBar,
+      color: context.bgActivityBar,
       child: Column(
         children: [
           // 顶部预留 macOS 原生交通灯安全高度
@@ -53,17 +53,17 @@ class ActivityBar extends StatelessWidget {
                   padding: const EdgeInsets.all(2),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTheme.borderSubtle, width: 0.5),
+                    border: Border.all(color: context.borderSubtle, width: 0.5),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: Image.asset(
                       'assets/images/app_logo.png',
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
+                      errorBuilder: (_, __, ___) => Icon(
                         Icons.construction_rounded,
                         size: 20,
-                        color: AppTheme.accent,
+                        color: context.accentText,
                       ),
                     ),
                   ),
@@ -74,6 +74,7 @@ class ActivityBar extends StatelessWidget {
 
           // 全部工具 (网格/搜索首页)
           _buildActivityItem(
+            context,
             icon: Icons.grid_view_rounded,
             label: '全部工具',
             isSelected: currentView == ActivityViewType.all,
@@ -89,6 +90,7 @@ class ActivityBar extends StatelessWidget {
             return Padding(
               padding: const EdgeInsets.only(bottom: AppTheme.space6),
               child: _buildActivityItem(
+                context,
                 icon: cat.icon,
                 label: cat.label,
                 isSelected: isSelected,
@@ -101,13 +103,14 @@ class ActivityBar extends StatelessWidget {
           }),
 
           // 分隔线
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: Divider(color: AppTheme.borderSubtle, height: 1),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Divider(color: context.borderSubtle, height: 1),
           ),
 
           // 隐私空间专属栏目入口
           _buildActivityItem(
+            context,
             icon: Icons.shield_outlined,
             label: '隐私空间 (PIN 安全锁)',
             isSelected: currentView == ActivityViewType.privacy,
@@ -118,6 +121,7 @@ class ActivityBar extends StatelessWidget {
 
           // 网络代理入口 (系统级代理管理)
           _buildActivityItem(
+            context,
             icon: Icons.vpn_lock_outlined,
             label: '网络代理',
             isSelected: currentView == ActivityViewType.proxy,
@@ -127,6 +131,7 @@ class ActivityBar extends StatelessWidget {
 
           // AI 配置入口 (置于底部设置之上)
           _buildActivityItem(
+            context,
             icon: Icons.smart_toy_outlined,
             label: 'AI 能力配置',
             isSelected: currentView == ActivityViewType.ai,
@@ -136,6 +141,7 @@ class ActivityBar extends StatelessWidget {
 
           // 全局设置
           _buildActivityItem(
+            context,
             icon: Icons.settings_outlined,
             label: '系统偏好设置',
             isSelected: false,
@@ -147,7 +153,8 @@ class ActivityBar extends StatelessWidget {
     );
   }
 
-  Widget _buildActivityItem({
+  Widget _buildActivityItem(
+    BuildContext context, {
     required IconData icon,
     required String label,
     required bool isSelected,
@@ -174,7 +181,7 @@ class ActivityBar extends StatelessWidget {
                   child: Container(
                     width: 3,
                     decoration: BoxDecoration(
-                      color: AppTheme.accentLight,
+                      color: context.accentText,
                       borderRadius: const BorderRadius.only(
                         topRight: Radius.circular(2),
                         bottomRight: Radius.circular(2),
@@ -187,13 +194,13 @@ class ActivityBar extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: isSelected ? AppTheme.bgSidebar : Colors.transparent,
+                  color: isSelected ? context.bgSidebar : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   icon,
                   size: 20,
-                  color: isSelected ? AppTheme.accentLight : AppTheme.textSecondary,
+                  color: isSelected ? context.accentText : context.textSecondary,
                 ),
               ),
             ],

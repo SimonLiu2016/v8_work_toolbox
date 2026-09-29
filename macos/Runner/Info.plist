@@ -38,5 +38,49 @@
 		<string>NSApplication</string>
 		<key>NSAppleEventsUsageDescription</key>
 		<string>需要访问其他应用的UI元素以读取快捷键信息</string>
+		<key>NSServices</key>
+		<array>
+			<dict>
+				<key>NSMenuItem</key>
+				<dict>
+					<key>default</key>
+					<string>查词 — V8</string>
+				</dict>
+				<key>NSMessage</key>
+				<string>handleLookupService</string>
+				<key>NSSendTypes</key>
+				<array>
+					<string>NSStringPboardType</string>
+				</array>
+				<key>NSReturnTypes</key>
+				<array/>
+			</dict>
+			<dict>
+				<key>NSMenuItem</key>
+				<dict>
+					<key>default</key>
+					<string>保存笔记 — V8</string>
+				</dict>
+				<key>NSMessage</key>
+				<string>handleSaveNoteService</string>
+				<key>NSSendTypes</key>
+				<array>
+					<string>NSStringPboardType</string>
+				</array>
+				<key>NSReturnTypes</key>
+				<array/>
+			</dict>
+		</array>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleURLName</key>
+				<string>com.v8en.V8WorkToolbox</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>v8toolbox</string>
+				</array>
+			</dict>
+		</array>
 	</dict>
 </plist>

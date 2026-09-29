@@ -84,7 +84,7 @@ class _CompressKmaState extends State<CompressKma> {
             ElevatedButton(
               onPressed: widget.onCompressKmaPackage,
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.accent,
+                backgroundColor: context.accentSolid,
                 foregroundColor: Colors.white,
               ),
               child: const Text('压缩为 KMA 包'),

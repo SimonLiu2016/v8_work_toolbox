@@ -13,7 +13,7 @@ void main() {
     testWidgets('深色主题下默认取暗色表面色', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData.dark(),
+          theme: AppTheme.darkTheme,
           home: const Scaffold(body: AppMarkdownView(data: '用 `字段名` 举例')),
         ),
       );
@@ -30,7 +30,7 @@ void main() {
     testWidgets('浅色主题下默认取浅中性，而非暗灰', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData.light(),
+          theme: AppTheme.lightTheme,
           home: const Scaffold(body: AppMarkdownView(data: '用 `字段名` 举例')),
         ),
       );
@@ -55,7 +55,7 @@ void main() {
       const explicit = Color(0xFF123456);
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData.light(),
+          theme: AppTheme.lightTheme,
           home: const Scaffold(
             body: AppMarkdownView(data: '用 `字段名` 举例', codeBlockColor: explicit),
           ),
@@ -109,7 +109,7 @@ class NotebookLightScopeProbe extends StatelessWidget {
   Widget build(BuildContext context) {
     // 与 NotebookLightScope 内部一致：浅色 Theme。
     return Theme(
-      data: ThemeData.light(),
+      data: AppTheme.lightTheme,
       child: const SizedBox(
         width: 360,
         child: AppMarkdownView(

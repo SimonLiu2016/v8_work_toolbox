@@ -22,7 +22,7 @@ class AppMarkdownView extends StatelessWidget {
 
   /// 代码块与内联 code 的背景色。
   ///
-  /// 默认 `null` 表示**按当前主题亮度推导**：深色主题取 [AppTheme.bgCardHover]
+  /// 默认 `null` 表示**按当前主题亮度推导**：深色主题取 [context.bgCardHover]
   /// （暗色容器上的既有外观），浅色主题取 [_lightCodeSurface]。本组件被暗色与浅色
   /// 容器共用，写死任一主题的字面量都会让另一种容器串色——曾因默认写死深灰，
   /// 浅色面板里的代码文字看不清。
@@ -33,7 +33,7 @@ class AppMarkdownView extends StatelessWidget {
   /// 浅色主题下代码块/内联 code 的底色。
   ///
   /// 比纯白深一档，保证代码在浅色容器上有可见边界（而非与背景同色）；
-  /// 与 [AppTheme.bgCardHover] 在深色主题中承担同一职责。
+  /// 与 [context.bgCardHover] 在深色主题中承担同一职责。
   static const Color _lightCodeSurface = Color(0xFFF1F5F9);
 
   /// 是否允许选中并复制文本。`MarkdownBody` 的 `selectable` 默认为 false，
@@ -58,7 +58,7 @@ class AppMarkdownView extends StatelessWidget {
     final body = MarkdownBody(
       data: data,
       selectable: selectable,
-      styleSheet: _buildStyleSheet(_resolveCodeBackground(context)),
+      styleSheet: _buildStyleSheet(context, _resolveCodeBackground(context)),
     );
 
     if (maxHeight == null) return body;
@@ -71,17 +71,20 @@ class AppMarkdownView extends StatelessWidget {
 
   /// 解析代码底色：显式传参优先，否则按主题亮度推导。
   ///
-  /// 深色分支的取值与改造前完全一致（[AppTheme.bgCardHover]），故三个暗色
+  /// 深色分支的取值与改造前完全一致（[context.bgCardHover]），故三个暗色
   /// 调用点不传参时外观零变化。
   Color _resolveCodeBackground(BuildContext context) {
     final explicit = codeBlockColor;
     if (explicit != null) return explicit;
     return Theme.of(context).brightness == Brightness.dark
-        ? AppTheme.bgCardHover
+        ? context.bgCardHover
         : _lightCodeSurface;
   }
 
-  MarkdownStyleSheet _buildStyleSheet(Color codeBackground) {
+  MarkdownStyleSheet _buildStyleSheet(
+    BuildContext context,
+    Color codeBackground,
+  ) {
     final codeStyle = baseStyle.copyWith(
       fontFamily: 'monospace',
       fontSize: 13,
@@ -117,12 +120,12 @@ class AppMarkdownView extends StatelessWidget {
       codeblockDecoration: BoxDecoration(
         color: codeBackground,
         borderRadius: AppTheme.borderRadiusSmall,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       codeblockPadding: const EdgeInsets.all(AppTheme.space8),
 
       // 列表
-      listBullet: baseStyle.copyWith(color: AppTheme.accent),
+      listBullet: baseStyle.copyWith(color: context.accentText),
       listBulletPadding: const EdgeInsets.only(right: AppTheme.space8),
       listIndent: AppTheme.space16,
 
@@ -131,7 +134,7 @@ class AppMarkdownView extends StatelessWidget {
       blockquoteDecoration: BoxDecoration(
         border: Border(
           left: BorderSide(
-            color: AppTheme.accent.withValues(alpha: 0.5),
+            color: context.accentText.withValues(alpha: 0.5),
             width: 3,
           ),
         ),

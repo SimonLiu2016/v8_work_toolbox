@@ -199,10 +199,10 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
       barrierColor: Colors.black.withValues(alpha: 0.6),
       builder: (context) {
         return AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           shape: RoundedRectangleBorder(
             borderRadius: AppTheme.borderRadiusMedium,
-            side: const BorderSide(color: AppTheme.borderStrong),
+            side: BorderSide(color: context.borderStrong),
           ),
           title: const Text('确认重命名', style: AppTheme.fontTitle),
           content: Text(
@@ -278,7 +278,7 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -287,22 +287,22 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
             // 标题
             Row(
               children: [
-                const Icon(Icons.text_format, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('批量重命名', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.text_format, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('批量重命名', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_previewCount > 0)
                   AppBadge(
                     label: '匹配到 $_previewCount 个文件',
-                    color: AppTheme.accentSubtle,
-                    textColor: AppTheme.accentLight,
+                    color: context.accentSubtle,
+                    textColor: context.accentText,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '使用正则表达式对指定目录中的文件进行批量匹配与捕获组替换',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -385,29 +385,29 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
                 ],
               ),
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 日志预览区
             Expanded(
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(AppTheme.space12),
+                padding: EdgeInsets.all(AppTheme.space12),
                 decoration: BoxDecoration(
-                  color: AppTheme.bgInput,
+                  color: context.bgInput,
                   borderRadius: AppTheme.borderRadiusMedium,
-                  border: Border.all(color: AppTheme.borderSubtle),
+                  border: Border.all(color: context.borderSubtle),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-                        const SizedBox(width: AppTheme.space6),
+                        Icon(Icons.terminal, size: 14, color: context.textTertiary),
+                        SizedBox(width: AppTheme.space6),
                         Text(
                           '处理与预览日志',
                           style: AppTheme.fontCaption.copyWith(
-                            color: AppTheme.textTertiary,
+                            color: context.textTertiary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -420,20 +420,20 @@ class _BatchRenameHomePageState extends State<BatchRenameHomePage> {
                             }),
                             child: Text(
                               '清空日志',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                              style: AppTheme.fontCaption.copyWith(color: context.accentText),
                             ),
                           ),
                       ],
                     ),
-                    const SizedBox(height: AppTheme.space8),
-                    const Divider(height: 1, color: AppTheme.borderSubtle),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
+                    Divider(height: 1, color: context.borderSubtle),
+                    SizedBox(height: AppTheme.space8),
                     Expanded(
                       child: _logMessages.isEmpty
                           ? Center(
                               child: Text(
                                 '暂无日志记录，可点击"预览变更"查看重命名计划',
-                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                               ),
                             )
                           : ListView.builder(

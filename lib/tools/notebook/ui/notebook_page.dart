@@ -20,6 +20,7 @@ import '../xlsx_to_markdown.dart';
 import 'note_editor.dart';
 import 'knowledge_graph_view.dart';
 import 'notebook_qa_panel.dart';
+import '../../../services/note_capture_service.dart';
 
 /// 笔记本工具主页面（仿印象笔记三栏布局）
 class NotebookPage extends StatefulWidget {
@@ -261,6 +262,20 @@ class _NotebookPageState extends State<NotebookPage> {
     await _refresh(silent: true);
   }
 
+  Future<void> _setDefaultCaptureNotebook(String id) async {
+    await _store.setDefaultCaptureNotebook(id);
+    await NoteCaptureService.instance.setDefaultNotebookId(id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('已设为笔记捕获默认笔记本 📥'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      _refresh(silent: true);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Note actions
   // ---------------------------------------------------------------------------
@@ -330,29 +345,46 @@ class _NotebookPageState extends State<NotebookPage> {
   /// 多格式文档导入：pdf/docx/xlsx/md/txt → 新笔记。
   /// 可选"保留原文件为附件"。
   Future<void> _importDocuments() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: _importExtensions,
-      allowMultiple: true,
-    );
-    if (result == null || result.files.isEmpty) return;
+    List<PlatformFile> picked = const [];
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _importExtensions,
+        allowMultiple: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      picked = result.files;
+    } catch (e) {
+      // 打开文件面板本身就可能失败（历史上缺 files.user-selected entitlement
+      // 时这里抛 PlatformException，而外层无 catch 会让用户"点了没反应"）。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('打开文件选择器失败: $e'),
+          backgroundColor: context.errorSolid,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
 
+    if (!mounted) return;
     // 导入选项：是否保留原文件为附件
-    final keepOriginal = await _askKeepOriginal(result.files.length);
+    final keepOriginal = await _askKeepOriginal(picked.length);
     if (keepOriginal == null) return; // 用户取消
 
     int successCount = 0;
     int failCount = 0;
-    for (final picked in result.files) {
-      if (picked.path == null) continue;
+    for (final file in picked) {
+      if (file.path == null) continue;
       String? createdNoteId;
       try {
-        final markdown = await _extractMarkdown(picked.path!, picked.name);
+        final markdown = await _extractMarkdown(file.path!, file.name);
         if (markdown == null) {
           failCount++;
           continue;
         }
-        final title = picked.name.replaceAll(
+        final title = file.name.replaceAll(
           RegExp(r'\.(pdf|docx|xlsx|md|markdown|txt)$', caseSensitive: false),
           '',
         );
@@ -368,7 +400,7 @@ class _NotebookPageState extends State<NotebookPage> {
         if (keepOriginal) {
           // 先建笔记拿到 noteId（addAttachment 需要），再把附件块追加进正文——
           // 只建记录不写正文的话，用户在笔记里看不到任何入口。
-          final sourceFile = File(picked.path!);
+          final sourceFile = File(file.path!);
           final attId = await _store.addAttachment(
             noteId: noteId,
             sourceFile: sourceFile,
@@ -377,7 +409,7 @@ class _NotebookPageState extends State<NotebookPage> {
           final updatedJson = _appendAttachmentBlock(
             deltaJson,
             attId: attId,
-            filename: picked.name,
+            filename: file.name,
             sizeBytes: stat.size,
           );
           await _store.updateNote(id: noteId, deltaJson: updatedJson);
@@ -385,7 +417,7 @@ class _NotebookPageState extends State<NotebookPage> {
         createdNoteId = null; // 已成功，退出回滚范围
         successCount++;
       } catch (e) {
-        debugPrint('导入 ${picked.name} 失败: $e');
+        debugPrint('导入 ${file.name} 失败: $e');
         await _rollbackFailedImport(createdNoteId);
         failCount++;
       }
@@ -400,7 +432,7 @@ class _NotebookPageState extends State<NotebookPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(msg),
-          backgroundColor: failCount > 0 ? AppTheme.warning : null,
+          backgroundColor: failCount > 0 ? context.warningSolid : null,
         ),
       );
     }
@@ -461,7 +493,7 @@ class _NotebookPageState extends State<NotebookPage> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('$e\n可在导入时勾选「保留原文件为附件」以保留原始文档。'),
-                backgroundColor: AppTheme.warning,
+                backgroundColor: context.warningSolid,
                 duration: const Duration(seconds: 8),
               ),
             );
@@ -473,7 +505,7 @@ class _NotebookPageState extends State<NotebookPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('不支持的格式 .$ext（支持：${_importExtensions.join('、')}）'),
-              backgroundColor: AppTheme.error,
+              backgroundColor: context.errorSolid,
             ),
           );
         }
@@ -493,7 +525,7 @@ class _NotebookPageState extends State<NotebookPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Text('导入 $fileCount 个文件', style: AppTheme.fontTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -538,7 +570,7 @@ class _NotebookPageState extends State<NotebookPage> {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('导入印象笔记', style: AppTheme.fontTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -552,44 +584,44 @@ class _NotebookPageState extends State<NotebookPage> {
                 shape: RoundedRectangleBorder(
                   borderRadius: AppTheme.borderRadiusSmall,
                 ),
-                tileColor: AppTheme.accent.withValues(alpha: 0.12),
-                leading: const Icon(Icons.flash_on, color: AppTheme.accent),
+                tileColor: context.accentSolid.withValues(alpha: 0.12),
+                leading: Icon(Icons.flash_on, color: context.accentText),
                 title: Text(
                   '从本机客户端一键全量迁移 (${localInfo.noteCount} 篇 · ${localInfo.notebookCount} 个笔记本)',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: AppTheme.accent,
+                    color: context.accentText,
                   ),
                 ),
-                subtitle: const Text('免密直读本机缓存，秒级还原全部笔记本分类、未加密正文与附件'),
+                subtitle: Text('免密直读本机缓存，秒级还原全部笔记本分类、未加密正文与附件'),
                 onTap: () => Navigator.pop(ctx, 'local_client'),
               ),
-              const SizedBox(height: AppTheme.space8),
+              SizedBox(height: AppTheme.space8),
             ],
             ListTile(
               dense: true,
               shape: RoundedRectangleBorder(
                 borderRadius: AppTheme.borderRadiusSmall,
               ),
-              tileColor: AppTheme.bgInput,
-              leading: const Icon(
+              tileColor: context.bgInput,
+              leading: Icon(
                 Icons.file_open_outlined,
-                color: AppTheme.textPrimary,
+                color: context.textPrimary,
               ),
-              title: const Text('从本地 .notes / .enex 备份文件导入'),
-              subtitle: const Text('自动提取文件名作为所属笔记本，并智能匹配本机明文正文'),
+              title: Text('从本地 .notes / .enex 备份文件导入'),
+              subtitle: Text('自动提取文件名作为所属笔记本，并智能匹配本机明文正文'),
               onTap: () => Navigator.pop(ctx, 'notes_file'),
             ),
-            const SizedBox(height: AppTheme.space8),
+            SizedBox(height: AppTheme.space8),
             ListTile(
               dense: true,
               shape: RoundedRectangleBorder(
                 borderRadius: AppTheme.borderRadiusSmall,
               ),
-              tileColor: AppTheme.bgInput,
-              leading: const Icon(
+              tileColor: context.bgInput,
+              leading: Icon(
                 Icons.cloud_sync_outlined,
-                color: AppTheme.info,
+                color: context.infoText,
               ),
               title: const Text('通过印象笔记 API 在线拉取'),
               subtitle: const Text('使用钥匙串授权 Token 远程获取笔记正文'),
@@ -642,7 +674,7 @@ class _NotebookPageState extends State<NotebookPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('本机迁移失败: $e'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
       }
@@ -673,7 +705,7 @@ class _NotebookPageState extends State<NotebookPage> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导入失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('导入失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -717,7 +749,7 @@ class _NotebookPageState extends State<NotebookPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('解析导入失败: $e'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
           ),
         );
       }
@@ -728,7 +760,7 @@ class _NotebookPageState extends State<NotebookPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('印象笔记导入完成', style: AppTheme.fontTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -738,8 +770,8 @@ class _NotebookPageState extends State<NotebookPage> {
             const SizedBox(height: 4),
             Text(
               '成功导入: ${result.imported} 篇',
-              style: const TextStyle(
-                color: AppTheme.success,
+              style: TextStyle(
+                color: context.successText,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -747,7 +779,7 @@ class _NotebookPageState extends State<NotebookPage> {
               const SizedBox(height: 4),
               Text(
                 '导入失败: ${result.failed} 篇',
-                style: const TextStyle(color: AppTheme.error),
+                style: TextStyle(color: context.errorText),
               ),
             ],
             if (result.errors.isNotEmpty) ...[
@@ -767,7 +799,7 @@ class _NotebookPageState extends State<NotebookPage> {
                           (e) => Text(
                             '• $e',
                             style: AppTheme.fontCaption.copyWith(
-                              color: AppTheme.textSecondary,
+                              color: context.textSecondary,
                             ),
                           ),
                         )
@@ -815,7 +847,7 @@ class _NotebookPageState extends State<NotebookPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导出失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('导出失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -834,7 +866,7 @@ class _NotebookPageState extends State<NotebookPage> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text(title, style: AppTheme.fontTitle),
         content: TextField(
           controller: ctrl,
@@ -911,8 +943,8 @@ class _NotebookPageState extends State<NotebookPage> {
         'delete',
         trash ? '粉碎笔记' : '删除笔记',
         trash ? Icons.delete_forever_outlined : Icons.delete_outline,
-        labelColor: trash ? AppTheme.error : null,
-        iconColor: trash ? AppTheme.error : null,
+        labelColor: trash ? context.errorSolid : null,
+        iconColor: trash ? context.errorSolid : null,
       ),
     ];
   }
@@ -1091,7 +1123,7 @@ class _NotebookPageState extends State<NotebookPage> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text('移动笔记到…', style: AppTheme.fontTitle),
         content: SizedBox(
           width: 340,
@@ -1108,9 +1140,9 @@ class _NotebookPageState extends State<NotebookPage> {
                 title: Text(nb.name),
                 subtitle: nb.stack != null ? Text(nb.stack!) : null,
                 trailing: isCurrent
-                    ? const Text(
+                    ? Text(
                         '当前',
-                        style: TextStyle(color: AppTheme.textTertiary),
+                        style: TextStyle(color: context.textTertiary),
                       )
                     : null,
                 onTap: () => Navigator.pop(ctx, isCurrent ? null : nb.id),
@@ -1136,7 +1168,7 @@ class _NotebookPageState extends State<NotebookPage> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text('共享笔记', style: AppTheme.fontTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1213,9 +1245,9 @@ class _NotebookPageState extends State<NotebookPage> {
     VoidCallback onTap,
   ) {
     return ListTile(
-      leading: Icon(icon, size: 20, color: AppTheme.accent),
+      leading: Icon(icon, size: 20, color: context.accentText),
       title: Text(title),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
+      subtitle: Text(subtitle, style: TextStyle(fontSize: 11)),
       dense: true,
       onTap: onTap,
     );
@@ -1229,7 +1261,7 @@ class _NotebookPageState extends State<NotebookPage> {
     final format = await showDialog<ExportFormat>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text('导出笔记', style: AppTheme.fontTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1302,7 +1334,7 @@ class _NotebookPageState extends State<NotebookPage> {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text(title, style: AppTheme.fontTitle),
         content: Text(message, style: AppTheme.fontBody),
         actions: [
@@ -1311,7 +1343,7 @@ class _NotebookPageState extends State<NotebookPage> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            style: ElevatedButton.styleFrom(backgroundColor: context.errorSolid),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('确定'),
           ),
@@ -1430,28 +1462,28 @@ class _NotebookPageState extends State<NotebookPage> {
 
   Widget _buildLeftPanel() {
     return Container(
-      color: AppTheme.bgSidebar,
+      color: context.bgSidebar,
       child: Column(
         children: [
           // macOS 沉浸式无边框窗口顶部预留红绿灯避让与标头
           Container(
             height: 68,
-            padding: const EdgeInsets.only(
+            padding: EdgeInsets.only(
               top: 28,
               left: 16,
               right: 12,
               bottom: 8,
             ),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: AppTheme.borderSubtle)),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: context.borderSubtle)),
             ),
             alignment: Alignment.bottomLeft,
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.menu_book_rounded,
                   size: 20,
-                  color: AppTheme.accent,
+                  color: context.accentText,
                 ),
                 const SizedBox(width: AppTheme.space8),
                 Text(
@@ -1488,10 +1520,10 @@ class _NotebookPageState extends State<NotebookPage> {
           ),
           ListTile(
             dense: true,
-            leading: const Icon(
+            leading: Icon(
               Icons.delete_outline,
               size: 18,
-              color: AppTheme.warning,
+              color: context.warningText,
             ),
             title: const Text('废纸篓'),
             selected: _isTrashSelected,
@@ -1508,7 +1540,7 @@ class _NotebookPageState extends State<NotebookPage> {
             },
           ),
 
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          Divider(height: 1, color: context.borderSubtle),
 
           // AI 问答入口（阶段二）：切换右侧「问我的笔记」面板
           ListTile(
@@ -1516,12 +1548,12 @@ class _NotebookPageState extends State<NotebookPage> {
             leading: Icon(
               Icons.auto_awesome,
               size: 18,
-              color: _showQa ? AppTheme.accent : AppTheme.textSecondary,
+              color: _showQa ? context.accentText : context.textSecondary,
             ),
             title: Text(
               '问我的笔记',
               style: TextStyle(
-                color: _showQa ? AppTheme.accent : null,
+                color: _showQa ? context.accentText : null,
                 fontWeight: _showQa ? FontWeight.w600 : null,
               ),
             ),
@@ -1538,12 +1570,12 @@ class _NotebookPageState extends State<NotebookPage> {
             leading: Icon(
               Icons.hub_outlined,
               size: 18,
-              color: _showGraph ? AppTheme.accent : AppTheme.textSecondary,
+              color: _showGraph ? context.accentText : context.textSecondary,
             ),
             title: Text(
               '知识星图',
               style: TextStyle(
-                color: _showGraph ? AppTheme.accent : null,
+                color: _showGraph ? context.accentText : null,
                 fontWeight: _showGraph ? FontWeight.w600 : null,
               ),
             ),
@@ -1554,11 +1586,11 @@ class _NotebookPageState extends State<NotebookPage> {
             }),
           ),
 
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          Divider(height: 1, color: context.borderSubtle),
 
           // Notebooks section header
           Padding(
-            padding: const EdgeInsets.only(
+            padding: EdgeInsets.only(
               left: 12,
               right: 4,
               top: 8,
@@ -1569,7 +1601,7 @@ class _NotebookPageState extends State<NotebookPage> {
                 Text(
                   '笔记本',
                   style: AppTheme.fontCaption.copyWith(
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1579,7 +1611,7 @@ class _NotebookPageState extends State<NotebookPage> {
                   onPressed: () => _createNotebook(),
                   tooltip: '新建笔记本',
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
+                  constraints: BoxConstraints(
                     minWidth: 24,
                     minHeight: 24,
                   ),
@@ -1593,15 +1625,15 @@ class _NotebookPageState extends State<NotebookPage> {
 
           // Tags section
           if (_tags.isNotEmpty) ...[
-            const Divider(height: 1, color: AppTheme.borderSubtle),
+            Divider(height: 1, color: context.borderSubtle),
             Padding(
-              padding: const EdgeInsets.only(left: 12, top: 8, bottom: 4),
+              padding: EdgeInsets.only(left: 12, top: 8, bottom: 4),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '标签',
                   style: AppTheme.fontCaption.copyWith(
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -1638,7 +1670,7 @@ class _NotebookPageState extends State<NotebookPage> {
             ),
           ],
 
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          Divider(height: 1, color: context.borderSubtle),
 
           // 常驻导入入口
           Container(
@@ -1649,22 +1681,22 @@ class _NotebookPageState extends State<NotebookPage> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
+                      backgroundColor: context.accentSolid,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      padding: EdgeInsets.symmetric(vertical: 8),
                     ),
-                    icon: const Icon(Icons.cloud_download_outlined, size: 16),
-                    label: const Text('导入印象笔记', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.cloud_download_outlined, size: 16),
+                    label: Text('导入印象笔记', style: TextStyle(fontSize: 12)),
                     onPressed: _showEvernoteImportDialog,
                   ),
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: 6),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      side: const BorderSide(color: AppTheme.borderSubtle),
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      side: BorderSide(color: context.borderSubtle),
                     ),
                     icon: const Icon(Icons.file_upload_outlined, size: 16),
                     label: const Text('导入文档', style: TextStyle(fontSize: 12)),
@@ -1682,18 +1714,18 @@ class _NotebookPageState extends State<NotebookPage> {
   Widget _buildNotebookTree() {
     final sortedStacks = _stacks.keys.toList()..sort();
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: EdgeInsets.symmetric(vertical: 2),
       children: [
         for (final stack in sortedStacks)
           _buildStackItem(stack, _stacks[stack] ?? []),
         if (_unstackedNotebooks.isNotEmpty) ...[
           if (sortedStacks.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(left: 14, top: 8, bottom: 4),
+              padding: EdgeInsets.only(left: 14, top: 8, bottom: 4),
               child: Text(
                 '未分类笔记本',
                 style: AppTheme.fontCaption.copyWith(
-                  color: AppTheme.textTertiary,
+                  color: context.textTertiary,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1734,7 +1766,7 @@ class _NotebookPageState extends State<NotebookPage> {
             height: 34,
             padding: const EdgeInsets.only(left: 6, right: 6),
             color: isStackSelected
-                ? AppTheme.accent.withAlpha(25)
+                ? context.accentSolid.withAlpha(25)
                 : Colors.transparent,
             child: Row(
               children: [
@@ -1751,13 +1783,13 @@ class _NotebookPageState extends State<NotebookPage> {
                     });
                   },
                   child: Padding(
-                    padding: const EdgeInsets.all(4),
+                    padding: EdgeInsets.all(4),
                     child: Icon(
                       isCollapsed
                           ? Icons.keyboard_arrow_right_rounded
                           : Icons.keyboard_arrow_down_rounded,
                       size: 16,
-                      color: AppTheme.textTertiary,
+                      color: context.textTertiary,
                     ),
                   ),
                 ),
@@ -1768,10 +1800,10 @@ class _NotebookPageState extends State<NotebookPage> {
                       : Icons.folder_open_rounded,
                   size: 16,
                   color: isStackSelected
-                      ? AppTheme.accent
-                      : const Color(0xFF64748B),
+                      ? context.accentSolid
+                      : Color(0xFF64748B),
                 ),
-                const SizedBox(width: 6),
+                SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     stack,
@@ -1779,8 +1811,8 @@ class _NotebookPageState extends State<NotebookPage> {
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,
                       color: isStackSelected
-                          ? AppTheme.accent
-                          : AppTheme.textPrimary,
+                          ? context.accentSolid
+                          : context.textPrimary,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1796,7 +1828,7 @@ class _NotebookPageState extends State<NotebookPage> {
                   ),
                   child: Text(
                     '${notebooks.length}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 10,
                       color: Color(0xFF475569),
                       fontWeight: FontWeight.w500,
@@ -1804,10 +1836,10 @@ class _NotebookPageState extends State<NotebookPage> {
                   ),
                 ),
                 PopupMenuButton<String>(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.more_horiz,
                     size: 14,
-                    color: AppTheme.textTertiary,
+                    color: context.textTertiary,
                   ),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
@@ -1854,27 +1886,40 @@ class _NotebookPageState extends State<NotebookPage> {
       child: Container(
         height: 32,
         padding: EdgeInsets.only(left: indent ? 28.0 : 12.0, right: 6.0),
-        color: isSelected ? AppTheme.accent.withAlpha(20) : Colors.transparent,
+        color: isSelected ? context.accentText.withAlpha(20) : Colors.transparent,
         child: Row(
           children: [
-            Text(nb.icon, style: const TextStyle(fontSize: 13)),
-            const SizedBox(width: 6),
+            Text(nb.icon, style: TextStyle(fontSize: 13)),
+            SizedBox(width: 6),
             Expanded(
-              child: Text(
-                nb.name,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  color: isSelected ? AppTheme.accent : AppTheme.textPrimary,
-                ),
-                overflow: TextOverflow.ellipsis,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      nb.name,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                        color: isSelected ? context.accentText : context.textPrimary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (nb.isDefaultForCapture == 1) ...[
+                    SizedBox(width: 4),
+                    Tooltip(
+                      message: '笔记捕获默认目标',
+                      child: Text('📥', style: TextStyle(fontSize: 11)),
+                    ),
+                  ],
+                ],
               ),
             ),
             PopupMenuButton<String>(
-              icon: const Icon(
+              icon: Icon(
                 Icons.more_vert,
                 size: 13,
-                color: AppTheme.textTertiary,
+                color: context.textTertiary,
               ),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
@@ -1884,13 +1929,19 @@ class _NotebookPageState extends State<NotebookPage> {
                   _renameNotebook(nb);
                 } else if (v == 'delete') {
                   _deleteNotebook(nb.id);
+                } else if (v == 'set_default_capture') {
+                  _setDefaultCaptureNotebook(nb.id);
                 }
               },
               itemBuilder: (ctx) => [
                 const PopupMenuItem(value: 'rename', child: Text('重命名')),
                 const PopupMenuItem(
+                  value: 'set_default_capture',
+                  child: Text('设为笔记捕获默认'),
+                ),
+                PopupMenuItem(
                   value: 'delete',
-                  child: Text('删除笔记本', style: TextStyle(color: AppTheme.error)),
+                  child: Text('删除笔记本', style: TextStyle(color: context.errorText)),
                 ),
               ],
             ),
@@ -1965,7 +2016,7 @@ class _NotebookPageState extends State<NotebookPage> {
                         : Icons.checklist_rounded,
                     size: 20,
                     color: _isBatchMode
-                        ? AppTheme.accent
+                        ? context.accentSolid
                         : const Color(0xFF64748B),
                   ),
                   onPressed: _toggleBatchMode,
@@ -1978,10 +2029,10 @@ class _NotebookPageState extends State<NotebookPage> {
                 ),
                 if (!_isTrashSelected) ...[
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.add_circle,
                       size: 22,
-                      color: AppTheme.accent,
+                      color: context.accentText,
                     ),
                     onPressed: _createNote,
                     tooltip: '新建笔记',
@@ -2037,7 +2088,7 @@ class _NotebookPageState extends State<NotebookPage> {
                           _notes.isNotEmpty &&
                           _selectedNoteIds.length == _notes.length,
                       onChanged: (_) => _toggleSelectAll(),
-                      activeColor: AppTheme.accent,
+                      activeColor: context.accentSolid,
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -2071,7 +2122,7 @@ class _NotebookPageState extends State<NotebookPage> {
                       style: const TextStyle(fontSize: 12),
                     ),
                     style: TextButton.styleFrom(
-                      foregroundColor: AppTheme.error,
+                      foregroundColor: context.errorSolid,
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2145,7 +2196,7 @@ class _NotebookPageState extends State<NotebookPage> {
                               ),
                               left: BorderSide(
                                 color: isSelected
-                                    ? AppTheme.accent
+                                    ? context.accentSolid
                                     : (isChecked
                                           ? const Color(0xFF3B82F6)
                                           : Colors.transparent),
@@ -2169,7 +2220,7 @@ class _NotebookPageState extends State<NotebookPage> {
                                       value: isChecked,
                                       onChanged: (_) =>
                                           _toggleSelectNote(note.id),
-                                      activeColor: AppTheme.accent,
+                                      activeColor: context.accentSolid,
                                     ),
                                   ),
                                 ),
@@ -2180,12 +2231,12 @@ class _NotebookPageState extends State<NotebookPage> {
                                     Row(
                                       children: [
                                         if (note.isPinned)
-                                          const Padding(
+                                          Padding(
                                             padding: EdgeInsets.only(right: 4),
                                             child: Icon(
                                               Icons.push_pin,
                                               size: 12,
-                                              color: AppTheme.accent,
+                                              color: context.accentText,
                                             ),
                                           ),
                                         Expanded(
@@ -2328,7 +2379,7 @@ class _NotebookPageState extends State<NotebookPage> {
         ),
         child: Text(
           label,
-          style: AppTheme.fontCaption.copyWith(color: AppTheme.accent),
+          style: AppTheme.fontCaption.copyWith(color: context.accentText),
         ),
       ),
     );
@@ -2407,17 +2458,17 @@ class _ImportProgressDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const CircularProgressIndicator(color: AppTheme.accent),
-          const SizedBox(height: AppTheme.space16),
-          const Text('正在导入印象笔记数据...', style: AppTheme.fontTitle),
-          const SizedBox(height: AppTheme.space8),
+          CircularProgressIndicator(color: context.accentText),
+          SizedBox(height: AppTheme.space16),
+          Text('正在导入印象笔记数据...', style: AppTheme.fontTitle),
+          SizedBox(height: AppTheme.space8),
           Text(
             '正在解析笔记、笔记本层级、标签及附件...\n过程视笔记数量可能需要数十秒，请勿关闭应用。',
-            style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary),
+            style: AppTheme.fontBody.copyWith(color: context.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],

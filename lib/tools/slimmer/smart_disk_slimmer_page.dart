@@ -243,10 +243,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
-        title: const Row(
+        backgroundColor: context.bgCard,
+        title: Row(
           children: [
-            Icon(Icons.auto_awesome_rounded, color: AppTheme.accent),
+            Icon(Icons.auto_awesome_rounded, color: context.accentText),
             SizedBox(width: AppTheme.space8),
             Text('未配置 AI 模型', style: AppTheme.fontTitle),
           ],
@@ -264,7 +264,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             icon: const Icon(Icons.settings_rounded, size: 16),
             label: const Text('前往 AI 配置'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.accent,
+              backgroundColor: context.accentSolid,
               foregroundColor: Colors.white,
             ),
             onPressed: () {
@@ -350,7 +350,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('AI 研判失败：$e\n请在左侧「AI 配置」中检查供应商与模型设置。'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
           duration: const Duration(seconds: 6),
         ),
       );
@@ -381,7 +381,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(err != null ? 'AI 研判未成功: $err' : 'AI 研判返回 0 个有效结果，请检查模型响应或配置'),
-          backgroundColor: AppTheme.warning,
+          backgroundColor: context.warningSolid,
           duration: const Duration(seconds: 6),
         ),
       );
@@ -413,16 +413,16 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         builder: (ctx, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return AlertDialog(
-              backgroundColor: AppTheme.bgCard,
+              backgroundColor: context.bgCard,
               title: Row(
                 children: [
-                  const SizedBox(
+                  SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: context.accentText),
                   ),
-                  const SizedBox(width: AppTheme.space12),
-                  const Text('AI 正在深度研判中...', style: AppTheme.fontTitle),
+                  SizedBox(width: AppTheme.space12),
+                  Text('AI 正在深度研判中...', style: AppTheme.fontTitle),
                 ],
               ),
               content: Text(
@@ -434,10 +434,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
           final report = snapshot.data ?? '无分析结果';
           return AlertDialog(
-            backgroundColor: AppTheme.bgCard,
+            backgroundColor: context.bgCard,
             title: Row(
               children: [
-                const Icon(Icons.auto_awesome_rounded, color: AppTheme.accent),
+                Icon(Icons.auto_awesome_rounded, color: context.accentText),
                 const SizedBox(width: AppTheme.space8),
                 Expanded(child: Text('AI 智能研判：${item.title}', style: AppTheme.fontTitle)),
               ],
@@ -464,7 +464,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     final selected = _items.where((it) => it.isSelected).toList();
     if (selected.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未勾选任何需要清理的项目')),
+        SnackBar(content: Text('未勾选任何需要清理的项目')),
       );
       return;
     }
@@ -475,12 +475,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Row(
           children: [
-            const Icon(Icons.delete_sweep_rounded, color: AppTheme.warning),
+            Icon(Icons.delete_sweep_rounded, color: context.warningText),
             const SizedBox(width: AppTheme.space8),
-            const Text('移至系统废纸篓'),
+            Text('移至系统废纸篓'),
           ],
         ),
         content: Column(
@@ -488,23 +488,23 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('即将把选中的 ${selected.length} 个项目移至 macOS 系统废纸篓：', style: AppTheme.fontBody),
-            const SizedBox(height: AppTheme.space8),
-            Text('预估释放空间: $sizeStr', style: AppTheme.fontTitle.copyWith(color: AppTheme.success)),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space8),
+            Text('预估释放空间: $sizeStr', style: AppTheme.fontTitle.copyWith(color: context.successText)),
+            SizedBox(height: AppTheme.space12),
             Container(
-              padding: const EdgeInsets.all(AppTheme.space12),
+              padding: EdgeInsets.all(AppTheme.space12),
               decoration: BoxDecoration(
-                color: AppTheme.bgInput,
+                color: context.bgInput,
                 borderRadius: AppTheme.borderRadiusSmall,
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle_outline_rounded, color: AppTheme.success, size: 20),
-                  const SizedBox(width: AppTheme.space8),
+                  Icon(Icons.check_circle_outline_rounded, color: context.successText, size: 20),
+                  SizedBox(width: AppTheme.space8),
                   Expanded(
                     child: Text(
                       '操作安全可逆：文件将进入系统废纸篓，可随时按 ⌘Z 或在废纸篓中右键“放回原处”。',
-                      style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+                      style: AppTheme.fontCaption.copyWith(color: context.textPrimary),
                     ),
                   ),
                 ],
@@ -515,7 +515,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warning),
+            style: ElevatedButton.styleFrom(backgroundColor: context.warningSolid),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('安全移入废纸篓', style: TextStyle(color: Colors.white)),
           ),
@@ -549,7 +549,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(successMsg),
-          backgroundColor: AppTheme.success,
+          backgroundColor: context.successSolid,
         ),
       );
     } else {
@@ -560,10 +560,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Row(
             children: [
-              const Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
+              Icon(Icons.warning_amber_rounded, color: context.warningText),
               const SizedBox(width: AppTheme.space8),
               Text(result.isPartialSuccess ? '部分项目清理失败' : '移入废纸篓失败'),
             ],
@@ -581,18 +581,18 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                         : '已成功移入 ${removedItems.length} 个项目 ($removedSizeStr)。',
                     style: AppTheme.fontBody,
                   ),
-                  const SizedBox(height: AppTheme.space8),
+                  SizedBox(height: AppTheme.space8),
                 ],
                 Text(
                   '有 $failedCount 个项目未能移入废纸篓，已保留在列表中：',
-                  style: AppTheme.fontBody.copyWith(color: AppTheme.error),
+                  style: AppTheme.fontBody.copyWith(color: context.errorText),
                 ),
-                const SizedBox(height: AppTheme.space8),
+                SizedBox(height: AppTheme.space8),
                 Container(
-                  constraints: const BoxConstraints(maxHeight: 120),
-                  padding: const EdgeInsets.all(AppTheme.space8),
+                  constraints: BoxConstraints(maxHeight: 120),
+                  padding: EdgeInsets.all(AppTheme.space8),
                   decoration: BoxDecoration(
-                    color: AppTheme.bgInput,
+                    color: context.bgInput,
                     borderRadius: AppTheme.borderRadiusSmall,
                   ),
                   child: SingleChildScrollView(
@@ -601,10 +601,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                       children: result.failedPaths.map((p) {
                         final name = p.split('/').where((s) => s.isNotEmpty).last;
                         return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          padding: EdgeInsets.symmetric(vertical: 2),
                           child: Text(
                             '• $name ($p)',
-                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppTheme.textSecondary),
+                            style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: context.textSecondary),
                           ),
                         );
                       }).toList(),
@@ -615,10 +615,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 Container(
                   padding: const EdgeInsets.all(AppTheme.space10),
                   decoration: BoxDecoration(
-                    color: isRootOwnedRelated ? AppTheme.errorSubtle : AppTheme.accentSubtle,
+                    color: isRootOwnedRelated ? context.errorText.withValues(alpha: 0x1F / 255) : context.accentSubtle,
                     borderRadius: AppTheme.borderRadiusSmall,
                     border: Border.all(
-                      color: (isRootOwnedRelated ? AppTheme.error : AppTheme.accent).withValues(alpha: 0.3),
+                      color: (isRootOwnedRelated ? context.errorText : context.accentText).withValues(alpha: 0.3),
                     ),
                   ),
                   child: Column(
@@ -630,16 +630,16 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                             : (isContainersRelated
                                 ? '原因：包含受 macOS 沙盒保护的 Containers 目录，需要赋予应用「完全磁盘访问权限」。'
                                 : '原因：文件受系统保护、被正在运行的进程占用或缺少访问权限。'),
-                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
+                        style: AppTheme.fontCaption.copyWith(color: context.textPrimary, fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(height: AppTheme.space4),
+                      SizedBox(height: AppTheme.space4),
                       Text(
                         isRootOwnedRelated
                             ? '您可以点击下方「授权管理员清理」直接输入开机密码或使用 Touch ID 彻底清理，也可以在访达中手动删除。'
                             : (isContainersRelated
                                 ? '前往「系统设置 → 隐私与安全性 → 完全磁盘访问权限」添加 V8WorkToolbox 即可支持直接清理。您也可以在访达中手动删除。'
                                 : '请确认相关程序已完全退出后重试，或在访达中手动删除。'),
-                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                        style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                       ),
                     ],
                   ),
@@ -664,7 +664,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             if (isRootOwnedRelated)
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.error,
+                  backgroundColor: context.errorSolid,
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.lock_open_rounded, size: 16),
@@ -677,7 +677,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             else if (isContainersRelated)
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.security_rounded, size: 16),
@@ -707,7 +707,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('已成功通过管理员权限清理 $count 个项目！'),
-          backgroundColor: AppTheme.success,
+          backgroundColor: context.successSolid,
         ),
       );
     }
@@ -716,7 +716,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(adminResult.errorMessage!),
-          backgroundColor: adminResult.errorMessage!.contains('取消') ? AppTheme.warning : AppTheme.error,
+          backgroundColor: adminResult.errorMessage!.contains('取消') ? context.warningSolid : context.errorSolid,
         ),
       );
     }
@@ -744,7 +744,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         .fold<int>(0, (sum, it) => sum + it.sizeBytes);
 
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space20),
         child: Column(
@@ -778,7 +778,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 const SizedBox(height: AppTheme.space8),
                 _buildTechStackChips(),
               ],
-              const SizedBox(height: AppTheme.space12),
+              SizedBox(height: AppTheme.space12),
 
               // 列表区域
               Expanded(
@@ -790,7 +790,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                             Icon(
                               _scanner.isScanning ? Icons.sync : Icons.check_circle_outline_rounded,
                               size: 48,
-                              color: AppTheme.textTertiary,
+                              color: context.textTertiary,
                             ),
                             const SizedBox(height: AppTheme.space12),
                             Text(
@@ -822,21 +822,21 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   Widget _buildFdaWarningBanner() {
     return Container(
-      margin: const EdgeInsets.only(bottom: AppTheme.space12),
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+      margin: EdgeInsets.only(bottom: AppTheme.space12),
+      padding: EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
       decoration: BoxDecoration(
-        color: AppTheme.warning.withValues(alpha: 0.12),
+        color: context.warningText.withValues(alpha: 0.12),
         borderRadius: AppTheme.borderRadiusSmall,
-        border: Border.all(color: AppTheme.warning.withValues(alpha: 0.4)),
+        border: Border.all(color: context.warningText.withValues(alpha: 0.4)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.shield_outlined, color: AppTheme.warning, size: 20),
-          const SizedBox(width: AppTheme.space10),
+          Icon(Icons.shield_outlined, color: context.warningText, size: 20),
+          SizedBox(width: AppTheme.space10),
           Expanded(
             child: Text(
               '检测到部分目录受 macOS 权限限制无法读取完整信息。建议在系统设置中开启「完全磁盘访问权限」以获得最彻底的瘦身分析。',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+              style: AppTheme.fontCaption.copyWith(color: context.textPrimary),
             ),
           ),
           const SizedBox(width: AppTheme.space10),
@@ -844,7 +844,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             icon: const Icon(Icons.open_in_new_rounded, size: 14),
             label: const Text('去开启'),
             style: TextButton.styleFrom(
-              foregroundColor: AppTheme.warning,
+              foregroundColor: context.warningSolid,
               padding: const EdgeInsets.symmetric(horizontal: AppTheme.space8),
             ),
             onPressed: () {
@@ -859,12 +859,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
   Widget _buildReadyToScanView() {
     return Center(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 580),
-        padding: const EdgeInsets.symmetric(horizontal: AppTheme.space32, vertical: AppTheme.space24),
+        constraints: BoxConstraints(maxWidth: 580),
+        padding: EdgeInsets.symmetric(horizontal: AppTheme.space32, vertical: AppTheme.space24),
         decoration: BoxDecoration(
-          color: AppTheme.bgCard,
+          color: context.bgCard,
           borderRadius: AppTheme.borderRadiusMedium,
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -873,13 +873,13 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: AppTheme.accent.withValues(alpha: 0.15),
+                color: context.accentText.withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.radar_rounded,
                 size: 38,
-                color: AppTheme.accent,
+                color: context.accentText,
               ),
             ),
             const SizedBox(height: AppTheme.space16),
@@ -897,19 +897,19 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             SizedBox(
               height: 44,
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.rocket_launch_rounded, size: 20),
-                label: const Text('开始全盘智能分析', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                icon: Icon(Icons.rocket_launch_rounded, size: 20),
+                label: Text('开始全盘智能分析', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24),
+                  padding: EdgeInsets.symmetric(horizontal: AppTheme.space24),
                   shape: RoundedRectangleBorder(borderRadius: AppTheme.borderRadiusSmall),
                 ),
                 onPressed: _startScan,
               ),
             ),
-            const SizedBox(height: AppTheme.space24),
-            const Divider(color: AppTheme.borderSubtle),
+            SizedBox(height: AppTheme.space24),
+            Divider(color: context.borderSubtle),
             const SizedBox(height: AppTheme.space12),
             const Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -931,18 +931,18 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     final freeGb = (_diskSpace.freeBytes / (1024 * 1024 * 1024)).toStringAsFixed(1);
 
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.pie_chart_rounded, color: AppTheme.accent),
+              Icon(Icons.pie_chart_rounded, color: context.accentText),
               SizedBox(width: AppTheme.space8),
               Text('Macintosh HD 磁盘透视', style: AppTheme.fontTitle),
             ],
@@ -954,10 +954,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             children: [
               OutlinedButton.icon(
                 icon: _isBatchDiagnosing
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 14,
                         height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+                        child: CircularProgressIndicator(strokeWidth: 2, color: context.accentText),
                       )
                     : const Icon(Icons.auto_awesome_rounded, size: 16),
                 label: const Text('🤖 AI 批量诊断'),
@@ -992,26 +992,26 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                 icon: const Icon(Icons.delete_sweep_rounded, size: 18),
                 label: Text('安全移入废纸篓 (${_formatSize(selectedBytes)})'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                   foregroundColor: Colors.white,
                 ),
                 onPressed: selectedBytes > 0 ? _performCleanSelected : null,
               ),
               IconButton(
-                icon: const Icon(Icons.folder_special_rounded, size: 18),
+                icon: Icon(Icons.folder_special_rounded, size: 18),
                 tooltip: '项目构建产物设置（额外项目根 / 产物类型开关）',
                 onPressed: _showProjectArtifactSettings,
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space12),
+          SizedBox(height: AppTheme.space12),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: _diskSpace.usedPercentage,
               minHeight: 10,
-              backgroundColor: AppTheme.bgInput,
-              color: _diskSpace.usedPercentage > 0.9 ? AppTheme.error : AppTheme.accent,
+              backgroundColor: context.bgInput,
+              color: _diskSpace.usedPercentage > 0.9 ? context.errorText : context.accentText,
             ),
           ),
           const SizedBox(height: AppTheme.space8),
@@ -1024,7 +1024,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
               ),
               Text(
                 '剩余可用: $freeGb GB',
-                style: AppTheme.fontBodySecondary.copyWith(color: AppTheme.success),
+                style: AppTheme.fontBodySecondary.copyWith(color: context.successText),
               ),
             ],
           ),
@@ -1042,13 +1042,13 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       margin: const EdgeInsets.only(top: AppTheme.space12),
       padding: const EdgeInsets.all(AppTheme.space12),
       decoration: BoxDecoration(
-        color: AppTheme.error.withOpacity(0.06),
+        color: context.errorText.withOpacity(0.06),
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.error.withOpacity(0.3)),
+        border: Border.all(color: context.errorText.withOpacity(0.3)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.delete_forever_rounded, color: AppTheme.error, size: 24),
+          Icon(Icons.delete_forever_rounded, color: context.errorText, size: 24),
           const SizedBox(width: AppTheme.space12),
           Expanded(
             child: Column(
@@ -1061,12 +1061,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: AppTheme.error.withOpacity(0.15),
+                        color: context.errorText.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: const Text(
+                      child: Text(
                         '永久清空不可撤销',
-                        style: TextStyle(fontSize: 11, color: AppTheme.error, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 11, color: context.errorText, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
@@ -1080,10 +1080,10 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             ),
           ),
           OutlinedButton.icon(
-            icon: const Icon(Icons.delete_forever_rounded, size: 16, color: AppTheme.error),
-            label: const Text('清空废纸篓', style: TextStyle(color: AppTheme.error)),
+            icon: Icon(Icons.delete_forever_rounded, size: 16, color: context.errorText),
+            label: Text('清空废纸篓', style: TextStyle(color: context.errorText)),
             style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: AppTheme.error),
+              side: BorderSide(color: context.errorText),
             ),
             onPressed: _showEmptyTrashDialog,
           ),
@@ -1099,9 +1099,9 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: AppTheme.error, size: 24),
+            Icon(Icons.warning_amber_rounded, color: context.errorText, size: 24),
             SizedBox(width: AppTheme.space8),
             Text('确认永久清空废纸篓？'),
           ],
@@ -1115,13 +1115,13 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             Container(
               padding: const EdgeInsets.all(AppTheme.space12),
               decoration: BoxDecoration(
-                color: AppTheme.error.withOpacity(0.08),
+                color: context.errorText.withOpacity(0.08),
                 borderRadius: AppTheme.borderRadiusSmall,
-                border: Border.all(color: AppTheme.error.withOpacity(0.2)),
+                border: Border.all(color: context.errorText.withOpacity(0.2)),
               ),
-              child: const Text(
+              child: Text(
                 '⚠️ 警告：清空废纸篓将永久抹除所有内容，无法再次还原，请确认无重要误丢文件后再继续。',
-                style: TextStyle(fontSize: 12, color: AppTheme.error, height: 1.4),
+                style: TextStyle(fontSize: 12, color: context.errorText, height: 1.4),
               ),
             ),
           ],
@@ -1133,7 +1133,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.error,
+              backgroundColor: context.errorSolid,
               foregroundColor: Colors.white,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -1156,7 +1156,7 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         _loadDiskSpace();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('清空废纸篓遇到权限限制或部分文件被系统占用。')),
+          SnackBar(content: Text('清空废纸篓遇到权限限制或部分文件被系统占用。')),
         );
       }
     }
@@ -1164,24 +1164,24 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
 
   Widget _buildScanProgressBar() {
     return Container(
-      margin: const EdgeInsets.only(bottom: AppTheme.space12),
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+      margin: EdgeInsets.only(bottom: AppTheme.space12),
+      padding: EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
       decoration: BoxDecoration(
-        color: AppTheme.bgInput,
+        color: context.bgInput,
         borderRadius: AppTheme.borderRadiusSmall,
       ),
       child: Row(
         children: [
-          const SizedBox(
+          SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+            child: CircularProgressIndicator(strokeWidth: 2, color: context.accentText),
           ),
-          const SizedBox(width: AppTheme.space12),
+          SizedBox(width: AppTheme.space12),
           Expanded(
             child: Text(
               '${_scanProgress!.stageName} (已发现 ${_scanProgress!.itemsFound} 项 / ${_formatSize(_scanProgress!.totalReclaimableBytes)})',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+              style: AppTheme.fontCaption.copyWith(color: context.textPrimary),
             ),
           ),
         ],
@@ -1194,22 +1194,22 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       margin: const EdgeInsets.only(bottom: AppTheme.space12),
       padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
       decoration: BoxDecoration(
-        color: AppTheme.accent.withValues(alpha: 0.1),
+        color: context.accentText.withValues(alpha: 0.1),
         borderRadius: AppTheme.borderRadiusSmall,
-        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+        border: Border.all(color: context.accentSolid.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          const SizedBox(
+          SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accent),
+            child: CircularProgressIndicator(strokeWidth: 2, color: context.accentText),
           ),
           const SizedBox(width: AppTheme.space12),
           Expanded(
             child: Text(
               _aiDiagnosingStatus,
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.accent),
+              style: AppTheme.fontCaption.copyWith(color: context.accentText),
             ),
           ),
         ],
@@ -1250,9 +1250,9 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
         });
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusSmall,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         children: [
@@ -1266,9 +1266,9 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                   Icon(
                     expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
                     size: 20,
-                    color: AppTheme.accent,
+                    color: context.accentText,
                   ),
-                  const SizedBox(width: AppTheme.space10),
+                  SizedBox(width: AppTheme.space10),
                   Expanded(
                     child: Text(
                       '${tech.label}（${items.length} 个项目）',
@@ -1277,14 +1277,14 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                   ),
                   Text(
                     _formatSize(totalBytes),
-                    style: AppTheme.fontTitle.copyWith(color: AppTheme.textPrimary),
+                    style: AppTheme.fontTitle.copyWith(color: context.textPrimary),
                   ),
                 ],
               ),
             ),
           ),
           if (expanded) ...[
-            const Divider(height: 1, color: AppTheme.borderSubtle),
+            Divider(height: 1, color: context.borderSubtle),
             for (final item in items) ...[
               _buildItemTile(item),
               const SizedBox(height: AppTheme.space4),
@@ -1342,14 +1342,14 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       label: Text(label),
       selected: isSelected,
       onSelected: (_) => setState(() => _selectedTechStack = tech),
-      selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+      selectedColor: context.accentSolid.withValues(alpha: 0.2),
       labelStyle: TextStyle(
-        color: isSelected ? AppTheme.accent : AppTheme.textSecondary,
+        color: isSelected ? context.accentText : context.textSecondary,
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       ),
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       side: BorderSide(
-        color: isSelected ? AppTheme.accent : AppTheme.borderSubtle,
+        color: isSelected ? context.accentText : context.borderSubtle,
       ),
     );
   }
@@ -1360,14 +1360,14 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
       label: Text(label),
       selected: isSelected,
       onSelected: (_) => setState(() => _selectedCategory = cat),
-      selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+      selectedColor: context.accentSolid.withValues(alpha: 0.2),
       labelStyle: TextStyle(
-        color: isSelected ? AppTheme.accent : AppTheme.textSecondary,
+        color: isSelected ? context.accentText : context.textSecondary,
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       ),
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       side: BorderSide(
-        color: isSelected ? AppTheme.accent : AppTheme.borderSubtle,
+        color: isSelected ? context.accentText : context.borderSubtle,
       ),
     );
   }
@@ -1387,50 +1387,50 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
             for (final a in top)
               Row(
                 children: [
-                  Icon(Icons.folder_outlined, size: 12, color: AppTheme.textTertiary),
-                  const SizedBox(width: AppTheme.space6),
+                  Icon(Icons.folder_outlined, size: 12, color: context.textTertiary),
+                  SizedBox(width: AppTheme.space6),
                   Expanded(
                     child: Text(
                       a.path,
-                      style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                      style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: AppTheme.space6),
+                  SizedBox(width: AppTheme.space6),
                   Text(
                     _formatSize(a.sizeBytes),
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                   ),
                 ],
               ),
             if (artifacts.length > top.length) ...[
-              const SizedBox(height: AppTheme.space4),
+              SizedBox(height: AppTheme.space4),
               TextButton(
                 onPressed: () => setDetailExpanded(() => detailExpanded = !detailExpanded),
                 child: Text(
                   detailExpanded ? '收起' : '展开其余 ${artifacts.length - top.length} 项',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.accent),
+                  style: AppTheme.fontCaption.copyWith(color: context.accentText),
                 ),
               ),
               if (detailExpanded)
                 for (final a in artifacts.sublist(top.length))
                   Row(
                     children: [
-                      Icon(Icons.folder_outlined, size: 12, color: AppTheme.textTertiary),
-                      const SizedBox(width: AppTheme.space6),
+                      Icon(Icons.folder_outlined, size: 12, color: context.textTertiary),
+                      SizedBox(width: AppTheme.space6),
                       Expanded(
                         child: Text(
                           a.path,
-                          style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                          style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(width: AppTheme.space6),
+                      SizedBox(width: AppTheme.space6),
                       Text(
                         _formatSize(a.sizeBytes),
-                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                        style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                       ),
                     ],
                   ),
@@ -1445,30 +1445,30 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
     Color safetyColor;
     switch (item.safety) {
       case SafetyRating.safe:
-        safetyColor = AppTheme.success;
+        safetyColor = context.successSolid;
         break;
       case SafetyRating.caution:
-        safetyColor = AppTheme.warning;
+        safetyColor = context.warningSolid;
         break;
       case SafetyRating.danger:
-        safetyColor = AppTheme.error;
+        safetyColor = context.errorSolid;
         break;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space10),
+      padding: EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space10),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusSmall,
         border: Border.all(
-          color: item.isSelected ? AppTheme.accent.withValues(alpha: 0.4) : AppTheme.borderSubtle,
+          color: item.isSelected ? context.accentText.withValues(alpha: 0.4) : context.borderSubtle,
         ),
       ),
       child: Row(
         children: [
           Checkbox(
             value: item.isSelected,
-            activeColor: AppTheme.accent,
+            activeColor: context.accentSolid,
             onChanged: (val) => _onItemSelectionChanged(item, val ?? false),
           ),
           const SizedBox(width: AppTheme.space8),
@@ -1496,34 +1496,34 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppTheme.errorSubtle,
+                          color: context.errorText.withValues(alpha: 0x1F / 255),
                           borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+                          border: Border.all(color: context.errorText.withValues(alpha: 0.3)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.lock_outline_rounded, size: 11, color: AppTheme.error),
-                            const SizedBox(width: 3),
+                            Icon(Icons.lock_outline_rounded, size: 11, color: context.errorText),
+                            SizedBox(width: 3),
                             Text(
                               '需管理员权限',
-                              style: AppTheme.fontCaption.copyWith(color: AppTheme.error, fontWeight: FontWeight.bold),
+                              style: AppTheme.fontCaption.copyWith(color: context.errorText, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
                       ),
                     ],
                     if (item.version != null) ...[
-                      const SizedBox(width: AppTheme.space6),
+                      SizedBox(width: AppTheme.space6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppTheme.bgInput,
+                          color: context.bgInput,
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
                           item.version!,
-                          style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                          style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                         ),
                       ),
                     ],
@@ -1532,13 +1532,13 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppTheme.warning.withValues(alpha: 0.15),
+                          color: context.warningText.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+                          border: Border.all(color: context.warningText.withValues(alpha: 0.3)),
                         ),
-                        child: const Text(
+                        child: Text(
                           '扫描超时 / 未完整',
-                          style: TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: context.warningText, fontSize: 11, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -1547,21 +1547,21 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: AppTheme.accent.withValues(alpha: 0.15),
+                          color: context.accentText.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text(
+                        child: Text(
                           '用户标记保留',
-                          style: TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: context.accentText, fontSize: 11, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
                   ],
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
                   item.subtitle,
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1573,12 +1573,12 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      const Icon(Icons.auto_awesome, size: 12, color: AppTheme.accent),
+                      Icon(Icons.auto_awesome, size: 12, color: context.accentText),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           item.aiAdvice!,
-                          style: AppTheme.fontCaption.copyWith(color: AppTheme.accent),
+                          style: AppTheme.fontCaption.copyWith(color: context.accentText),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1589,25 +1589,25 @@ class _SmartDiskSlimmerPageState extends State<SmartDiskSlimmerPage> {
               ],
             ),
           ),
-          const SizedBox(width: AppTheme.space12),
+          SizedBox(width: AppTheme.space12),
           Text(
             item.formattedSize,
             style: AppTheme.fontTitle.copyWith(
-              color: item.sizeBytes > 1024 * 1024 * 1024 ? AppTheme.warning : AppTheme.textPrimary,
+              color: item.sizeBytes > 1024 * 1024 * 1024 ? context.warningText : context.textPrimary,
             ),
           ),
-          const SizedBox(width: AppTheme.space12),
+          SizedBox(width: AppTheme.space12),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
                 tooltip: '让 AI 分析此文件/目录',
-                icon: const Icon(Icons.auto_awesome_rounded, size: 18, color: AppTheme.accent),
+                icon: Icon(Icons.auto_awesome_rounded, size: 18, color: context.accentText),
                 onPressed: () => _showSingleAiDialog(item),
               ),
               IconButton(
                 tooltip: '在访达中显示',
-                icon: const Icon(Icons.folder_open_rounded, size: 18, color: AppTheme.textSecondary),
+                icon: Icon(Icons.folder_open_rounded, size: 18, color: context.textSecondary),
                 onPressed: () => _revealInFinder(item.path),
               ),
             ],
@@ -1682,9 +1682,9 @@ class _ProjectArtifactSettingsDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       shape: RoundedRectangleBorder(borderRadius: AppTheme.borderRadiusMedium),
-      title: const Text('项目构建产物设置', style: AppTheme.fontTitle),
+      title: Text('项目构建产物设置', style: AppTheme.fontTitle),
       content: SizedBox(
         width: 560,
         child: Column(
@@ -1695,7 +1695,7 @@ class _ProjectArtifactSettingsDialogState
               '自动发现依赖项目根内的构建清单信号（.git / package.json / pubspec.yaml / '
               'build.gradle / Podfile / CMakeLists.txt / go.mod）。以下项目根为"额外指定"，'
               '不受清单信号限制；不在工作区内的产物需手动添加项目根。',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space12),
             const Text('额外项目根', style: AppTheme.fontBody),
@@ -1722,38 +1722,38 @@ class _ProjectArtifactSettingsDialogState
                   onPressed: _addFromInput,
                 ),
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.folder_open_rounded, size: 16),
-                  label: const Text('选择'),
+                  icon: Icon(Icons.folder_open_rounded, size: 16),
+                  label: Text('选择'),
                   onPressed: _pickDirectory,
                 ),
               ],
             ),
             if (_roots.isEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: AppTheme.space8),
+                padding: EdgeInsets.only(top: AppTheme.space8),
                 child: Text(
                   '（空）',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                 ),
               )
             else
-              const SizedBox(height: AppTheme.space8),
+              SizedBox(height: AppTheme.space8),
             for (final root in _roots)
               Padding(
-                padding: const EdgeInsets.only(bottom: AppTheme.space4),
+                padding: EdgeInsets.only(bottom: AppTheme.space4),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(
                         root,
-                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary),
+                        style: AppTheme.fontCaption.copyWith(color: context.textPrimary),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(
-                          Icons.close_rounded, size: 14, color: AppTheme.textTertiary),
+                      icon: Icon(
+                          Icons.close_rounded, size: 14, color: context.textTertiary),
                       onPressed: () =>
                           setState(() => _roots = _roots.where((r) => r != root).toList()),
                     ),
@@ -1787,7 +1787,7 @@ class _ProjectArtifactSettingsDialogState
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.accent,
+            backgroundColor: context.accentSolid,
             foregroundColor: Colors.white,
           ),
           onPressed: () {
@@ -1819,9 +1819,9 @@ class _FeatureBadge extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: AppTheme.accent),
-        const SizedBox(width: AppTheme.space6),
-        Text(title, style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+        Icon(icon, size: 16, color: context.accentText),
+        SizedBox(width: AppTheme.space6),
+        Text(title, style: AppTheme.fontCaption.copyWith(color: context.textSecondary)),
       ],
     );
   }
@@ -1860,10 +1860,10 @@ class _BatchSettingsDialogState extends State<_BatchSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
-      title: const Row(
+      backgroundColor: context.bgCard,
+      title: Row(
         children: [
-          Icon(Icons.settings_rounded, color: AppTheme.accent),
+          Icon(Icons.settings_rounded, color: context.accentText),
           SizedBox(width: AppTheme.space8),
           Text('AI 批量诊断设置', style: AppTheme.fontTitle),
         ],
@@ -1872,39 +1872,39 @@ class _BatchSettingsDialogState extends State<_BatchSettingsDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('并发数', style: AppTheme.fontBody),
-          const SizedBox(height: AppTheme.space4),
-          Text('同时分析的条目数量', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
-          const SizedBox(height: AppTheme.space8),
+          Text('并发数', style: AppTheme.fontBody),
+          SizedBox(height: AppTheme.space4),
+          Text('同时分析的条目数量', style: AppTheme.fontCaption.copyWith(color: context.textTertiary)),
+          SizedBox(height: AppTheme.space8),
           Wrap(
             spacing: AppTheme.space8,
             children: _concurrencyOptions.map((v) {
               return ChoiceChip(
                 label: Text('$v'),
                 selected: _concurrency == v,
-                selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+                selectedColor: context.accentSolid.withValues(alpha: 0.2),
                 labelStyle: TextStyle(
-                  color: _concurrency == v ? AppTheme.accent : AppTheme.textSecondary,
+                  color: _concurrency == v ? context.accentText : context.textSecondary,
                   fontWeight: _concurrency == v ? FontWeight.w600 : FontWeight.normal,
                 ),
                 onSelected: (_) => setState(() => _concurrency = v),
               );
             }).toList(),
           ),
-          const SizedBox(height: AppTheme.space16),
-          const Text('最大重试次数', style: AppTheme.fontBody),
-          const SizedBox(height: AppTheme.space4),
-          Text('遇到限流时自动重试的最大次数', style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary)),
-          const SizedBox(height: AppTheme.space8),
+          SizedBox(height: AppTheme.space16),
+          Text('最大重试次数', style: AppTheme.fontBody),
+          SizedBox(height: AppTheme.space4),
+          Text('遇到限流时自动重试的最大次数', style: AppTheme.fontCaption.copyWith(color: context.textTertiary)),
+          SizedBox(height: AppTheme.space8),
           Wrap(
             spacing: AppTheme.space8,
             children: _retryOptions.map((v) {
               return ChoiceChip(
                 label: Text('$v'),
                 selected: _maxRetries == v,
-                selectedColor: AppTheme.accent.withValues(alpha: 0.2),
+                selectedColor: context.accentSolid.withValues(alpha: 0.2),
                 labelStyle: TextStyle(
-                  color: _maxRetries == v ? AppTheme.accent : AppTheme.textSecondary,
+                  color: _maxRetries == v ? context.accentText : context.textSecondary,
                   fontWeight: _maxRetries == v ? FontWeight.w600 : FontWeight.normal,
                 ),
                 onSelected: (_) => setState(() => _maxRetries = v),
@@ -1916,17 +1916,17 @@ class _BatchSettingsDialogState extends State<_BatchSettingsDialog> {
             Container(
               padding: const EdgeInsets.all(AppTheme.space8),
               decoration: BoxDecoration(
-                color: AppTheme.warning.withValues(alpha: 0.1),
+                color: context.warningText.withValues(alpha: 0.1),
                 borderRadius: AppTheme.borderRadiusSmall,
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.info_outline_rounded, size: 16, color: AppTheme.warning),
+                  Icon(Icons.info_outline_rounded, size: 16, color: context.warningText),
                   const SizedBox(width: AppTheme.space8),
                   Expanded(
                     child: Text(
                       '并发过高可能触发服务商限流',
-                      style: AppTheme.fontCaption.copyWith(color: AppTheme.warning),
+                      style: AppTheme.fontCaption.copyWith(color: context.warningText),
                     ),
                   ),
                 ],
@@ -1941,7 +1941,7 @@ class _BatchSettingsDialogState extends State<_BatchSettingsDialog> {
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.accent,
+            backgroundColor: context.accentSolid,
             foregroundColor: Colors.white,
           ),
           onPressed: () {

@@ -62,6 +62,17 @@ class $NotebooksTable extends Notebooks
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _isDefaultForCaptureMeta =
+      const VerificationMeta('isDefaultForCapture');
+  @override
+  late final GeneratedColumn<int> isDefaultForCapture = GeneratedColumn<int>(
+    'is_default_for_capture',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -91,6 +102,7 @@ class $NotebooksTable extends Notebooks
     stack,
     icon,
     sortOrder,
+    isDefaultForCapture,
     createdAt,
     updatedAt,
   ];
@@ -135,6 +147,15 @@ class $NotebooksTable extends Notebooks
       context.handle(
         _sortOrderMeta,
         sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
+      );
+    }
+    if (data.containsKey('is_default_for_capture')) {
+      context.handle(
+        _isDefaultForCaptureMeta,
+        isDefaultForCapture.isAcceptableOrUnknown(
+          data['is_default_for_capture']!,
+          _isDefaultForCaptureMeta,
+        ),
       );
     }
     if (data.containsKey('created_at')) {
@@ -182,6 +203,10 @@ class $NotebooksTable extends Notebooks
         DriftSqlType.int,
         data['${effectivePrefix}sort_order'],
       )!,
+      isDefaultForCapture: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}is_default_for_capture'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -205,6 +230,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
   final String? stack;
   final String icon;
   final int sortOrder;
+  final int isDefaultForCapture;
   final DateTime createdAt;
   final DateTime updatedAt;
   const Notebook({
@@ -213,6 +239,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     this.stack,
     required this.icon,
     required this.sortOrder,
+    required this.isDefaultForCapture,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -226,6 +253,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     }
     map['icon'] = Variable<String>(icon);
     map['sort_order'] = Variable<int>(sortOrder);
+    map['is_default_for_capture'] = Variable<int>(isDefaultForCapture);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -240,6 +268,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
           : Value(stack),
       icon: Value(icon),
       sortOrder: Value(sortOrder),
+      isDefaultForCapture: Value(isDefaultForCapture),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -256,6 +285,9 @@ class Notebook extends DataClass implements Insertable<Notebook> {
       stack: serializer.fromJson<String?>(json['stack']),
       icon: serializer.fromJson<String>(json['icon']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
+      isDefaultForCapture: serializer.fromJson<int>(
+        json['isDefaultForCapture'],
+      ),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -269,6 +301,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
       'stack': serializer.toJson<String?>(stack),
       'icon': serializer.toJson<String>(icon),
       'sortOrder': serializer.toJson<int>(sortOrder),
+      'isDefaultForCapture': serializer.toJson<int>(isDefaultForCapture),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -280,6 +313,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     Value<String?> stack = const Value.absent(),
     String? icon,
     int? sortOrder,
+    int? isDefaultForCapture,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => Notebook(
@@ -288,6 +322,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
     stack: stack.present ? stack.value : this.stack,
     icon: icon ?? this.icon,
     sortOrder: sortOrder ?? this.sortOrder,
+    isDefaultForCapture: isDefaultForCapture ?? this.isDefaultForCapture,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -298,6 +333,9 @@ class Notebook extends DataClass implements Insertable<Notebook> {
       stack: data.stack.present ? data.stack.value : this.stack,
       icon: data.icon.present ? data.icon.value : this.icon,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+      isDefaultForCapture: data.isDefaultForCapture.present
+          ? data.isDefaultForCapture.value
+          : this.isDefaultForCapture,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -311,6 +349,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
           ..write('stack: $stack, ')
           ..write('icon: $icon, ')
           ..write('sortOrder: $sortOrder, ')
+          ..write('isDefaultForCapture: $isDefaultForCapture, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -318,8 +357,16 @@ class Notebook extends DataClass implements Insertable<Notebook> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, stack, icon, sortOrder, createdAt, updatedAt);
+  int get hashCode => Object.hash(
+    id,
+    name,
+    stack,
+    icon,
+    sortOrder,
+    isDefaultForCapture,
+    createdAt,
+    updatedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -329,6 +376,7 @@ class Notebook extends DataClass implements Insertable<Notebook> {
           other.stack == this.stack &&
           other.icon == this.icon &&
           other.sortOrder == this.sortOrder &&
+          other.isDefaultForCapture == this.isDefaultForCapture &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -339,6 +387,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
   final Value<String?> stack;
   final Value<String> icon;
   final Value<int> sortOrder;
+  final Value<int> isDefaultForCapture;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -348,6 +397,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     this.stack = const Value.absent(),
     this.icon = const Value.absent(),
     this.sortOrder = const Value.absent(),
+    this.isDefaultForCapture = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -358,6 +408,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     this.stack = const Value.absent(),
     this.icon = const Value.absent(),
     this.sortOrder = const Value.absent(),
+    this.isDefaultForCapture = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
@@ -371,6 +422,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     Expression<String>? stack,
     Expression<String>? icon,
     Expression<int>? sortOrder,
+    Expression<int>? isDefaultForCapture,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
@@ -381,6 +433,8 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
       if (stack != null) 'stack': stack,
       if (icon != null) 'icon': icon,
       if (sortOrder != null) 'sort_order': sortOrder,
+      if (isDefaultForCapture != null)
+        'is_default_for_capture': isDefaultForCapture,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -393,6 +447,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     Value<String?>? stack,
     Value<String>? icon,
     Value<int>? sortOrder,
+    Value<int>? isDefaultForCapture,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -403,6 +458,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
       stack: stack ?? this.stack,
       icon: icon ?? this.icon,
       sortOrder: sortOrder ?? this.sortOrder,
+      isDefaultForCapture: isDefaultForCapture ?? this.isDefaultForCapture,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -427,6 +483,9 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
+    if (isDefaultForCapture.present) {
+      map['is_default_for_capture'] = Variable<int>(isDefaultForCapture.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -447,6 +506,7 @@ class NotebooksCompanion extends UpdateCompanion<Notebook> {
           ..write('stack: $stack, ')
           ..write('icon: $icon, ')
           ..write('sortOrder: $sortOrder, ')
+          ..write('isDefaultForCapture: $isDefaultForCapture, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -2531,6 +2591,722 @@ class NoteLinksCompanion extends UpdateCompanion<NoteLink> {
   }
 }
 
+class $VocabEntriesTable extends VocabEntries
+    with TableInfo<$VocabEntriesTable, VocabEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $VocabEntriesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _wordMeta = const VerificationMeta('word');
+  @override
+  late final GeneratedColumn<String> word = GeneratedColumn<String>(
+    'word',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _phoneticMeta = const VerificationMeta(
+    'phonetic',
+  );
+  @override
+  late final GeneratedColumn<String> phonetic = GeneratedColumn<String>(
+    'phonetic',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _audioUrlMeta = const VerificationMeta(
+    'audioUrl',
+  );
+  @override
+  late final GeneratedColumn<String> audioUrl = GeneratedColumn<String>(
+    'audio_url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _partOfSpeechMeta = const VerificationMeta(
+    'partOfSpeech',
+  );
+  @override
+  late final GeneratedColumn<String> partOfSpeech = GeneratedColumn<String>(
+    'part_of_speech',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _definitionsMeta = const VerificationMeta(
+    'definitions',
+  );
+  @override
+  late final GeneratedColumn<String> definitions = GeneratedColumn<String>(
+    'definitions',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _examplesMeta = const VerificationMeta(
+    'examples',
+  );
+  @override
+  late final GeneratedColumn<String> examples = GeneratedColumn<String>(
+    'examples',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _phrasesMeta = const VerificationMeta(
+    'phrases',
+  );
+  @override
+  late final GeneratedColumn<String> phrases = GeneratedColumn<String>(
+    'phrases',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _sourceContextMeta = const VerificationMeta(
+    'sourceContext',
+  );
+  @override
+  late final GeneratedColumn<String> sourceContext = GeneratedColumn<String>(
+    'source_context',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _masteryLevelMeta = const VerificationMeta(
+    'masteryLevel',
+  );
+  @override
+  late final GeneratedColumn<int> masteryLevel = GeneratedColumn<int>(
+    'mastery_level',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _tagsMeta = const VerificationMeta('tags');
+  @override
+  late final GeneratedColumn<String> tags = GeneratedColumn<String>(
+    'tags',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _addedAtMeta = const VerificationMeta(
+    'addedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> addedAt = GeneratedColumn<DateTime>(
+    'added_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    word,
+    phonetic,
+    audioUrl,
+    partOfSpeech,
+    definitions,
+    examples,
+    phrases,
+    sourceContext,
+    masteryLevel,
+    tags,
+    addedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'vocab_entries';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<VocabEntry> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('word')) {
+      context.handle(
+        _wordMeta,
+        word.isAcceptableOrUnknown(data['word']!, _wordMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_wordMeta);
+    }
+    if (data.containsKey('phonetic')) {
+      context.handle(
+        _phoneticMeta,
+        phonetic.isAcceptableOrUnknown(data['phonetic']!, _phoneticMeta),
+      );
+    }
+    if (data.containsKey('audio_url')) {
+      context.handle(
+        _audioUrlMeta,
+        audioUrl.isAcceptableOrUnknown(data['audio_url']!, _audioUrlMeta),
+      );
+    }
+    if (data.containsKey('part_of_speech')) {
+      context.handle(
+        _partOfSpeechMeta,
+        partOfSpeech.isAcceptableOrUnknown(
+          data['part_of_speech']!,
+          _partOfSpeechMeta,
+        ),
+      );
+    }
+    if (data.containsKey('definitions')) {
+      context.handle(
+        _definitionsMeta,
+        definitions.isAcceptableOrUnknown(
+          data['definitions']!,
+          _definitionsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('examples')) {
+      context.handle(
+        _examplesMeta,
+        examples.isAcceptableOrUnknown(data['examples']!, _examplesMeta),
+      );
+    }
+    if (data.containsKey('phrases')) {
+      context.handle(
+        _phrasesMeta,
+        phrases.isAcceptableOrUnknown(data['phrases']!, _phrasesMeta),
+      );
+    }
+    if (data.containsKey('source_context')) {
+      context.handle(
+        _sourceContextMeta,
+        sourceContext.isAcceptableOrUnknown(
+          data['source_context']!,
+          _sourceContextMeta,
+        ),
+      );
+    }
+    if (data.containsKey('mastery_level')) {
+      context.handle(
+        _masteryLevelMeta,
+        masteryLevel.isAcceptableOrUnknown(
+          data['mastery_level']!,
+          _masteryLevelMeta,
+        ),
+      );
+    }
+    if (data.containsKey('tags')) {
+      context.handle(
+        _tagsMeta,
+        tags.isAcceptableOrUnknown(data['tags']!, _tagsMeta),
+      );
+    }
+    if (data.containsKey('added_at')) {
+      context.handle(
+        _addedAtMeta,
+        addedAt.isAcceptableOrUnknown(data['added_at']!, _addedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_addedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  VocabEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return VocabEntry(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      word: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}word'],
+      )!,
+      phonetic: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phonetic'],
+      ),
+      audioUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}audio_url'],
+      ),
+      partOfSpeech: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}part_of_speech'],
+      ),
+      definitions: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}definitions'],
+      )!,
+      examples: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}examples'],
+      )!,
+      phrases: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phrases'],
+      )!,
+      sourceContext: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_context'],
+      ),
+      masteryLevel: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}mastery_level'],
+      )!,
+      tags: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tags'],
+      )!,
+      addedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}added_at'],
+      )!,
+    );
+  }
+
+  @override
+  $VocabEntriesTable createAlias(String alias) {
+    return $VocabEntriesTable(attachedDatabase, alias);
+  }
+}
+
+class VocabEntry extends DataClass implements Insertable<VocabEntry> {
+  final String id;
+  final String word;
+  final String? phonetic;
+  final String? audioUrl;
+  final String? partOfSpeech;
+  final String definitions;
+  final String examples;
+  final String phrases;
+  final String? sourceContext;
+  final int masteryLevel;
+  final String tags;
+  final DateTime addedAt;
+  const VocabEntry({
+    required this.id,
+    required this.word,
+    this.phonetic,
+    this.audioUrl,
+    this.partOfSpeech,
+    required this.definitions,
+    required this.examples,
+    required this.phrases,
+    this.sourceContext,
+    required this.masteryLevel,
+    required this.tags,
+    required this.addedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['word'] = Variable<String>(word);
+    if (!nullToAbsent || phonetic != null) {
+      map['phonetic'] = Variable<String>(phonetic);
+    }
+    if (!nullToAbsent || audioUrl != null) {
+      map['audio_url'] = Variable<String>(audioUrl);
+    }
+    if (!nullToAbsent || partOfSpeech != null) {
+      map['part_of_speech'] = Variable<String>(partOfSpeech);
+    }
+    map['definitions'] = Variable<String>(definitions);
+    map['examples'] = Variable<String>(examples);
+    map['phrases'] = Variable<String>(phrases);
+    if (!nullToAbsent || sourceContext != null) {
+      map['source_context'] = Variable<String>(sourceContext);
+    }
+    map['mastery_level'] = Variable<int>(masteryLevel);
+    map['tags'] = Variable<String>(tags);
+    map['added_at'] = Variable<DateTime>(addedAt);
+    return map;
+  }
+
+  VocabEntriesCompanion toCompanion(bool nullToAbsent) {
+    return VocabEntriesCompanion(
+      id: Value(id),
+      word: Value(word),
+      phonetic: phonetic == null && nullToAbsent
+          ? const Value.absent()
+          : Value(phonetic),
+      audioUrl: audioUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioUrl),
+      partOfSpeech: partOfSpeech == null && nullToAbsent
+          ? const Value.absent()
+          : Value(partOfSpeech),
+      definitions: Value(definitions),
+      examples: Value(examples),
+      phrases: Value(phrases),
+      sourceContext: sourceContext == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceContext),
+      masteryLevel: Value(masteryLevel),
+      tags: Value(tags),
+      addedAt: Value(addedAt),
+    );
+  }
+
+  factory VocabEntry.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return VocabEntry(
+      id: serializer.fromJson<String>(json['id']),
+      word: serializer.fromJson<String>(json['word']),
+      phonetic: serializer.fromJson<String?>(json['phonetic']),
+      audioUrl: serializer.fromJson<String?>(json['audioUrl']),
+      partOfSpeech: serializer.fromJson<String?>(json['partOfSpeech']),
+      definitions: serializer.fromJson<String>(json['definitions']),
+      examples: serializer.fromJson<String>(json['examples']),
+      phrases: serializer.fromJson<String>(json['phrases']),
+      sourceContext: serializer.fromJson<String?>(json['sourceContext']),
+      masteryLevel: serializer.fromJson<int>(json['masteryLevel']),
+      tags: serializer.fromJson<String>(json['tags']),
+      addedAt: serializer.fromJson<DateTime>(json['addedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'word': serializer.toJson<String>(word),
+      'phonetic': serializer.toJson<String?>(phonetic),
+      'audioUrl': serializer.toJson<String?>(audioUrl),
+      'partOfSpeech': serializer.toJson<String?>(partOfSpeech),
+      'definitions': serializer.toJson<String>(definitions),
+      'examples': serializer.toJson<String>(examples),
+      'phrases': serializer.toJson<String>(phrases),
+      'sourceContext': serializer.toJson<String?>(sourceContext),
+      'masteryLevel': serializer.toJson<int>(masteryLevel),
+      'tags': serializer.toJson<String>(tags),
+      'addedAt': serializer.toJson<DateTime>(addedAt),
+    };
+  }
+
+  VocabEntry copyWith({
+    String? id,
+    String? word,
+    Value<String?> phonetic = const Value.absent(),
+    Value<String?> audioUrl = const Value.absent(),
+    Value<String?> partOfSpeech = const Value.absent(),
+    String? definitions,
+    String? examples,
+    String? phrases,
+    Value<String?> sourceContext = const Value.absent(),
+    int? masteryLevel,
+    String? tags,
+    DateTime? addedAt,
+  }) => VocabEntry(
+    id: id ?? this.id,
+    word: word ?? this.word,
+    phonetic: phonetic.present ? phonetic.value : this.phonetic,
+    audioUrl: audioUrl.present ? audioUrl.value : this.audioUrl,
+    partOfSpeech: partOfSpeech.present ? partOfSpeech.value : this.partOfSpeech,
+    definitions: definitions ?? this.definitions,
+    examples: examples ?? this.examples,
+    phrases: phrases ?? this.phrases,
+    sourceContext: sourceContext.present
+        ? sourceContext.value
+        : this.sourceContext,
+    masteryLevel: masteryLevel ?? this.masteryLevel,
+    tags: tags ?? this.tags,
+    addedAt: addedAt ?? this.addedAt,
+  );
+  VocabEntry copyWithCompanion(VocabEntriesCompanion data) {
+    return VocabEntry(
+      id: data.id.present ? data.id.value : this.id,
+      word: data.word.present ? data.word.value : this.word,
+      phonetic: data.phonetic.present ? data.phonetic.value : this.phonetic,
+      audioUrl: data.audioUrl.present ? data.audioUrl.value : this.audioUrl,
+      partOfSpeech: data.partOfSpeech.present
+          ? data.partOfSpeech.value
+          : this.partOfSpeech,
+      definitions: data.definitions.present
+          ? data.definitions.value
+          : this.definitions,
+      examples: data.examples.present ? data.examples.value : this.examples,
+      phrases: data.phrases.present ? data.phrases.value : this.phrases,
+      sourceContext: data.sourceContext.present
+          ? data.sourceContext.value
+          : this.sourceContext,
+      masteryLevel: data.masteryLevel.present
+          ? data.masteryLevel.value
+          : this.masteryLevel,
+      tags: data.tags.present ? data.tags.value : this.tags,
+      addedAt: data.addedAt.present ? data.addedAt.value : this.addedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('VocabEntry(')
+          ..write('id: $id, ')
+          ..write('word: $word, ')
+          ..write('phonetic: $phonetic, ')
+          ..write('audioUrl: $audioUrl, ')
+          ..write('partOfSpeech: $partOfSpeech, ')
+          ..write('definitions: $definitions, ')
+          ..write('examples: $examples, ')
+          ..write('phrases: $phrases, ')
+          ..write('sourceContext: $sourceContext, ')
+          ..write('masteryLevel: $masteryLevel, ')
+          ..write('tags: $tags, ')
+          ..write('addedAt: $addedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    word,
+    phonetic,
+    audioUrl,
+    partOfSpeech,
+    definitions,
+    examples,
+    phrases,
+    sourceContext,
+    masteryLevel,
+    tags,
+    addedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is VocabEntry &&
+          other.id == this.id &&
+          other.word == this.word &&
+          other.phonetic == this.phonetic &&
+          other.audioUrl == this.audioUrl &&
+          other.partOfSpeech == this.partOfSpeech &&
+          other.definitions == this.definitions &&
+          other.examples == this.examples &&
+          other.phrases == this.phrases &&
+          other.sourceContext == this.sourceContext &&
+          other.masteryLevel == this.masteryLevel &&
+          other.tags == this.tags &&
+          other.addedAt == this.addedAt);
+}
+
+class VocabEntriesCompanion extends UpdateCompanion<VocabEntry> {
+  final Value<String> id;
+  final Value<String> word;
+  final Value<String?> phonetic;
+  final Value<String?> audioUrl;
+  final Value<String?> partOfSpeech;
+  final Value<String> definitions;
+  final Value<String> examples;
+  final Value<String> phrases;
+  final Value<String?> sourceContext;
+  final Value<int> masteryLevel;
+  final Value<String> tags;
+  final Value<DateTime> addedAt;
+  final Value<int> rowid;
+  const VocabEntriesCompanion({
+    this.id = const Value.absent(),
+    this.word = const Value.absent(),
+    this.phonetic = const Value.absent(),
+    this.audioUrl = const Value.absent(),
+    this.partOfSpeech = const Value.absent(),
+    this.definitions = const Value.absent(),
+    this.examples = const Value.absent(),
+    this.phrases = const Value.absent(),
+    this.sourceContext = const Value.absent(),
+    this.masteryLevel = const Value.absent(),
+    this.tags = const Value.absent(),
+    this.addedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  VocabEntriesCompanion.insert({
+    required String id,
+    required String word,
+    this.phonetic = const Value.absent(),
+    this.audioUrl = const Value.absent(),
+    this.partOfSpeech = const Value.absent(),
+    this.definitions = const Value.absent(),
+    this.examples = const Value.absent(),
+    this.phrases = const Value.absent(),
+    this.sourceContext = const Value.absent(),
+    this.masteryLevel = const Value.absent(),
+    this.tags = const Value.absent(),
+    required DateTime addedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       word = Value(word),
+       addedAt = Value(addedAt);
+  static Insertable<VocabEntry> custom({
+    Expression<String>? id,
+    Expression<String>? word,
+    Expression<String>? phonetic,
+    Expression<String>? audioUrl,
+    Expression<String>? partOfSpeech,
+    Expression<String>? definitions,
+    Expression<String>? examples,
+    Expression<String>? phrases,
+    Expression<String>? sourceContext,
+    Expression<int>? masteryLevel,
+    Expression<String>? tags,
+    Expression<DateTime>? addedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (word != null) 'word': word,
+      if (phonetic != null) 'phonetic': phonetic,
+      if (audioUrl != null) 'audio_url': audioUrl,
+      if (partOfSpeech != null) 'part_of_speech': partOfSpeech,
+      if (definitions != null) 'definitions': definitions,
+      if (examples != null) 'examples': examples,
+      if (phrases != null) 'phrases': phrases,
+      if (sourceContext != null) 'source_context': sourceContext,
+      if (masteryLevel != null) 'mastery_level': masteryLevel,
+      if (tags != null) 'tags': tags,
+      if (addedAt != null) 'added_at': addedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  VocabEntriesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? word,
+    Value<String?>? phonetic,
+    Value<String?>? audioUrl,
+    Value<String?>? partOfSpeech,
+    Value<String>? definitions,
+    Value<String>? examples,
+    Value<String>? phrases,
+    Value<String?>? sourceContext,
+    Value<int>? masteryLevel,
+    Value<String>? tags,
+    Value<DateTime>? addedAt,
+    Value<int>? rowid,
+  }) {
+    return VocabEntriesCompanion(
+      id: id ?? this.id,
+      word: word ?? this.word,
+      phonetic: phonetic ?? this.phonetic,
+      audioUrl: audioUrl ?? this.audioUrl,
+      partOfSpeech: partOfSpeech ?? this.partOfSpeech,
+      definitions: definitions ?? this.definitions,
+      examples: examples ?? this.examples,
+      phrases: phrases ?? this.phrases,
+      sourceContext: sourceContext ?? this.sourceContext,
+      masteryLevel: masteryLevel ?? this.masteryLevel,
+      tags: tags ?? this.tags,
+      addedAt: addedAt ?? this.addedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (word.present) {
+      map['word'] = Variable<String>(word.value);
+    }
+    if (phonetic.present) {
+      map['phonetic'] = Variable<String>(phonetic.value);
+    }
+    if (audioUrl.present) {
+      map['audio_url'] = Variable<String>(audioUrl.value);
+    }
+    if (partOfSpeech.present) {
+      map['part_of_speech'] = Variable<String>(partOfSpeech.value);
+    }
+    if (definitions.present) {
+      map['definitions'] = Variable<String>(definitions.value);
+    }
+    if (examples.present) {
+      map['examples'] = Variable<String>(examples.value);
+    }
+    if (phrases.present) {
+      map['phrases'] = Variable<String>(phrases.value);
+    }
+    if (sourceContext.present) {
+      map['source_context'] = Variable<String>(sourceContext.value);
+    }
+    if (masteryLevel.present) {
+      map['mastery_level'] = Variable<int>(masteryLevel.value);
+    }
+    if (tags.present) {
+      map['tags'] = Variable<String>(tags.value);
+    }
+    if (addedAt.present) {
+      map['added_at'] = Variable<DateTime>(addedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('VocabEntriesCompanion(')
+          ..write('id: $id, ')
+          ..write('word: $word, ')
+          ..write('phonetic: $phonetic, ')
+          ..write('audioUrl: $audioUrl, ')
+          ..write('partOfSpeech: $partOfSpeech, ')
+          ..write('definitions: $definitions, ')
+          ..write('examples: $examples, ')
+          ..write('phrases: $phrases, ')
+          ..write('sourceContext: $sourceContext, ')
+          ..write('masteryLevel: $masteryLevel, ')
+          ..write('tags: $tags, ')
+          ..write('addedAt: $addedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$NoteDatabase extends GeneratedDatabase {
   _$NoteDatabase(QueryExecutor e) : super(e);
   $NoteDatabaseManager get managers => $NoteDatabaseManager(this);
@@ -2540,6 +3316,7 @@ abstract class _$NoteDatabase extends GeneratedDatabase {
   late final $NoteTagsTable noteTags = $NoteTagsTable(this);
   late final $AttachmentsTable attachments = $AttachmentsTable(this);
   late final $NoteLinksTable noteLinks = $NoteLinksTable(this);
+  late final $VocabEntriesTable vocabEntries = $VocabEntriesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2551,6 +3328,7 @@ abstract class _$NoteDatabase extends GeneratedDatabase {
     noteTags,
     attachments,
     noteLinks,
+    vocabEntries,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -2599,6 +3377,7 @@ typedef $$NotebooksTableCreateCompanionBuilder =
       Value<String?> stack,
       Value<String> icon,
       Value<int> sortOrder,
+      Value<int> isDefaultForCapture,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<int> rowid,
@@ -2610,6 +3389,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder =
       Value<String?> stack,
       Value<String> icon,
       Value<int> sortOrder,
+      Value<int> isDefaultForCapture,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -2670,6 +3450,11 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<int> get sortOrder => $composableBuilder(
     column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get isDefaultForCapture => $composableBuilder(
+    column: $table.isDefaultForCapture,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2743,6 +3528,11 @@ class $$NotebooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get isDefaultForCapture => $composableBuilder(
+    column: $table.isDefaultForCapture,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -2777,6 +3567,11 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+
+  GeneratedColumn<int> get isDefaultForCapture => $composableBuilder(
+    column: $table.isDefaultForCapture,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -2843,6 +3638,7 @@ class $$NotebooksTableTableManager
                 Value<String?> stack = const Value.absent(),
                 Value<String> icon = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
+                Value<int> isDefaultForCapture = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -2852,6 +3648,7 @@ class $$NotebooksTableTableManager
                 stack: stack,
                 icon: icon,
                 sortOrder: sortOrder,
+                isDefaultForCapture: isDefaultForCapture,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -2863,6 +3660,7 @@ class $$NotebooksTableTableManager
                 Value<String?> stack = const Value.absent(),
                 Value<String> icon = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
+                Value<int> isDefaultForCapture = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -2872,6 +3670,7 @@ class $$NotebooksTableTableManager
                 stack: stack,
                 icon: icon,
                 sortOrder: sortOrder,
+                isDefaultForCapture: isDefaultForCapture,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -4930,6 +5729,347 @@ typedef $$NoteLinksTableProcessedTableManager =
       NoteLink,
       PrefetchHooks Function({bool sourceNoteId, bool targetNoteId})
     >;
+typedef $$VocabEntriesTableCreateCompanionBuilder =
+    VocabEntriesCompanion Function({
+      required String id,
+      required String word,
+      Value<String?> phonetic,
+      Value<String?> audioUrl,
+      Value<String?> partOfSpeech,
+      Value<String> definitions,
+      Value<String> examples,
+      Value<String> phrases,
+      Value<String?> sourceContext,
+      Value<int> masteryLevel,
+      Value<String> tags,
+      required DateTime addedAt,
+      Value<int> rowid,
+    });
+typedef $$VocabEntriesTableUpdateCompanionBuilder =
+    VocabEntriesCompanion Function({
+      Value<String> id,
+      Value<String> word,
+      Value<String?> phonetic,
+      Value<String?> audioUrl,
+      Value<String?> partOfSpeech,
+      Value<String> definitions,
+      Value<String> examples,
+      Value<String> phrases,
+      Value<String?> sourceContext,
+      Value<int> masteryLevel,
+      Value<String> tags,
+      Value<DateTime> addedAt,
+      Value<int> rowid,
+    });
+
+class $$VocabEntriesTableFilterComposer
+    extends Composer<_$NoteDatabase, $VocabEntriesTable> {
+  $$VocabEntriesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get word => $composableBuilder(
+    column: $table.word,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phonetic => $composableBuilder(
+    column: $table.phonetic,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get audioUrl => $composableBuilder(
+    column: $table.audioUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get partOfSpeech => $composableBuilder(
+    column: $table.partOfSpeech,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get definitions => $composableBuilder(
+    column: $table.definitions,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get examples => $composableBuilder(
+    column: $table.examples,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phrases => $composableBuilder(
+    column: $table.phrases,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceContext => $composableBuilder(
+    column: $table.sourceContext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get masteryLevel => $composableBuilder(
+    column: $table.masteryLevel,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get addedAt => $composableBuilder(
+    column: $table.addedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$VocabEntriesTableOrderingComposer
+    extends Composer<_$NoteDatabase, $VocabEntriesTable> {
+  $$VocabEntriesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get word => $composableBuilder(
+    column: $table.word,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phonetic => $composableBuilder(
+    column: $table.phonetic,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get audioUrl => $composableBuilder(
+    column: $table.audioUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get partOfSpeech => $composableBuilder(
+    column: $table.partOfSpeech,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get definitions => $composableBuilder(
+    column: $table.definitions,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get examples => $composableBuilder(
+    column: $table.examples,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phrases => $composableBuilder(
+    column: $table.phrases,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceContext => $composableBuilder(
+    column: $table.sourceContext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get masteryLevel => $composableBuilder(
+    column: $table.masteryLevel,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get addedAt => $composableBuilder(
+    column: $table.addedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$VocabEntriesTableAnnotationComposer
+    extends Composer<_$NoteDatabase, $VocabEntriesTable> {
+  $$VocabEntriesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get word =>
+      $composableBuilder(column: $table.word, builder: (column) => column);
+
+  GeneratedColumn<String> get phonetic =>
+      $composableBuilder(column: $table.phonetic, builder: (column) => column);
+
+  GeneratedColumn<String> get audioUrl =>
+      $composableBuilder(column: $table.audioUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get partOfSpeech => $composableBuilder(
+    column: $table.partOfSpeech,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get definitions => $composableBuilder(
+    column: $table.definitions,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get examples =>
+      $composableBuilder(column: $table.examples, builder: (column) => column);
+
+  GeneratedColumn<String> get phrases =>
+      $composableBuilder(column: $table.phrases, builder: (column) => column);
+
+  GeneratedColumn<String> get sourceContext => $composableBuilder(
+    column: $table.sourceContext,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get masteryLevel => $composableBuilder(
+    column: $table.masteryLevel,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get tags =>
+      $composableBuilder(column: $table.tags, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get addedAt =>
+      $composableBuilder(column: $table.addedAt, builder: (column) => column);
+}
+
+class $$VocabEntriesTableTableManager
+    extends
+        RootTableManager<
+          _$NoteDatabase,
+          $VocabEntriesTable,
+          VocabEntry,
+          $$VocabEntriesTableFilterComposer,
+          $$VocabEntriesTableOrderingComposer,
+          $$VocabEntriesTableAnnotationComposer,
+          $$VocabEntriesTableCreateCompanionBuilder,
+          $$VocabEntriesTableUpdateCompanionBuilder,
+          (
+            VocabEntry,
+            BaseReferences<_$NoteDatabase, $VocabEntriesTable, VocabEntry>,
+          ),
+          VocabEntry,
+          PrefetchHooks Function()
+        > {
+  $$VocabEntriesTableTableManager(_$NoteDatabase db, $VocabEntriesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$VocabEntriesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$VocabEntriesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$VocabEntriesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> word = const Value.absent(),
+                Value<String?> phonetic = const Value.absent(),
+                Value<String?> audioUrl = const Value.absent(),
+                Value<String?> partOfSpeech = const Value.absent(),
+                Value<String> definitions = const Value.absent(),
+                Value<String> examples = const Value.absent(),
+                Value<String> phrases = const Value.absent(),
+                Value<String?> sourceContext = const Value.absent(),
+                Value<int> masteryLevel = const Value.absent(),
+                Value<String> tags = const Value.absent(),
+                Value<DateTime> addedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => VocabEntriesCompanion(
+                id: id,
+                word: word,
+                phonetic: phonetic,
+                audioUrl: audioUrl,
+                partOfSpeech: partOfSpeech,
+                definitions: definitions,
+                examples: examples,
+                phrases: phrases,
+                sourceContext: sourceContext,
+                masteryLevel: masteryLevel,
+                tags: tags,
+                addedAt: addedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String word,
+                Value<String?> phonetic = const Value.absent(),
+                Value<String?> audioUrl = const Value.absent(),
+                Value<String?> partOfSpeech = const Value.absent(),
+                Value<String> definitions = const Value.absent(),
+                Value<String> examples = const Value.absent(),
+                Value<String> phrases = const Value.absent(),
+                Value<String?> sourceContext = const Value.absent(),
+                Value<int> masteryLevel = const Value.absent(),
+                Value<String> tags = const Value.absent(),
+                required DateTime addedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => VocabEntriesCompanion.insert(
+                id: id,
+                word: word,
+                phonetic: phonetic,
+                audioUrl: audioUrl,
+                partOfSpeech: partOfSpeech,
+                definitions: definitions,
+                examples: examples,
+                phrases: phrases,
+                sourceContext: sourceContext,
+                masteryLevel: masteryLevel,
+                tags: tags,
+                addedAt: addedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$VocabEntriesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$NoteDatabase,
+      $VocabEntriesTable,
+      VocabEntry,
+      $$VocabEntriesTableFilterComposer,
+      $$VocabEntriesTableOrderingComposer,
+      $$VocabEntriesTableAnnotationComposer,
+      $$VocabEntriesTableCreateCompanionBuilder,
+      $$VocabEntriesTableUpdateCompanionBuilder,
+      (
+        VocabEntry,
+        BaseReferences<_$NoteDatabase, $VocabEntriesTable, VocabEntry>,
+      ),
+      VocabEntry,
+      PrefetchHooks Function()
+    >;
 
 class $NoteDatabaseManager {
   final _$NoteDatabase _db;
@@ -4945,4 +6085,6 @@ class $NoteDatabaseManager {
       $$AttachmentsTableTableManager(_db, _db.attachments);
   $$NoteLinksTableTableManager get noteLinks =>
       $$NoteLinksTableTableManager(_db, _db.noteLinks);
+  $$VocabEntriesTableTableManager get vocabEntries =>
+      $$VocabEntriesTableTableManager(_db, _db.vocabEntries);
 }

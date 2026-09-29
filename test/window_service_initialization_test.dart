@@ -129,9 +129,10 @@ void main() {
       );
     });
 
-    test('密码工具子窗口不声明 AI 服务（本地密码库不消费 AI），但声明基础设施 AppPaths', () {
+    test('密码工具子窗口不声明 AI 服务（本地密码库不消费 AI），但声明基础设施 AppPaths 与 SettingsStore', () {
       final names = WindowServices.requiredNames(WindowKind.passwordVault);
-      expect(names, ['AppPaths']);
+      // SettingsStore：该窗口渲染 themed MaterialApp，必须读到持久化 themeMode。
+      expect(names, ['AppPaths', 'SettingsStore']);
       expect(names, isNot(contains('AiConfigStore')));
       expect(names, isNot(contains('ProxySettings')));
       expect(names, isNot(contains('NoteStore')));

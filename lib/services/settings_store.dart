@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'app_paths.dart';
 
@@ -26,6 +26,46 @@ class SettingsStore {
   File? _appConfigFile;
   Map<String, dynamic> _appConfig = {};
   String? _lastError;
+
+  /// 全局主题模式通知器
+  final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
+
+  ThemeMode get themeMode => themeModeNotifier.value;
+  String get themeModeString => _themeModeToString(themeModeNotifier.value);
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    themeModeNotifier.value = mode;
+    _appConfig['themeMode'] = _themeModeToString(mode);
+    await _saveAppConfig();
+  }
+
+  Future<void> setThemeModeString(String modeStr) async {
+    final mode = _parseThemeMode(modeStr);
+    await setThemeMode(mode);
+  }
+
+  static ThemeMode _parseThemeMode(String mode) {
+    switch (mode.toLowerCase()) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+      default:
+        return ThemeMode.system;
+    }
+  }
+
+  static String _themeModeToString(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'light';
+      case ThemeMode.dark:
+        return 'dark';
+      case ThemeMode.system:
+        return 'system';
+    }
+  }
 
   String? get lastError => _lastError;
 
@@ -94,6 +134,7 @@ class SettingsStore {
   Future<void> _loadAppConfig() async {
     if (_appConfigFile == null || !await _appConfigFile!.exists()) {
       _appConfig = _defaultAppConfig();
+      themeModeNotifier.value = ThemeMode.system;
       await _saveAppConfig();
       return;
     }
@@ -105,10 +146,13 @@ class SettingsStore {
       } else {
         _appConfig = jsonDecode(content) as Map<String, dynamic>;
       }
+      final modeStr = _appConfig['themeMode'] as String? ?? 'system';
+      themeModeNotifier.value = _parseThemeMode(modeStr);
     } catch (e) {
       _lastError = 'app.json 损坏，已回退默认配置: $e';
       debugPrint(_lastError);
       _appConfig = _defaultAppConfig();
+      themeModeNotifier.value = ThemeMode.system;
     }
   }
 
@@ -116,6 +160,7 @@ class SettingsStore {
     return {
       'recentTools': <String>[],
       'hotkey': HotKeyConfig.defaultHotKey.toJson(),
+      'themeMode': 'system',
       'migratedFrom': <String>[],
     };
   }

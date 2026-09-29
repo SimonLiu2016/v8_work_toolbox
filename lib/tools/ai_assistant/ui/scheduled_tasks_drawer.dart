@@ -43,7 +43,7 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Text(isEditing ? '编辑定时资讯任务' : '新建定时资讯任务', style: AppTheme.fontTitle),
           content: SizedBox(
             width: 440,
@@ -101,8 +101,8 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
   Widget build(BuildContext context) {
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
-      decoration: const BoxDecoration(
-        color: AppTheme.bgCard,
+      decoration: BoxDecoration(
+        color: context.bgCard,
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.radiusLarge)),
       ),
       child: Column(
@@ -112,7 +112,7 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
             padding: const EdgeInsets.symmetric(horizontal: AppTheme.space24, vertical: AppTheme.space16),
             child: Row(
               children: [
-                const Icon(Icons.notifications_active_outlined, color: AppTheme.accentLight, size: 22),
+                Icon(Icons.notifications_active_outlined, color: context.accentText, size: 22),
                 const SizedBox(width: AppTheme.space8),
                 const Text('定时资讯检索与快报追踪', style: AppTheme.fontTitle),
                 const Spacer(),
@@ -161,32 +161,32 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
             ),
           ],
         ),
-        const SizedBox(height: AppTheme.space16),
+        SizedBox(height: AppTheme.space16),
         if (tasks.isEmpty)
-          const Center(
-            child: Text('暂无定时资讯检索任务，点击右上角添加。', style: TextStyle(color: AppTheme.textSecondary)),
+          Center(
+            child: Text('暂无定时资讯检索任务，点击右上角添加。', style: TextStyle(color: context.textSecondary)),
           )
         else
           ...tasks.map((t) {
             return Padding(
-              padding: const EdgeInsets.only(bottom: AppTheme.space12),
+              padding: EdgeInsets.only(bottom: AppTheme.space12),
               child: AppCard(
                 child: Padding(
-                  padding: const EdgeInsets.all(AppTheme.space16),
+                  padding: EdgeInsets.all(AppTheme.space16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.radar, size: 18, color: t.enabled ? AppTheme.accentLight : AppTheme.textTertiary),
+                          Icon(Icons.radar, size: 18, color: t.enabled ? context.accentText : context.textTertiary),
                           const SizedBox(width: AppTheme.space8),
                           Text(t.title, style: AppTheme.fontTitle),
-                          const SizedBox(width: AppTheme.space8),
+                          SizedBox(width: AppTheme.space8),
                           AppBadge(label: '每 ${t.intervalMinutes} 分钟'),
-                          const Spacer(),
+                          Spacer(),
                           Switch(
                             value: t.enabled,
-                            activeThumbColor: AppTheme.accentLight,
+                            activeThumbColor: context.accentText,
                             onChanged: (val) async {
                               t.enabled = val;
                               await _service.saveTask(t);
@@ -194,26 +194,26 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
                           ),
                         ],
                       ),
-                      const SizedBox(height: AppTheme.space8),
-                      Text('关键词: ${t.query}', style: AppTheme.fontBody.copyWith(color: AppTheme.textSecondary)),
+                      SizedBox(height: AppTheme.space8),
+                      Text('关键词: ${t.query}', style: AppTheme.fontBody.copyWith(color: context.textSecondary)),
                       if (t.lastRunTime != null) ...[
-                        const SizedBox(height: AppTheme.space4),
+                        SizedBox(height: AppTheme.space4),
                         Text(
                           '上次检索: ${t.lastRunTime!.hour.toString().padLeft(2, '0')}:${t.lastRunTime!.minute.toString().padLeft(2, '0')}:${t.lastRunTime!.second.toString().padLeft(2, '0')}',
-                          style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                          style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                         ),
                       ],
                       if (t.lastBriefing != null) ...[
-                        const SizedBox(height: AppTheme.space8),
+                        SizedBox(height: AppTheme.space8),
                         Container(
-                          padding: const EdgeInsets.all(AppTheme.space10),
+                          padding: EdgeInsets.all(AppTheme.space10),
                           decoration: BoxDecoration(
-                            color: AppTheme.bgContent,
+                            color: context.bgContent,
                             borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                           ),
                           child: Text(
                             t.lastBriefing!,
-                            style: const TextStyle(fontSize: 12, color: AppTheme.textPrimary, height: 1.4),
+                            style: TextStyle(fontSize: 12, color: context.textPrimary, height: 1.4),
                           ),
                         ),
                       ],
@@ -234,7 +234,7 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
                           ),
                           const SizedBox(width: AppTheme.space8),
                           IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 16, color: AppTheme.error),
+                            icon: Icon(Icons.delete_outline, size: 16, color: context.errorText),
                             tooltip: '删除任务',
                             onPressed: () => _service.deleteTask(t.id),
                           ),
@@ -267,39 +267,39 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
             ),
           ],
         ),
-        const SizedBox(height: AppTheme.space16),
+        SizedBox(height: AppTheme.space16),
         if (briefings.isEmpty)
-          const Center(
-            child: Text('暂无资讯快报。当定时任务发现新的动态时会自动汇总在此。', style: TextStyle(color: AppTheme.textSecondary)),
+          Center(
+            child: Text('暂无资讯快报。当定时任务发现新的动态时会自动汇总在此。', style: TextStyle(color: context.textSecondary)),
           )
         else
           ...briefings.map((b) {
             return Padding(
-              padding: const EdgeInsets.only(bottom: AppTheme.space12),
+              padding: EdgeInsets.only(bottom: AppTheme.space12),
               child: AppCard(
                 child: Padding(
-                  padding: const EdgeInsets.all(AppTheme.space16),
+                  padding: EdgeInsets.all(AppTheme.space16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.article_outlined, size: 18, color: b.isRead ? AppTheme.textTertiary : AppTheme.accentLight),
-                          const SizedBox(width: AppTheme.space8),
-                          Text(b.taskTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                          const SizedBox(width: AppTheme.space8),
-                          if (!b.isRead) const AppBadge(label: 'NEW', color: AppTheme.accentLight),
-                          const Spacer(),
+                          Icon(Icons.article_outlined, size: 18, color: b.isRead ? context.textTertiary : context.accentText),
+                          SizedBox(width: AppTheme.space8),
+                          Text(b.taskTitle, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          SizedBox(width: AppTheme.space8),
+                          if (!b.isRead) AppBadge(label: 'NEW', color: context.accentText),
+                          Spacer(),
                           Text(
                             '${b.timestamp.month}/${b.timestamp.day} ${b.timestamp.hour.toString().padLeft(2, '0')}:${b.timestamp.minute.toString().padLeft(2, '0')}',
-                            style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                            style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                           ),
                         ],
                       ),
-                      const SizedBox(height: AppTheme.space8),
+                      SizedBox(height: AppTheme.space8),
                       AppMarkdownView(
                         data: b.content,
-                        baseStyle: const TextStyle(fontSize: 13, height: 1.5, color: AppTheme.textPrimary),
+                        baseStyle: TextStyle(fontSize: 13, height: 1.5, color: context.textPrimary),
                       ),
                     ],
                   ),

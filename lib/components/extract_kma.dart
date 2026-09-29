@@ -85,7 +85,7 @@ class _ExtractKmaState extends State<ExtractKma> {
                 icon: const Icon(Icons.unarchive, size: 16),
                 label: const Text('解压 KMA 包'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accent,
+                  backgroundColor: context.accentSolid,
                   foregroundColor: Colors.white,
                 ),
               ),

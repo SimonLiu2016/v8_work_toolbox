@@ -42,12 +42,12 @@ class _AiConfigPageState extends State<AiConfigPage>
     final rebuilt = await KeychainService.instance.consumeRebuildNotice();
     if (rebuilt && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
             '密钥库此前因密钥失配被重置，已存密钥（如 API Key）需重新填入。'
             '残件备份见 ~/Library/Application Support/V8WorkToolbox/ 下的 .mismatch-* 文件。',
           ),
-          backgroundColor: AppTheme.warning,
+          backgroundColor: context.warningSolid,
           duration: Duration(seconds: 12),
         ),
       );
@@ -64,7 +64,7 @@ class _AiConfigPageState extends State<AiConfigPage>
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.bgContent,
+      color: context.bgContent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -86,12 +86,12 @@ class _AiConfigPageState extends State<AiConfigPage>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('AI 基础设施配置', style: AppTheme.fontHeadline),
-                          const SizedBox(height: AppTheme.space4),
+                          Text('AI 基础设施配置', style: AppTheme.fontHeadline),
+                          SizedBox(height: AppTheme.space4),
                           Text(
                             '配置多协议模型供应商、全局能力槽位与外部 MCP 服务。凭证由 macOS Keychain 安全保护。',
                             style: AppTheme.fontCaption.copyWith(
-                              color: AppTheme.textSecondary,
+                              color: context.textSecondary,
                             ),
                           ),
                         ],
@@ -105,15 +105,15 @@ class _AiConfigPageState extends State<AiConfigPage>
                     ),
                   ],
                 ),
-                const SizedBox(height: AppTheme.space16),
+                SizedBox(height: AppTheme.space16),
                 TabBar(
                   controller: _tabController,
                   isScrollable: true,
-                  labelColor: AppTheme.accentLight,
-                  unselectedLabelColor: AppTheme.textSecondary,
-                  indicatorColor: AppTheme.accent,
+                  labelColor: context.accentText,
+                  unselectedLabelColor: context.textSecondary,
+                  indicatorColor: context.accentSolid,
                   indicatorSize: TabBarIndicatorSize.tab,
-                  dividerColor: AppTheme.borderSubtle,
+                  dividerColor: context.borderSubtle,
                   tabs: const [
                     Tab(
                       icon: Icon(Icons.business_outlined, size: 16),
@@ -132,7 +132,7 @@ class _AiConfigPageState extends State<AiConfigPage>
               ],
             ),
           ),
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          Divider(height: 1, color: context.borderSubtle),
 
           // Tab 内容展示
           Expanded(
@@ -178,23 +178,23 @@ class _AiConfigPageState extends State<AiConfigPage>
               child: Center(
                 child: Column(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.smart_toy_outlined,
                       size: 36,
-                      color: AppTheme.textTertiary,
+                      color: context.textTertiary,
                     ),
-                    const SizedBox(height: AppTheme.space12),
+                    SizedBox(height: AppTheme.space12),
                     Text(
                       '暂未配置任何 AI 供应商',
                       style: AppTheme.fontBody.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: context.textSecondary,
                       ),
                     ),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
                     Text(
                       '支持接入 OpenAI、DeepSeek、Ollama、Anthropic、Gemini 等兼容端点。',
                       style: AppTheme.fontCaption.copyWith(
-                        color: AppTheme.textTertiary,
+                        color: context.textTertiary,
                       ),
                     ),
                   ],
@@ -219,10 +219,10 @@ class _AiConfigPageState extends State<AiConfigPage>
             children: [
               Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.psychology_alt_outlined,
                     size: 20,
-                    color: AppTheme.accentLight,
+                    color: context.accentText,
                   ),
                   const SizedBox(width: AppTheme.space8),
                   Text(p.name, style: AppTheme.fontTitle),
@@ -240,23 +240,23 @@ class _AiConfigPageState extends State<AiConfigPage>
                     icon: Icons.edit_outlined,
                     onPressed: () => _showAddOrEditProviderDialog(provider: p),
                   ),
-                  const SizedBox(width: AppTheme.space6),
+                  SizedBox(width: AppTheme.space6),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.delete_outline,
                       size: 16,
-                      color: AppTheme.error,
+                      color: context.errorText,
                     ),
                     tooltip: '删除供应商',
                     onPressed: () => _deleteProvider(p),
                   ),
                 ],
               ),
-              const SizedBox(height: AppTheme.space8),
+              SizedBox(height: AppTheme.space8),
               Text(
                 'API 地址: ${p.baseUrl}',
                 style: AppTheme.fontCaption.copyWith(
-                  color: AppTheme.textSecondary,
+                  color: context.textSecondary,
                 ),
               ),
               if (p.textModels.isNotEmpty) ...[
@@ -296,10 +296,10 @@ class _AiConfigPageState extends State<AiConfigPage>
       padding: const EdgeInsets.all(AppTheme.space24),
       children: [
         Text('全局能力槽位绑定', style: AppTheme.fontTitle),
-        const SizedBox(height: AppTheme.space4),
+        SizedBox(height: AppTheme.space4),
         Text(
           '每个槽位支持多个候选供应商，按优先级排列。运行时自动路由至最优可用供应商，首选不可用时自动降级。',
-          style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+          style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
         ),
         const SizedBox(height: AppTheme.space16),
         ...slots.map((s) => _buildSlotCard(s['key']!, s['label']!, s['desc']!)),
@@ -322,16 +322,16 @@ class _AiConfigPageState extends State<AiConfigPage>
     return 3;
   }
 
-  Color _healthColor(int level) {
+  Color _healthColor(BuildContext context, int level) {
     switch (level) {
       case 1:
-        return AppTheme.success;
+        return context.successSolid;
       case 2:
-        return AppTheme.warning;
+        return context.warningSolid;
       case 3:
-        return AppTheme.error;
+        return context.errorSolid;
       default:
-        return AppTheme.textTertiary;
+        return context.textTertiary;
     }
   }
 
@@ -384,6 +384,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                               ),
                               decoration: BoxDecoration(
                                 color: _healthColor(
+                                  context,
                                   healthLevel,
                                 ).withValues(alpha: 0.15),
                                 borderRadius: AppTheme.borderRadiusSmall,
@@ -395,7 +396,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                     width: 8,
                                     height: 8,
                                     decoration: BoxDecoration(
-                                      color: _healthColor(healthLevel),
+                                      color: _healthColor(context, healthLevel),
                                       shape: BoxShape.circle,
                                     ),
                                   ),
@@ -404,7 +405,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                     _healthLabel(healthLevel),
                                     style: TextStyle(
                                       fontSize: 11,
-                                      color: _healthColor(healthLevel),
+                                      color: _healthColor(context, healthLevel),
                                     ),
                                   ),
                                 ],
@@ -412,11 +413,11 @@ class _AiConfigPageState extends State<AiConfigPage>
                             ),
                           ],
                         ),
-                        const SizedBox(height: AppTheme.space2),
+                        SizedBox(height: AppTheme.space2),
                         Text(
                           desc,
                           style: AppTheme.fontCaption.copyWith(
-                            color: AppTheme.textTertiary,
+                            color: context.textTertiary,
                           ),
                         ),
                         // 降级/不可用时显示额外信息
@@ -438,7 +439,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   return Text(
                                     '当前活跃: ${provider?.name ?? c.providerId}',
                                     style: AppTheme.fontCaption.copyWith(
-                                      color: AppTheme.warning,
+                                      color: context.warningText,
                                     ),
                                   );
                                 }
@@ -448,11 +449,11 @@ class _AiConfigPageState extends State<AiConfigPage>
                           ),
                         ],
                         if (healthLevel == 3) ...[
-                          const SizedBox(height: AppTheme.space4),
+                          SizedBox(height: AppTheme.space4),
                           Text(
                             '请检查供应商配置或网络连接',
                             style: AppTheme.fontCaption.copyWith(
-                              color: AppTheme.error,
+                              color: context.errorText,
                             ),
                           ),
                         ],
@@ -468,8 +469,8 @@ class _AiConfigPageState extends State<AiConfigPage>
               ),
               // 候选列表
               if (candidates.isNotEmpty) ...[
-                const SizedBox(height: AppTheme.space12),
-                const Divider(height: 1, color: AppTheme.borderSubtle),
+                SizedBox(height: AppTheme.space12),
+                Divider(height: 1, color: context.borderSubtle),
                 const SizedBox(height: AppTheme.space8),
                 ReorderableListView.builder(
                   shrinkWrap: true,
@@ -505,23 +506,23 @@ class _AiConfigPageState extends State<AiConfigPage>
                     );
                     final isHealthy = health?.isHealthy != false;
                     final candidateHealthColor = isHealthy
-                        ? AppTheme.success
-                        : AppTheme.error;
+                        ? context.successSolid
+                        : context.errorSolid;
 
                     return Container(
                       key: ValueKey(
                         '${slotKey}_${candidate.providerId}_${candidate.model}_$index',
                       ),
                       margin: const EdgeInsets.only(bottom: AppTheme.space4),
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                         horizontal: AppTheme.space12,
                         vertical: AppTheme.space8,
                       ),
                       decoration: BoxDecoration(
-                        color: AppTheme.bgSidebar,
+                        color: context.bgSidebar,
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: AppTheme.borderSubtle,
+                          color: context.borderSubtle,
                           width: 0.5,
                         ),
                       ),
@@ -530,10 +531,10 @@ class _AiConfigPageState extends State<AiConfigPage>
                           // 拖拽手柄
                           ReorderableDragStartListener(
                             index: index,
-                            child: const Icon(
+                            child: Icon(
                               Icons.drag_indicator,
                               size: 16,
-                              color: AppTheme.textTertiary,
+                              color: context.textTertiary,
                             ),
                           ),
                           const SizedBox(width: AppTheme.space8),
@@ -543,15 +544,15 @@ class _AiConfigPageState extends State<AiConfigPage>
                             height: 22,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: AppTheme.accent.withValues(alpha: 0.15),
+                              color: context.accentText.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               '${index + 1}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: AppTheme.accentLight,
+                                color: context.accentText,
                               ),
                             ),
                           ),
@@ -579,7 +580,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   ? '(未指定模型)'
                                   : candidate.model,
                               style: AppTheme.fontCaption.copyWith(
-                                color: AppTheme.textSecondary,
+                                color: context.textSecondary,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -588,19 +589,19 @@ class _AiConfigPageState extends State<AiConfigPage>
                           if (!isHealthy && health?.lastError != null)
                             Tooltip(
                               message: health!.lastError!,
-                              child: const Icon(
+                              child: Icon(
                                 Icons.warning_amber_rounded,
                                 size: 14,
-                                color: AppTheme.warning,
+                                color: context.warningText,
                               ),
                             ),
                           const SizedBox(width: AppTheme.space4),
                           // 删除按钮
                           IconButton(
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.close,
                               size: 14,
-                              color: AppTheme.textTertiary,
+                              color: context.textTertiary,
                             ),
                             tooltip: '移除候选',
                             padding: EdgeInsets.zero,
@@ -619,12 +620,12 @@ class _AiConfigPageState extends State<AiConfigPage>
                   },
                 ),
               ] else ...[
-                const SizedBox(height: AppTheme.space12),
+                SizedBox(height: AppTheme.space12),
                 Center(
                   child: Text(
                     '暂无候选供应商，点击"添加候选"配置',
                     style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textTertiary,
+                      color: context.textTertiary,
                     ),
                   ),
                 ),
@@ -662,7 +663,7 @@ class _AiConfigPageState extends State<AiConfigPage>
           }
 
           return AlertDialog(
-            backgroundColor: AppTheme.bgCard,
+            backgroundColor: context.bgCard,
             title: const Text('添加槽位候选', style: AppTheme.fontTitle),
             content: SizedBox(
               width: 400,
@@ -764,11 +765,11 @@ class _AiConfigPageState extends State<AiConfigPage>
                       setState(() {});
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
+                          SnackBar(
                             content: Text(
                               '已添加 Firecrawl 官方 MCP 预置，建议点击“测试连接”验证。',
                             ),
-                            backgroundColor: AppTheme.success,
+                            backgroundColor: context.successSolid,
                           ),
                         );
                       }
@@ -801,23 +802,23 @@ class _AiConfigPageState extends State<AiConfigPage>
               child: Center(
                 child: Column(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.cable_outlined,
                       size: 36,
-                      color: AppTheme.textTertiary,
+                      color: context.textTertiary,
                     ),
-                    const SizedBox(height: AppTheme.space12),
+                    SizedBox(height: AppTheme.space12),
                     Text(
                       '暂未配置外部 MCP 客户端',
                       style: AppTheme.fontBody.copyWith(
-                        color: AppTheme.textSecondary,
+                        color: context.textSecondary,
                       ),
                     ),
-                    const SizedBox(height: AppTheme.space8),
+                    SizedBox(height: AppTheme.space8),
                     Text(
                       '可配置已运行的第三方 Model Context Protocol 服务的连接端点或命令行调用。',
                       style: AppTheme.fontCaption.copyWith(
-                        color: AppTheme.textTertiary,
+                        color: context.textTertiary,
                       ),
                     ),
                   ],
@@ -845,8 +846,8 @@ class _AiConfigPageState extends State<AiConfigPage>
                             Icons.settings_input_component_outlined,
                             size: 20,
                             color: c.enabled
-                                ? AppTheme.accentLight
-                                : AppTheme.textTertiary,
+                                ? context.accentText
+                                : context.textTertiary,
                           ),
                           const SizedBox(width: AppTheme.space8),
                           Text(c.name, style: AppTheme.fontTitle),
@@ -859,8 +860,8 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   ? '已连通 (${testResult.toolCount} 工具)'
                                   : '连通异常',
                               color: testResult.isHealthy
-                                  ? AppTheme.success
-                                  : AppTheme.error,
+                                  ? context.successSolid
+                                  : context.errorSolid,
                             ),
                             if (testResult.remoteReachable != null) ...[
                               const SizedBox(width: AppTheme.space6),
@@ -869,8 +870,8 @@ class _AiConfigPageState extends State<AiConfigPage>
                                     ? '远端可达'
                                     : '远端不可达',
                                 color: testResult.remoteReachable!
-                                    ? AppTheme.success
-                                    : AppTheme.warning,
+                                    ? context.successSolid
+                                    : context.warningSolid,
                               ),
                             ],
                           ],
@@ -881,7 +882,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                           ),
                           Switch(
                             value: c.enabled,
-                            activeThumbColor: AppTheme.accentLight,
+                            activeThumbColor: context.accentText,
                             onChanged: (val) async {
                               await store.saveMcpClient(
                                 c.copyWith(enabled: val),
@@ -893,31 +894,31 @@ class _AiConfigPageState extends State<AiConfigPage>
                       ),
                       const SizedBox(height: AppTheme.space8),
                       Container(
-                        padding: const EdgeInsets.symmetric(
+                        padding: EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: AppTheme.bgContent.withAlpha(128),
+                          color: context.bgContent.withAlpha(128),
                           borderRadius: BorderRadius.circular(
                             AppTheme.radiusSmall,
                           ),
                         ),
                         child: Row(
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.terminal,
                               size: 14,
-                              color: AppTheme.textTertiary,
+                              color: context.textTertiary,
                             ),
                             const SizedBox(width: AppTheme.space6),
                             Expanded(
                               child: Text(
                                 fullCmd,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontFamily: 'monospace',
                                   fontSize: 12,
-                                  color: AppTheme.textSecondary,
+                                  color: context.textSecondary,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -933,18 +934,18 @@ class _AiConfigPageState extends State<AiConfigPage>
                           runSpacing: 4,
                           children: c.env.keys.map((k) {
                             return Chip(
-                              labelPadding: const EdgeInsets.symmetric(
+                              labelPadding: EdgeInsets.symmetric(
                                 horizontal: 4,
                               ),
                               visualDensity: VisualDensity.compact,
-                              backgroundColor: AppTheme.bgContent,
+                              backgroundColor: context.bgContent,
                               side: BorderSide.none,
                               label: Text(
                                 '$k=***',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontFamily: 'monospace',
                                   fontSize: 10,
-                                  color: AppTheme.textTertiary,
+                                  color: context.textTertiary,
                                 ),
                               ),
                             );
@@ -954,31 +955,31 @@ class _AiConfigPageState extends State<AiConfigPage>
                       if (testResult != null &&
                           !testResult.isHealthy &&
                           testResult.lastError != null) ...[
-                        const SizedBox(height: AppTheme.space8),
+                        SizedBox(height: AppTheme.space8),
                         Container(
-                          padding: const EdgeInsets.all(AppTheme.space8),
+                          padding: EdgeInsets.all(AppTheme.space8),
                           decoration: BoxDecoration(
-                            color: AppTheme.error.withAlpha(25),
+                            color: context.errorText.withAlpha(25),
                             borderRadius: BorderRadius.circular(
                               AppTheme.radiusSmall,
                             ),
                             border: Border.all(
-                              color: AppTheme.error.withAlpha(60),
+                              color: context.errorText.withAlpha(60),
                             ),
                           ),
                           child: Row(
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.warning_amber_rounded,
                                 size: 16,
-                                color: AppTheme.error,
+                                color: context.errorText,
                               ),
-                              const SizedBox(width: AppTheme.space8),
+                              SizedBox(width: AppTheme.space8),
                               Expanded(
                                 child: Text(
                                   testResult.lastError!,
                                   style: AppTheme.fontCaption.copyWith(
-                                    color: AppTheme.error,
+                                    color: context.errorText,
                                   ),
                                 ),
                               ),
@@ -1005,12 +1006,12 @@ class _AiConfigPageState extends State<AiConfigPage>
                             icon: Icons.edit_outlined,
                             onPressed: () => _showAddOrEditMcpDialog(client: c),
                           ),
-                          const SizedBox(width: AppTheme.space8),
+                          SizedBox(width: AppTheme.space8),
                           IconButton(
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.delete_outline,
                               size: 16,
-                              color: AppTheme.error,
+                              color: context.errorText,
                             ),
                             tooltip: '删除 MCP 服务',
                             onPressed: () async {
@@ -1057,7 +1058,7 @@ class _AiConfigPageState extends State<AiConfigPage>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Row(
             children: [
               Text(
@@ -1067,26 +1068,26 @@ class _AiConfigPageState extends State<AiConfigPage>
               if (isEditing) ...[
                 const SizedBox(width: AppTheme.space8),
                 Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: 6,
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: AppTheme.success.withValues(alpha: 0.15),
+                    color: context.successText.withValues(alpha: 0.15),
                     borderRadius: AppTheme.borderRadiusSmall,
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         Icons.shield_outlined,
                         size: 12,
-                        color: AppTheme.success,
+                        color: context.successText,
                       ),
                       SizedBox(width: 4),
                       Text(
                         '已加密存储',
-                        style: TextStyle(fontSize: 11, color: AppTheme.success),
+                        style: TextStyle(fontSize: 11, color: context.successText),
                       ),
                     ],
                   ),
@@ -1109,10 +1110,10 @@ class _AiConfigPageState extends State<AiConfigPage>
                     runSpacing: 6,
                     children: [
                       ActionChip(
-                        avatar: const Icon(
+                        avatar: Icon(
                           Icons.bolt,
                           size: 14,
-                          color: AppTheme.accent,
+                          color: context.accentText,
                         ),
                         label: const Text(
                           'DeepSeek',
@@ -1251,7 +1252,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   ? Icons.visibility
                                   : Icons.visibility_off,
                               size: 16,
-                              color: AppTheme.textSecondary,
+                              color: context.textSecondary,
                             ),
                             tooltip: keyVisible ? '隐藏密钥' : '显示密钥',
                             onPressed: () async {
@@ -1268,11 +1269,11 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   if (stored == null || stored.isEmpty) {
                                     if (ctx.mounted) {
                                       ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
+                                        SnackBar(
                                           content: Text(
                                             '未能从密钥库载入已保存的密钥，可能已被清除',
                                           ),
-                                          backgroundColor: AppTheme.warning,
+                                          backgroundColor: context.warningSolid,
                                           duration: Duration(seconds: 6),
                                         ),
                                       );
@@ -1337,9 +1338,9 @@ class _AiConfigPageState extends State<AiConfigPage>
                                   !urlCtrl.text.contains('127.0.0.1')) {
                                 if (ctx.mounted) {
                                   ScaffoldMessenger.of(ctx).showSnackBar(
-                                    const SnackBar(
+                                    SnackBar(
                                       content: Text('请先输入 API Key 再进行自动探测'),
-                                      backgroundColor: AppTheme.warning,
+                                      backgroundColor: context.warningSolid,
                                     ),
                                   );
                                 }
@@ -1374,7 +1375,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                     content: Text(
                                       '✓ 成功探测到 ${found.length} 个可用模型！',
                                     ),
-                                    backgroundColor: AppTheme.success,
+                                    backgroundColor: context.successSolid,
                                   ),
                                 );
                               }
@@ -1383,7 +1384,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                                 ScaffoldMessenger.of(ctx).showSnackBar(
                                   SnackBar(
                                     content: Text('探测失败: $e'),
-                                    backgroundColor: AppTheme.error,
+                                    backgroundColor: context.errorSolid,
                                     duration: const Duration(seconds: 6),
                                   ),
                                 );
@@ -1464,7 +1465,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                               content: Text(
                                 '供应商已保存。\n⚠️ 密钥库此前因密钥失配已重置，其他已存密钥（如其他供应商的 API Key）需重新填入。\n残件备份: ${rebuild.backupPath}',
                               ),
-                              backgroundColor: AppTheme.warning,
+                              backgroundColor: context.warningSolid,
                               duration: const Duration(seconds: 10),
                             ),
                           );
@@ -1479,7 +1480,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                               content: Text(
                                 '供应商配置已保存，但 $e\n可稍后在编辑界面重新填入 API Key 保存。',
                               ),
-                              backgroundColor: AppTheme.warning,
+                              backgroundColor: context.warningSolid,
                               duration: const Duration(seconds: 8),
                             ),
                           );
@@ -1491,7 +1492,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                           ScaffoldMessenger.of(ctx).showSnackBar(
                             SnackBar(
                               content: Text('保存失败: $e'),
-                              backgroundColor: AppTheme.error,
+                              backgroundColor: context.errorSolid,
                               duration: const Duration(seconds: 8),
                             ),
                           );
@@ -1543,7 +1544,7 @@ class _AiConfigPageState extends State<AiConfigPage>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1552,14 +1553,14 @@ class _AiConfigPageState extends State<AiConfigPage>
                 style: AppTheme.fontTitle,
               ),
               TextButton.icon(
-                icon: const Icon(
+                icon: Icon(
                   Icons.auto_awesome,
                   size: 14,
-                  color: AppTheme.accentLight,
+                  color: context.accentText,
                 ),
-                label: const Text(
+                label: Text(
                   '填入 Firecrawl 模板',
-                  style: TextStyle(color: AppTheme.accentLight, fontSize: 12),
+                  style: TextStyle(color: context.accentText, fontSize: 12),
                 ),
                 onPressed: () => fillFirecrawlPreset(setDialogState),
               ),
@@ -1712,7 +1713,7 @@ class _AiConfigPageState extends State<AiConfigPage>
             content: Text(
               '✓ MCP [${c.name}] 握手成功！探测到 ${res.toolCount} 个工具: $toolNames$more',
             ),
-            backgroundColor: AppTheme.success,
+            backgroundColor: context.successSolid,
             duration: const Duration(seconds: 6),
           ),
         );
@@ -1720,7 +1721,7 @@ class _AiConfigPageState extends State<AiConfigPage>
         messenger.showSnackBar(
           SnackBar(
             content: Text('✕ MCP [${c.name}] 连接失败: ${res.lastError}'),
-            backgroundColor: AppTheme.error,
+            backgroundColor: context.errorSolid,
             duration: const Duration(seconds: 8),
           ),
         );
@@ -1731,7 +1732,7 @@ class _AiConfigPageState extends State<AiConfigPage>
       messenger.showSnackBar(
         SnackBar(
           content: Text('✕ 测试异常: $e'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
           duration: const Duration(seconds: 8),
         ),
       );
@@ -1750,7 +1751,7 @@ class _AiConfigPageState extends State<AiConfigPage>
       messenger.showSnackBar(
         SnackBar(
           content: Text('✓ 连接与真机对话测试均通过！已探测到 ${models.length} 个模型'),
-          backgroundColor: AppTheme.success,
+          backgroundColor: context.successSolid,
         ),
       );
     } catch (e) {
@@ -1758,7 +1759,7 @@ class _AiConfigPageState extends State<AiConfigPage>
       messenger.showSnackBar(
         SnackBar(
           content: Text('✕ 连接测试失败: $e'),
-          backgroundColor: AppTheme.error,
+          backgroundColor: context.errorSolid,
           duration: const Duration(seconds: 8),
         ),
       );

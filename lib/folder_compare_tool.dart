@@ -328,7 +328,7 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -337,22 +337,22 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
             // 标题
             Row(
               children: [
-                const Icon(Icons.compare_arrows, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('文件夹对比', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.compare_arrows, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('文件夹对比', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_comparisonResults.isNotEmpty)
                   AppBadge(
                     label: '${_comparisonResults.length} 项结果',
-                    color: AppTheme.accentSubtle,
-                    textColor: AppTheme.accentLight,
+                    color: context.accentSubtle,
+                    textColor: context.accentText,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '按路径表达式对比两个目录中同名配置文件的字段值并支持导出 CSV',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -423,7 +423,7 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppTheme.space12),
+                  SizedBox(height: AppTheme.space12),
 
                   // 选项行
                   Row(
@@ -431,31 +431,33 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                       Text(
                         '文件类型: ',
                         style: AppTheme.fontCaption.copyWith(
-                          color: AppTheme.textSecondary,
+                          color: context.textSecondary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(width: AppTheme.space6),
+                      SizedBox(width: AppTheme.space6),
                       ..._fileTypes.map((type) {
                         final isSel = _selectedFileType == type;
                         return Padding(
-                          padding: const EdgeInsets.only(right: 6),
+                          padding: EdgeInsets.only(right: 6),
                           child: InkWell(
                             onTap: _isProcessing ? null : () => setState(() => _selectedFileType = type),
                             borderRadius: BorderRadius.circular(4),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(
-                                color: isSel ? AppTheme.accentSubtle : AppTheme.bgInput,
+                                color: isSel ? context.accentSubtle : context.bgInput,
                                 borderRadius: BorderRadius.circular(4),
                                 border: Border.all(
-                                  color: isSel ? AppTheme.accent : AppTheme.borderSubtle,
+                                  color: isSel ? context.accentText : context.borderSubtle,
                                 ),
                               ),
                               child: Text(
                                 type.toUpperCase(),
                                 style: AppTheme.fontCaption.copyWith(
-                                  color: isSel ? Colors.white : AppTheme.textSecondary,
+                                  color: isSel
+                                      ? (context.isDarkMode ? Colors.white : context.accentText)
+                                      : context.textSecondary,
                                   fontWeight: isSel ? FontWeight.w600 : FontWeight.normal,
                                 ),
                               ),
@@ -463,7 +465,7 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                           ),
                         );
                       }),
-                      const SizedBox(width: AppTheme.space16),
+                      SizedBox(width: AppTheme.space16),
                       InkWell(
                         onTap: _isProcessing
                             ? null
@@ -474,10 +476,10 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                             Icon(
                               _filterDuplicates ? Icons.check_box : Icons.check_box_outline_blank,
                               size: 15,
-                              color: _filterDuplicates ? AppTheme.accent : AppTheme.textTertiary,
+                              color: _filterDuplicates ? context.accentText : context.textTertiary,
                             ),
-                            const SizedBox(width: 6),
-                            Text('过滤相同记录', style: AppTheme.fontCaption.copyWith(color: AppTheme.textPrimary)),
+                            SizedBox(width: 6),
+                            Text('过滤相同记录', style: AppTheme.fontCaption.copyWith(color: context.textPrimary)),
                           ],
                         ),
                       ),
@@ -501,7 +503,7 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                 ],
               ),
             ),
-            const SizedBox(height: AppTheme.space12),
+            SizedBox(height: AppTheme.space12),
 
             // 结果与日志分栏
             Expanded(
@@ -512,9 +514,9 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                     flex: 3,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: AppTheme.bgCard,
+                        color: context.bgCard,
                         borderRadius: AppTheme.borderRadiusMedium,
-                        border: Border.all(color: AppTheme.borderSubtle),
+                        border: Border.all(color: context.borderSubtle),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -535,24 +537,24 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                               ],
                             ),
                           ),
-                          const Divider(height: 1, color: AppTheme.borderSubtle),
+                          Divider(height: 1, color: context.borderSubtle),
                           Expanded(
                             child: _comparisonResults.isEmpty
                                 ? Center(
                                     child: Text(
                                       '暂无对比差异结果',
-                                      style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                                      style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                                     ),
                                   )
                                 : ListView.separated(
-                                    padding: const EdgeInsets.all(AppTheme.space8),
+                                    padding: EdgeInsets.all(AppTheme.space8),
                                     itemCount: _comparisonResults.length,
                                     separatorBuilder: (_, __) =>
-                                        const Divider(height: 1, color: AppTheme.borderSubtle),
+                                        Divider(height: 1, color: context.borderSubtle),
                                     itemBuilder: (context, index) {
                                       final item = _comparisonResults[index];
                                       return Padding(
-                                        padding: const EdgeInsets.symmetric(
+                                        padding: EdgeInsets.symmetric(
                                           horizontal: AppTheme.space8,
                                           vertical: AppTheme.space6,
                                         ),
@@ -565,8 +567,8 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                                                   item.fileName,
                                                   style: AppTheme.fontBody.copyWith(fontWeight: FontWeight.w600),
                                                 ),
-                                                const SizedBox(width: AppTheme.space8),
-                                                AppBadge(label: item.key, color: AppTheme.bgInput),
+                                                SizedBox(width: AppTheme.space8),
+                                                AppBadge(label: item.key, color: context.bgInput),
                                               ],
                                             ),
                                             const SizedBox(height: AppTheme.space4),
@@ -581,22 +583,22 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: AppTheme.space12),
+                  SizedBox(width: AppTheme.space12),
 
                   // 右栏：执行日志
                   Expanded(
                     flex: 2,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: AppTheme.bgInput,
+                        color: context.bgInput,
                         borderRadius: AppTheme.borderRadiusMedium,
-                        border: Border.all(color: AppTheme.borderSubtle),
+                        border: Border.all(color: context.borderSubtle),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Padding(
-                            padding: const EdgeInsets.fromLTRB(
+                            padding: EdgeInsets.fromLTRB(
                               AppTheme.space12,
                               AppTheme.space10,
                               AppTheme.space12,
@@ -604,28 +606,28 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-                                const SizedBox(width: AppTheme.space6),
+                                Icon(Icons.terminal, size: 14, color: context.textTertiary),
+                                SizedBox(width: AppTheme.space6),
                                 Text(
                                   '执行日志',
                                   style: AppTheme.fontCaption.copyWith(
-                                    color: AppTheme.textTertiary,
+                                    color: context.textTertiary,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                                const Spacer(),
+                                Spacer(),
                                 if (_logMessages.isNotEmpty)
                                   GestureDetector(
                                     onTap: () => setState(() => _logMessages.clear()),
                                     child: Text(
                                       '清空',
-                                      style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                                      style: AppTheme.fontCaption.copyWith(color: context.accentText),
                                     ),
                                   ),
                               ],
                             ),
                           ),
-                          const Divider(height: 1, color: AppTheme.borderSubtle),
+                          Divider(height: 1, color: context.borderSubtle),
                           Expanded(
                             child: ListView.builder(
                               controller: _logScrollController,
@@ -666,23 +668,23 @@ class _FolderCompareHomePageState extends State<FolderCompareHomePage> {
       if (v1 != v2) {
         widgets.add(
           Padding(
-            padding: const EdgeInsets.only(top: 2),
+            padding: EdgeInsets.only(top: 2),
             child: Row(
               children: [
                 Text(
                   '${_getDisplayName(expr)}: ',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                 ),
                 Text(
                   v1,
-                  style: AppTheme.fontMono.copyWith(color: AppTheme.error, fontSize: 11),
+                  style: AppTheme.fontMono.copyWith(color: context.errorText, fontSize: 11),
                 ),
-                const SizedBox(width: 6),
-                const Icon(Icons.arrow_forward, size: 10, color: AppTheme.textTertiary),
+                SizedBox(width: 6),
+                Icon(Icons.arrow_forward, size: 10, color: context.textTertiary),
                 const SizedBox(width: 6),
                 Text(
                   v2,
-                  style: AppTheme.fontMono.copyWith(color: AppTheme.success, fontSize: 11),
+                  style: AppTheme.fontMono.copyWith(color: context.successText, fontSize: 11),
                 ),
               ],
             ),

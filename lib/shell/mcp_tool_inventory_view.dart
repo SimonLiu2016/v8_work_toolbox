@@ -36,29 +36,29 @@ class McpToolInventoryView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: AppTheme.space24),
+        SizedBox(height: AppTheme.space24),
         Text('已加载的 MCP 工具', style: AppTheme.fontTitle),
-        const SizedBox(height: AppTheme.space8),
+        SizedBox(height: AppTheme.space8),
         Text(
           '工具来自客户端的连接探测结果，不会在打开本页时自动拉起进程。',
-          style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+          style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
         ),
-        const SizedBox(height: AppTheme.space16),
+        SizedBox(height: AppTheme.space16),
         if (probed.isEmpty)
           AppCard(
             child: Padding(
-              padding: const EdgeInsets.all(AppTheme.space24),
+              padding: EdgeInsets.all(AppTheme.space24),
               child: Row(
                 children: [
-                  const Icon(Icons.bolt_outlined,
-                      size: 20, color: AppTheme.textTertiary),
-                  const SizedBox(width: AppTheme.space12),
+                  Icon(Icons.bolt_outlined,
+                      size: 20, color: context.textTertiary),
+                  SizedBox(width: AppTheme.space12),
                   Expanded(
                     child: Text(
                       '尚未探测任何客户端。点击上方客户端的「测试连接与探测工具」后，'
                       '其工具将显示在这里。',
                       style: AppTheme.fontCaption.copyWith(
-                          color: AppTheme.textSecondary),
+                          color: context.textSecondary),
                     ),
                   ),
                 ],
@@ -87,10 +87,10 @@ class _ClientToolGroup extends StatelessWidget {
     final enabled = client.enabled;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppTheme.space12),
+      padding: EdgeInsets.only(bottom: AppTheme.space12),
       child: AppCard(
         child: Padding(
-          padding: const EdgeInsets.all(AppTheme.space16),
+          padding: EdgeInsets.all(AppTheme.space16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -100,37 +100,37 @@ class _ClientToolGroup extends StatelessWidget {
                     Icons.cable_outlined,
                     size: 16,
                     color:
-                        enabled ? AppTheme.accentLight : AppTheme.textTertiary,
+                        enabled ? context.accentSolid : context.textTertiary,
                   ),
-                  const SizedBox(width: AppTheme.space8),
+                  SizedBox(width: AppTheme.space8),
                   Text(client.name, style: AppTheme.fontTitle),
-                  const SizedBox(width: AppTheme.space8),
+                  SizedBox(width: AppTheme.space8),
                   AppBadge(label: '${tools.length} 个工具'),
                 ],
               ),
-              const SizedBox(height: AppTheme.space12),
+              SizedBox(height: AppTheme.space12),
               if (!enabled)
                 Text(
                   '该客户端已停用，工具未加载。启用后重新探测即可在此查看。',
                   style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textTertiary),
+                      color: context.textTertiary),
                 )
               else if (tools.isEmpty)
                 Text(
                   '探测完成，但该客户端未发现工具。',
                   style: AppTheme.fontCaption.copyWith(
-                      color: AppTheme.textTertiary),
+                      color: context.textTertiary),
                 )
               else
                 // 工具数可达数十条，独立滚动容器避免撑高整个页签。
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 260),
+                  constraints: BoxConstraints(maxHeight: 260),
                   child: ListView.separated(
                     shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
+                    physics: NeverScrollableScrollPhysics(),
                     itemCount: tools.length,
                     separatorBuilder: (_, __) =>
-                        const Divider(height: 1, color: AppTheme.borderSubtle),
+                        Divider(height: 1, color: context.borderSubtle),
                     itemBuilder: (ctx, idx) {
                       final t = tools[idx];
                       return Padding(
@@ -139,8 +139,8 @@ class _ClientToolGroup extends StatelessWidget {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.bolt,
-                                size: 14, color: AppTheme.accentLight),
+                            Icon(Icons.bolt,
+                                size: 14, color: context.accentText),
                             const SizedBox(width: AppTheme.space8),
                             Expanded(
                               child: Column(
@@ -148,19 +148,19 @@ class _ClientToolGroup extends StatelessWidget {
                                 children: [
                                   Text(
                                     t.name,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 13,
                                     ),
                                   ),
                                   if (t.description.isNotEmpty) ...[
-                                    const SizedBox(height: 2),
+                                    SizedBox(height: 2),
                                     Text(
                                       t.description,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: AppTheme.fontCaption.copyWith(
-                                        color: AppTheme.textSecondary,
+                                        color: context.textSecondary,
                                       ),
                                     ),
                                   ],

@@ -80,7 +80,7 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('删除报告确认', style: AppTheme.fontTitle),
         content: Text(
           '确定要删除报告「${report.title}」吗？此操作无法撤销。',
@@ -92,7 +92,7 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            style: ElevatedButton.styleFrom(backgroundColor: context.errorSolid),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('删除'),
           ),
@@ -186,7 +186,7 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
       if (mounted) {
         setState(() => _aiLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('AI 研判失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('AI 研判失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -210,7 +210,7 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
       if (mounted) {
         setState(() => _aiLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('AI 提炼摘要失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('AI 提炼摘要失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -274,30 +274,30 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _reports.isEmpty
-                        ? const Center(child: Text('暂无历史报告', style: AppTheme.fontBodySecondary))
+                        ? Center(child: Text('暂无历史报告', style: AppTheme.fontBodySecondary))
                         : ListView.separated(
                             itemCount: _reports.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+                            separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
                             itemBuilder: (context, idx) {
                               final r = _reports[idx];
                               final isSelected = _currentReport?.id == r.id;
                               return ListTile(
                                 selected: isSelected,
-                                selectedTileColor: AppTheme.bgSelected,
-                                leading: const Icon(Icons.article_outlined, size: 20, color: AppTheme.accent),
+                                selectedTileColor: context.bgSelected,
+                                leading: Icon(Icons.article_outlined, size: 20, color: context.accentText),
                                 title: Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTheme.fontBody),
                                 subtitle: Text(r.date, style: AppTheme.fontCaption),
                                 trailing: IconButton(
-                                  icon: const Icon(Icons.delete_outline, size: 18, color: AppTheme.error),
+                                  icon: Icon(Icons.delete_outline, size: 18, color: context.errorText),
                                   tooltip: '删除报告',
                                   onPressed: () => _deleteReport(r),
                                 ),
@@ -341,44 +341,44 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
                                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                                 : const Icon(Icons.psychology_alt_rounded, size: 18),
                             label: const Text('AI 异常研判'),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.info),
+                            style: ElevatedButton.styleFrom(backgroundColor: context.infoSolid),
                             onPressed: _aiLoading ? null : _runAiAnomalyAnalysis,
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton.icon(
                             icon: const Icon(Icons.summarize_rounded, size: 18),
                             label: const Text('AI 提炼摘要'),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+                            style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
                             onPressed: _aiLoading ? null : _runAiSummary,
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton.icon(
                             icon: const Icon(Icons.save_rounded, size: 18),
                             label: const Text('保存报告'),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                            style: ElevatedButton.styleFrom(backgroundColor: context.successSolid),
                             onPressed: _saveCurrentReport,
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton.icon(
                             icon: const Icon(Icons.send_rounded, size: 18),
                             label: const Text('发邮件'),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warning),
+                            style: ElevatedButton.styleFrom(backgroundColor: context.warningSolid),
                             onPressed: _sendCurrentToEmail,
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      SizedBox(height: 12),
                       Expanded(
                         child: Row(
                           children: [
                             // 左侧：Markdown 编辑器
                             Expanded(
                               child: Container(
-                                padding: const EdgeInsets.all(AppTheme.space16),
+                                padding: EdgeInsets.all(AppTheme.space16),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.bgCard,
+                                  color: context.bgCard,
                                   borderRadius: AppTheme.borderRadiusMedium,
-                                  border: Border.all(color: AppTheme.borderSubtle),
+                                  border: Border.all(color: context.borderSubtle),
                                 ),
                                 child: TextField(
                                   controller: _contentCtrl,
@@ -393,16 +393,16 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: AppTheme.space16),
+                            SizedBox(width: AppTheme.space16),
 
                             // 右侧：实时渲染预览
                             Expanded(
                               child: Container(
-                                padding: const EdgeInsets.all(AppTheme.space16),
+                                padding: EdgeInsets.all(AppTheme.space16),
                                 decoration: BoxDecoration(
-                                  color: AppTheme.bgCard,
+                                  color: context.bgCard,
                                   borderRadius: AppTheme.borderRadiusMedium,
-                                  border: Border.all(color: AppTheme.borderSubtle),
+                                  border: Border.all(color: context.borderSubtle),
                                 ),
                                 child: Markdown(
                                   data: _contentCtrl.text,
@@ -410,7 +410,7 @@ class _OpsReportEditorViewState extends State<OpsReportEditorView> {
                                     p: AppTheme.fontBody,
                                     h1: AppTheme.fontHeadline,
                                     h2: AppTheme.fontTitle,
-                                    h3: AppTheme.fontTitle.copyWith(color: AppTheme.accent),
+                                    h3: AppTheme.fontTitle.copyWith(color: context.accentText),
                                   ),
                                 ),
                               ),

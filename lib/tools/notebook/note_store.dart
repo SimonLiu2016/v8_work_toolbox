@@ -174,6 +174,14 @@ class NoteStore {
 
   Future<void> deleteNotebook(String id) => _db.deleteNotebook(id);
 
+  /// 设为笔记捕获默认目标（单事务清空其他并设置目标）
+  Future<void> setDefaultCaptureNotebook(String id) =>
+      _db.setDefaultCaptureNotebook(id);
+
+  /// 获取当前默认捕获笔记本
+  Future<Notebook?> defaultCaptureNotebook() =>
+      _db.defaultCaptureNotebook();
+
   /// 从本地印象笔记 SQLite 数据库自动为现有笔记本补全 stack 分组
   Future<void> autoBackfillNotebookStacksFromEvernote() async {
     try {

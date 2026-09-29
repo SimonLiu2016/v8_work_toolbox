@@ -48,10 +48,10 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
     final sttCandidates = AiConfigStore.instance.slotBindings['stt'] ?? [];
 
     return Dialog(
-      backgroundColor: AppTheme.bgCard,
+      backgroundColor: context.bgCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: AppTheme.borderSubtle),
+        side: BorderSide(color: context.borderSubtle),
       ),
       child: Container(
         width: 520,
@@ -67,23 +67,23 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
+                    color: context.accentText.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded, color: AppTheme.accent, size: 20),
+                  child: Icon(Icons.auto_awesome_rounded, color: context.accentText, size: 20),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'AI 语音识别转字幕',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.textPrimary),
                       ),
                       Text(
                         '当前视频: ${ctrl.currentTitle}',
-                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        style: TextStyle(fontSize: 12, color: context.textSecondary),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -91,50 +91,50 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 20, color: AppTheme.textSecondary),
+                  icon: Icon(Icons.close_rounded, size: 20, color: context.textSecondary),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
 
-            const SizedBox(height: AppTheme.space20),
+            SizedBox(height: AppTheme.space20),
 
             // AI STT 槽位状态提示
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: AppTheme.bgCard,
+                color: context.bgCard,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppTheme.borderSubtle),
+                border: Border.all(color: context.borderSubtle),
               ),
               child: Row(
                 children: [
                   Icon(
                     sttCandidates.isNotEmpty ? Icons.check_circle_outline_rounded : Icons.info_outline_rounded,
                     size: 16,
-                    color: sttCandidates.isNotEmpty ? AppTheme.success : Colors.amber,
+                    color: sttCandidates.isNotEmpty ? context.successText : Colors.amber,
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       sttCandidates.isNotEmpty
                           ? '已绑定 STT 槽位: ${sttCandidates.first.model} (${sttCandidates.first.providerId})'
                           : '未显式绑定 STT 槽位，将尝试匹配可用 OpenAI 语音接口',
-                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      style: TextStyle(fontSize: 12, color: context.textSecondary),
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: AppTheme.space16),
+            SizedBox(height: AppTheme.space16),
 
             // 生成模式单选
-            const Text(
+            Text(
               '选择字幕生成模式：',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.textPrimary),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
 
             RadioGroup<int>(
               groupValue: _selectedMode,
@@ -146,29 +146,29 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                 children: [
                   RadioListTile<int>(
                     value: 0,
-                    activeColor: AppTheme.accent,
+                    activeColor: context.accentSolid,
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('极速全量生成完整字幕 (推荐)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary)),
+                    title: Text('极速全量生成完整字幕 (推荐)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.textPrimary)),
                     subtitle: Text(
                       '优先直取原生/内嵌轨，无内置时最速提取整片轻量音频并发调用 AI 转录，整片时间轴无缝同步',
-                      style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                      style: TextStyle(fontSize: 11, color: context.textSecondary),
                     ),
                   ),
                   RadioListTile<int>(
                     value: 1,
-                    activeColor: AppTheme.accent,
+                    activeColor: context.accentSolid,
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('按当前播放点生成切片 (快速调试)', style: TextStyle(fontSize: 13, color: AppTheme.textPrimary)),
+                    title: Text('按当前播放点生成切片 (快速调试)', style: TextStyle(fontSize: 13, color: context.textPrimary)),
                     subtitle: Text(
                       '仅提取当前播放位置 (${_formatDuration(ctrl.position)}) 前后约 10 分钟音频快速生成局部字幕',
-                      style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                      style: TextStyle(fontSize: 11, color: context.textSecondary),
                     ),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 8),
+            SizedBox(height: 8),
 
             // 是否调用大模型翻译为中文字幕
             CheckboxListTile(
@@ -176,35 +176,35 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
               onChanged: _isGenerating
                   ? null
                   : (val) => setState(() => _autoTranslateZh = val ?? true),
-              title: const Text(
+              title: Text(
                 '生成后调用 AI 文本模型翻译为中文字幕 (推荐)',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: context.textPrimary),
               ),
-              subtitle: const Text(
+              subtitle: Text(
                 '调用全局配置的 text 槽位大模型，将字幕分批全量翻译为中英双语字幕',
-                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                style: TextStyle(fontSize: 11, color: context.textSecondary),
               ),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,
-              activeColor: AppTheme.accent,
+              activeColor: context.accentSolid,
             ),
 
             // 进度与状态反馈
             if (_isGenerating) ...[
-              const SizedBox(height: AppTheme.space16),
+              SizedBox(height: AppTheme.space16),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: _progressPct > 0 ? _progressPct : null,
-                  backgroundColor: AppTheme.bgCard,
-                  valueColor: const AlwaysStoppedAnimation(AppTheme.accent),
+                  backgroundColor: context.bgCard,
+                  valueColor: AlwaysStoppedAnimation(context.accentSolid),
                   minHeight: 6,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 _statusText,
-                style: const TextStyle(fontSize: 12, color: AppTheme.accent),
+                style: TextStyle(fontSize: 12, color: context.accentText),
               ),
             ],
 
@@ -212,11 +212,11 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
               const SizedBox(height: AppTheme.space12),
               Text(
                 _errorText,
-                style: const TextStyle(color: AppTheme.error, fontSize: 12),
+                style: TextStyle(color: context.errorText, fontSize: 12),
               ),
             ],
 
-            const SizedBox(height: AppTheme.space20),
+            SizedBox(height: AppTheme.space20),
 
             // 底部操作按钮
             Row(
@@ -224,8 +224,8 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                 if (hasSubtitles) ...[
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.textPrimary,
-                      side: const BorderSide(color: AppTheme.borderSubtle),
+                      foregroundColor: context.textPrimary,
+                      side: BorderSide(color: context.borderSubtle),
                     ),
                     icon: const Icon(Icons.file_download_outlined, size: 16),
                     label: const Text('导出 .SRT 字幕文件'),
@@ -234,13 +234,13 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
                   const SizedBox(width: 8),
                   Text(
                     '已加载 ${ctrl.subtitles.length} 条字幕',
-                    style: const TextStyle(color: AppTheme.success, fontSize: 12),
+                    style: TextStyle(color: context.successText, fontSize: 12),
                   ),
                 ],
                 const Spacer(),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.accent,
+                    backgroundColor: context.accentSolid,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   ),
@@ -380,7 +380,7 @@ class _AiSubtitlesDialogState extends State<AiSubtitlesDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('字幕已成功导出至: $savePath'),
-            backgroundColor: AppTheme.bgCard,
+            backgroundColor: context.bgCard,
           ),
         );
       }

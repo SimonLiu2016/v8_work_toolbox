@@ -83,7 +83,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
     final isActive = state.isEffectivelyActive;
 
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -134,24 +134,24 @@ class _UnattendedPageState extends State<UnattendedPage> {
             Container(
               padding: const EdgeInsets.all(AppTheme.space10),
               decoration: BoxDecoration(
-                color: isActive ? AppTheme.successSubtle : AppTheme.accentSubtle,
+                color: isActive ? context.successText.withValues(alpha: 0x1F / 255) : context.accentSubtle,
                 borderRadius: AppTheme.borderRadiusMedium,
               ),
               child: Icon(
                 isActive ? Icons.verified_user_rounded : Icons.shield_outlined,
-                color: isActive ? AppTheme.success : AppTheme.accent,
+                color: isActive ? context.successText : context.accentText,
                 size: 28,
               ),
             ),
-            const SizedBox(width: AppTheme.space16),
+            SizedBox(width: AppTheme.space16),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('无人值守助手', style: AppTheme.fontHeadline),
-                const SizedBox(height: AppTheme.space4),
+                Text('无人值守助手', style: AppTheme.fontHeadline),
+                SizedBox(height: AppTheme.space4),
                 Text(
                   '离开电脑时自动审批 AI 工具授权，内置机械安全硬地板杜绝破坏',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                 ),
               ],
             ),
@@ -176,12 +176,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
   /// 核心 Hero 状态大卡片
   Widget _buildHeroStatusCard(UnattendedState state, bool isActive) {
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space24),
+      padding: EdgeInsets.all(AppTheme.space24),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusLarge,
         border: Border.all(
-          color: isActive ? AppTheme.success.withAlpha(80) : AppTheme.borderSubtle,
+          color: isActive ? context.successText.withAlpha(80) : context.borderSubtle,
           width: 1.5,
         ),
       ),
@@ -198,14 +198,14 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     height: 12,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: isActive ? AppTheme.success : AppTheme.textTertiary,
+                      color: isActive ? context.successText : context.textTertiary,
                     ),
                   ),
-                  const SizedBox(width: AppTheme.space8),
+                  SizedBox(width: AppTheme.space8),
                   Text(
                     isActive ? '无人值守运行中 (自动放行安全操作)' : '常规人工确认模式 (自动审批已关闭)',
                     style: AppTheme.fontTitle.copyWith(
-                      color: isActive ? AppTheme.success : AppTheme.textSecondary,
+                      color: isActive ? context.successText : context.textSecondary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -213,7 +213,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
               ),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isActive ? AppTheme.error : AppTheme.success,
+                  backgroundColor: isActive ? context.errorSolid : context.successSolid,
                   padding: const EdgeInsets.symmetric(horizontal: AppTheme.space20, vertical: AppTheme.space12),
                   shape: RoundedRectangleBorder(borderRadius: AppTheme.borderRadiusMedium),
                 ),
@@ -244,20 +244,20 @@ class _UnattendedPageState extends State<UnattendedPage> {
                 children: [
                   Text(
                     isActive ? _formatDuration(state.remainingTime) : '--:--:--',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 40,
                       fontWeight: FontWeight.w700,
                       fontFamily: 'monospace',
-                      color: AppTheme.textPrimary,
+                      color: context.textPrimary,
                       letterSpacing: 2,
                     ),
                   ),
-                  const SizedBox(height: AppTheme.space4),
+                  SizedBox(height: AppTheme.space4),
                   Text(
                     isActive
                         ? '到期时间：${_formatTime(state.expiresAt!)} (超时自动关闭防遗忘)'
                         : '点击预设时长可立即开启或调节有效时限',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                   ),
                 ],
               ),
@@ -275,9 +275,9 @@ class _UnattendedPageState extends State<UnattendedPage> {
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space16),
-          const Divider(color: AppTheme.borderSubtle, height: 1),
-          const SizedBox(height: AppTheme.space12),
+          SizedBox(height: AppTheme.space16),
+          Divider(color: context.borderSubtle, height: 1),
+          SizedBox(height: AppTheme.space12),
           // 防休眠与屏幕常亮控制行
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -287,9 +287,9 @@ class _UnattendedPageState extends State<UnattendedPage> {
                   Icon(
                     _service.isCaffeinateActive ? Icons.coffee_rounded : Icons.coffee_outlined,
                     size: 18,
-                    color: _service.isCaffeinateActive ? AppTheme.accent : AppTheme.textTertiary,
+                    color: _service.isCaffeinateActive ? context.accentText : context.textTertiary,
                   ),
-                  const SizedBox(width: AppTheme.space8),
+                  SizedBox(width: AppTheme.space8),
                   Text(
                     isActive
                         ? (_service.isCaffeinateActive
@@ -297,7 +297,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                             : '防休眠保护待命中')
                         : '防休眠与防息屏策略',
                     style: AppTheme.fontCaption.copyWith(
-                      color: _service.isCaffeinateActive ? AppTheme.textPrimary : AppTheme.textSecondary,
+                      color: _service.isCaffeinateActive ? context.textPrimary : context.textSecondary,
                       fontWeight: _service.isCaffeinateActive ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
@@ -306,12 +306,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: AppTheme.accentSubtle,
+                        color: context.accentSubtle,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         state.keepDisplayAwake ? '系统+屏幕常亮' : '仅保系统不休眠',
-                        style: const TextStyle(fontSize: 10, color: AppTheme.accent, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 10, color: context.accentText, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
@@ -321,12 +321,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
                 children: [
                   Text(
                     '保持屏幕常亮 (防息屏)',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                    style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                   ),
                   const SizedBox(width: AppTheme.space8),
                   Switch(
                     value: state.keepDisplayAwake,
-                    activeThumbColor: AppTheme.accent,
+                    activeThumbColor: context.accentSolid,
                     onChanged: (val) {
                       _service.setKeepDisplayAwake(val);
                     },
@@ -349,11 +349,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
       onSelected: (_) {
         _service.enable(ttlMinutes: minutes);
       },
-      selectedColor: AppTheme.accent,
-      backgroundColor: AppTheme.bgInput,
+      selectedColor: context.accentSolid,
+      backgroundColor: context.bgInput,
       labelStyle: TextStyle(
         fontSize: 12,
-        color: isSelected ? Colors.white : AppTheme.textSecondary,
+        color: isSelected ? context.onAccentSolid : context.textSecondary,
         fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
       ),
     );
@@ -361,9 +361,9 @@ class _UnattendedPageState extends State<UnattendedPage> {
 
   Widget _buildCustomDurationButton(bool isActive) {
     return ActionChip(
-      avatar: const Icon(Icons.tune_rounded, size: 14, color: AppTheme.textSecondary),
-      label: const Text('自定义', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-      backgroundColor: AppTheme.bgInput,
+      avatar: Icon(Icons.tune_rounded, size: 14, color: context.textSecondary),
+      label: Text('自定义', style: TextStyle(fontSize: 12, color: context.textSecondary)),
+      backgroundColor: context.bgInput,
       onPressed: () => _showCustomDurationDialog(),
     );
   }
@@ -373,7 +373,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('自定义有效时长'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -416,11 +416,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
     final geminiOk = status?.geminiInstalled == true;
 
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -457,7 +457,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(ok ? '全局 Hook 已成功挂载！跨项目立即生效。' : 'Hook 挂载失败，请检查配置权限。'),
-                        backgroundColor: ok ? AppTheme.success : AppTheme.error,
+                        backgroundColor: ok ? context.successSolid : context.errorSolid,
                       ),
                     );
                   }
@@ -473,7 +473,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     );
                   }
                 },
-                child: const Text('卸载 Hook'),
+                child: Text('卸载 Hook'),
               ),
             ],
           ),
@@ -484,9 +484,9 @@ class _UnattendedPageState extends State<UnattendedPage> {
 
   Widget _buildClientStatusRow(String name, bool isReady, String path) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
+      padding: EdgeInsets.symmetric(horizontal: AppTheme.space12, vertical: AppTheme.space8),
       decoration: BoxDecoration(
-        color: AppTheme.bgInput,
+        color: context.bgInput,
         borderRadius: AppTheme.borderRadiusSmall,
       ),
       child: Row(
@@ -494,27 +494,27 @@ class _UnattendedPageState extends State<UnattendedPage> {
           Icon(
             isReady ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
             size: 16,
-            color: isReady ? AppTheme.success : AppTheme.warning,
+            color: isReady ? context.successText : context.warningText,
           ),
-          const SizedBox(width: AppTheme.space8),
+          SizedBox(width: AppTheme.space8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary)),
-                Text(path, style: const TextStyle(fontSize: 11, color: AppTheme.textTertiary, fontFamily: 'monospace')),
+                Text(name, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.textPrimary)),
+                Text(path, style: TextStyle(fontSize: 11, color: context.textTertiary, fontFamily: 'monospace')),
               ],
             ),
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: isReady ? AppTheme.successSubtle : AppTheme.warningSubtle,
+              color: isReady ? context.successText.withValues(alpha: 0x1F / 255) : context.warningText.withValues(alpha: 0x1F / 255),
               borderRadius: AppTheme.borderRadiusSmall,
             ),
             child: Text(
               isReady ? '已挂载' : '未挂载',
-              style: TextStyle(fontSize: 11, color: isReady ? AppTheme.success : AppTheme.warning, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 11, color: isReady ? context.successText : context.warningText, fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -525,11 +525,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
   /// 安全机械硬地板卡片
   Widget _buildSafetyFloorCard(UnattendedState state) {
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -537,18 +537,18 @@ class _UnattendedPageState extends State<UnattendedPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('机械安全硬地板 (绝对拦截)', style: AppTheme.fontTitle),
+              Text('机械安全硬地板 (绝对拦截)', style: AppTheme.fontTitle),
               TextButton.icon(
-                icon: const Icon(Icons.rule_rounded, size: 16),
-                label: const Text('规则管理'),
+                icon: Icon(Icons.rule_rounded, size: 16),
+                label: Text('规则管理'),
                 onPressed: () => _showDenylistRulesDialog(state),
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space8),
+          SizedBox(height: AppTheme.space8),
           Text(
             '无论是否处于无人值守，命中以下模式一律阻断并触发系统告警：',
-            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
           ),
           const SizedBox(height: AppTheme.space12),
           Wrap(
@@ -573,7 +573,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('安全黑名单正则表达式规则'),
         content: SizedBox(
           width: 540,
@@ -606,7 +606,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
               Navigator.of(ctx).pop();
               _service.updateDenylist(rules);
             },
-            child: const Text('保存修改'),
+            child: Text('保存修改'),
           ),
         ],
       ),
@@ -618,11 +618,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
     final allowlist = state.allowlist;
 
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -637,35 +637,35 @@ class _UnattendedPageState extends State<UnattendedPage> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.successSubtle,
+                      color: context.successText.withValues(alpha: 0x1F / 255),
                       borderRadius: AppTheme.borderRadiusSmall,
                     ),
                     child: Text(
                       '${allowlist.length} 条规则',
-                      style: const TextStyle(fontSize: 11, color: AppTheme.success, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 11, color: context.successText, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
               ),
               TextButton.icon(
-                icon: const Icon(Icons.tune_rounded, size: 16),
-                label: const Text('规则管理'),
+                icon: Icon(Icons.tune_rounded, size: 16),
+                label: Text('规则管理'),
                 onPressed: () => _showAllowlistRulesDialog(state),
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space8),
+          SizedBox(height: AppTheme.space8),
           Text(
             '处于无人值守状态时，命中白名单的命令将拥有最高优先级，绕过黑名单直接自动审批通过：',
-            style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+            style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
           ),
-          const SizedBox(height: AppTheme.space12),
+          SizedBox(height: AppTheme.space12),
           if (allowlist.isEmpty)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
-              child: const Text(
+              padding: EdgeInsets.symmetric(vertical: AppTheme.space8),
+              child: Text(
                 '暂未添加任何白名单规则。在下方实时流水中，可针对已拦截记录一键点击「加入白名单」。',
-                style: TextStyle(fontSize: 12, color: AppTheme.textTertiary),
+                style: TextStyle(fontSize: 12, color: context.textTertiary),
               ),
             )
           else
@@ -676,12 +676,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
                 return Chip(
                   label: Text(
                     rule,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                    style: TextStyle(fontFamily: 'monospace', fontSize: 11),
                   ),
-                  backgroundColor: AppTheme.bgInput,
+                  backgroundColor: context.bgInput,
                   shape: RoundedRectangleBorder(
                     borderRadius: AppTheme.borderRadiusSmall,
-                    side: const BorderSide(color: AppTheme.borderSubtle),
+                    side: BorderSide(color: context.borderSubtle),
                   ),
                   deleteIcon: const Icon(Icons.close_rounded, size: 14),
                   onDeleted: () async {
@@ -702,7 +702,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('白名单命令/正则规则管理'),
         content: SizedBox(
           width: 540,
@@ -733,7 +733,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     Navigator.of(ctx).pop();
                     _service.clearAllowlist();
                   },
-            child: const Text('清空白名单', style: TextStyle(color: AppTheme.error)),
+            child: Text('清空白名单', style: TextStyle(color: context.errorText)),
           ),
           TextButton.icon(
             onPressed: consolidating
@@ -838,7 +838,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
     return showDialog<bool>(
       context: parentCtx,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('AI 整理预览'),
         content: SizedBox(
           width: 620,
@@ -847,42 +847,42 @@ class _UnattendedPageState extends State<UnattendedPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('以下规则簇将被合并为宽规则。未列出的规则保持不变：', style: AppTheme.fontCaption),
-                const SizedBox(height: AppTheme.space12),
+                Text('以下规则簇将被合并为宽规则。未列出的规则保持不变：', style: AppTheme.fontCaption),
+                SizedBox(height: AppTheme.space12),
                 ...plan.groups.map((g) {
                   final oldRules = g.covers.map((i) => plan.tidiedRules[i]).toList();
                   return Container(
-                    margin: const EdgeInsets.only(bottom: AppTheme.space12),
-                    padding: const EdgeInsets.all(AppTheme.space12),
+                    margin: EdgeInsets.only(bottom: AppTheme.space12),
+                    padding: EdgeInsets.all(AppTheme.space12),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgInput,
+                      color: context.bgInput,
                       borderRadius: AppTheme.borderRadiusSmall,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (g.summary.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
+                            padding: EdgeInsets.only(bottom: 6),
                             child: Text('📦 ${g.summary}',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                           ),
                         ...oldRules.map((r) => Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
+                              padding: EdgeInsets.only(bottom: 4),
                               child: Text('－ $r',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontFamily: 'monospace',
                                       fontSize: 10,
-                                      color: AppTheme.textTertiary,
+                                      color: context.textTertiary,
                                       decoration: TextDecoration.lineThrough)),
                             )),
                         const SizedBox(height: 2),
                         Text('＋ ${g.mergedRule}',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontFamily: 'monospace',
                                 fontSize: 11,
-                                color: AppTheme.accent,
+                                color: context.accentText,
                                 fontWeight: FontWeight.bold)),
                       ],
                     ),
@@ -893,7 +893,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
                       '⚠️ ${plan.rejected.length} 组合并未通过安全校验（回验或黑名单交叉），已保留原规则',
-                      style: const TextStyle(fontSize: 11, color: AppTheme.error),
+                      style: TextStyle(fontSize: 11, color: context.errorText),
                     ),
                   ),
               ],
@@ -933,11 +933,11 @@ class _UnattendedPageState extends State<UnattendedPage> {
     }).toList();
 
     return Container(
-      padding: const EdgeInsets.all(AppTheme.space16),
+      padding: EdgeInsets.all(AppTheme.space16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard,
+        color: context.bgCard,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -951,15 +951,15 @@ class _UnattendedPageState extends State<UnattendedPage> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('实时审批审计流水 (Audit Stream)', style: AppTheme.fontTitle),
-                  const SizedBox(width: AppTheme.space12),
+                  Text('实时审批审计流水 (Audit Stream)', style: AppTheme.fontTitle),
+                  SizedBox(width: AppTheme.space12),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.bgInput,
+                      color: context.bgInput,
                       borderRadius: AppTheme.borderRadiusSmall,
                     ),
-                    child: Text('${filtered.length} 条记录', style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                    child: Text('${filtered.length} 条记录', style: TextStyle(fontSize: 11, color: context.textSecondary)),
                   ),
                 ],
               ),
@@ -994,22 +994,22 @@ class _UnattendedPageState extends State<UnattendedPage> {
               ),
             ],
           ),
-          const SizedBox(height: AppTheme.space12),
+          SizedBox(height: AppTheme.space12),
           if (_isLoadingLogs)
-            const Padding(padding: EdgeInsets.all(AppTheme.space32), child: Center(child: CircularProgressIndicator()))
+            Padding(padding: EdgeInsets.all(AppTheme.space32), child: Center(child: CircularProgressIndicator()))
           else if (filtered.isEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(AppTheme.space32),
+              padding: EdgeInsets.all(AppTheme.space32),
               alignment: Alignment.center,
-              child: const Text('暂无审批记录，AI 发起工具调用时将自动在此流水呈现。', style: TextStyle(color: AppTheme.textTertiary)),
+              child: Text('暂无审批记录，AI 发起工具调用时将自动在此流水呈现。', style: TextStyle(color: context.textTertiary)),
             )
           else
             ListView.separated(
               shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
+              physics: NeverScrollableScrollPhysics(),
               itemCount: filtered.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.borderSubtle),
+              separatorBuilder: (_, __) => Divider(height: 1, color: context.borderSubtle),
               itemBuilder: (ctx, idx) {
                 final item = filtered[idx];
                 return _buildAuditItemRow(item);
@@ -1022,12 +1022,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
 
   Widget _buildAuditItemRow(AuditRecord item) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
+      padding: EdgeInsets.symmetric(vertical: AppTheme.space8),
       child: Row(
         children: [
           Text(
             _formatTime(item.timestamp),
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.textTertiary),
+            style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: context.textTertiary),
           ),
           const SizedBox(width: AppTheme.space12),
           Builder(
@@ -1060,20 +1060,20 @@ class _UnattendedPageState extends State<UnattendedPage> {
               );
             },
           ),
-          const SizedBox(width: AppTheme.space12),
+          SizedBox(width: AppTheme.space12),
           Expanded(
             child: Text(
               item.command,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.textPrimary),
+              style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: context.textPrimary),
             ),
           ),
           const SizedBox(width: AppTheme.space12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: item.isAllowed ? AppTheme.successSubtle : AppTheme.errorSubtle,
+              color: item.isAllowed ? context.successText.withValues(alpha: 0x1F / 255) : context.errorText.withValues(alpha: 0x1F / 255),
               borderRadius: AppTheme.borderRadiusSmall,
             ),
             child: Row(
@@ -1082,7 +1082,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
                 Icon(
                   item.isAllowed ? Icons.check_circle_outline : Icons.block_rounded,
                   size: 13,
-                  color: item.isAllowed ? AppTheme.success : AppTheme.error,
+                  color: item.isAllowed ? context.successText : context.errorText,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -1090,14 +1090,14 @@ class _UnattendedPageState extends State<UnattendedPage> {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
-                    color: item.isAllowed ? AppTheme.success : AppTheme.error,
+                    color: item.isAllowed ? context.successText : context.errorText,
                   ),
                 ),
               ],
             ),
           ),
           if (item.isDenied) ...[
-            const SizedBox(width: AppTheme.space8),
+            SizedBox(width: AppTheme.space8),
             _buildAllowlistAction(item.command),
           ],
         ],
@@ -1109,20 +1109,20 @@ class _UnattendedPageState extends State<UnattendedPage> {
     final isAlreadyWhitelisted = _service.isCommandInAllowlist(command);
     if (isAlreadyWhitelisted) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: AppTheme.bgInput,
+          color: context.bgInput,
           borderRadius: AppTheme.borderRadiusSmall,
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(color: context.borderSubtle),
         ),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_rounded, size: 12, color: AppTheme.textTertiary),
+            Icon(Icons.check_rounded, size: 12, color: context.textTertiary),
             SizedBox(width: 4),
             Text(
               '已在白名单',
-              style: TextStyle(fontSize: 11, color: AppTheme.textTertiary),
+              style: TextStyle(fontSize: 11, color: context.textTertiary),
             ),
           ],
         ),
@@ -1135,12 +1135,12 @@ class _UnattendedPageState extends State<UnattendedPage> {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: VisualDensity.compact,
-        side: BorderSide(color: AppTheme.accent.withAlpha(120)),
+        side: BorderSide(color: context.accentSolid.withAlpha(120)),
       ),
-      icon: const Icon(Icons.playlist_add_check_rounded, size: 14, color: AppTheme.accent),
-      label: const Text(
+      icon: Icon(Icons.playlist_add_check_rounded, size: 14, color: context.accentText),
+      label: Text(
         '加入白名单',
-        style: TextStyle(fontSize: 11, color: AppTheme.accent, fontWeight: FontWeight.bold),
+        style: TextStyle(fontSize: 11, color: context.accentText, fontWeight: FontWeight.bold),
       ),
       onPressed: () => _addToAllowlistSmart(command),
     );
@@ -1210,7 +1210,7 @@ class _UnattendedPageState extends State<UnattendedPage> {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('发现相似白名单规则'),
         content: SizedBox(
           width: 620,
@@ -1221,48 +1221,48 @@ class _UnattendedPageState extends State<UnattendedPage> {
               children: [
                 if (suggestion.summary.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
+                    padding: EdgeInsets.only(bottom: 8),
                     child: Text('📦 ${suggestion.summary}',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                   ),
-                const Text('AI 建议将以下规则合并为一条宽规则：', style: AppTheme.fontCaption),
-                const SizedBox(height: AppTheme.space8),
+                Text('AI 建议将以下规则合并为一条宽规则：', style: AppTheme.fontCaption),
+                SizedBox(height: AppTheme.space8),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(AppTheme.space12),
+                  padding: EdgeInsets.all(AppTheme.space12),
                   decoration: BoxDecoration(
-                    color: AppTheme.bgInput,
+                    color: context.bgInput,
                     borderRadius: AppTheme.borderRadiusSmall,
-                    border: Border.all(color: AppTheme.borderSubtle),
+                    border: Border.all(color: context.borderSubtle),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ...suggestion.coveredRules.map((r) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
+                            padding: EdgeInsets.only(bottom: 4),
                             child: Text(
                               r == newExactRule ? '－ $r（本次新增）' : '－ $r',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontFamily: 'monospace',
                                   fontSize: 10,
-                                  color: AppTheme.textTertiary,
+                                  color: context.textTertiary,
                                   decoration: TextDecoration.lineThrough),
                             ),
                           )),
-                      const SizedBox(height: 2),
+                      SizedBox(height: 2),
                       Text('＋ ${suggestion.mergedRule}',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontFamily: 'monospace',
                               fontSize: 11,
-                              color: AppTheme.accent,
+                              color: context.accentText,
                               fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
-                const SizedBox(height: AppTheme.space8),
+                SizedBox(height: AppTheme.space8),
                 Text(
                   '宽规则已校验通过（覆盖原有命令、不触及安全黑名单）。合并后同类命令将自动放行。',
-                  style: AppTheme.fontCaption.copyWith(color: AppTheme.textTertiary),
+                  style: AppTheme.fontCaption.copyWith(color: context.textTertiary),
                 ),
               ],
             ),
@@ -1290,18 +1290,18 @@ class _SafetyBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: AppTheme.bgInput,
+        color: context.bgInput,
         borderRadius: AppTheme.borderRadiusSmall,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.lock_outline_rounded, size: 12, color: AppTheme.warning),
-          const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+          Icon(Icons.lock_outline_rounded, size: 12, color: context.warningText),
+          SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 11, color: context.textSecondary)),
         ],
       ),
     );

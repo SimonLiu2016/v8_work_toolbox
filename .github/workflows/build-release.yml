@@ -7,6 +7,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  theme-token-guard:
+    name: Static Theme Token Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 关闭 theme-token-guard：widget 代码不得直接引用 AppTheme 的静态深色 token，
+      # 必须走 BuildContext 扩展（见 tool/check_no_static_theme_tokens.sh 注释）。
+      # 存量已由 clean-up-tool-page-static-theme-tokens 清零，此处为阻断式。
+      - name: Check for static theme token references
+        run: |
+          chmod +x tool/check_no_static_theme_tokens.sh
+          tool/check_no_static_theme_tokens.sh
+
   build-windows:
     name: Build Windows Package
     runs-on: windows-latest

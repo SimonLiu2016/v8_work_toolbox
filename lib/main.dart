@@ -1,3 +1,6 @@
+import 'dart:async' show runZonedGuarded;
+import 'dart:ui' show PlatformDispatcher;
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,8 +11,11 @@ import 'package:window_manager/window_manager.dart';
 
 import 'services/ai_config_store.dart';
 import 'services/app_paths.dart';
+import 'services/context_services_bridge.dart';
 import 'services/launcher_service.dart';
+import 'services/note_capture_service.dart';
 import 'services/privacy_security_service.dart';
+import 'tools/lookup_panel/ui/lookup_window.dart';
 import 'services/proxy_settings.dart';
 import 'services/scheduled_news_service.dart';
 import 'services/settings_store.dart';
@@ -53,6 +59,9 @@ enum WindowKind {
 
   /// 磐石运维工具独立窗口：DevOps、数据源与报告调度，复用 AI 配置。
   opsTool,
+
+  /// 查词独立浮窗：轻量词典查询、发音与 AI 深度解析
+  lookupPanel,
 }
 
 /// 按窗口类型声明的必需服务。
@@ -106,6 +115,9 @@ class WindowServices {
     ],
     WindowKind.passwordVault: [
       ..._appPaths,
+      // 该窗口渲染 themed MaterialApp，必须能读到持久化的 themeMode；
+      // 缺了它 themeModeNotifier 会停在 ThemeMode.system，暗色偏好静默失效。
+      ..._settingsStore,
     ],
     WindowKind.singleNote: [
       ..._appPaths,
@@ -119,6 +131,13 @@ class WindowServices {
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
+    ],
+    WindowKind.lookupPanel: [
+      ..._appPaths,
+      ..._settingsStore,
+      ..._proxy,
+      ..._aiConfig,
+      ..._noteStore,
     ],
   };
 
@@ -161,6 +180,38 @@ class ServiceInit {
   String toString() => name;
 }
 
+/// 带全局错误兜底的 runApp。
+///
+/// 历史上六个窗口入口都是裸 `runApp(...)`：任何从 `onPressed` 之类回调里逃逸的
+/// async 异常会被静默吞掉——用户侧表现是"点了按钮没反应、也没有任何日志"
+/// （笔记本「导入文档」缺 entitlement 时就正是如此）。
+///
+/// 三层兜底：
+///   1. `runZonedGuarded` 接住未捕获的 async 异常；
+///   2. `FlutterError.onError` 接住 framework 层的 build/layout 错误；
+///   3. `PlatformDispatcher.instance.onError` 接住平台层未捕获错误。
+/// release 下都要落到 stderr，开发期另走 debugPrint。
+void runAppWithErrorHandling(Widget app) {
+  runZonedGuarded(() {
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('[未捕获 FlutterError] ${details.exceptionAsString()}');
+      if (details.stack != null) {
+        debugPrint(details.stack.toString());
+      }
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      debugPrint('[未捕获平台错误] $error');
+      debugPrint(stack.toString());
+      return true;
+    };
+    runApp(app);
+  }, (error, stack) {
+    debugPrint('[未捕获异常] $error');
+    debugPrint(stack.toString());
+  });
+}
+
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -180,19 +231,19 @@ Future<void> main(List<String> args) async {
   if (isSubWindow && subWindowArgument == 'password-vault') {
     // 密码工具子窗口：VaultStore 自管加载与 DEK，不消费 AI。
     await WindowServices.initFor(WindowKind.passwordVault);
-    runApp(const _PasswordVaultWindowApp());
+    runAppWithErrorHandling(const _PasswordVaultWindowApp());
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'notebook') {
     await WindowServices.initFor(WindowKind.notebook);
-    runApp(const _NotebookWindowApp());
+    runAppWithErrorHandling(const _NotebookWindowApp());
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'ops-tool') {
     await WindowServices.initFor(WindowKind.opsTool);
-    runApp(const _OpsToolWindowApp());
+    runAppWithErrorHandling(const _OpsToolWindowApp());
     return;
   }
 
@@ -200,7 +251,14 @@ Future<void> main(List<String> args) async {
     // Sub-window mode for a single note.
     final noteId = subWindowArgument.substring('note:'.length);
     await WindowServices.initFor(WindowKind.singleNote);
-    runApp(_SingleNoteWindowApp(noteId: noteId));
+    runAppWithErrorHandling(_SingleNoteWindowApp(noteId: noteId));
+    return;
+  }
+
+  if (isSubWindow && subWindowArgument.startsWith('lookup:')) {
+    final query = subWindowArgument.substring('lookup:'.length);
+    await WindowServices.initFor(WindowKind.lookupPanel);
+    runAppWithErrorHandling(LookupWindowApp(initialQuery: query));
     return;
   }
 
@@ -258,8 +316,38 @@ Future<void> main(List<String> args) async {
   // 历史上 mihomo 子进程反复变成 PPID=1 孤儿的根因。清理失败不阻止退出。
   ProcessSignal.sigterm.watch().listen((_) => runShutdownCleanup());
 
-  runApp(const V8WorkToolboxApp());
+  // 初始化上下文服务桥接（macOS Services + 热键）
+  ContextServicesBridge.instance.init();
+  ContextServicesBridge.instance.onLookup = (text) {
+    debugPrint('[Bridge] lookup: $text');
+    LookupWindowLauncher.open(text);
+  };
+  ContextServicesBridge.instance.onSaveNote = ({
+    required text,
+    required html,
+    required sourceApp,
+    url,
+    title,
+  }) async {
+    debugPrint('[Bridge] saveNote from $sourceApp: ${text.length} chars');
+    final ctx = appNavigatorKey.currentContext;
+    if (ctx != null) {
+      await NoteCaptureService.instance.captureNote(
+        text: text,
+        html: html,
+        sourceApp: sourceApp,
+        context: ctx,
+        directUrl: url,
+        directTitle: title,
+      );
+    }
+  };
+
+  runAppWithErrorHandling(const V8WorkToolboxApp());
 }
+
+/// 主应用全局导航 Key，供平台服务在需要时弹出对话框
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 /// 测试注入点：替代 `exit()`，使清理路径可在测试中驱动而不终止 test runner。
 /// 生产代码始终为 null（走真实 `exit(0)`）。
@@ -298,30 +386,38 @@ class V8WorkToolboxApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'V8 工作工具箱',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      home: Builder(
-        builder: (context) {
-          return AppShell(
-            initialRecentToolIds: SettingsStore.instance.getRecentToolIds(),
-            onToolUsed: (toolId) {
-              SettingsStore.instance.recordToolUsed(toolId);
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          navigatorKey: appNavigatorKey,
+          title: 'V8 工作工具箱',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: Builder(
+            builder: (context) {
+              return AppShell(
+                initialRecentToolIds: SettingsStore.instance.getRecentToolIds(),
+                onToolUsed: (toolId) {
+                  SettingsStore.instance.recordToolUsed(toolId);
+                },
+                onOpenSettings: () {
+                  SettingsDialog.show(context);
+                },
+              );
             },
-            onOpenSettings: () {
-              SettingsDialog.show(context);
-            },
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -332,18 +428,25 @@ class _PasswordVaultWindowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '密码工具 - V8 工作工具箱',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      home: const PasswordPage(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: '密码工具 - V8 工作工具箱',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const PasswordPage(),
+        );
+      },
     );
   }
 }
@@ -354,18 +457,25 @@ class _NotebookWindowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '笔记本 - V8 工作工具箱',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      home: const Scaffold(backgroundColor: Colors.white, body: NotebookPage()),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: '笔记本 - V8 工作工具箱',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const Scaffold(body: NotebookPage()),
+        );
+      },
     );
   }
 }
@@ -416,59 +526,61 @@ class _SingleNoteWindowAppState extends State<_SingleNoteWindowApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '笔记 - V8 工作工具箱',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.light().copyWith(
-        scaffoldBackgroundColor: Colors.white,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppTheme.accent,
-          surface: Colors.white,
-        ),
-      ),
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      home: Scaffold(
-        backgroundColor: Colors.white,
-        body: Padding(
-          padding: const EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
-          child: FutureBuilder<Note?>(
-            future: _noteFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              if (snapshot.data == null) {
-                return const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.note_outlined, size: 40, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text('笔记不存在或已删除', style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
-                );
-              }
-              return NoteEditor(
-                key: ValueKey(snapshot.data!.id),
-                note: _reloadedNote ?? snapshot.data,
-                onSaved: () {},
-                // 资产/关联写入后刷新编辑器持有的快照，使 chip 反映现值。
-                onNoteReloaded: (fresh) {
-                  if (!mounted) return;
-                  setState(() => _reloadedNote = fresh);
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: '笔记 - V8 工作工具箱',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: Scaffold(
+            backgroundColor: context.bgWindow,
+            body: Padding(
+              padding: const EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+              child: FutureBuilder<Note?>(
+                future: _noteFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.data == null) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.note_outlined, size: 40, color: context.textTertiary),
+                          const SizedBox(height: 8),
+                          Text('笔记不存在或已删除',
+                              style: TextStyle(color: context.textSecondary)),
+                        ],
+                      ),
+                    );
+                  }
+                  return NoteEditor(
+                    key: ValueKey(snapshot.data!.id),
+                    note: _reloadedNote ?? snapshot.data,
+                    onSaved: () {},
+                    // 资产/关联写入后刷新编辑器持有的快照，使 chip 反映现值。
+                    onNoteReloaded: (fresh) {
+                      if (!mounted) return;
+                      setState(() => _reloadedNote = fresh);
+                    },
+                  );
                 },
-              );
-            },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -478,22 +590,29 @@ class _OpsToolWindowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '磐石运维工具',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-      home: const Scaffold(
-        body: Padding(
-          padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
-          child: OpsToolMainPage(),
-        ),
-      ),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: '磐石运维工具',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const Scaffold(
+            body: Padding(
+              padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+              child: OpsToolMainPage(),
+            ),
+          ),
+        );
+      },
     );
   }
 }

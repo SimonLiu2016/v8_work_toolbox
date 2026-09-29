@@ -308,15 +308,15 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
       onTap: () => setState(() => _currentTabIndex = index),
       borderRadius: AppTheme.borderRadiusSmall,
       child: Container(
-        padding: const EdgeInsets.symmetric(
+        padding: EdgeInsets.symmetric(
           horizontal: AppTheme.space12,
           vertical: AppTheme.space8,
         ),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.bgSelected : AppTheme.bgInput,
+          color: isSelected ? context.bgSelected : context.bgInput,
           borderRadius: AppTheme.borderRadiusSmall,
           border: Border.all(
-            color: isSelected ? AppTheme.accent.withValues(alpha: 0.6) : AppTheme.borderSubtle,
+            color: isSelected ? context.accentText.withValues(alpha: 0.6) : context.borderSubtle,
           ),
         ),
         child: Row(
@@ -325,19 +325,21 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             Icon(
               icon,
               size: 15,
-              color: isSelected ? AppTheme.accentLight : AppTheme.textSecondary,
+              color: isSelected ? context.accentText : context.textSecondary,
             ),
-            const SizedBox(width: AppTheme.space8),
+            SizedBox(width: AppTheme.space8),
             Text(
               label,
               style: AppTheme.fontBody.copyWith(
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected ? Colors.white : AppTheme.textSecondary,
+                color: isSelected
+                    ? (context.isDarkMode ? Colors.white : context.accentText)
+                    : context.textSecondary,
               ),
             ),
             if (badgeCount != null && badgeCount > 0) ...[
-              const SizedBox(width: AppTheme.space6),
-              AppBadge(label: '$badgeCount', color: AppTheme.bgCardHover),
+              SizedBox(width: AppTheme.space6),
+              AppBadge(label: '$badgeCount', color: context.bgCardHover),
             ],
           ],
         ),
@@ -348,7 +350,7 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgContent,
+      backgroundColor: context.bgContent,
       body: Padding(
         padding: const EdgeInsets.all(AppTheme.space24),
         child: Column(
@@ -357,22 +359,22 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
             // 顶部标题栏
             Row(
               children: [
-                const Icon(Icons.archive, size: 22, color: AppTheme.accent),
-                const SizedBox(width: AppTheme.space8),
-                const Text('KMA 包生成', style: AppTheme.fontHeadline),
-                const Spacer(),
+                Icon(Icons.archive, size: 22, color: context.accentText),
+                SizedBox(width: AppTheme.space8),
+                Text('KMA 包生成', style: AppTheme.fontHeadline),
+                Spacer(),
                 if (_isLoading)
-                  const AppBadge(
+                  AppBadge(
                     label: '处理中...',
-                    color: AppTheme.warningSubtle,
-                    textColor: AppTheme.warning,
+                    color: context.warningText.withValues(alpha: 0x1F / 255),
+                    textColor: context.warningSolid,
                   ),
               ],
             ),
-            const SizedBox(height: AppTheme.space4),
+            SizedBox(height: AppTheme.space4),
             Text(
               '生成加密的 KMA 资源包，支持多语言本地化翻译、快捷键录入与解包/压包维护',
-              style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+              style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
             ),
             const SizedBox(height: AppTheme.space16),
 
@@ -790,11 +792,11 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                       builder: (context, progressText, child) {
                         return Container(
                           width: 420,
-                          padding: const EdgeInsets.all(AppTheme.space16),
+                          padding: EdgeInsets.all(AppTheme.space16),
                           decoration: BoxDecoration(
-                            color: AppTheme.bgCard,
+                            color: context.bgCard,
                             borderRadius: AppTheme.borderRadiusMedium,
-                            border: Border.all(color: AppTheme.borderSubtle),
+                            border: Border.all(color: context.borderSubtle),
                           ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -803,17 +805,17 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                                 borderRadius: BorderRadius.circular(4),
                                 child: LinearProgressIndicator(
                                   value: progressValue,
-                                  backgroundColor: AppTheme.bgInput,
-                                  valueColor: const AlwaysStoppedAnimation<Color>(
-                                    AppTheme.accent,
+                                  backgroundColor: context.bgInput,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    context.accentSolid,
                                   ),
                                   minHeight: 8,
                                 ),
                               ),
-                              const SizedBox(height: AppTheme.space8),
+                              SizedBox(height: AppTheme.space8),
                               Text(
                                 progressText,
-                                style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary),
+                                style: AppTheme.fontCaption.copyWith(color: context.textSecondary),
                               ),
                             ],
                           ),
@@ -822,12 +824,12 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                     );
                   },
                 )
-              : const SizedBox(
+              : SizedBox(
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accent),
+                    valueColor: AlwaysStoppedAnimation<Color>(context.accentSolid),
                   ),
                 ))
           : AppButton.primary(
@@ -1655,23 +1657,23 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
   Widget _buildLogConsole() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(AppTheme.space12),
+      padding: EdgeInsets.all(AppTheme.space12),
       decoration: BoxDecoration(
-        color: AppTheme.bgInput,
+        color: context.bgInput,
         borderRadius: AppTheme.borderRadiusMedium,
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(color: context.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.terminal, size: 14, color: AppTheme.textTertiary),
-              const SizedBox(width: AppTheme.space6),
+              Icon(Icons.terminal, size: 14, color: context.textTertiary),
+              SizedBox(width: AppTheme.space6),
               Text(
                 '运行日志',
                 style: AppTheme.fontCaption.copyWith(
-                  color: AppTheme.textTertiary,
+                  color: context.textTertiary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -1686,13 +1688,13 @@ class _KmaPackageToolPageState extends State<KmaPackageToolPage> {
                   },
                   child: Text(
                     '清空日志',
-                    style: AppTheme.fontCaption.copyWith(color: AppTheme.accentLight),
+                    style: AppTheme.fontCaption.copyWith(color: context.accentText),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: AppTheme.space8),
-          const Divider(height: 1, color: AppTheme.borderSubtle),
+          SizedBox(height: AppTheme.space8),
+          Divider(height: 1, color: context.borderSubtle),
           const SizedBox(height: AppTheme.space8),
           Expanded(
             child: TextField(

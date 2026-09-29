@@ -3,6 +3,7 @@ import Carbon
 import Cocoa
 import FlutterMacOS
 import Foundation
+import UserNotifications
 
 @main
 class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
@@ -17,6 +18,9 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
   private var hotKeyRef: EventHotKeyRef?
   private var hotKeyHandlerInstalled = false
   private var launcherChannel: FlutterMethodChannel?
+  private var contextServicesChannel: FlutterMethodChannel?
+  private var lookupHotKeyRef: EventHotKeyRef?
+  private var saveNoteHotKeyRef: EventHotKeyRef?
   private var isTrulyQuitting = false
 
   // 无人值守托盘指示器
@@ -36,6 +40,10 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     installCarbonEventHandlerIfNeeded()
     // 默认注册 ⌥Space (modifiers: 2048, keyCode: 49)
     _ = registerHotKey(modifiers: UInt32(optionKey), keyCode: 49)
+    // 注册上下文热键 ⌥D / ⌥S
+    registerContextHotKeys()
+    // 注册桌面全局选区悬浮小图标监听 (Bob / PopClip 模式)
+    setupGlobalSelectionMonitor()
 
     // 延迟初始化通道，确保Flutter引擎完全加载
     DispatchQueue.main.async {
@@ -254,6 +262,348 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     NSApp.setActivationPolicy(.accessory)
   }
 
+  // MARK: - macOS Services Handlers
+
+  /// macOS Services: 查词
+  @objc func handleLookupService(_ pboard: NSPasteboard,
+                                  userData: String?,
+                                  error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+    guard let text = pboard.string(forType: .string), !text.isEmpty else { return }
+    DispatchQueue.main.async { [weak self] in
+      // 保持静默，不弹出主窗口
+      self?.contextServicesChannel?.invokeMethod("lookup", arguments: text)
+    }
+  }
+
+  /// macOS Services: 保存笔记
+  @objc func handleSaveNoteService(_ pboard: NSPasteboard,
+                                    userData: String?,
+                                    error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+    let text = pboard.string(forType: .string) ?? ""
+    let html = pboard.string(forType: NSPasteboard.PasteboardType("public.html")) ?? ""
+    let sourceApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+    DispatchQueue.main.async { [weak self] in
+      // 保持静默，不弹出主窗口
+      self?.contextServicesChannel?.invokeMethod("saveNote", arguments: [
+        "text": text,
+        "html": html,
+        "sourceApp": sourceApp,
+      ])
+    }
+  }
+
+  // MARK: - Lookup & SaveNote HotKeys (⌥D, ⌥S)
+
+  func registerContextHotKeys() {
+    // ⌥D (keyCode: 2, mod: optionKey)
+    registerContextHotKey(
+      keyCode: 2,
+      modifiers: UInt32(optionKey),
+      id: 2,
+      refOut: &lookupHotKeyRef,
+      action: #selector(handleLookupHotKey)
+    )
+    // ⌥S (keyCode: 1, mod: optionKey)
+    registerContextHotKey(
+      keyCode: 1,
+      modifiers: UInt32(optionKey),
+      id: 3,
+      refOut: &saveNoteHotKeyRef,
+      action: #selector(handleSaveNoteHotKey)
+    )
+  }
+
+  private func registerContextHotKey(
+    keyCode: UInt32, modifiers: UInt32, id: UInt32,
+    refOut: inout EventHotKeyRef?, action: Selector
+  ) {
+    var keyID = EventHotKeyID(signature: OSType(0x56384354), id: id) // 'V8CT'
+    RegisterEventHotKey(keyCode, modifiers, keyID, GetApplicationEventTarget(), 0, &refOut)
+  }
+
+  /// 尝试使用 macOS 辅助功能 API 直接获取当前选中文字（无侵入、不占用剪贴板、不产生按键泄漏）
+  func getSystemSelectedText() -> String? {
+    let systemWide = AXUIElementCreateSystemWide()
+    var focusedAppValue: AnyObject?
+    let appErr = AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &focusedAppValue)
+    guard appErr == .success, let focusedApp = focusedAppValue else { return nil }
+
+    var focusedElementValue: AnyObject?
+    let elemErr = AXUIElementCopyAttributeValue(focusedApp as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
+    guard elemErr == .success, let focusedElement = focusedElementValue else { return nil }
+
+    var selectedTextValue: AnyObject?
+    let textErr = AXUIElementCopyAttributeValue(focusedElement as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedTextValue)
+    guard textErr == .success, let text = selectedTextValue as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return nil
+    }
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  @objc func handleLookupHotKey() {
+    // 1. 优先尝试 Accessibility API 静默获取选中文本
+    if let selectedText = getSystemSelectedText(), !selectedText.isEmpty {
+      DispatchQueue.main.async { [weak self] in
+        self?.contextServicesChannel?.invokeMethod("lookup", arguments: selectedText)
+      }
+      return
+    }
+
+    // 2. 降级：释放 Option 修饰键后模拟 ⌘C，防止键码泄漏（如 \D）
+    simulateCopyAndInvoke(method: "lookup")
+  }
+
+  @objc func handleSaveNoteHotKey() {
+    let sourceApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+
+    // 1. 优先尝试 Accessibility API 静默获取选中文本
+    if let selectedText = getSystemSelectedText(), !selectedText.isEmpty {
+      DispatchQueue.main.async { [weak self] in
+        self?.contextServicesChannel?.invokeMethod("saveNote", arguments: [
+          "text": selectedText,
+          "html": "",
+          "sourceApp": sourceApp,
+        ])
+      }
+      return
+    }
+
+    // 2. 降级：释放 Option 修饰键后模拟 ⌘C，防止键码泄漏（如 ß）
+    simulateCopyAndInvoke(method: "saveNote", extraArgs: ["sourceApp": sourceApp])
+  }
+
+  /// 释放 Option 修饰键 → 保存旧剪贴板 → 模拟 ⌘C → 读取 → 恢复 → 静默调用 Flutter
+  private func simulateCopyAndInvoke(method: String, extraArgs: [String: String] = [:]) {
+    let pb = NSPasteboard.general
+    let oldContents = pb.string(forType: .string)
+    let oldChangeCount = pb.changeCount
+
+    // 独立事件源，不继承物理键盘的硬件修饰键状态
+    let src = CGEventSource(stateID: .privateState)
+
+    // 显式释放 Option 键（0x3A = 左 Option, 0x3D = 右 Option）
+    let optKeyUp1 = CGEvent(keyboardEventSource: src, virtualKey: 0x3A, keyDown: false)
+    optKeyUp1?.flags = []
+    optKeyUp1?.post(tap: .cghidEventTap)
+    let optKeyUp2 = CGEvent(keyboardEventSource: src, virtualKey: 0x3D, keyDown: false)
+    optKeyUp2?.flags = []
+    optKeyUp2?.post(tap: .cghidEventTap)
+
+    // 短暂延迟确保系统消费 Option-Up 事件，然后模拟纯净的 ⌘C
+    DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.02) {
+      let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: true) // 'c'
+      keyDown?.flags = .maskCommand
+      let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: false)
+      keyUp?.flags = .maskCommand
+      keyDown?.post(tap: .cghidEventTap)
+      keyUp?.post(tap: .cghidEventTap)
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+        defer {
+          if pb.changeCount != oldChangeCount {
+            pb.clearContents()
+            if let old = oldContents { pb.setString(old, forType: .string) }
+          }
+        }
+
+        let text = pb.string(forType: .string) ?? ""
+        let html = pb.string(forType: NSPasteboard.PasteboardType("public.html")) ?? ""
+
+        // 注意：绝不调用 showMainWindow()，完全静默触发
+        var args: [String: String] = ["text": text, "html": html]
+        args.merge(extraArgs) { _, new in new }
+        self?.contextServicesChannel?.invokeMethod(method, arguments: method == "lookup" ? text : args)
+      }
+    }
+  }
+
+  // MARK: - Popover Frame & Window Configuration
+
+  /// 计算紧随鼠标光标的悬浮弹窗位置，具备边界自动贴靠翻转
+  func calculatePopoverFrame(width: CGFloat = 420, height: CGFloat = 520) -> NSRect {
+    let mouse = NSEvent.mouseLocation
+    let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+    let visible = screen.visibleFrame
+
+    var x = mouse.x + 8
+    var y = mouse.y - height - 12
+
+    // 超出右边界，翻转到光标左侧
+    if x + width > visible.maxX {
+      x = mouse.x - width - 8
+    }
+    // 超出下边界，翻转到光标上方
+    if y < visible.minY {
+      y = mouse.y + 12
+    }
+
+    // 严防溢出可视区域
+    x = max(visible.minX + 8, min(x, visible.maxX - width - 8))
+    y = max(visible.minY + 8, min(y, visible.maxY - height - 8))
+
+    return NSRect(x: x, y: y, width: width, height: height)
+  }
+
+  // MARK: - Selection Floating Bubble Panel (Bob / PopClip Style)
+
+  private var selectionBubble: SelectionBubblePanel?
+  private var bubbleDismissTimer: Timer?
+  private var globalMouseMonitor: Any?
+
+  func setupGlobalSelectionMonitor() {
+    globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+      self?.handleGlobalMouseUp()
+    }
+  }
+
+  private func handleGlobalMouseUp() {
+    // 延迟 120ms 等待宿主应用（PDF/Word/编辑器等）完成选区高亮绘制
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+      guard let self = self else { return }
+      // 避免如果当前前台是本应用的主窗口时反复弹出
+      if NSApp.isActive && self.mainFlutterWindow?.isKeyWindow == true {
+        return
+      }
+
+      guard let text = self.getSystemSelectedText(), text.count >= 2, text.count <= 60 else {
+        self.hideSelectionBubble()
+        return
+      }
+
+      self.showSelectionBubble(for: text)
+    }
+  }
+
+  private func showSelectionBubble(for text: String) {
+    if selectionBubble == nil {
+      selectionBubble = SelectionBubblePanel()
+    }
+    selectionBubble?.onClick = { [weak self] in
+      DispatchQueue.main.async {
+        self?.contextServicesChannel?.invokeMethod("lookup", arguments: text)
+      }
+    }
+
+    let mouse = NSEvent.mouseLocation
+    selectionBubble?.setFrameOrigin(NSPoint(x: mouse.x + 8, y: mouse.y + 8))
+    selectionBubble?.orderFront(nil)
+
+    bubbleDismissTimer?.invalidate()
+    bubbleDismissTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { [weak self] _ in
+      self?.hideSelectionBubble()
+    }
+  }
+
+  func hideSelectionBubble() {
+    selectionBubble?.orderOut(nil)
+    bubbleDismissTimer?.invalidate()
+    bubbleDismissTimer = nil
+  }
+
+  /// 配置查词弹窗：无红绿灯、无边框、半透明卡片样式、悬浮于光标旁
+  func configureLookupWindow() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.hideSelectionBubble()
+      for window in NSApp.windows where window != self.mainFlutterWindow && !(window is SelectionBubblePanel) {
+        let frame = self.calculatePopoverFrame(width: 420, height: 520)
+        window.setFrame(frame, display: true, animate: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.level = .floating
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.makeKeyAndOrderFront(nil)
+        break
+      }
+    }
+  }
+
+  // MARK: - Native Notification for Note Capture
+
+  func showNoteNotification(title: String, notebook: String) {
+    let notification = NSUserNotification()
+    notification.title = "已保存笔记 📝"
+    notification.informativeText = "「\(title)」已存入「\(notebook)」"
+    notification.soundName = NSUserNotificationDefaultSoundName
+    NSUserNotificationCenter.default.deliver(notification)
+  }
+
+  // MARK: - Incoming URL Schemes (v8toolbox://)
+
+  override func application(_ application: NSApplication, open urls: [URL]) {
+    for url in urls {
+      handleIncomingUrl(url)
+    }
+  }
+
+  private func handleIncomingUrl(_ url: URL) {
+    guard url.scheme == "v8toolbox" else { return }
+    let host = url.host ?? ""
+    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    let queryItems = components?.queryItems ?? []
+
+    func getParam(_ name: String) -> String {
+      return queryItems.first(where: { $0.name == name })?.value ?? ""
+    }
+
+    switch host {
+    case "lookup":
+      let text = getParam("text")
+      if !text.isEmpty {
+        DispatchQueue.main.async { [weak self] in
+          self?.contextServicesChannel?.invokeMethod("lookup", arguments: text)
+        }
+      }
+    case "savenote":
+      let text = getParam("text")
+      let pageUrl = getParam("url")
+      let title = getParam("title")
+      DispatchQueue.main.async { [weak self] in
+        self?.contextServicesChannel?.invokeMethod("saveNote", arguments: [
+          "text": text,
+          "html": "",
+          "sourceApp": "browser",
+          "url": pageUrl,
+          "title": title,
+        ])
+      }
+    default:
+      break
+    }
+  }
+
+  // MARK: - Browser URL via AppleScript
+
+  func getFrontBrowserURL() -> String? {
+    guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
+    let bundleId = frontApp.bundleIdentifier ?? ""
+
+    let script: String
+    switch bundleId {
+    case "com.google.Chrome", "com.google.Chrome.canary":
+      script = "tell application \"Google Chrome\" to get URL of active tab of front window"
+    case "com.apple.Safari":
+      script = "tell application \"Safari\" to get URL of current tab of front window"
+    case "org.mozilla.firefox":
+      script = "tell application \"Firefox\" to get URL of active tab of front window"
+    case "com.microsoft.edgemac":
+      script = "tell application \"Microsoft Edge\" to get URL of active tab of front window"
+    default:
+      return nil
+    }
+
+    var error: NSDictionary?
+    let appleScript = NSAppleScript(source: script)
+    let result = appleScript?.executeAndReturnError(&error)
+    if error != nil { return nil }
+    return result?.stringValue
+  }
+
   // MARK: - Carbon HotKey
   private func installCarbonEventHandlerIfNeeded() {
     guard !hotKeyHandlerInstalled else { return }
@@ -266,7 +616,22 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     let handlerStatus = InstallEventHandler(
       GetApplicationEventTarget(),
       { (nextHandler, theEvent, userData) -> OSStatus in
-        AppDelegate.shared?.handleHotKey()
+        var hotKeyID = EventHotKeyID()
+        GetEventParameter(
+          theEvent,
+          UInt32(kEventParamDirectObject),
+          UInt32(typeEventHotKeyID),
+          nil,
+          MemoryLayout<EventHotKeyID>.size,
+          nil,
+          &hotKeyID
+        )
+        switch hotKeyID.id {
+        case 1: AppDelegate.shared?.handleHotKey()          // ⌥Space - 原有行为
+        case 2: AppDelegate.shared?.handleLookupHotKey()    // ⌥D
+        case 3: AppDelegate.shared?.handleSaveNoteHotKey()  // ⌥S
+        default: break
+        }
         return noErr
       },
       1,
@@ -420,6 +785,43 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     }
     self.launcherChannel = launcher
 
+    // 3. 上下文服务通道（查词 + 保存笔记）
+    let contextServices = FlutterMethodChannel(
+      name: "v8_work_toolbox/context_services",
+      binaryMessenger: messenger
+    )
+    contextServices.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      switch call.method {
+      case "getBrowserUrl":
+        let url = self.getFrontBrowserURL()
+        result(url)
+      case "styleLookupWindow":
+        self.configureLookupWindow()
+        result(true)
+      case "getMouseLocation":
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
+        result([
+          "x": mouse.x,
+          "y": mouse.y,
+          "screenHeight": screen.frame.height,
+        ])
+      case "showNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let title = args["title"] as? String ?? ""
+        let notebook = args["notebook"] as? String ?? "默认笔记本"
+        self.showNoteNotification(title: title, notebook: notebook)
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.contextServicesChannel = contextServices
+
     channelInitialized = true
     print("MethodChannels已初始化")
   }
@@ -523,3 +925,57 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     return appShortcutsHandler.getRunningApps()
   }
 }
+
+// MARK: - SelectionBubblePanel (Bob / PopClip Style Floating Action Button)
+
+class SelectionBubblePanel: NSPanel {
+  var onClick: (() -> Void)?
+
+  init() {
+    super.init(
+      contentRect: NSRect(x: 0, y: 0, width: 28, height: 28),
+      styleMask: [.nonactivatingPanel, .borderless],
+      backing: .buffered,
+      defer: false
+    )
+    self.isFloatingPanel = true
+    self.level = .floating
+    self.isOpaque = false
+    self.backgroundColor = .clear
+    self.hasShadow = true
+    self.hidesOnDeactivate = false
+
+    let button = NSButton(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
+    button.isBordered = false
+    button.wantsLayer = true
+    button.layer?.cornerRadius = 14
+    button.layer?.masksToBounds = true
+    button.layer?.backgroundColor = NSColor(red: 0.388, green: 0.400, blue: 0.945, alpha: 1.0).cgColor
+    button.target = self
+    button.action = #selector(handleButtonClick)
+
+    button.attributedTitle = NSAttributedString(
+      string: "V8",
+      attributes: [
+        .foregroundColor: NSColor.white,
+        .font: NSFont.boldSystemFont(ofSize: 11),
+      ]
+    )
+
+    self.contentView = button
+  }
+
+  @objc private func handleButtonClick() {
+    self.orderOut(nil)
+    onClick?()
+  }
+
+  override var canBecomeKey: Bool {
+    return false
+  }
+
+  override var canBecomeMain: Bool {
+    return false
+  }
+}
+

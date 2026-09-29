@@ -35,6 +35,11 @@ TARGET_APP="$INSTALL_DIR/$APP_NAME.app"
 BUILD_PRODUCTS="$PROJECT_DIR/build/macos/Build/Products/Release"
 SOURCE_APP="$BUILD_PRODUCTS/$APP_NAME.app"
 
+# entitlements 文件。resign 时显式注入——不带 --entitlements 的
+# codesign --force 不会把 entitlement 带进签名（本项目 binary 内也没有内嵌的），
+# 而 file_picker 需要 files.user-selected.* 才能打开文件面板。
+ENTITLEMENTS="$PROJECT_DIR/macos/Runner/Release.entitlements"
+
 # Dart AOT 快照 = 真正的应用代码身份。
 # 不能用 Contents/MacOS/V8WorkToolbox 判断——那是瘦启动器，跨构建可能不变。
 AOT_SNAPSHOT="Contents/Frameworks/App.framework/Versions/A/App"
@@ -152,15 +157,41 @@ inject_mihomo() {
 # 4. resign
 # ---------------------------------------------------------------------------
 resign() {
-    step "resign" "重新 ad-hoc 签名"
+    step "resign" "重新 ad-hoc 签名（显式注入 entitlements）"
 
     # 顺序不可交换：往已签名 bundle 加文件会破坏 seal。必须先注入再签名。
     codesign --remove-signature "$SOURCE_APP" 2>/dev/null || true
-    codesign -s - --force "$SOURCE_APP" \
+
+    # --entitlements 必须显式传：`codesign --force` 不带它时，用的是可执行文件
+    # __TEXT 段内嵌的 entitlement，而本项目的 binary 里没有——实测（2026-09-29）
+    # 无论是 Xcode 构建产物还是重签后的 app，`codesign -d --entitlements -`
+    # 输出都是空的，导致 file_picker 的 ENTITLEMENT_NOT_FOUND。
+    # 这两个 key 支撑全库 28 处文件面板：pickFiles/getDirectoryPath 只需
+    # read-only 任一，saveFile（导出 MP3/思维导图/密码备份/字幕/对比报告）
+    # 只认 read-write，故两个都要签进去。
+    codesign -s - --force \
+        --entitlements "$ENTITLEMENTS" "$SOURCE_APP" \
         || die resign "签名失败"
+
+    # 签完立即验收 entitlement 真的在里面——静默丢失会让 28 处文件面板全挂。
+    local signed_ent
+    signed_ent="$(codesign -d --entitlements :- "$SOURCE_APP" 2>/dev/null || true)"
+    case "$signed_ent" in
+        *files.user-selected.read-only*) ;;
+        *) die resign "entitlements 未进入签名：
+   $signed_ent
+   期望含 files.user-selected.read-only。" ;;
+    esac
+    case "$signed_ent" in
+        *files.user-selected.read-write*) ;;
+        *) die resign "entitlements 未进入签名：
+   $signed_ent
+   期望含 files.user-selected.read-write（saveFile 只认它）。" ;;
+    esac
+
     codesign -v --strict "$SOURCE_APP" \
         || die resign "签名后 strict 校验失败（seal 不自洽）"
-    ok "签名通过 strict 校验"
+    ok "签名通过 strict 校验，entitlements 已注入"
 }
 
 # ---------------------------------------------------------------------------

@@ -69,16 +69,16 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Text('密码生成器',
+              Text('密码生成器',
                   style: TextStyle(
-                      color: AppTheme.textPrimary,
+                      color: context.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w600)),
               const Spacer(),
@@ -95,40 +95,40 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
                 style: ButtonStyle(
                   visualDensity: VisualDensity.compact,
                   textStyle: WidgetStateProperty.all(
-                      const TextStyle(fontSize: 12)),
+                      TextStyle(fontSize: 12)),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(14),
+            padding: EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppTheme.bgInput,
+              color: context.bgInput,
               borderRadius: BorderRadius.circular(8),
             ),
             child: _error != null
                 ? Text(_error!,
                     style:
-                        const TextStyle(color: AppTheme.error, fontSize: 12))
+                        TextStyle(color: context.errorText, fontSize: 12))
                 : SelectableText(
                     _result,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
+                    style: TextStyle(
+                      color: context.textPrimary,
                       fontSize: 16,
                       fontFamily: 'monospace',
                       letterSpacing: 1,
                     ),
                   ),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: 12),
           if (!_passphraseMode) ...[
             Row(
               children: [
-                const Text('长度',
+                Text('长度',
                     style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 12)),
+                        color: context.textSecondary, fontSize: 12)),
                 Expanded(
                   child: Slider(
                     value: _length.toDouble(),
@@ -145,8 +145,8 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
                 SizedBox(
                   width: 32,
                   child: Text('$_length',
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary, fontSize: 12)),
+                      style: TextStyle(
+                          color: context.textPrimary, fontSize: 12)),
                 ),
               ],
             ),
@@ -164,9 +164,9 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
           ] else ...[
             Row(
               children: [
-                const Text('词数',
+                Text('词数',
                     style: TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 12)),
+                        color: context.textSecondary, fontSize: 12)),
                 Expanded(
                   child: Slider(
                     value: _wordCount.toDouble(),
@@ -183,8 +183,8 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
                 SizedBox(
                   width: 32,
                   child: Text('$_wordCount',
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary, fontSize: 12)),
+                      style: TextStyle(
+                          color: context.textPrimary, fontSize: 12)),
                 ),
               ],
             ),
@@ -206,22 +206,22 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
               ],
             ),
           ],
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           Row(
             children: [
               FilledButton.icon(
                 style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.accent),
+                    backgroundColor: context.accentSolid),
                 onPressed: _regenerate,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('重新生成',
+                icon: Icon(Icons.refresh, size: 16),
+                label: Text('重新生成',
                     style: TextStyle(fontSize: 13)),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: 12),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.textSecondary,
-                  side: const BorderSide(color: AppTheme.borderStrong),
+                  foregroundColor: context.textSecondary,
+                  side: BorderSide(color: context.borderStrong),
                 ),
                 onPressed: _result.isEmpty
                     ? null
@@ -237,16 +237,16 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
                           );
                         }
                       },
-                icon: const Icon(Icons.copy_rounded, size: 16),
+                icon: Icon(Icons.copy_rounded, size: 16),
                 label:
-                    const Text('复制', style: TextStyle(fontSize: 13)),
+                    Text('复制', style: TextStyle(fontSize: 13)),
               ),
               if (widget.onUse != null) ...[
-                const SizedBox(width: 12),
+                SizedBox(width: 12),
                 OutlinedButton(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                    side: const BorderSide(color: AppTheme.borderStrong),
+                    foregroundColor: context.textSecondary,
+                    side: BorderSide(color: context.borderStrong),
                   ),
                   onPressed: _result.isEmpty
                       ? null
@@ -269,8 +269,8 @@ class _GeneratorPanelState extends State<GeneratorPanel> {
     return FilterChip(
       label: Text(label, style: const TextStyle(fontSize: 11)),
       selected: value,
-      selectedColor: AppTheme.accentSubtle,
-      checkmarkColor: AppTheme.accent,
+      selectedColor: context.accentSubtle,
+      checkmarkColor: context.accentSolid,
       visualDensity: VisualDensity.compact,
       onSelected: (v) {
         onChanged(v);

@@ -79,7 +79,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: Text(
             existing == null ? '添加 SMTP 邮箱账户' : '编辑邮箱账户',
             style: AppTheme.fontTitle,
@@ -121,9 +121,9 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: userCtrl,
-                    decoration: const InputDecoration(labelText: '发件人邮箱 / 用户名'),
+                    decoration: InputDecoration(labelText: '发件人邮箱 / 用户名'),
                   ),
-                  const SizedBox(height: 10),
+                  SizedBox(height: 10),
                   TextField(
                     controller: passCtrl,
                     obscureText: !passVisible,
@@ -134,7 +134,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                         icon: Icon(
                           passVisible ? Icons.visibility : Icons.visibility_off,
                           size: 16,
-                          color: AppTheme.textSecondary,
+                          color: context.textSecondary,
                         ),
                         tooltip: passVisible ? '隐藏授权码' : '显示授权码',
                         onPressed: () =>
@@ -146,7 +146,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                   SwitchListTile(
                     title: const Text('启用 SSL/TLS 加密'),
                     value: useTls,
-                    activeColor: AppTheme.accent,
+                    activeColor: context.accentSolid,
                     onChanged: (v) => setDialogState(() => useTls = v),
                   ),
                 ],
@@ -159,7 +159,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
               child: const Text('取消'),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+              style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
               onPressed: () async {
                 final item = EmailAccount(
                   id: existing?.id,
@@ -193,7 +193,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: const Text('添加收件人', style: AppTheme.fontTitle),
         content: SizedBox(
           width: 400,
@@ -223,7 +223,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+            style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
             onPressed: () async {
               final r = EmailRecipient(
                 accountId: _selectedAccount!.id,
@@ -274,7 +274,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('邮件成功投递给 ${targetRecipients.length} 位收件人！'),
-            backgroundColor: AppTheme.success,
+            backgroundColor: context.successSolid,
           ),
         );
       }
@@ -282,7 +282,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
       if (mounted) {
         setState(() => _sending = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('发信失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('发信失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -306,18 +306,18 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('SMTP 邮箱账户', style: AppTheme.fontTitle),
+                    Text('SMTP 邮箱账户', style: AppTheme.fontTitle),
                     IconButton(
-                      icon: const Icon(Icons.add, size: 20),
+                      icon: Icon(Icons.add, size: 20),
                       onPressed: () => _showAddAccountDialog(),
                       tooltip: '添加账户',
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 DropdownButtonFormField<EmailAccount>(
                   value: _selectedAccount,
-                  dropdownColor: AppTheme.bgCard,
+                  dropdownColor: context.bgCard,
                   decoration: const InputDecoration(labelText: '当前发信账户'),
                   items: _accounts
                       .map(
@@ -335,7 +335,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                   children: [
                     const Text('收件人通讯录', style: AppTheme.fontTitle),
                     IconButton(
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.person_add_alt_1_rounded,
                         size: 20,
                       ),
@@ -344,16 +344,16 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: 8),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _recipients.isEmpty
-                        ? const Center(
+                        ? Center(
                             child: Text(
                               '当前账户下暂无收件人',
                               style: AppTheme.fontBodySecondary,
@@ -361,9 +361,9 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                           )
                         : ListView.separated(
                             itemCount: _recipients.length,
-                            separatorBuilder: (_, __) => const Divider(
+                            separatorBuilder: (_, __) => Divider(
                               height: 1,
-                              color: AppTheme.borderSubtle,
+                              color: context.borderSubtle,
                             ),
                             itemBuilder: (context, idx) {
                               final r = _recipients[idx];
@@ -372,7 +372,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                               );
                               return CheckboxListTile(
                                 value: isChecked,
-                                activeColor: AppTheme.accent,
+                                activeColor: context.accentSolid,
                                 title: Text(r.name, style: AppTheme.fontBody),
                                 subtitle: Text(
                                   '${r.email} (${r.groupName})',
@@ -441,7 +441,7 @@ class _OpsEmailViewState extends State<OpsEmailView> {
                           : '立即发送报告邮件 (${_selectedRecipientIds.length} 位收件人)',
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
+                      backgroundColor: context.accentSolid,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     onPressed: _sending ? null : _sendEmail,

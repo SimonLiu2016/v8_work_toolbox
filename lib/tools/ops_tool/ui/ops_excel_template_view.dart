@@ -65,7 +65,7 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
       if (mounted) {
         setState(() => _loading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Excel 解析失败: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('Excel 解析失败: $e'), backgroundColor: context.errorSolid),
         );
       }
     }
@@ -87,7 +87,7 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.bgCard,
+        backgroundColor: context.bgCard,
         title: Text(existing == null ? '新建报告模板' : '编辑报告模板', style: AppTheme.fontTitle),
         content: SizedBox(
           width: 550,
@@ -109,7 +109,7 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+            style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
             onPressed: () async {
               final item = ReportTemplate(
                 id: existing?.id,
@@ -176,7 +176,7 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
                     ElevatedButton.icon(
                       icon: const Icon(Icons.file_open_outlined, size: 18),
                       label: const Text('导入 Excel 文件'),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent),
+                      style: ElevatedButton.styleFrom(backgroundColor: context.accentSolid),
                       onPressed: _loading ? null : _pickExcelFile,
                     ),
                   ],
@@ -195,34 +195,34 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
                           child: ChoiceChip(
                             label: Text('${sheet.name} (${sheet.rows.length}行)'),
                             selected: isSelected,
-                            selectedColor: AppTheme.accent,
+                            selectedColor: context.accentSolid,
                             onSelected: (_) => setState(() => _activeSheetIdx = idx),
                           ),
                         );
                       }).toList(),
                     ),
                   ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: AppTheme.bgCard,
+                      color: context.bgCard,
                       borderRadius: AppTheme.borderRadiusMedium,
-                      border: Border.all(color: AppTheme.borderSubtle),
+                      border: Border.all(color: context.borderSubtle),
                     ),
                     child: _loading
-                        ? const Center(child: CircularProgressIndicator())
+                        ? Center(child: CircularProgressIndicator())
                         : _excelData == null || _excelData!.sheets.isEmpty
                             ? Center(
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(Icons.table_chart_outlined, size: 48, color: AppTheme.textSecondary),
-                                    const SizedBox(height: 12),
-                                    const Text('未加载 Excel 文件', style: AppTheme.fontBody),
-                                    const SizedBox(height: 4),
+                                    Icon(Icons.table_chart_outlined, size: 48, color: context.textSecondary),
+                                    SizedBox(height: 12),
+                                    Text('未加载 Excel 文件', style: AppTheme.fontBody),
+                                    SizedBox(height: 4),
                                     Text('点击上方按钮导入 .xlsx 或 .xls 文件进行解析',
-                                        style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+                                        style: AppTheme.fontCaption.copyWith(color: context.textSecondary)),
                                   ],
                                 ),
                               )
@@ -243,44 +243,44 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('报告模板', style: AppTheme.fontTitle),
+                    Text('报告模板', style: AppTheme.fontTitle),
                     IconButton(
-                      icon: const Icon(Icons.add, size: 20),
+                      icon: Icon(Icons.add, size: 20),
                       onPressed: () => _showAddTemplateDialog(),
                       tooltip: '新建模板',
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 DropdownButtonFormField<ReportTemplate>(
                   value: _selectedTemplate,
-                  dropdownColor: AppTheme.bgCard,
-                  decoration: const InputDecoration(labelText: '选择已保存的模板'),
+                  dropdownColor: context.bgCard,
+                  decoration: InputDecoration(labelText: '选择已保存的模板'),
                   items: _templates
                       .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
                       .toList(),
                   onChanged: (v) => setState(() => _selectedTemplate = v),
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: 16),
                 if (_selectedTemplate != null) ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('模板内容预览', style: AppTheme.fontCaption.copyWith(color: AppTheme.textSecondary)),
+                      Text('模板内容预览', style: AppTheme.fontCaption.copyWith(color: context.textSecondary)),
                       IconButton(
-                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        icon: Icon(Icons.edit_outlined, size: 18),
                         onPressed: () => _showAddTemplateDialog(_selectedTemplate),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: 4),
                   Expanded(
                     child: Container(
-                      padding: const EdgeInsets.all(AppTheme.space16),
+                      padding: EdgeInsets.all(AppTheme.space16),
                       decoration: BoxDecoration(
-                        color: AppTheme.bgCard,
+                        color: context.bgCard,
                         borderRadius: AppTheme.borderRadiusMedium,
-                        border: Border.all(color: AppTheme.borderSubtle),
+                        border: Border.all(color: context.borderSubtle),
                       ),
                       child: SingleChildScrollView(
                         child: Text(_selectedTemplate!.content, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
@@ -294,7 +294,7 @@ class _OpsExcelTemplateViewState extends State<OpsExcelTemplateView> {
                       icon: const Icon(Icons.auto_awesome_rounded, size: 20),
                       label: const Text('根据此模板与数据生成报告'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.accent,
+                        backgroundColor: context.accentSolid,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: _generateReport,

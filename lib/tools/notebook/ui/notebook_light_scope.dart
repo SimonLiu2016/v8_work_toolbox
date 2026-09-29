@@ -22,7 +22,7 @@ class NotebookLightScope extends StatelessWidget {
   /// 浅色面板中 markdown 代码块/内联 code 的底色。
   ///
   /// 比 [surface] 深一档，保证代码在浅色画布上有可见边界（而非与背景同色）。
-  /// 与 [AppTheme.bgCardHover] 在暗色主题中承担同一职责——`AppMarkdownView`
+  /// 与 [context.bgCardHover] 在暗色主题中承担同一职责——`AppMarkdownView`
   /// 在浅色主题下会自动取同族色，此处供浅色面板显式传参（design D2）。
   static const Color codeSurface = Color(0xFFF1F5F9);
 

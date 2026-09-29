@@ -71,9 +71,9 @@ class _NoteEditorState extends State<NoteEditor> {
   late final Map<String, BlockComponentBuilder> _blockComponentBuilders;
 
   EditorStyle get _editorStyle => EditorStyle.desktop(
-    padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-    cursorColor: AppTheme.accent,
-    selectionColor: AppTheme.accent.withValues(alpha: 0.2),
+    padding: EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+    cursorColor: context.accentSolid,
+    selectionColor: context.accentSolid.withValues(alpha: 0.2),
     textStyleConfiguration: const TextStyleConfiguration(
       text: TextStyle(fontSize: 15.0, color: Color(0xFF0F172A), height: 1.6),
       bold: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
@@ -92,13 +92,15 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   void _initBlockBuilders() {
+    // 注意：此处不读 context.*——_initBlockBuilders 由 initState 调用，
+    // 而 initState 期间禁止 dependOnInheritedWidget（读 ThemeExtension 会触发）。
+    // 表格描边需要强调色的地方改在 build 内解析后传入。
     _blockComponentBuilders = {
       ...standardBlockComponentBuilderMap,
       TableBlockKeys.type: TableBlockComponentBuilder(
-        tableStyle: const TableStyle(
+        tableStyle: TableStyle(
           borderWidth: 1.0,
           borderColor: Color(0xFFE2E8F0),
-          borderHoverColor: AppTheme.accent,
         ),
       ),
       TableCellBlockKeys.type: TableCellBlockComponentBuilder(
@@ -313,7 +315,7 @@ class _NoteEditorState extends State<NoteEditor> {
       context: context,
       builder: (ctx) => NotebookLightScope(
         child: AlertDialog(
-          backgroundColor: AppTheme.bgCard,
+          backgroundColor: context.bgCard,
           title: const Text('添加标签', style: AppTheme.fontTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -520,12 +522,12 @@ class _NoteEditorState extends State<NoteEditor> {
             Icon(
               Icons.note_alt_outlined,
               size: 64,
-              color: AppTheme.textTertiary,
+              color: context.textTertiary,
             ),
-            const SizedBox(height: AppTheme.space16),
+            SizedBox(height: AppTheme.space16),
             Text(
               '选择或创建一条笔记开始记录',
-              style: AppTheme.fontBody.copyWith(color: AppTheme.textTertiary),
+              style: AppTheme.fontBody.copyWith(color: context.textTertiary),
             ),
           ],
         ),
@@ -550,23 +552,23 @@ class _NoteEditorState extends State<NoteEditor> {
             // 废纸篓警告横幅
             if (widget.note!.isDeleted)
               Container(
-                padding: const EdgeInsets.symmetric(
+                padding: EdgeInsets.symmetric(
                   horizontal: AppTheme.space16,
                   vertical: AppTheme.space8,
                 ),
-                color: AppTheme.warningSubtle,
+                color: context.warningText.withValues(alpha: 0x1F / 255),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.delete_outline,
                       size: 18,
-                      color: AppTheme.warning,
+                      color: context.warningText,
                     ),
-                    const SizedBox(width: AppTheme.space8),
+                    SizedBox(width: AppTheme.space8),
                     Text(
                       '此笔记位于废纸篓中',
                       style: AppTheme.fontBody.copyWith(
-                        color: AppTheme.warning,
+                        color: context.warningText,
                       ),
                     ),
                     const Spacer(),
@@ -574,12 +576,12 @@ class _NoteEditorState extends State<NoteEditor> {
                       onPressed: widget.onRestore,
                       child: const Text('恢复笔记'),
                     ),
-                    const SizedBox(width: AppTheme.space8),
+                    SizedBox(width: AppTheme.space8),
                     TextButton(
                       onPressed: widget.onPermanentDelete,
-                      child: const Text(
+                      child: Text(
                         '彻底粉碎',
-                        style: TextStyle(color: AppTheme.error),
+                        style: TextStyle(color: context.errorText),
                       ),
                     ),
                   ],
@@ -697,7 +699,7 @@ class _NoteEditorState extends State<NoteEditor> {
                           InkWell(
                             onTap: _addTagDialog,
                             borderRadius: BorderRadius.circular(4),
-                            child: const Padding(
+                            child: Padding(
                               padding: EdgeInsets.symmetric(
                                 horizontal: 6,
                                 vertical: 2,
@@ -708,12 +710,12 @@ class _NoteEditorState extends State<NoteEditor> {
                                   Icon(
                                     Icons.add,
                                     size: 12,
-                                    color: AppTheme.accent,
+                                    color: context.accentText,
                                   ),
                                   Text(
                                     ' 标签',
                                     style: TextStyle(
-                                      color: AppTheme.accent,
+                                      color: context.accentText,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -756,8 +758,8 @@ class _NoteEditorState extends State<NoteEditor> {
                           : Icons.push_pin_outlined,
                       size: 18,
                       color: widget.note!.isPinned
-                          ? AppTheme.accent
-                          : AppTheme.textTertiary,
+                          ? context.accentSolid
+                          : context.textTertiary,
                     ),
                     tooltip: widget.note!.isPinned ? '取消置顶' : '置顶笔记',
                     onPressed: _togglePin,

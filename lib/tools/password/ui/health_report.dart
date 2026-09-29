@@ -136,9 +136,9 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.bgCard,
-      title: const Text('密码体检',
-          style: TextStyle(color: AppTheme.textPrimary, fontSize: 16)),
+      backgroundColor: context.bgCard,
+      title: Text('密码体检',
+          style: TextStyle(color: context.textPrimary, fontSize: 16)),
       content: SizedBox(
         width: 480,
         height: 420,
@@ -147,7 +147,7 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
             : _error != null
                 ? Center(
                     child: Text(_error!,
-                        style: const TextStyle(color: AppTheme.error)))
+                        style: TextStyle(color: context.errorText)))
                 : _buildReport(),
       ),
       actions: [
@@ -168,40 +168,40 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: AppTheme.successSubtle,
+            color: context.successText.withValues(alpha: 0x1F / 255),
             borderRadius: BorderRadius.circular(6),
           ),
-          child: const Row(
+          child: Row(
             children: [
               Icon(Icons.offline_pin_outlined,
-                  size: 14, color: AppTheme.success),
+                  size: 14, color: context.successText),
               SizedBox(width: 6),
               Expanded(
                 child: Text(
                   '纯本地体检，无网络请求。泄露检测需逐条手动触发（k-匿名）。',
-                  style: TextStyle(color: AppTheme.success, fontSize: 11),
+                  style: TextStyle(color: context.successText, fontSize: 11),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: 12),
         Text(
           total == 0
               ? '未发现问题 🎉'
               : '发现 $_weak.length 个弱密码 · ${_duplicates.length} 组重复 · ${_aged.length} 个超期未换',
-          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          style: TextStyle(color: context.textSecondary, fontSize: 12),
         ),
         const SizedBox(height: 12),
         Expanded(
           child: ListView(
             children: [
-              if (_weak.isNotEmpty) _section('弱密码', AppTheme.error),
+              if (_weak.isNotEmpty) _section('弱密码', context.errorSolid),
               for (final w in _weak) _weakTile(w),
               if (_duplicates.isNotEmpty)
-                _section('重复密码', AppTheme.warning),
+                _section('重复密码', context.warningSolid),
               for (final d in _duplicates) _dupTile(d),
-              if (_aged.isNotEmpty) _section('超期未更换', AppTheme.warning),
+              if (_aged.isNotEmpty) _section('超期未更换', context.warningSolid),
               for (final a in _aged) _agedTile(a),
             ],
           ),
@@ -233,17 +233,17 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
       title: w.title,
       subtitle: '强度 ${w.score}/100',
       trailing: breach == null
-          ? const Text('检测失败',
-              style: TextStyle(color: AppTheme.textTertiary, fontSize: 11))
+          ? Text('检测失败',
+              style: TextStyle(color: context.textTertiary, fontSize: 11))
           : breach == -1
               ? const SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2))
               : breach == 1
-                  ? const Text('已泄露!',
+                  ? Text('已泄露!',
                       style: TextStyle(
-                          color: AppTheme.error,
+                          color: context.errorText,
                           fontSize: 11,
                           fontWeight: FontWeight.w600))
                   : TextButton(
@@ -287,10 +287,10 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        margin: const EdgeInsets.only(bottom: 4),
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        margin: EdgeInsets.only(bottom: 4),
         decoration: BoxDecoration(
-          color: AppTheme.bgInput,
+          color: context.bgInput,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
@@ -300,12 +300,12 @@ class _HealthReportPanelState extends State<HealthReportPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary, fontSize: 13),
+                      style: TextStyle(
+                          color: context.textPrimary, fontSize: 13),
                       overflow: TextOverflow.ellipsis),
                   Text(subtitle,
-                      style: const TextStyle(
-                          color: AppTheme.textTertiary, fontSize: 11)),
+                      style: TextStyle(
+                          color: context.textTertiary, fontSize: 11)),
                 ],
               ),
             ),

@@ -153,7 +153,7 @@ class AppShellState extends State<AppShell> {
         !PrivacySecurityService.instance.isUnlocked;
 
     return Scaffold(
-      backgroundColor: AppTheme.bgWindow,
+      backgroundColor: context.bgWindow,
       body: Row(
         children: [
           // 1. 左侧活动栏 (Activity Bar, 56px)
@@ -198,7 +198,7 @@ class AppShellState extends State<AppShell> {
           ),
 
           // 分割线
-          const VerticalDivider(width: 1, thickness: 1, color: AppTheme.borderSubtle),
+          VerticalDivider(width: 1, thickness: 1, color: context.borderSubtle),
 
           // 若隐私空间处于锁定状态，主视区直接被 PIN 安全锁界面接管拦截
           if (isPrivacyLocked)
@@ -223,7 +223,7 @@ class AppShellState extends State<AppShell> {
                         message: '立即锁定隐私空间',
                         child: IconButton(
                           icon: const Icon(Icons.lock_rounded, size: 16),
-                          color: AppTheme.accent,
+                          color: context.accentText,
                           onPressed: () {
                             PrivacySecurityService.instance.lock();
                           },
@@ -252,7 +252,7 @@ class AppShellState extends State<AppShell> {
                   });
                 },
               ),
-              const VerticalDivider(width: 1, thickness: 1, color: AppTheme.borderSubtle),
+              VerticalDivider(width: 1, thickness: 1, color: context.borderSubtle),
             ],
 
             // 3. 右侧主工作区
@@ -262,7 +262,7 @@ class AppShellState extends State<AppShell> {
                   : _currentView == ActivityViewType.proxy
                       ? const NetworkProxyPage()
                       : Container(
-                      color: AppTheme.bgContent,
+                      color: context.bgContent,
                       child: IndexedStack(
                         index: activeToolIndex,
                         children: allTools.asMap().entries.map((entry) {
