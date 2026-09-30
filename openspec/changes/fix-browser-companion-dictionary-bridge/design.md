@@ -11,6 +11,8 @@ Current state relevant to the design:
 - Persistent app-level preferences are plain JSON via `SettingsStore` (`app.json`), with `ValueNotifier` broadcast for reactive reads (`themeModeNotifier` is the established pattern).
 - Chrome terminates an MV3 service worker when a `fetch()` response takes longer than 30 seconds. The current fallback chain (403 → 20s FreeDict) sits at ~21s with no abort, so it can strand the bubble in a loading state.
 
+**Deployment context (decided by the user):** this application runs on a single machine for its owner — it is not a distributed product. Threat model is therefore "accidental or opportunistic local use", not "a local attacker". This is why the bridge's shared secret is a constant copied into `background.js` rather than a runtime-delivered credential; see Decision 2.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -41,8 +43,9 @@ Current state relevant to the design:
 
 - **Choice**: The desktop application generates the secret once, persists it in `SettingsStore` (`app.json`), and the extension carries the same value as a constant in `background.js`. A mismatch is an authorization failure, not silent.
 - **Alternatives considered**:
-  - **Native messaging host** to hand the secret over at runtime. Rejected for now: it adds an installer, a manifest, and a native host binary to the deployment story — a lot of machinery for a loopback-only, read-only dictionary lookup. Worth revisiting if the bridge ever grows a write path.
+  - **Native messaging host** to hand the secret over at runtime. Rejected **for this deployment context**: it adds an installer, a manifest, and a native host binary to solve a problem a single-machine, single-owner setup does not have. Revisit only if the bridge ever grows a write path — at which point the value at stake is no longer "dictionary data on one box".
   - **No secret at all**, relying on loopback being unreachable. Rejected: any local process (or any web page you visit that can reach `127.0.0.1` with a fetch) could then use the bridge. A static shared secret does not make the bridge private, but it does stop accidental and opportunistic use — and the spec can require the behavior without over-promising the security.
+- **Known cost, accepted**: the secret is a hand-synced constant. Reinstall or migrate the desktop app, delete `~/Library/Application Support/V8WorkToolbox/`, or regenerate the key, and the bubble will read 「本地词典桥拒绝访问」 until someone re-copies `localBridgeSecret` from `app.json` into `background.js`. That is a one-time manual step in three rare situations — acceptable for a single-user box, and it fails *loudly* rather than silently, which is the property that matters.
 - **Rationale**: Matches the project's existing posture — `SettingsStore` already holds app-level config as JSON, and `themeMode` shows the established `ValueNotifier` + `app.json` pattern.
 
 ### Decision 3: Port from `SettingsStore`, not from the OS
@@ -78,11 +81,15 @@ Current state relevant to the design:
 ## Migration Plan
 
 1. Desktop side: add the bridge service, wire it into `main()` init (after `SettingsStore`) and `runShutdownCleanup()`. Ship and restart the desktop app.
-2. Extension side: point `background.js` at the bridge, add timeouts, distinguish failure states, bump to `1.2.0`.
-3. **User action**: `chrome://extensions` → reload the unpacked extension. Until this happens the browser keeps running the old service worker — this is the step whose absence caused the current bug.
-4. Rollback: revert the extension to `1.1.0` (back to broken lookups) and/or disable the bridge in settings; the desktop app's own lookups are never affected.
+2. Extension side: point `background.js` at the bridge, add timeouts, distinguish failure states, bump the version.
+3. **Pair the secret (one-time, manual)**: read `localBridgeSecret` from `~/Library/Application Support/V8WorkToolbox/app.json` and paste it into `background.js`'s `BRIDGE_SECRET`. Until this is done every lookup returns 401 → 「本地词典桥拒绝访问」. See Decision 2 for when it must be redone.
+4. **User action**: `chrome://extensions` → reload the unpacked extension. Until this happens the browser keeps running the old service worker — this is the step whose absence caused the current bug.
+5. Rollback: revert the extension to the previous version (back to broken lookups) and/or disable the bridge in settings; the desktop app's own lookups are never affected.
 
 ## Open Questions
 
 - Whether to surface "bridge 未启动" as an actionable banner in the desktop app when the bridge fails to bind — currently it is a debug log only. Deferrable; does not change the specs or the task list.
 - Whether the bridge should also serve the vocabulary book's read path (list/filter) so a future browser UI could show existing entries. Deferrable; the capability spec is written so a second route can be added without redefining the capability.
+
+**Resolved — not an open question.** Whether to move the bridge secret to a runtime-delivered credential (native messaging host). Decided: no. This is a single-machine, single-owner deployment; a hand-synced constant plus a loud authorization failure is the right amount of machinery, and it fails in a state the user can diagnose rather than silently. The condition that would reopen it is stated in Decision 2 — the bridge growing a write path.
+
