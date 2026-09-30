@@ -38,7 +38,18 @@
 - [x] 5.3 单测：分类断言守卫「每个分类非空、系统与配置的成员集合、迁移的 5 个工具各归其位、publicTools 与隐私分类无交叠」（同文件，4 例）。独立窗口工具记次数由接线保证（`selectTool` 的 `openInNewWindow` 分支调 `_recordUsage`），并使 3.4 完成
 - [x] 5.4 单测：`NewsBriefingItem` 的 sources 序列化往返；旧条目（无该字段）、null、脏数据均不致命（`test/briefing_sources_test.dart`，5 例）
 - [x] 5.5 单测：每个 `ToolCategory` 至少有一个工具，且「系统与配置」的成员全部语义相符（`frequently_used_tools_test.dart` 的 category membership 组）
-- [x] 5.6 运行 `flutter analyze` 与全量测试，确认无回归——`flutter analyze lib/ test/` 零 error；全量 `+976 ~3 -13`，13 个失败经 `git stash` 逐文件单跑比对，基线下同样失败（notebook 编辑器渲染、表格交互、doc_audio 落盘），与本次无关。本次造成的唯一回归（`ops_tool_test` 断言 system）与自埋的端口坑（`local_dictionary_bridge_test` 无参 start 走生产端口 8797）均已修复
+- [x] 5.6 运行 `flutter analyze` 与全量测试，确认无回归——`flutter analyze lib/ test/` 零 error；全量 `+976 ~3 -13`
+
+  13 个失败的归属判定过程（留痕，因为它不是一次跑干净的）：
+  第一轮拿**全量日志**与基线做 diff，得出 12 个「新增失败」——其中 4 个单跑即通过
+  （`dek_backup` 更是在全量日志里失败 3 次而单跑 10 例全过），属并发资源竞争，
+  全量失败集合本身是噪的。改用**逐文件单跑**后才得到可靠结论。
+  最终 10 个真实失败（notebook 编辑器渲染 ×3、表格交互 ×5、notebook_table_interactive ×2、
+  codeblock、doc_audio 落盘）经 `git stash` 出基线后逐个单跑，基线下同样失败，与本次无关。
+
+  本次造成的唯一回归（`ops_tool_test` 断言 category==system）与自埋的端口坑
+  （`local_dictionary_bridge_test` 无参 `start()` 走生产端口 8797，被真实桌面应用占着）
+  均已修复
 - [ ] 5.7 浅色模式下目视复核全部改动点（开关圆饼、NEW 标签、连通胶囊、新分类图标、常用软件入口）
 
 ## 6. 部署
