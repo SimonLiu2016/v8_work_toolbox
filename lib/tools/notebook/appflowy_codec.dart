@@ -239,6 +239,96 @@ class AppFlowyCodec {
     return documentToJson(doc);
   }
 
+  /// 把文档中的图片占位标记替换为 attachment 节点。
+  ///
+  /// 占位形如 `{{attachment:local:<key>}}`，由 docx/pdf 转换器写入。
+  ///
+  /// 为什么不要求"占位独占一个段落"：`markdownToDelta` 产出 quill delta 后，
+  /// `parseToDocument` 会经 `deltaToMarkdown` 中转，而该步会把 `\n\n` 压成
+  /// `\n`——原本以空行分隔的占位段落会与相邻文本合并。故此处改为**在节点内
+  /// 按文本切片替换**：占位前的文本、attachment 节点、占位后的文本各就各位。
+  static String replacePlaceholderWithAttachment(
+    String deltaJson, {
+    required String placeholder,
+    required String attachmentId,
+    required String filename,
+    required int sizeBytes,
+    String? mime,
+  }) {
+    final doc = parseToDocument(deltaJson);
+    var replaced = false;
+
+    for (final node in List.of(doc.root.children)) {
+      if (replaced) break;
+      final text = node.delta?.toPlainText() ?? '';
+      final idx = text.indexOf(placeholder);
+      if (idx < 0) continue;
+
+      final before = text.substring(0, idx);
+      final after = text.substring(idx + placeholder.length);
+
+      // insertBefore 把新节点插到 node 之前，所以插入顺序必须是
+      // before → attachment → after，这样最终相对次序才正确
+      //（顺序写反会得到 [after, att, before]，实测踩过）。
+      if (before.trim().isNotEmpty) {
+        node.insertBefore(_paragraphNode(before));
+      }
+      node.insertBefore(Node(
+        type: 'attachment',
+        attributes: {
+          'attachmentId': attachmentId,
+          'filename': filename,
+          'sizeBytes': sizeBytes,
+          if (mime != null) 'mime': mime,
+        },
+      ));
+      if (after.trim().isNotEmpty) {
+        node.insertBefore(_paragraphNode(after));
+      }
+      node.unlink();
+      replaced = true;
+    }
+
+    return documentToJson(doc);
+  }
+
+  /// 直接构造一个 attachment 节点的 document JSON——供测试与"纯附件"场景使用。
+  static String placeholderToAttachmentJson({
+    required String attachmentId,
+    required String filename,
+    required int sizeBytes,
+    String? localPath,
+    String? mime,
+  }) {
+    final doc = Document.blank(withInitialText: false);
+    doc.root.insert(Node(
+      type: 'attachment',
+      attributes: {
+        'attachmentId': attachmentId,
+        'filename': filename,
+        'sizeBytes': sizeBytes,
+        if (localPath != null) 'localPath': localPath,
+        if (mime != null) 'mime': mime,
+      },
+    ));
+    return documentToJson(doc);
+  }
+
+  /// 由纯文本构造一个段落节点。
+  ///
+  /// 走 [Node.fromJson] 而非 `Node(type: ...)`——后者不接受 delta，
+  /// 而 `TextNode(delta:)` 的 type 固定为 `text`，塞不进 root 的段落序列。
+  static Node _paragraphNode(String text) {
+    return Node.fromJson({
+      'type': ParagraphBlockKeys.type,
+      'data': {
+        'delta': [
+          {'insert': text.trim()},
+        ],
+      },
+    });
+  }
+
   /// 将 [Document] 序列化为 JSON 字符串以便落盘
   static String documentToJson(Document doc) {
     try {

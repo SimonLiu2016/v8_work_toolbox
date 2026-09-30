@@ -445,34 +445,78 @@ class NotebookKbService {
   /// 走共享 [AgentLoop]，注入三个工具：`notebook_search`（本服务 retrieve）、
   /// `web_search` / `scrape`（[WebSearchService]）。这样用户问笔记里没有的内容
   /// 时，模型可自行降级到联网检索。
+  /// 针对指定目标笔记或全库检索提问。
+  ///
+  /// 若提供 [targetNotes]，则直接提取其全文作为核心上下文，跳过 800 字片断截断，
+  /// 同时依然保留 [kbTools]（可根据需要 cross-reference 或联网）。
+  /// 若 [targetNotes] 为空，则走原有的 FTS5 + 星图扩展链路。
   Future<KbAnswer> ask(
     String question, {
     int limit = 5,
     int graphHops = 1,
+    List<Note>? targetNotes,
   }) async {
     final trimmed = question.trim();
     if (trimmed.isEmpty) {
       return const KbAnswer.noMatch('请输入问题。');
     }
 
-    // FTS 直接命中 + 沿星图扩展邻居（阶段四）：问「豆浆机坏了」命中延保笔记后，
-    // 同订单/同产品的关联笔记也会被带进上下文。
-    final direct = await retrieve(trimmed, limit: limit);
-    if (direct.isEmpty) {
-      return const KbAnswer.noMatch(
-        '你的笔记本里没有与这个问题相关的记录。可以换个说法，或到「AI 咨询与检索」里联网查询。',
-      );
-    }
-    final directIds = direct.map((f) => f.noteId).toSet();
-    final fragments = graphHops > 0
-        ? await retrieveWithGraph(trimmed, limit: limit, graphHops: graphHops)
-        : direct;
-    final graphIds =
-        fragments.map((f) => f.noteId).where((id) => !directIds.contains(id)).toList();
+    final String initialPrompt;
+    final List<KbCitation> citations;
+    final bool usedGraph;
+    final List<String> graphIds;
 
-    final context = _buildContext(fragments);
-    final initialPrompt = '以下是我笔记本里检索到的相关记录：\n\n$context\n\n'
-        '我的问题：$trimmed';
+    if (targetNotes != null && targetNotes.isNotEmpty) {
+      citations = targetNotes
+          .map((n) => KbCitation(noteId: n.id, title: n.title))
+          .toList();
+      usedGraph = false;
+      graphIds = const [];
+
+      final credentialMap = <String, List<String>>{};
+      for (final note in targetNotes) {
+        try {
+          final creds = await NoteStore.instance.db.credentialsForNote(note.id);
+          final files = creds
+              .map((a) => a.filename ?? a.localPath.split('/').last)
+              .toList();
+          if (files.isNotEmpty) {
+            credentialMap[note.id] = files;
+          }
+        } catch (_) {}
+      }
+
+      initialPrompt = buildTargetPrompt(
+        targetNotes: targetNotes,
+        question: trimmed,
+        credentialMap: credentialMap,
+      );
+    } else {
+      // FTS 直接命中 + 沿星图扩展邻居（阶段四）：问「豆浆机坏了」命中延保笔记后，
+      // 同订单/同产品的关联笔记也会被带进上下文。
+      final direct = await retrieve(trimmed, limit: limit);
+      if (direct.isEmpty) {
+        return const KbAnswer.noMatch(
+          '你的笔记本里没有与这个问题相关的记录。可以换个说法，或到「AI 咨询与检索」里联网查询。',
+        );
+      }
+      final directIds = direct.map((f) => f.noteId).toSet();
+      final fragments = graphHops > 0
+          ? await retrieveWithGraph(trimmed, limit: limit, graphHops: graphHops)
+          : direct;
+      graphIds = fragments
+          .map((f) => f.noteId)
+          .where((id) => !directIds.contains(id))
+          .toList();
+
+      final context = _buildContext(fragments);
+      initialPrompt = '以下是我笔记本里检索到的相关记录：\n\n$context\n\n'
+          '我的问题：$trimmed';
+      citations = fragments
+          .map((f) => KbCitation(noteId: f.noteId, title: f.title))
+          .toList();
+      usedGraph = graphIds.isNotEmpty;
+    }
 
     try {
       final result = await AgentLoop.run(
@@ -486,16 +530,54 @@ class NotebookKbService {
       final text = result.text.trim();
       return KbAnswer(
         text: text.isEmpty ? '（模型返回了空回答）' : text,
-        citations: fragments
-            .map((f) => KbCitation(noteId: f.noteId, title: f.title))
-            .toList(),
-        usedGraph: graphIds.isNotEmpty,
+        citations: citations,
+        usedGraph: usedGraph,
         graphNoteIds: graphIds,
       );
     } catch (e) {
       AiLogger.logError('笔记本问答失败: $e');
       return KbAnswer.failure('生成回答时出错：$e');
     }
+  }
+
+  /// 单篇目标笔记全文的最大字符预算，防止单次 prompt 超出 token 上限。
+  static const int _maxTargetNoteLength = 30000;
+
+  /// 构建目标笔记的提问 prompt。
+  @visibleForTesting
+  static String buildTargetPrompt({
+    required List<Note> targetNotes,
+    required String question,
+    Map<String, List<String>> credentialMap = const {},
+  }) {
+    final targetBuffer = StringBuffer();
+    for (var i = 0; i < targetNotes.length; i++) {
+      final note = targetNotes[i];
+      var body = _notePlainText(note.deltaJson);
+      if (body.length > _maxTargetNoteLength) {
+        body =
+            '${body.substring(0, _maxTargetNoteLength)}\n[...注意：该笔记内容过长，已截取前 $_maxTargetNoteLength 字符...]';
+      }
+      targetBuffer.writeln('【选定目标笔记 ${i + 1}】标题：${note.title}');
+      if (note.assetCategory != null) {
+        targetBuffer.writeln('  资产类别：${note.assetCategory}');
+      }
+      if (note.assetExpiryDate != null) {
+        targetBuffer.writeln('  到期日：${_fmtDate(note.assetExpiryDate!)}');
+      }
+      final creds = credentialMap[note.id] ?? const [];
+      if (creds.isNotEmpty) {
+        targetBuffer.writeln('  凭证附件：${creds.join('、')}');
+      }
+      targetBuffer.writeln('  全文内容：\n$body');
+      targetBuffer.writeln();
+    }
+
+    return '用户已选定以下具体笔记作为本次问答的目标对象：\n\n'
+        '${targetBuffer.toString()}'
+        '用户提问或分析要求：$question\n\n'
+        '请针对上述选定的笔记内容进行深度处理与回答（例如归纳总结、提取业务流程、撰写使用指南、指出逻辑疑点等）。'
+        '若分析中需要对比参考其他笔记或联网检索验证外部事实，可使用提供的工具。';
   }
 
   /// 笔记本问答可用工具。笔记检索优先，联网作为兜底。
@@ -656,7 +738,7 @@ ${AgentLoop.renderTools(kbTools)}
     return '$prefix${text.substring(start, end)}$suffix';
   }
 
-  String _fmtDate(DateTime d) =>
+  static String _fmtDate(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   @visibleForTesting

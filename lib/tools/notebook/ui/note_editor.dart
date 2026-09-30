@@ -49,16 +49,47 @@ class NoteEditor extends StatefulWidget {
   });
 
   @override
-  State<NoteEditor> createState() => _NoteEditorState();
+  State<NoteEditor> createState() => NoteEditorState();
 }
 
-class _NoteEditorState extends State<NoteEditor> {
+class NoteEditorState extends State<NoteEditor> {
   EditorState? _editorState;
   EditorScrollController? _editorScrollController;
   StreamSubscription? _transactionSub;
   late TextEditingController _titleCtrl;
   Timer? _bodyDebounce;
   bool _isSaving = false;
+
+  /// 追加 Markdown 内容到当前活跃编辑器末尾，并实时更新视图与持久化到数据库。
+  Future<bool> appendMarkdown(String markdown) async {
+    if (_editorState == null || !mounted) return false;
+    try {
+      final appendDoc = AppFlowyCodec.parseToDocument('\n\n---\n\n$markdown');
+      final transaction = _editorState!.transaction;
+      var insertIdx = _editorState!.document.root.children.length;
+      for (final node in appendDoc.root.children) {
+        transaction.insertNode([insertIdx++], node);
+      }
+      await _editorState!.apply(transaction);
+
+      // 光标置底并激活焦点（自动触发将新段落滚动进入视野）
+      _focusEditorAtEnd();
+
+      // 立即保存至底层存储并通知刷新
+      await _save();
+      return true;
+    } catch (e) {
+      debugPrint('NoteEditor.appendMarkdown 出错: $e');
+      return false;
+    }
+  }
+
+  /// 获取当前编辑器的文档模型实例
+  Document? get document => _editorState?.document;
+
+  /// 获取当前编辑器的纯文本内容
+  String get plainText =>
+      _editorState == null ? '' : AppFlowyCodec.documentToPlainText(_editorState!.document);
 
   List<Notebook> _notebooks = [];
   List<Tag> _allTags = [];

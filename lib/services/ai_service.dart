@@ -492,6 +492,7 @@ class AiService {
     String? explicitModel,
     required List<Map<String, String>> messages,
     Duration? timeout,
+    bool ignoreCooldown = false,
   }) async {
     final store = AiConfigStore.instance;
 
@@ -550,7 +551,7 @@ class AiService {
 
     for (final candidate in candidates) {
       // 检查健康状态冷却
-      if (!_isProviderHealthy(candidate.providerId)) {
+      if (!ignoreCooldown && !_isProviderHealthy(candidate.providerId)) {
         final health = _healthCache[candidate.providerId];
         routingTrace.add(
           RouteAttempt(

@@ -348,14 +348,37 @@ class _AppListItemState extends State<AppListItem> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.isDarkMode;
+
+    // 悬停背景与选中背景（确保浅色与深色模式下均具有舒适、清晰的对比度）
+    final Color hoverColor = isDark
+        ? Colors.white.withValues(alpha: 0.065)
+        : Colors.black.withValues(alpha: 0.05);
+
+    final Color selectedColor = isDark
+        ? context.bgSelected
+        : const Color(0xFFE2E8F0);
+
     Color bg;
     if (widget.isSelected) {
-      bg = context.bgSelected;
+      bg = selectedColor;
     } else if (_isHovered) {
-      bg = context.bgCardHover;
+      bg = hoverColor;
     } else {
       bg = Colors.transparent;
     }
+
+    final Color titleColor = widget.isSelected
+        ? (isDark ? Colors.white : context.accentSolid)
+        : (_isHovered ? context.textPrimary : context.textPrimary);
+
+    final Color subtitleColor = widget.isSelected
+        ? (isDark ? context.textSecondary : context.textSecondary)
+        : (_isHovered ? context.textSecondary : context.textTertiary);
+
+    final Color iconColor = widget.isSelected
+        ? context.accentText
+        : (_isHovered ? context.textPrimary : context.textSecondary);
 
     return MouseRegion(
       cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
@@ -363,56 +386,83 @@ class _AppListItemState extends State<AppListItem> {
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
+        child: Container(
+          // 即时切换无延迟，消除快速划过时的残影频闪
           padding: widget.padding,
           decoration: BoxDecoration(
             color: bg,
             borderRadius: AppTheme.borderRadiusSmall,
             border: widget.isSelected
-                ? Border.all(color: context.accentSolid.withValues(alpha: 0.35), width: 1)
+                ? Border.all(
+                    color: context.accentSolid.withValues(alpha: isDark ? 0.35 : 0.25),
+                    width: 1,
+                  )
                 : Border.all(color: Colors.transparent, width: 1),
           ),
-          child: Row(
+          child: Stack(
             children: [
-              if (widget.leading != null) ...[
-                widget.leading!,
-                const SizedBox(width: AppTheme.space8),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.title,
-                      style: AppTheme.fontBody.copyWith(
-                        color: widget.isSelected
-                            ? (context.isDarkMode ? Colors.white : context.accentSolid)
-                            : context.textPrimary,
-                        fontWeight: widget.isSelected ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+              // 选中项左侧 Accent 指示条 (macOS 原生侧栏风格)
+              if (widget.isSelected)
+                Positioned(
+                  left: 0,
+                  top: 2,
+                  bottom: 2,
+                  child: Container(
+                    width: 3,
+                    decoration: BoxDecoration(
+                      color: context.accentSolid,
+                      borderRadius: BorderRadius.circular(1.5),
                     ),
-                    if (widget.subtitle != null) ...[
-                      const SizedBox(height: AppTheme.space2),
-                      Text(
-                        widget.subtitle!,
-                        style: AppTheme.fontCaption.copyWith(
-                          color: context.textTertiary,
+                  ),
+                ),
+              Padding(
+                // 当处于选中态有左指示条时，微调内容左边距避开指示条
+                padding: EdgeInsets.only(left: widget.isSelected ? 4.0 : 0.0),
+                child: Row(
+                  children: [
+                    if (widget.leading != null) ...[
+                      IconTheme(
+                        data: IconThemeData(
+                          color: iconColor,
+                          size: 16,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        child: widget.leading!,
                       ),
+                      const SizedBox(width: AppTheme.space8),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.title,
+                            style: AppTheme.fontBody.copyWith(
+                              color: titleColor,
+                              fontWeight: widget.isSelected ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (widget.subtitle != null) ...[
+                            const SizedBox(height: AppTheme.space2),
+                            Text(
+                              widget.subtitle!,
+                              style: AppTheme.fontCaption.copyWith(color: subtitleColor),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (widget.trailing != null) ...[
+                      const SizedBox(width: AppTheme.space8),
+                      widget.trailing!,
                     ],
                   ],
                 ),
               ),
-              if (widget.trailing != null) ...[
-                const SizedBox(width: AppTheme.space8),
-                widget.trailing!,
-              ],
             ],
           ),
         ),

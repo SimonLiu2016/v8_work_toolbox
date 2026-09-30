@@ -1,6 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:drift/native.dart';
-import 'package:drift/drift.dart' show Value;
 import 'package:V8WorkToolbox/tools/notebook/note_database.dart';
 import 'package:V8WorkToolbox/tools/notebook/notebook_kb_service.dart';
 
@@ -58,6 +56,7 @@ void main() {
   });
 
   _stage3();
+  _stageTargetPrompt();
 
   group('检索边界', () {
     test('空查询返回空列表', () async {
@@ -168,3 +167,67 @@ void _stage3() {
     });
   });
 }
+
+void _stageTargetPrompt() {
+  group('目标笔记提问 prompt 构建 (buildTargetPrompt)', () {
+    test('构建包含选定笔记全文和凭证附件的 prompt', () {
+      final now = DateTime.now();
+      final targetNote = Note(
+        id: 'note-target-1',
+        title: '新用户入职业务流程',
+        deltaJson: '# 新员工入职指南\n\n1. 领取办公电脑\n2. 配置 VPN 与账号\n3. 提交行政审批',
+        isPinned: false,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+        assetCategory: '行政指引',
+        assetExpiryDate: DateTime(2027, 1, 1),
+      );
+
+      final prompt = NotebookKbService.buildTargetPrompt(
+        targetNotes: [targetNote],
+        question: '总结入职业务流程并指出需要完善的步骤',
+        credentialMap: {
+          'note-target-1': ['入职审批表.pdf', '网络配置单.png'],
+        },
+      );
+
+      expect(prompt, contains('新用户入职业务流程'));
+      expect(prompt, contains('【选定目标笔记 1】'));
+      expect(prompt, contains('行政指引'));
+      expect(prompt, contains('2027-01-01'));
+      expect(prompt, contains('入职审批表.pdf、网络配置单.png'));
+      expect(prompt, contains('领取办公电脑'));
+      expect(prompt, contains('总结入职业务流程并指出需要完善的步骤'));
+      expect(prompt, contains('可使用提供的工具'));
+    });
+
+    test('长笔记超过 30,000 字符时被安全截断', () {
+      final now = DateTime.now();
+      final hugeContent = '很长的段落内容' * 6000; // > 36000 chars
+      final targetNote = Note(
+        id: 'note-huge-1',
+        title: '长篇日志',
+        deltaJson: hugeContent,
+        isPinned: false,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      final prompt = NotebookKbService.buildTargetPrompt(
+        targetNotes: [targetNote],
+        question: '分析全文',
+      );
+
+      expect(prompt, contains('注意：该笔记内容过长，已截取前 30000 字符'));
+      expect(prompt.length, lessThan(35000));
+    });
+
+    test('保留 kbTools 包含 notebook_search, web_search, scrape', () {
+      final toolNames = NotebookKbService.kbTools.map((t) => t.name).toList();
+      expect(toolNames, containsAll(['notebook_search', 'web_search', 'scrape']));
+    });
+  });
+}
+

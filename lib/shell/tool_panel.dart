@@ -216,12 +216,12 @@ class _ToolPanelState extends State<ToolPanel> {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: AppTheme.space4),
                       child: AppListItem(
+                        key: ValueKey(tool.id),
                         title: tool.title,
                         subtitle: tool.subtitle,
                         leading: Icon(
                           tool.icon,
                           size: 16,
-                          color: isSelected ? context.accentText : context.textSecondary,
                         ),
                         isSelected: isSelected,
                         onTap: () => widget.onSelectTool(tool.id),

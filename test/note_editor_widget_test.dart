@@ -98,4 +98,50 @@ void main() {
     expect(box.size.height, greaterThan(300));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('NoteEditorState.appendMarkdown seamlessly updates editor nodes in real time', (tester) async {
+    final note = Note(
+      id: 'test-append-live',
+      title: '流程图说明',
+      deltaJson: '# 初始标题\n\n初始正文第一行',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      isPinned: false,
+      isDeleted: false,
+    );
+
+    final editorKey = GlobalKey<NoteEditorState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 800,
+            height: 600,
+            child: NoteEditor(
+              key: editorKey,
+              note: note,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(editorKey.currentState!.plainText, contains('初始标题'));
+    expect(editorKey.currentState!.plainText, contains('初始正文第一行'));
+    expect(editorKey.currentState!.plainText, isNot(contains('追加的新步骤')));
+
+    // 调用 appendMarkdown 实时追加
+    final success = await editorKey.currentState!.appendMarkdown('追加的新步骤');
+    expect(success, isTrue);
+
+    await tester.pumpAndSettle();
+
+    // 验证新追加内容立刻在文档模型和编辑器中生效
+    expect(editorKey.currentState!.plainText, contains('追加的新步骤'));
+    expect(find.byType(AppFlowyEditor), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

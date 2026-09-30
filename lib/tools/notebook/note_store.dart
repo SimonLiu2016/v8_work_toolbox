@@ -284,6 +284,16 @@ class NoteStore {
 
   Future<List<Note>> deletedNotes() => _db.deletedNotes();
 
+  /// 获取知识库中所有未删除的笔记。
+  Future<List<Note>> allNotes() async {
+    if (!_initialized) return const [];
+    try {
+      return await _db.allNotesForIndexing();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<Note?> noteById(String id) => _db.noteById(id);
 
   Future<String> createNote({
@@ -645,7 +655,7 @@ class NoteStore {
   Future<Attachment?> attachmentById(String attId) async {
     final results = await _db
         .customSelect(
-          'SELECT id, note_id, filename, mime, local_path, created_at FROM attachments WHERE id = ?',
+          'SELECT id, note_id, filename, mime, local_path, created_at, is_credential FROM attachments WHERE id = ?',
           variables: [Variable<String>(attId)],
         )
         .get();

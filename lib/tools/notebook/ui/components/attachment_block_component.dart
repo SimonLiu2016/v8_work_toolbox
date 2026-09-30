@@ -3,7 +3,10 @@ import 'dart:io';
 import 'package:appflowy_editor/appflowy_editor.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../convert/matrix.dart';
+import '../../convert/ui/convert_dialog.dart';
 import '../../note_store.dart';
 
 class AttachmentBlockKeys {
@@ -97,6 +100,16 @@ class _AttachmentBlockComponentWidgetState
       node.attributes[AttachmentBlockKeys.sizeBytes] as int? ?? 0;
   String? get _attachmentId =>
       node.attributes[AttachmentBlockKeys.attachmentId] as String?;
+  String? get _mime => node.attributes[AttachmentBlockKeys.mime] as String?;
+
+  /// 是否为图片附件：优先看节点上的 mime（导入时写入），
+  /// 老节点没有 mime 时退回按扩展名判断——两者都不命中才按非图片渲染。
+  bool get _isImage {
+    final m = _mime;
+    if (m != null && m.isNotEmpty) return m.startsWith('image/');
+    final ext = _filename.toLowerCase().split('.').last;
+    return const {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}.contains(ext);
+  }
 
   /// 早期版本写入节点内的缓存路径（legacy 回退用）。
   String? get _legacyCachedPath =>
@@ -122,8 +135,9 @@ class _AttachmentBlockComponentWidgetState
       try {
         final att = await NoteStore.instance.attachmentById(attId);
         resolved = att?.localPath;
-      } catch (_) {
-        // 查表失败（DB 不可用等）→ 走 legacy 回退
+      } catch (e, st) {
+        // 查表失败（DB 不可用等）→ 走 legacy 回退；打印以便调试
+        debugPrint('[附件解析] 查表异常 attId=$attId  error=$e\n$st');
       }
     }
     resolved ??= _legacyCachedPath;
@@ -151,8 +165,12 @@ class _AttachmentBlockComponentWidgetState
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
+        crossAxisAlignment: _isImage ? CrossAxisAlignment.start : CrossAxisAlignment.center,
         children: [
-          Icon(_iconFor(_filename), size: 22, color: const Color(0xFF64748B)),
+          if (_isImage)
+            _buildThumbnail()
+          else
+            Icon(_iconFor(_filename), size: 22, color: const Color(0xFF64748B)),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -180,6 +198,12 @@ class _AttachmentBlockComponentWidgetState
             ),
           ),
           if (!_resolving && _available) ...[
+            if (_canConvert)
+              TextButton.icon(
+                onPressed: () => _convert(context),
+                icon: const Icon(Icons.transform_rounded, size: 14),
+                label: const Text('转换', style: TextStyle(fontSize: 11)),
+              ),
             TextButton.icon(
               onPressed: _revealInFinder,
               icon: const Icon(Icons.folder_open, size: 14),
@@ -190,10 +214,137 @@ class _AttachmentBlockComponentWidgetState
               icon: const Icon(Icons.download_rounded, size: 14),
               label: const Text('另存为', style: TextStyle(fontSize: 11)),
             ),
+            TextButton.icon(
+              onPressed: () => _confirmDelete(context),
+              icon: const Icon(Icons.delete_outline_rounded, size: 14, color: Colors.redAccent),
+              label: const Text('删除', style: TextStyle(fontSize: 11, color: Colors.redAccent)),
+            ),
           ],
         ],
       ),
     );
+  }
+
+  /// 图片缩略图：约束宽度、等比缩放，点击用系统默认应用打开原图。
+  ///
+  /// 为什么是缩略而非原图直显：附件块嵌在长笔记流里，一张几 MB 的原图
+  /// 会把版面冲散。缩略兼顾可扫读性，需要原图时点一下即可。
+  Widget _buildThumbnail() {
+    final p = _resolvedPath;
+    if (p == null || !File(p).existsSync()) {
+      return const SizedBox(width: 96, height: 72);
+    }
+    return GestureDetector(
+      onTap: () => Process.run('open', [p]),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 120, maxHeight: 120),
+          child: Image.file(
+            File(p),
+            width: 120,
+            fit: BoxFit.cover,
+            // 解码失败（文件损坏/格式不支持）时退回图标，不显示破图。
+            errorBuilder: (_, __, ___) => Container(
+              width: 96,
+              height: 72,
+              alignment: Alignment.center,
+              child: Icon(_iconFor(_filename), size: 28, color: const Color(0xFF94A3B8)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _canConvert {
+    final ext = _filename.toLowerCase().split('.').last;
+    return DocFormat.fromExtension(ext) != null;
+  }
+
+  void _convert(BuildContext context) {
+    final attId = _attachmentId;
+    final p = _resolvedPath;
+    if (attId == null || p == null) return;
+
+    EditorState? editorState;
+    try {
+      editorState = context.read<EditorState>();
+    } catch (_) {}
+
+    ConvertDialog.show(
+      context,
+      attachmentId: attId,
+      filename: _filename,
+      localPath: p,
+      onConvertedAttachment: (newAtt) {
+        if (editorState != null) {
+          try {
+            final f = File(newAtt.localPath);
+            final size = f.existsSync() ? f.lengthSync() : 0;
+            final newNode = attachmentNode(
+              attachmentId: newAtt.id,
+              filename: newAtt.filename ?? 'attachment',
+              sizeBytes: size,
+              mime: newAtt.mime,
+            );
+            final transaction = editorState.transaction;
+            transaction.insertNode(widget.node.path.next, newNode);
+            editorState.apply(transaction);
+          } catch (e) {
+            debugPrint('自动插入转换产物节点失败: $e');
+          }
+        }
+      },
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('删除确认'),
+          ],
+        ),
+        content: Text('确定要从笔记中删除附件「$_filename」吗？\n删除后该附件内容将从正文和附件库中彻底移除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    // 1. 从编辑器文档树中删除当前节点
+    try {
+      final editorState = context.read<EditorState>();
+      final transaction = editorState.transaction;
+      transaction.deleteNode(widget.node);
+      await editorState.apply(transaction);
+    } catch (e) {
+      debugPrint('删除编辑器节点失败: $e');
+    }
+
+    // 2. 级联清理 SQLite 数据库和磁盘物理文件
+    final attId = _attachmentId;
+    if (attId != null && attId.isNotEmpty) {
+      try {
+        await NoteStore.instance.deleteAttachment(attId);
+      } catch (e) {
+        debugPrint('清理附件存储失败: $e');
+      }
+    }
   }
 
   Future<void> _revealInFinder() async {

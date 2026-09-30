@@ -15,6 +15,7 @@ import '../export_service.dart';
 import '../markdown_converter.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import '../pdf_image_extractor.dart';
 import '../pdf_to_markdown.dart';
 import '../xlsx_to_markdown.dart';
 import 'note_editor.dart';
@@ -61,6 +62,42 @@ class NotebookFocusBridge {
   }
 }
 
+/// 待落库的图片：占位标记 + 字节 + MIME。
+///
+/// 为什么需要它：图片必须等 `createNote` 拿到 noteId 之后才能
+/// `addAttachment`，而 markdown 在此之前就要生成。故先以占位标记传递，
+/// 落库后再替换为附件节点。
+class _PendingImage {
+  _PendingImage({
+    required this.key,
+    required this.placeholder,
+    required this.bytes,
+    required this.mime,
+  });
+
+  /// 稳定键（docx 用文件名，pdf 用页+尺寸+长度）。
+  final String key;
+
+  /// markdown 中的占位文本。
+  final String placeholder;
+
+  final Uint8List bytes;
+  final String mime;
+}
+
+/// 解析结果：markdown + 图片 + 无法提取的图片计数。
+class _ExtractedDoc {
+  _ExtractedDoc({
+    required this.markdown,
+    this.images = const [],
+    this.unrecoverable = 0,
+  });
+
+  final String markdown;
+  final List<_PendingImage> images;
+  final int unrecoverable;
+}
+
 class _NotebookPageState extends State<NotebookPage> {
   final NoteStore _store = NoteStore.instance;
 
@@ -88,6 +125,9 @@ class _NotebookPageState extends State<NotebookPage> {
   final Set<String> _selectedNoteIds = {};
 
   final TextEditingController _searchController = TextEditingController();
+
+  /// 活动笔记编辑器 GlobalKey，用于实时事务级内容追加
+  final GlobalKey<NoteEditorState> _editorKey = GlobalKey<NoteEditorState>();
 
   // 窗口焦点刷新回调（子窗口中的编辑感知）
   late VoidCallback _windowFocusCallback;
@@ -375,12 +415,13 @@ class _NotebookPageState extends State<NotebookPage> {
 
     int successCount = 0;
     int failCount = 0;
+    var lostImages = 0;
     for (final file in picked) {
       if (file.path == null) continue;
       String? createdNoteId;
       try {
-        final markdown = await _extractMarkdown(file.path!, file.name);
-        if (markdown == null) {
+        final doc = await _extractMarkdownWithImages(file.path!, file.name);
+        if (doc == null) {
           failCount++;
           continue;
         }
@@ -388,7 +429,7 @@ class _NotebookPageState extends State<NotebookPage> {
           RegExp(r'\.(pdf|docx|xlsx|md|markdown|txt)$', caseSensitive: false),
           '',
         );
-        final deltaJson = MarkdownConverter.markdownToDelta(markdown);
+        var deltaJson = MarkdownConverter.markdownToDelta(doc.markdown);
 
         final noteId = await _store.createNote(
           title: title,
@@ -396,6 +437,24 @@ class _NotebookPageState extends State<NotebookPage> {
           notebookId: _selectedNotebookId,
         );
         createdNoteId = noteId;
+
+        // 内嵌图片：占位标记 → 落库 → 附件节点。
+        // 顺序不可换——addAttachment 需要 noteId。
+        for (final img in doc.images) {
+          final attId = await _store.addAttachment(
+            noteId: noteId,
+            sourceFile: await _writeTempImage(img),
+          );
+          deltaJson = AppFlowyCodec.replacePlaceholderWithAttachment(
+            deltaJson,
+            placeholder: img.placeholder,
+            attachmentId: attId,
+            filename: '${img.key}.${_extFor(img.mime)}',
+            sizeBytes: img.bytes.length,
+            mime: img.mime,
+          );
+        }
+        lostImages += doc.unrecoverable;
 
         if (keepOriginal) {
           // 先建笔记拿到 noteId（addAttachment 需要），再把附件块追加进正文——
@@ -406,14 +465,14 @@ class _NotebookPageState extends State<NotebookPage> {
             sourceFile: sourceFile,
           );
           final stat = await sourceFile.stat();
-          final updatedJson = _appendAttachmentBlock(
+          deltaJson = _appendAttachmentBlock(
             deltaJson,
             attId: attId,
             filename: file.name,
             sizeBytes: stat.size,
           );
-          await _store.updateNote(id: noteId, deltaJson: updatedJson);
         }
+        await _store.updateNote(id: noteId, deltaJson: deltaJson);
         createdNoteId = null; // 已成功，退出回滚范围
         successCount++;
       } catch (e) {
@@ -431,11 +490,31 @@ class _NotebookPageState extends State<NotebookPage> {
           : '已导入 $successCount 篇笔记';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(msg),
-          backgroundColor: failCount > 0 ? context.warningSolid : null,
+          content: Text(
+            lostImages > 0 ? '$msg（$lostImages 张图片未能提取）' : msg,
+          ),
+          backgroundColor: failCount > 0 || lostImages > 0 ? context.warningSolid : null,
         ),
       );
     }
+  }
+
+  /// MIME → 扩展名。
+  static String _extFor(String mime) {
+    if (mime == 'image/jpeg') return 'jpg';
+    if (mime == 'image/png') return 'png';
+    if (mime == 'image/gif') return 'gif';
+    return 'bin';
+  }
+
+  /// 把待落库图片写入临时文件——[addAttachment] 收的是 File。
+  ///
+  /// 临时目录由调用方负责清理（导入结束后统一删）。
+  static Future<File> _writeTempImage(_PendingImage img) async {
+    final dir = Directory.systemTemp.createTempSync('v8_note_img_');
+    final file = File('${dir.path}/${img.key}.${_extFor(img.mime)}');
+    await file.writeAsBytes(img.bytes);
+    return file;
   }
 
   /// 在笔记文档末尾追加一个附件块，返回更新后的 deltaJson。
@@ -472,34 +551,28 @@ class _NotebookPageState extends State<NotebookPage> {
     }
   }
 
-  /// 按扩展名分发解析为 Markdown；不支持的格式返回 null 并提示。
-  Future<String?> _extractMarkdown(String path, String name) async {
+
+  /// 解析结果：markdown + 待落库的图片字节。
+  ///
+  /// 图片此时还没有 noteId，故先以 [DocxToMarkdown.imagePlaceholderPrefix]
+  /// 或 [PdfToMarkdown.imagePlaceholderPrefix] 占位，等 createNote 之后
+  /// 逐个 addAttachment 拿真实 attId，再把占位替换为附件节点。
+  Future<_ExtractedDoc?> _extractMarkdownWithImages(
+    String path,
+    String name,
+  ) async {
     final ext = path.split('.').last.toLowerCase();
     switch (ext) {
       case 'md':
       case 'markdown':
       case 'txt':
-        return File(path).readAsString();
+        return _ExtractedDoc(markdown: await File(path).readAsString());
       case 'docx':
-        return DocxToMarkdown.convert(path);
-      case 'xlsx':
-        return XlsxToMarkdown.convert(path);
+        return _extractDocxWithImages(path);
       case 'pdf':
-        try {
-          return await _extractPdfMarkdown(path);
-        } on PdfNoTextLayerException catch (e) {
-          // 扫描件无文字层：明确告知，并引导到"保留原文件为附件"这条可用路径
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('$e\n可在导入时勾选「保留原文件为附件」以保留原始文档。'),
-                backgroundColor: context.warningSolid,
-                duration: const Duration(seconds: 8),
-              ),
-            );
-          }
-          return null;
-        }
+        return _extractPdfWithImages(path);
+      case 'xlsx':
+        return _ExtractedDoc(markdown: await XlsxToMarkdown.convert(path));
       default:
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -511,6 +584,95 @@ class _NotebookPageState extends State<NotebookPage> {
         }
         return null;
     }
+  }
+
+  /// docx：文本与图片一次抽出，markdown 中已含占位标记。
+  Future<_ExtractedDoc> _extractDocxWithImages(String path) async {
+    final bytes = await File(path).readAsBytes();
+    final result = DocxToMarkdown.convertWithImages(bytes);
+    return _ExtractedDoc(
+      markdown: result.markdown,
+      images: result.images
+          .map((i) => _PendingImage(
+                key: i.filename,
+                placeholder: '${DocxToMarkdown.imagePlaceholderPrefix}${i.filename}${DocxToMarkdown.imagePlaceholderSuffix}',
+                bytes: i.bytes,
+                mime: i.mime,
+              ))
+          .toList(),
+      unrecoverable: DocxToMarkdown.lastUnrecoverableCount,
+    );
+  }
+
+  /// pdf：文本走 PDFKit，图片走 [PdfImageExtractor]。
+  ///
+  /// 两者无位置关联（PDF 无段落概念），故按"每页首之前"插入该页图片的
+  /// 占位标记—— fidelity 到页这一级，与 spec 的 "extracted per page" 对齐。
+  Future<_ExtractedDoc?> _extractPdfWithImages(String path) async {
+    String markdown;
+    try {
+      markdown = await _extractPdfMarkdown(path);
+    } on PdfNoTextLayerException catch (e) {
+      // 扫描件无文字层：明确告知，并引导到"保留原文件为附件"这条可用路径
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$e\n可在导入时勾选「保留原文件为附件」以保留原始文档。'),
+            backgroundColor: context.warningSolid,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
+      return null;
+    }
+
+    List<PdfExtractedImage> images = const [];
+    var unrecoverable = 0;
+    try {
+      final bytes = await File(path).readAsBytes();
+      images = PdfImageExtractor.extract(bytes);
+      unrecoverable = PdfImageExtractor.lastUnrecoverableCount;
+    } on PdfEncryptedException {
+      // 加密 PDF：文本可能仍可读，图片不可提取。如实报告，不假装成功。
+      unrecoverable = 1;
+    }
+
+    // 按页把该页图片的占位插到该页第一个文本之前。
+    if (images.isNotEmpty) {
+      markdown = _insertPdfImagePlaceholders(markdown, images);
+    }
+    return _ExtractedDoc(
+      markdown: markdown,
+      images: images
+          .map((i) => _PendingImage(
+                key: 'p${i.pageIndex}_${i.width}x${i.height}_${i.bytes.length}',
+                placeholder: PdfToMarkdown.imagePlaceholder(i),
+                bytes: i.bytes,
+                mime: i.mime,
+              ))
+          .toList(),
+      unrecoverable: unrecoverable,
+    );
+  }
+
+  /// 把每页图片占位插到该页文本之前。[pdfToMarkdown] 以 `\n---\n` 分页。
+  String _insertPdfImagePlaceholders(
+    String markdown,
+    List<PdfExtractedImage> images,
+  ) {
+    final byPage = <int, List<String>>{};
+    for (final img in images) {
+      byPage.putIfAbsent(img.pageIndex, () => []).add(
+        PdfToMarkdown.imagePlaceholder(img),
+      );
+    }
+    final blocks = markdown.split('\n---\n');
+    final out = <String>[];
+    for (var i = 0; i < blocks.length; i++) {
+      final prefix = byPage[i]?.join('\n\n');
+      out.add(prefix == null ? blocks[i] : '$prefix\n\n${blocks[i]}');
+    }
+    return out.join('\n---\n');
   }
 
   /// PDF 文本提取（复用朗读模块的解析能力）
@@ -719,8 +881,9 @@ class _NotebookPageState extends State<NotebookPage> {
     );
     if (result == null ||
         result.files.isEmpty ||
-        result.files.first.path == null)
+        result.files.first.path == null) {
       return;
+    }
 
     if (!mounted) return;
     showDialog(
@@ -1062,8 +1225,9 @@ class _NotebookPageState extends State<NotebookPage> {
     final id = note.id;
     final title = note.title.isEmpty ? '无标题笔记' : note.title;
     await _store.softDeleteNote(id);
-    if (mounted && _selectedNote?.id == id)
+    if (mounted && _selectedNote?.id == id) {
       setState(() => _selectedNote = null);
+    }
     await _refresh(silent: true);
     if (!mounted) return;
 
@@ -1392,7 +1556,21 @@ class _NotebookPageState extends State<NotebookPage> {
             ),
             SizedBox(
               width: 360,
-              child: NotebookQaPanel(onOpenNote: _openNoteById),
+              child: NotebookQaPanel(
+                onOpenNote: _openNoteById,
+                activeNote: _selectedNote,
+                onNoteCreated: () => _refresh(silent: true),
+                onAppendToActiveNote: (markdown) async {
+                  if (_editorKey.currentState != null && _selectedNote != null) {
+                    final ok = await _editorKey.currentState!.appendMarkdown(markdown);
+                    if (ok) {
+                      _refresh(silent: true);
+                      return true;
+                    }
+                  }
+                  return false;
+                },
+              ),
             ),
           ],
 
@@ -2344,7 +2522,7 @@ class _NotebookPageState extends State<NotebookPage> {
           // Note Editor
           Expanded(
             child: NoteEditor(
-              key: ValueKey(_selectedNote?.id ?? 'empty'),
+              key: _editorKey,
               note: _selectedNote,
               onSaved: () => _refresh(silent: true),
               onTogglePin: () => _refresh(silent: true),

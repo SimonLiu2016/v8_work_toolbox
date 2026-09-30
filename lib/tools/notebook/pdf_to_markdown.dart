@@ -12,6 +12,16 @@ import 'dart:io';
 class PdfToMarkdown {
   PdfToMarkdown._();
 
+  /// 图片占位前缀/后缀。与 DocxToMarkdown 保持同一形态，上层统一处理。
+  static const imagePlaceholderPrefix = '{{attachment:local:';
+  static const imagePlaceholderSuffix = '}}';
+
+  /// pdf 图片的占位标记。pdf 无段落概念，用 页+尺寸+长度 作稳定键。
+  static String imagePlaceholder(dynamic image) {
+    final key = 'p${image.pageIndex}_${image.width}x${image.height}_${image.bytes.length}';
+    return '$imagePlaceholderPrefix$key$imagePlaceholderSuffix';
+  }
+
   /// 标题层级判定阈值（相对正文字号的倍数）
   static const double _h1Ratio = 1.8;
   static const double _h2Ratio = 1.35;
