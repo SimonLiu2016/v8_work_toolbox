@@ -54,12 +54,35 @@ class ScheduledNewsTask {
   }
 }
 
+/// 资讯快报的来源条目。
+///
+/// 快报的正文由 AI 总结，而 [NewsBriefingItem.sources] 存的是检索结果里**原始**的
+/// 标题与 URL。不依赖 AI 是否把 URL 复述进正文——能否点回原始网页不能交给模型
+/// 抄写 URL 的准确率，那是把关键路径交给概率。
+class BriefingSource {
+  final String title;
+  final String url;
+
+  const BriefingSource({required this.title, required this.url});
+
+  Map<String, dynamic> toJson() => {'title': title, 'url': url};
+
+  factory BriefingSource.fromJson(Map<String, dynamic> json) => BriefingSource(
+        title: json['title'] as String? ?? '',
+        url: json['url'] as String? ?? '',
+      );
+}
+
 /// 历史资讯快报条目
 class NewsBriefingItem {
   final String id;
   final String taskId;
   final String taskTitle;
   final String content;
+
+  /// 产生本条快报的检索来源。历史条目（该字段入库前生成的）为**空列表**——
+  /// 反序列化按缺省空处理，不需要数据迁移。
+  final List<BriefingSource> sources;
   final DateTime timestamp;
   bool isRead;
 
@@ -68,25 +91,35 @@ class NewsBriefingItem {
     required this.taskId,
     required this.taskTitle,
     required this.content,
+    List<BriefingSource>? sources,
     DateTime? timestamp,
     this.isRead = false,
-  }) : timestamp = timestamp ?? DateTime.now();
+  })  : sources = sources ?? const [],
+        timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'taskId': taskId,
-    'taskTitle': taskTitle,
-    'content': content,
-    'timestamp': timestamp.toIso8601String(),
-    'isRead': isRead,
-  };
+        'id': id,
+        'taskId': taskId,
+        'taskTitle': taskTitle,
+        'content': content,
+        'sources': sources.map((s) => s.toJson()).toList(),
+        'timestamp': timestamp.toIso8601String(),
+        'isRead': isRead,
+      };
 
   factory NewsBriefingItem.fromJson(Map<String, dynamic> json) {
+    final rawSources = json['sources'] as List?;
     return NewsBriefingItem(
       id: json['id'] as String? ?? '',
       taskId: json['taskId'] as String? ?? '',
       taskTitle: json['taskTitle'] as String? ?? '',
       content: json['content'] as String? ?? '',
+      // 缺省空列表：旧条目读到这里悄悄降级为「无来源」，不是缺失数据错误。
+      sources: rawSources
+              ?.whereType<Map<String, dynamic>>()
+              .map(BriefingSource.fromJson)
+              .toList() ??
+          const [],
       timestamp: DateTime.tryParse(json['timestamp'] as String? ?? '') ?? DateTime.now(),
       isRead: json['isRead'] as bool? ?? false,
     );
@@ -320,6 +353,12 @@ class ScheduledNewsService extends ChangeNotifier {
           .map((r) => '标题: ${r.title}\n来源: ${r.url}\n摘要: ${r.snippet}')
           .join('\n\n');
 
+      // 来源在写库这一刻就从检索结果里取定，不留给 AI 复述。
+      final sources = webResult.results
+          .where((r) => r.url.trim().isNotEmpty)
+          .map((r) => BriefingSource(title: r.title, url: r.url))
+          .toList(growable: false);
+
       // 2. 调用 AI 生成 150 字精炼快报
       String summary = '';
       if (contentToSummarize.isNotEmpty) {
@@ -358,6 +397,7 @@ class ScheduledNewsService extends ChangeNotifier {
           taskId: task.id,
           taskTitle: task.title,
           content: summary,
+          sources: sources,
         );
 
         _briefings.insert(0, item);

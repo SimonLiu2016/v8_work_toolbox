@@ -84,10 +84,8 @@ class _NetworkProxyPageState extends State<NetworkProxyPage> {
                       ),
                     ),
                     const SizedBox(width: AppTheme.space8),
-                    Switch(
+                    AppSwitch(
                       value: _proxySettings.enabled,
-                      activeColor: context.accentText,
-                      activeTrackColor: context.accentSolid,
                       onChanged: (val) async {
                         try {
                           await _service.setGlobalEnabled(val);

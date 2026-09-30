@@ -278,8 +278,12 @@ void main() {
       await squatter.close(force: true);
 
       // fail-soft 之后仍可正常启动：应用的其他查词路径不受影响。
-      await bridge.start();
+      // 这里必须显式给端口：无参 start() 走 SettingsStore 的生产端口（8797），
+      // 而开发机上跑着的真实桌面应用正持有它——测试会因此失败，且失败原因与
+      // 被测行为无关。
+      await bridge.start(port: 0);
       expect(bridge.isRunning, isTrue);
+      expect(bridge.port, greaterThan(0));
     });
   });
 

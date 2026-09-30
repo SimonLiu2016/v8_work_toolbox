@@ -44,6 +44,12 @@ class AppMarkdownView extends StatelessWidget {
   /// 避免超长 AI 回答把聊天气泡无限撑高、淹没输入栏。
   final double? maxHeight;
 
+  /// 链接点击回调。为 null 时链接渲染为不可点文本（默认，行为与改造前一致）。
+  ///
+  /// 快报与 AI 回答里出现的 URL 需要能点开——原先 [MarkdownBody] 没有接入这个
+  /// 回调，链接只是看起来像链接的纯文本。
+  final void Function(String url)? onTapLink;
+
   const AppMarkdownView({
     super.key,
     required this.data,
@@ -51,6 +57,7 @@ class AppMarkdownView extends StatelessWidget {
     this.codeBlockColor,
     this.selectable = true,
     this.maxHeight,
+    this.onTapLink,
   });
 
   @override
@@ -59,6 +66,9 @@ class AppMarkdownView extends StatelessWidget {
       data: data,
       selectable: selectable,
       styleSheet: _buildStyleSheet(context, _resolveCodeBackground(context)),
+      onTapLink: onTapLink == null
+          ? null
+          : (text, href, title) => onTapLink!(href ?? text),
     );
 
     if (maxHeight == null) return body;

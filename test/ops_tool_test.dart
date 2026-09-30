@@ -13,7 +13,9 @@ void main() {
       expect(tool, isNotNull);
       expect(tool!.title, '磐石运维工具');
       expect(tool.openInNewWindow, isTrue);
-      expect(tool.category, ToolCategory.system);
+      // 磐石运维归「运维与监控」分类，不再挤在「系统与配置」里（见 change
+      // reorganize-tool-categories-and-fix-light-mode-legibility）。
+      expect(tool.category, ToolCategory.ops);
     });
   });
 

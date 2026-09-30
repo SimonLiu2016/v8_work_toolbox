@@ -9,6 +9,10 @@ import 'ai_config_page.dart';
 import 'privacy_lock_view.dart';
 import 'tool_panel.dart';
 
+/// 「常用软件」入口展示的工具数量上限。纵使 `recentTools` 持久化了更多条目，
+/// 该入口只取最常用的几个，避免把快捷入口变成第二个「全部工具」。
+const int kFrequentToolLimit = 5;
+
 /// 现代化三栏工作区外壳 (ActivityBar + ToolPanel + Content)
 class AppShell extends StatefulWidget {
   final List<String> initialRecentToolIds;
@@ -92,8 +96,14 @@ class AppShellState extends State<AppShell> {
     final tool = ToolRegistry.findById(toolId);
     if (tool == null) return;
 
-    // If tool opens in a new window, do that instead of embedding
+    // If tool opens in a new window, do that instead of embedding.
+    // 使用频率仍要记录：笔记本 / 密码工具 / 磐石运维都走独立窗口，漏记意味着它们
+    // 永远进不了「常用软件」——而那恰是最常用的几个工具。隐私分类不记录：该入口
+    // 无需解锁即可见，排隐私工具进去等于在解锁前泄露它们的存在。
     if (tool.openInNewWindow) {
+      if (tool.category != ToolCategory.privacy) {
+        _recordUsage(toolId);
+      }
       tool.openNewWindow();
       return;
     }
@@ -124,9 +134,27 @@ class AppShellState extends State<AppShell> {
     widget.onToolUsed?.call(toolId);
   }
 
+  List<ToolDefinition> _frequentTools() {
+    // 频率数据 = recentTools 的 move-to-front 序，取前 5。过滤掉已不存在的
+    // id（工具下线/改名）与隐私分类工具——常用软件入口无需解锁隐私空间即可
+    // 见，把隐私工具排进去等于在解锁前泄露它们的存在。
+    final out = <ToolDefinition>[];
+    for (final id in _recentToolIds) {
+      final tool = ToolRegistry.findById(id);
+      if (tool == null) continue;
+      if (tool.category == ToolCategory.privacy) continue;
+      out.add(tool);
+      if (out.length >= kFrequentToolLimit) break;
+    }
+    return out;
+  }
+
   List<ToolDefinition> _getToolsForCurrentView() {
     if (_currentView == ActivityViewType.privacy) {
       return ToolRegistry.getByCategory(ToolCategory.privacy);
+    }
+    if (_currentView == ActivityViewType.frequent) {
+      return _frequentTools();
     }
     if (_currentView == ActivityViewType.category && _currentCategory != null) {
       return ToolRegistry.getByCategory(_currentCategory!);
@@ -137,6 +165,9 @@ class AppShellState extends State<AppShell> {
   String _getPanelTitle() {
     if (_currentView == ActivityViewType.privacy) {
       return '隐私空间';
+    }
+    if (_currentView == ActivityViewType.frequent) {
+      return '常用软件';
     }
     if (_currentView == ActivityViewType.category && _currentCategory != null) {
       return _currentCategory!.label;
@@ -160,6 +191,7 @@ class AppShellState extends State<AppShell> {
           ActivityBar(
             currentView: _currentView,
             currentCategory: _currentCategory,
+            hasFrequentTools: _frequentTools().isNotEmpty,
             onViewSelected: (view) {
               setState(() {
                 _currentView = view;
@@ -176,6 +208,16 @@ class AppShellState extends State<AppShell> {
                     _selectedToolId = ToolRegistry.publicTools.first.id;
                     final idx = ToolRegistry.tools.indexWhere((t) => t.id == _selectedToolId);
                     if (idx >= 0) _activatedToolIndices.add(idx);
+                  } else if (view == ActivityViewType.frequent) {
+                    // 进入常用软件时，若当前选中的工具不在频率列表里，选中最常用的那个，
+                    // 避免内容区停在「当前视图里看不到」的工具上。
+                    final frequentIds = _frequentTools().map((t) => t.id).toSet();
+                    if (!frequentIds.contains(_selectedToolId) &&
+                        _frequentTools().isNotEmpty) {
+                      _selectedToolId = _frequentTools().first.id;
+                      final idx = ToolRegistry.tools.indexWhere((t) => t.id == _selectedToolId);
+                      if (idx >= 0) _activatedToolIndices.add(idx);
+                    }
                   }
                 }
               });

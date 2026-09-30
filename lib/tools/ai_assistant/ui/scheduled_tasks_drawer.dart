@@ -1,8 +1,25 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../../../components/app_components.dart';
 import '../../../components/markdown_view.dart';
 import '../../../services/scheduled_news_service.dart';
 import '../../../theme/app_theme.dart';
+
+/// 用系统默认浏览器打开外链。
+///
+/// 走 `Process.run('open', ...)` 而不引 `url_launcher`：项目面向 macOS，且在
+/// 附件/瘦身/播放器等处已有 8 处同样的先例。为桌面目标平台新增一个插件依赖
+/// 只为了这一件事，不划算。
+Future<void> _openExternalUrl(String url) async {
+  final trimmed = url.trim();
+  if (trimmed.isEmpty) return;
+  try {
+    await Process.run('open', [trimmed]);
+  } catch (e) {
+    debugPrint('打开外部链接失败: $url ($e)');
+  }
+}
 
 class ScheduledTasksDrawer extends StatefulWidget {
   const ScheduledTasksDrawer({super.key});
@@ -300,7 +317,47 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
                       AppMarkdownView(
                         data: b.content,
                         baseStyle: TextStyle(fontSize: 13, height: 1.5, color: context.textPrimary),
+                        // AI 有时会把来源 URL 复述进正文，让它可点开。
+                        onTapLink: _openExternalUrl,
                       ),
+                      if (b.sources.isNotEmpty) ...[
+                        SizedBox(height: AppTheme.space8),
+                        // 来源条目独立于正文渲染：AI 是否复述 URL 不由我们决定，
+                        // 而「能点回原始网页」必须是确定可达的。
+                        Wrap(
+                          spacing: AppTheme.space8,
+                          runSpacing: AppTheme.space4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Icon(Icons.link_rounded, size: 13, color: context.textTertiary),
+                            for (final s in b.sources)
+                              InkWell(
+                                borderRadius: AppTheme.borderRadiusSmall,
+                                onTap: () => _openExternalUrl(s.url),
+                                child: Tooltip(
+                                  message: s.url,
+                                  preferBelow: false,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.open_in_new_rounded, size: 12, color: context.accentText),
+                                      SizedBox(width: AppTheme.space4),
+                                      ConstrainedBox(
+                                        constraints: const BoxConstraints(maxWidth: 220),
+                                        child: Text(
+                                          s.title.isEmpty ? s.url : s.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: AppTheme.fontCaption.copyWith(color: context.accentText),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -155,7 +155,7 @@ class UnattendedApproverToolDefinition extends ToolDefinition {
   @override
   IconData get icon => Icons.verified_user_rounded;
   @override
-  ToolCategory get category => ToolCategory.system;
+  ToolCategory get category => ToolCategory.ops;
   @override
   Widget buildPage(BuildContext context) => const UnattendedPage();
 }
@@ -200,7 +200,7 @@ class AiAssistantToolDefinition extends ToolDefinition {
   @override
   IconData get icon => Icons.assistant_outlined;
   @override
-  ToolCategory get category => ToolCategory.system;
+  ToolCategory get category => ToolCategory.ai;
   @override
   Widget buildPage(BuildContext context) => const AiAssistantPage();
 }
@@ -215,7 +215,7 @@ class NotebookToolDefinition extends ToolDefinition {
   @override
   IconData get icon => Icons.note_alt_outlined;
   @override
-  ToolCategory get category => ToolCategory.system;
+  ToolCategory get category => ToolCategory.note;
 
   @override
   bool get openInNewWindow => true;
@@ -255,7 +255,7 @@ class VocabBookToolDefinition extends ToolDefinition {
   @override
   IconData get icon => Icons.menu_book_rounded;
   @override
-  ToolCategory get category => ToolCategory.system;
+  ToolCategory get category => ToolCategory.note;
   @override
   Widget buildPage(BuildContext context) => const VocabBookPage();
 }
@@ -269,6 +269,9 @@ class PasswordVaultToolDefinition extends ToolDefinition {
   String get subtitle => '本地加密密码库：密码生成、TOTP 两步验证、体检报告';
   @override
   IconData get icon => Icons.lock_rounded;
+  // 归属仍是 system：改为 privacy 会让它从「全部工具」掉到「只在隐私空间可见」，
+  // 那是用户未要求的可见性变更（password_vault_registry_test 明确断言它公开可见）。
+  // 「系统与配置里躺一个密码库」的名实不符是遗留问题，记在 change 的遗留项里。
   @override
   ToolCategory get category => ToolCategory.system;
 
@@ -310,7 +313,7 @@ class OpsToolDefinition extends ToolDefinition {
   @override
   IconData get icon => Icons.cloud_sync_rounded;
   @override
-  ToolCategory get category => ToolCategory.system;
+  ToolCategory get category => ToolCategory.ops;
 
   @override
   bool get openInNewWindow => true;

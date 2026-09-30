@@ -138,10 +138,8 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                     ),
                     const SizedBox(width: 4),
                     Text('代理', style: AppTheme.fontCaption),
-                    Switch(
+                    AppSwitch(
                       value: isEnabled,
-                      activeColor: context.accentText,
-                      activeTrackColor: context.accentSolid,
                       onChanged: (val) async {
                         await ProxySettings.instance
                             .setToolEnabled(kToolIdAiAssistant, val);

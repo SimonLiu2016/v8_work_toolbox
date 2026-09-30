@@ -9,11 +9,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ToolRegistry Registration Tests', () {
-    test('UnattendedApproverToolDefinition 成功注册在系统分类中', () {
+    test('UnattendedApproverToolDefinition 成功注册在运维与监控分类中', () {
       final tool = ToolRegistry.findById('unattended-approver');
       expect(tool, isNotNull);
       expect(tool?.title, '无人值守助手');
-      expect(tool?.category, ToolCategory.system);
+      expect(tool?.category, ToolCategory.ops);
     });
   });
 

@@ -6,6 +6,7 @@ import '../tools/tool_definition.dart';
 enum ActivityViewType {
   all,      // 全部/搜索
   category, // 按特定分类过滤
+  frequent, // 常用软件（按使用频率）
   ai,       // AI 能力配置
   privacy,  // 隐私空间
   proxy,    // 网络代理
@@ -14,6 +15,11 @@ enum ActivityViewType {
 class ActivityBar extends StatelessWidget {
   final ActivityViewType currentView;
   final ToolCategory? currentCategory;
+
+  /// 是否存在可使用频率数据。为 false 时「常用软件」入口不渲染——新装机或
+  /// 清空历史后，摆一个空入口比不摆更难解释。
+  final bool hasFrequentTools;
+
   final ValueChanged<ActivityViewType> onViewSelected;
   final ValueChanged<ToolCategory> onCategorySelected;
   final VoidCallback onOpenSettings;
@@ -22,6 +28,7 @@ class ActivityBar extends StatelessWidget {
     super.key,
     required this.currentView,
     this.currentCategory,
+    this.hasFrequentTools = false,
     required this.onViewSelected,
     required this.onCategorySelected,
     required this.onOpenSettings,
@@ -81,6 +88,19 @@ class ActivityBar extends StatelessWidget {
             onTap: () => onViewSelected(ActivityViewType.all),
           ),
           const SizedBox(height: AppTheme.space8),
+
+          // 常用软件（按使用频率，无使用记录时不显示）。
+          // 它是频率数据的投影而非语义分类，因此不作为 ToolCategory 的取值，
+          // 而是一个独立入口：工具同时保留在原分类中。
+          if (hasFrequentTools)
+            _buildActivityItem(
+              context,
+              icon: Icons.history_rounded,
+              label: '常用软件',
+              isSelected: currentView == ActivityViewType.frequent,
+              onTap: () => onViewSelected(ActivityViewType.frequent),
+            ),
+          if (hasFrequentTools) const SizedBox(height: AppTheme.space8),
 
           // 工具分类项目 (排除隐私空间)
           ...ToolCategory.values

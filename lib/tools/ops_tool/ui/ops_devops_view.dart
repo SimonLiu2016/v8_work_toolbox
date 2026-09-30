@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../../components/app_components.dart';
 import '../../../theme/app_theme.dart';
 import '../database/ops_database.dart';
 import '../models/ops_models.dart';
@@ -1730,13 +1731,10 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
             onPressed: () => _showEnvDialog(env),
           ),
           SizedBox(width: 8),
-          Switch(
+          AppSwitch(
             value: env.enabled,
-            activeThumbColor: context.bgSidebar,
-            activeTrackColor: context.accentSolid,
             onChanged: (v) => _toggleEnv(env, v),
-          ),
-          InkWell(
+          ),          InkWell(
             borderRadius: AppTheme.borderRadiusSmall,
             onTap: () => _deleteEnv(env),
             child: Tooltip(
@@ -1913,10 +1911,8 @@ class OpsArgoCdMonitorTabState extends State<OpsArgoCdMonitorTab> {
         ),
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Switch(
+          child: AppSwitch(
             value: t.enabled,
-            activeThumbColor: context.bgSidebar,
-            activeTrackColor: context.accentSolid,
             onChanged: (v) => _updateTag(t.projectName, enabled: v),
           ),
         ),
