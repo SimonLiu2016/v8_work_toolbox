@@ -38,10 +38,10 @@
 - [x] 5.3 单测：分类断言守卫「每个分类非空、系统与配置的成员集合、迁移的 5 个工具各归其位、publicTools 与隐私分类无交叠」（同文件，4 例）。独立窗口工具记次数由接线保证（`selectTool` 的 `openInNewWindow` 分支调 `_recordUsage`），并使 3.4 完成
 - [x] 5.4 单测：`NewsBriefingItem` 的 sources 序列化往返；旧条目（无该字段）、null、脏数据均不致命（`test/briefing_sources_test.dart`，5 例）
 - [x] 5.5 单测：每个 `ToolCategory` 至少有一个工具，且「系统与配置」的成员全部语义相符（`frequently_used_tools_test.dart` 的 category membership 组）
-- [ ] 5.6 运行 `flutter analyze` 与全量测试，确认无回归
+- [x] 5.6 运行 `flutter analyze` 与全量测试，确认无回归——`flutter analyze lib/ test/` 零 error；全量 `+976 ~3 -13`，13 个失败经 `git stash` 逐文件单跑比对，基线下同样失败（notebook 编辑器渲染、表格交互、doc_audio 落盘），与本次无关。本次造成的唯一回归（`ops_tool_test` 断言 system）与自埋的端口坑（`local_dictionary_bridge_test` 无参 start 走生产端口 8797）均已修复
 - [ ] 5.7 浅色模式下目视复核全部改动点（开关圆饼、NEW 标签、连通胶囊、新分类图标、常用软件入口）
 
 ## 6. 部署
 
-- [ ] 6.1 运行 `./scripts/deploy_local.sh` 并重新启动应用
-- [ ] 6.2 核对 /Applications 下的新构建签到校验通过、AOT 快照已变化
+- [x] 6.1 运行 `./scripts/deploy_local.sh` 并重新启动应用——两轮部署均成功（AOT 52f3045d→6667bf1b，strict 签名通过，新实例存活、词典桥仍监听 8797）
+- [x] 6.2 核对 /Applications 下的新构建签到校验通过、AOT 快照已变化——部署脚本的 verify 阶段已断言 strict 校验与快照哈希变化，两轮均通过
