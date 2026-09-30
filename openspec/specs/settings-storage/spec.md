@@ -1,9 +1,7 @@
 ## Purpose
 
 统一配置存储把各工具散落自管的配置文件收拢到 macOS 标准的应用支持目录，提供一致的读写规范与一次性旧配置迁移，避免主目录被 `.*.json` 文件污染。
-
 ## Requirements
-
 ### Requirement: 统一存储位置
 
 应用的所有配置与状态数据 SHALL 存储于 `~/Library/Application Support/V8WorkToolbox/` 目录下，按工具或用途分子文件/子目录组织。任何工具 MUST NOT 再直接向用户主目录写入散落的配置文件。
@@ -66,3 +64,15 @@
 
 - **WHEN** 配置继承的完成标志已置位，但承接键当时非空导致被移除工具的条目此前未被并入
 - **THEN** 下一次读取配置时被移除工具的条目被补齐并入，用户的配置自动恢复完整，无需手工修复
+
+### Requirement: Global theme mode persistence and reactive notification
+The unified settings store SHALL persist the user's selected theme mode (`system`, `light`, `dark`) in `app.json` and expose a reactive `ValueNotifier<ThemeMode>` so all listening widgets can update immediately upon configuration changes.
+
+#### Scenario: Persisting theme preference
+- **WHEN** user chooses a theme mode in the settings interface
+- **THEN** the preference is written to `app.json` under the key `themeMode`, defaulting to `system` if not configured.
+
+#### Scenario: Reactive update notification
+- **WHEN** the theme mode setting is updated
+- **THEN** the `themeModeNotifier` emits the new `ThemeMode` value and any open windows listening to the notifier rebuild their MaterialApp tree.
+

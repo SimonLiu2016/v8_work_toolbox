@@ -20,7 +20,6 @@ The application bundle SHALL include custom high-resolution macOS application ic
 - **WHEN** the user views the ActivityBar or About dialog
 - **THEN** the application renders the matching clean origami ribbon V8 brand symbol seamlessly integrated with the dark UI theme.
 
-
 ### Requirement: Elevated button contrast default
 Elevated buttons rendered with the theme accent background SHALL default to high-contrast white text and icons under the dark theme, ensuring all primary action buttons remain readable.
 
@@ -71,4 +70,15 @@ All typography definitions and text elements SHALL automatically contrast with t
 #### Scenario: Text legibility verification
 - **WHEN** body, title, headline, or secondary text is rendered in light mode
 - **THEN** the text color evaluates to high-contrast dark tokens (#0F172A / #475569) without faded or washed-out appearance.
+
+### Requirement: Dynamic global theme mode switching
+The application SHALL support dynamic theme mode switching between system follow (`ThemeMode.system`), explicit light mode (`ThemeMode.light`), and explicit dark mode (`ThemeMode.dark`) across the main workspace and all sub-windows without requiring an application restart.
+
+#### Scenario: Switching theme mode from settings
+- **WHEN** user selects "浅色模式" (Light Mode) or "深色模式" (Dark Mode) in SettingsDialog
+- **THEN** all open windows (main window, notebook, password vault, ops tool, and lookup panel) immediately re-render using the corresponding color palette and contrast rules.
+
+#### Scenario: Follow system appearance
+- **WHEN** user selects "跟随系统" (Follow System) in SettingsDialog
+- **THEN** the application automatically tracks the macOS system appearance changes between light and dark modes in real time.
 

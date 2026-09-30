@@ -1,9 +1,7 @@
 ## Purpose
 
 应用外壳提供整个工具箱的统一桌面形态：深色 Raycast 风格的侧边栏导航、插件化工具注册、搜索与最近使用，使工具可以低成本持续增加而无需修改外壳代码。
-
 ## Requirements
-
 ### Requirement: 深色主题桌面外壳
 
 应用 SHALL 以"侧边栏 + 内容区"的桌面布局呈现，整体采用深色主题（Raycast 风格：深色背景、紧凑排版、弱边框分隔、强调色点缀），并遵循统一的设计 token（色板、字体层级、间距阶梯、圆角）。应用 MUST NOT 保留旧的 2 列卡片墙首页与蓝色 AppBar 样式。
@@ -86,3 +84,24 @@ Every window entry point SHALL install a global error handler so that an uncaugh
 - **WHEN** the set of window entry points is inspected
 - **THEN** each one that calls `runApp` installs the global error handling
 - **AND** a window that lacks it is a defect.
+
+### Requirement: 工具面板列表项悬停与选中视觉层级
+
+工具列表项（ToolPanel 中的工具条目）SHALL 在鼠标滑入时即时响应悬停视觉效果，且 MUST NOT 产生两项同时变灰闪烁的过渡延迟拖影；在浅色与深色主题下，悬停背景色 SHALL 具有肉眼清晰可辨的对比度。当前选中项（Active）SHALL 呈现明确的强调色视觉指示（如左侧指示条与高亮联动），与悬停态（Hover）形成清晰分明的视觉层级。
+
+#### Scenario: 鼠标快速滑过工具列表无残影闪烁
+- **WHEN** 用户在工具列表中快速移动鼠标滑过多个工具项
+- **THEN** 鼠标所在项即时呈现悬停背景，上一项即时复原
+- **AND** 不会出现两项或多项同时变灰并持续渐变闪烁的拖影现象。
+
+#### Scenario: 浅色与深色模式下悬停具有清晰对比度
+- **WHEN** 用户将鼠标悬停在工具项上且保持静止
+- **THEN** 该项呈现肉眼清晰可见的悬停背景色与前景色反馈
+- **AND** 在浅色与深色主题下均与面板底色形成舒适且分明的视觉对比。
+
+#### Scenario: 选中项与悬停项视觉层级分明
+- **WHEN** 列表中存在一个已选中的活动工具项，且鼠标移动到另一个未选中项上悬停
+- **THEN** 已选中项保留明确的激活视觉标识（如左侧指示条与选中状态）
+- **AND** 悬停项呈现不同于选中项的轻量悬停反馈
+- **AND** 两者在视觉上不会混淆为同一种灰色块。
+

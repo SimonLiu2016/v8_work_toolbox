@@ -211,7 +211,6 @@ The notebook export system SHALL render Chinese, Japanese, and Korean (CJK) char
 - **WHEN** exporting a note to PDF and no local system CJK font can be located
 - **THEN** the export still completes using the built-in font fallback without attempting any network access.
 
-
 ### Requirement: Ask-my-notes panel fits its fixed narrow column
 The ask-my-notes panel SHALL lay out its header and answer area within its fixed narrow
 column width without clipping or overflowing any control. Text that cannot fit SHALL be
@@ -262,8 +261,6 @@ The knowledge star map SHALL perform slow, ambient 3D rotation at a serene pace 
 - **WHEN** the user moves the mouse cursor outside the boundary of the star map container
 - **THEN** the star map clears hover indicators and automatically resumes ambient 3D rotation.
 
-
-
 ### Requirement: Document import reports selection failures
 The document import flow SHALL surface a failure that occurs while opening the file panel or before any file is chosen, through the application's error surface, so that the user receives feedback instead of no visible response.
 
@@ -271,3 +268,126 @@ The document import flow SHALL surface a failure that occurs while opening the f
 - **WHEN** the user invokes the import action and opening the file panel raises an error
 - **THEN** an error message is shown to the user naming the failure
 - **AND** the import button does not appear to do nothing.
+
+### Requirement: Target Note Context Binding in Ask-My-Notes
+The ask-my-notes QA panel SHALL allow users to bind a specific note as the primary context for questions via a persistent scope capsule bar. When a note is bound, the QA service SHALL supply the entire plain-text content of the targeted note into the LLM context, bypassing short snippet truncation.
+
+#### Scenario: Scope bar displays currently open note by default
+- **WHEN** the user opens the ask-my-notes panel while a note is active in the editor
+- **THEN** the panel displays a top scope capsule indicating the active note title with a remove button
+- **AND** submitted questions default to analyzing that note.
+
+#### Scenario: User unbinds note to return to global library search
+- **WHEN** the user clicks the remove button on the active note scope capsule
+- **THEN** the scope switches to global library retrieval mode
+- **AND** subsequent queries perform full-text retrieval across all notes.
+
+#### Scenario: Targeted note full-text prompt injection
+- **WHEN** a question is submitted with a targeted note bound
+- **THEN** the QA service retrieves the complete document content of the target note
+- **AND** injects it as primary reference context in the prompt without restricting it to 800-character snippet truncation.
+
+### Requirement: At-Mention Note Reference Autocomplete in QA Input
+The ask-my-notes input box SHALL support typing `@` to trigger an inline note autocomplete suggestion list. Selecting a note SHALL attach that note as an explicit query target.
+
+#### Scenario: Triggering note mention suggestions
+- **WHEN** the user types `@` in the question input field
+- **THEN** an overlay menu appears adjacent to the input field displaying notes matching the search term following `@`
+- **AND** pressing Up/Down keys or clicking selects a candidate note.
+
+#### Scenario: Confirming note mention from autocomplete
+- **WHEN** the user selects a note candidate from the autocomplete overlay
+- **THEN** the note is added as a bound target reference for the question
+- **AND** the input text cursor is restored with the overlay dismissed.
+
+### Requirement: Tool-Assisted Execution During Targeted Note Analysis
+When answering questions against a targeted note, the QA assistant SHALL retain the ability to invoke agent tools (including notebook search, web search, and web scrape) to cross-reference related notes or verify external information.
+
+#### Scenario: Assistant uses tools during targeted note analysis
+- **WHEN** the user asks a question about a targeted note that requires external verification or cross-referencing other notes
+- **THEN** the assistant executes appropriate tools in the agent loop
+- **AND** incorporates both the targeted note content and tool execution results into the final answer.
+
+### Requirement: Actionable QA Results: Saving and Appending Notes
+The ask-my-notes panel SHALL provide action buttons on generated answer cards enabling users to save the AI response as a new rich-text note or append it directly to the active note. When appending to the currently open note in the editor, the newly appended content SHALL render immediately on the editing canvas without requiring note deselection or switching.
+
+#### Scenario: Saving answer as a new note
+- **WHEN** the user clicks the "Save as New Note" button on an AI answer card
+- **THEN** the system parses the Markdown response into rich-text document blocks
+- **AND** creates a new note in the active notebook titled after the question or summary
+- **AND** opens the newly created note in the editor with confirmation feedback.
+
+#### Scenario: Appending answer to current note
+- **WHEN** the user clicks the "Append to Note" button on an AI answer card while a note is open
+- **THEN** the system parses the response and appends the content blocks to the end of the open note document
+- **AND** the live editor canvas immediately reflects and renders the appended blocks in-place
+- **AND** the editor scrolls to the appended content and persists the updated note with toast confirmation.
+
+### Requirement: Attachment blocks offer deletion with confirmation and cleanup
+Every attachment block (including embedded image blocks) rendered in the notebook SHALL provide a delete action. Invoking it SHALL prompt the user for confirmation, and upon confirmation, SHALL remove the block node from the document and remove the underlying attachment record and cached file from storage.
+
+#### Scenario: Deleting an attachment block from a note
+- **WHEN** the user clicks the delete button on an attachment or image block and confirms the action
+- **THEN** the attachment block is removed from the active editor document
+- **AND** the corresponding attachment database record and local storage file are deleted
+- **AND** other content in the note remains intact.
+
+#### Scenario: Canceling attachment block deletion
+- **WHEN** the user clicks the delete button on an attachment block but cancels the confirmation dialog
+- **THEN** the block remains in the document
+- **AND** the attachment file and record are preserved.
+
+### Requirement: Conversion flow provides explicit output location and note insertion
+When an attachment conversion completes, the system SHALL inform the user of the concrete output file location, offer actions to reveal the file in Finder and open it, and SHALL insert the converted file as a new attachment block directly in the current note document.
+
+#### Scenario: Successful conversion inserts output into note document
+- **WHEN** an attachment conversion succeeds
+- **THEN** a new attachment block representing the converted document is inserted into the active note immediately following the source block or appended to the document
+- **AND** the user can see and interact with the newly converted document in the note editor.
+
+#### Scenario: Successful conversion offers direct reveal and open actions
+- **WHEN** an attachment conversion finishes
+- **THEN** the conversion dialog presents the output filename and location
+- **AND** provides clickable actions to reveal the output in Finder and open the output file with the default application.
+
+### Requirement: Note attachments offer one-tap conversion
+Every note attachment whose format appears in the conversion matrix SHALL offer a conversion action. Invoking it SHALL let the user choose a source language, a target language, and a target format drawn from that source's available row of the matrix, and SHALL produce a new attachment without altering the original.
+
+#### Scenario: Converting an English Word attachment to Chinese Word
+- **WHEN** the user chooses source English, target Chinese, and target format Word on a Word attachment
+- **THEN** a new Word attachment is produced whose layout, images and styling match the original
+- **AND** only the English text has been replaced by Chinese
+- **AND** the original attachment is left untouched.
+
+#### Scenario: Converting the same attachment to PDF
+- **WHEN** the user chooses source English, target Chinese, and target format PDF on the same attachment
+- **THEN** a new PDF attachment is produced containing the translated text and the original images
+- **AND** the layout is a best-effort reconstruction, not a byte-level match.
+
+#### Scenario: Only available targets are offered
+- **WHEN** the target-format picker opens for a Word attachment
+- **THEN** the offered formats are Word, PDF, Markdown and plain text
+- **AND** spreadsheet formats are not offered.
+
+#### Scenario: Output is a new attachment with a distinguishing name
+- **WHEN** a conversion completes
+- **THEN** the result is stored as a new attachment of the same note
+- **AND** its name carries the target language and format so it is distinguishable from the source.
+
+### Requirement: Document Import Carries Embedded Images
+The notebook tool SHALL import a locally chosen document (`pdf`, `docx`, `xlsx`, `md`, `markdown`, `txt`) as a new note, converting its content into the note body. Any images embedded in the source document SHALL be carried into the note body at their original positions and persisted as attachments of that note. An import that would drop an embedded image SHALL surface that loss to the user rather than completing silently.
+
+#### Scenario: Import converts body text into a note
+- **WHEN** the user imports a `docx` containing paragraphs and headings
+- **THEN** a new note is created whose body preserves the paragraph and heading structure of the source.
+
+#### Scenario: Import carries embedded images
+- **WHEN** the user imports a document that contains embedded images
+- **THEN** each embedded image appears in the note body at its position in the source
+- **AND** each image is persisted as an attachment of the note.
+
+#### Scenario: Import reports an unrecoverable image
+- **WHEN** an embedded image cannot be extracted from the source document
+- **THEN** the import result reports the count of images that could not be carried over
+- **AND** the import does not present itself as a complete success.
+
