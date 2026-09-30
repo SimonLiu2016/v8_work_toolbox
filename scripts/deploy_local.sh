@@ -328,6 +328,7 @@ launch() {
     while [ "$waited" -lt 15 ]; do
         if pgrep -f "$TARGET_APP/Contents/MacOS/$APP_NAME" >/dev/null 2>&1; then
             ok "应用已启动并存活（${waited}s）"
+            remind_extension_reload
             echo -e "\n${GREEN}════════════════════════════════════════${NC}"
             echo -e "${GREEN}  部署完成${NC}"
             echo -e "${GREEN}════════════════════════════════════════${NC}"
@@ -340,6 +341,33 @@ launch() {
     done
 
     die launch "应用 15s 内未存活——bundle 已部署但未启动，请手动检查"
+}
+
+# ---------------------------------------------------------------------------
+# 浏览器伴侣扩展：部署后必须重载
+#
+# 未打包扩展不会因为磁盘上的文件变了就自动重载。Chrome 保留的是**安装时**注册的
+# 那个 service worker：改了 extensions/ 下的代码而不去 chrome://extensions
+# 点刷新，浏览器会继续跑旧版本——表现是"改了却没生效"，且没有任何报错。
+# 本项目的词典桥修复（2026-09-30）正是被这一步吃掉的：代码在磁盘上是新的，
+# Chrome 里跑的 service worker 还是旧的，于是内容脚本发消息无人应答。
+#
+# 只做提醒，不代劳：脚本无法替用户在浏览器里点按钮。
+# ---------------------------------------------------------------------------
+remind_extension_reload() {
+    local ext_dir="$PROJECT_DIR/extensions/v8-browser-companion"
+    [ -d "$ext_dir" ] || return 0
+
+    echo -e "\n${YELLOW}────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}  浏览器伴侣扩展需手动重载${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────────${NC}"
+    echo "  若改动过 extensions/，请到 chrome://extensions"
+    echo "  打开「开发者模式」，点击本扩展卡片上的刷新按钮。"
+    echo ""
+    echo "  未打包扩展不会自动重载：Chrome 保留安装时注册的 service worker，"
+    echo "  不刷新就继续跑旧代码——症状是『改了却没生效』且无任何报错。"
+    echo ""
+    echo "  扩展目录: $ext_dir"
 }
 
 # ---------------------------------------------------------------------------

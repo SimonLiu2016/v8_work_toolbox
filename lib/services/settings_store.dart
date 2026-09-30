@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -42,6 +43,61 @@ class SettingsStore {
   Future<void> setThemeModeString(String modeStr) async {
     final mode = _parseThemeMode(modeStr);
     await setThemeMode(mode);
+  }
+
+  // -------------------------------------------------------------------------
+  // 本地词典桥（local-dictionary-bridge）配置
+  // -------------------------------------------------------------------------
+
+  /// 本地词典桥默认端口。写死而不用 OS 分配的临时端口：浏览器扩展无法读桌面
+  /// 文件系统，发现不了运行时端口；固定端口 + 端口占用时 fail-soft 是可诊断的，
+  /// 而"支持自定义端口"会把发现问题的手段又拿走。
+  static const int defaultBridgePort = 8797;
+
+  /// 本地词典桥端口。默认 [defaultBridgePort]，可在设置中改。
+  int get localBridgePort {
+    final raw = _appConfig['localBridgePort'];
+    if (raw is int) return raw;
+    if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed != null && parsed > 0 && parsed < 65536) return parsed;
+    }
+    return defaultBridgePort;
+  }
+
+  Future<void> setLocalBridgePort(int port) async {
+    if (port <= 0 || port >= 65536) return;
+    _appConfig['localBridgePort'] = port;
+    await _saveAppConfig();
+  }
+
+  /// 本地词典桥密钥。首次读取时生成并持久化，因此桌面应用重启后扩展无需重新配置。
+  ///
+  /// 职责界定：回环 + 只读 + 仅词典数据。密钥拦的是误用与机会主义调用，不是
+  /// 已能读本地文件的攻击者——桥一旦要长出写路径，这个决策必须重新评估。
+  ///
+  /// 异步版：写盘完成才算生成成功。getter 里"发射后不管"会留下真实竞态——
+  /// 紧接着的第二次 `init()` 会读到还没有密钥的 app.json，于是再生成一个，
+  /// 把已配对的扩展挡在授权失败上（表现与"桥没启动"难以区分）。
+  Future<String> ensureLocalDictionaryBridgeSecret() async {
+    final existing = _appConfig['localBridgeSecret'] as String?;
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    final generated = _generateBridgeSecret();
+    _appConfig['localBridgeSecret'] = generated;
+    await _saveAppConfig();
+    return generated;
+  }
+
+  /// 同步读取；未生成过时返回空串。只在"确定已经生成过"的调用点使用
+  /// （桥启动时 [ensureLocalDictionaryBridgeSecret] 已经跑过）。
+  String get localDictionaryBridgeSecretOrEmpty =>
+      (_appConfig['localBridgeSecret'] as String?) ?? '';
+
+  static String _generateBridgeSecret() {
+    final rand = Random.secure();
+    final bytes = List<int>.generate(24, (_) => rand.nextInt(256));
+    return base64Url.encode(bytes);
   }
 
   static ThemeMode _parseThemeMode(String mode) {
@@ -161,6 +217,7 @@ class SettingsStore {
       'recentTools': <String>[],
       'hotkey': HotKeyConfig.defaultHotKey.toJson(),
       'themeMode': 'system',
+      'localBridgePort': defaultBridgePort,
       'migratedFrom': <String>[],
     };
   }

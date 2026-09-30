@@ -323,34 +323,77 @@
       setTimeout(dismissBubble, 1200);
     });
 
-    // 发起极速词典查询（直连有道词典 API，毫秒级无延迟）
+    // 发起词典查询（经本地词典桥，见 background.js 顶部说明）
     fetchDictionary(text, shadow);
   }
 
-  // 极速高可用词典解析：通过 background 代理请求，彻底绕过宿主页面的 CSP / CORS 限制
+  // 词典解析：把请求交给 background，由它打桌面应用的本地词典桥。
+  //
+  // 四种结果分开渲染——原实现把「桥没起来」「密钥不对」「词典没收录」揉成同一个
+  // "查询失败"，用户无法判断该启动桌面端还是该换个词。这三种的下一步动作完全
+  // 不同，混在一起文案就是骗人的。
   function fetchDictionary(word, shadow) {
     const contentEl = shadow.querySelector('#v8-content');
     const phEl = shadow.querySelector('#v8-ph');
     const speakBtn = shadow.querySelector('#v8-speak-btn');
 
+    // 每个失败态都必须留一条出路：要么启动桌面端修好桥，要么用深度链接直接
+    // 走桌面端查（那条路一直好用）。
+    const renderFailure = (message, hint) => {
+      contentEl.innerHTML = `
+        <div style="color: #64748b; text-align: center; padding: 12px 0;">
+          ${message}
+          <div style="margin-top: 6px; font-size: 12px; color: #94a3b8;">${hint}</div>
+          <div style="margin-top: 10px; display: flex; gap: 8px; justify-content: center;">
+            <button class="v8-btn v8-btn-primary" id="v8-open-desktop">在桌面端打开</button>
+          </div>
+        </div>
+      `;
+      shadow.querySelector('#v8-open-desktop')?.addEventListener('click', () => {
+        window.location.href = `v8toolbox://lookup?text=${encodeURIComponent(word)}`;
+        dismissBubble();
+      });
+    };
+
     chrome.runtime.sendMessage({ action: 'fetchDictionary', word: word }, (response) => {
-      if (chrome.runtime.lastError || !response || !response.success) {
+      // lastError 大多是消息通道本身不通（SW 未注册/已休眠被杀），按桥不可达算。
+      const channelError = chrome.runtime.lastError?.message || '';
+      if (channelError || !response || !response.success) {
+        const reason = channelError
+          ? 'bridge_unreachable'
+          : (response.reason || 'unknown');
+
+        if (reason === 'bridge_unauthorized') {
+          renderFailure('本地词典桥拒绝访问', '密钥不匹配，请在桌面端设置中核对伴侣密钥');
+        } else if (reason === 'bridge_timeout') {
+          renderFailure('本地词典桥响应超时', '桌面端可能正忙，可重试或直接在桌面端查');
+        } else {
+          // bridge_offline / bridge_unreachable / bridge_error / unknown
+          renderFailure('本地词典桥未连接', '请先启动 V8 工作工具箱');
+        }
+        return;
+      }
+
+      const data = response.data || {};
+
+      // 没收录不是失败：桌面应用明确知道词典里没有这个词，气泡该说"未收录"
+      // 并给 AI 深度解析的出路，而不是冒充网络故障。
+      if (data.matched === false || (data.definitions || []).length === 0) {
         contentEl.innerHTML = `
-          <div style="color: #64748b; text-align: center; padding: 10px 0;">
-            查询失败
-            <div style="margin-top: 8px;">
-              <button class="v8-btn v8-btn-primary" id="v8-fallback-desktop">在桌面端打开</button>
+          <div style="color: #64748b; text-align: center; padding: 12px 0;">
+            本地词典未收录该词条
+            <div style="margin-top: 10px;">
+              <button class="v8-btn v8-btn-secondary" id="v8-ask-ai-btn">问 AI 深度解析</button>
             </div>
           </div>
         `;
-        shadow.querySelector('#v8-fallback-desktop')?.addEventListener('click', () => {
+        shadow.querySelector('#v8-ask-ai-btn')?.addEventListener('click', () => {
           window.location.href = `v8toolbox://lookup?text=${encodeURIComponent(word)}`;
           dismissBubble();
         });
         return;
       }
 
-      const data = response.data;
       const phonetic = data.phonetic || '';
       const audioUrl = data.audioUrl || '';
       const definitions = data.definitions || [];
@@ -366,28 +409,13 @@
         };
       }
 
-      if (definitions.length > 0) {
-        contentEl.innerHTML = definitions.map((def) => {
-          const match = def.match(/^([a-z]+\.)\s*(.*)$/i);
-          if (match) {
-            return `<div class="v8-def-group"><span class="v8-pos">${match[1]}</span><span>${escapeHtml(match[2])}</span></div>`;
-          }
-          return `<div class="v8-def-group"><span>${escapeHtml(def)}</span></div>`;
-        }).join('');
-      } else {
-        contentEl.innerHTML = `
-          <div style="color: #64748b; text-align: center; padding: 12px 0;">
-            本地词典未收录该词条
-            <div style="margin-top: 10px;">
-              <button class="v8-btn v8-btn-secondary" id="v8-ask-ai-btn">问 AI 深度解析</button>
-            </div>
-          </div>
-        `;
-        shadow.querySelector('#v8-ask-ai-btn')?.addEventListener('click', () => {
-          window.location.href = `v8toolbox://lookup?text=${encodeURIComponent(word)}`;
-          dismissBubble();
-        });
-      }
+      contentEl.innerHTML = definitions.map((def) => {
+        const match = def.match(/^([a-z]+\.)\s*(.*)$/i);
+        if (match) {
+          return `<div class="v8-def-group"><span class="v8-pos">${match[1]}</span><span>${escapeHtml(match[2])}</span></div>`;
+        }
+        return `<div class="v8-def-group"><span>${escapeHtml(def)}</span></div>`;
+      }).join('');
     });
   }
 

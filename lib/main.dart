@@ -13,6 +13,7 @@ import 'services/ai_config_store.dart';
 import 'services/app_paths.dart';
 import 'services/context_services_bridge.dart';
 import 'services/launcher_service.dart';
+import 'services/local_dictionary_bridge.dart';
 import 'services/note_capture_service.dart';
 import 'services/privacy_security_service.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
@@ -343,6 +344,15 @@ Future<void> main(List<String> args) async {
     }
   };
 
+  // 启动本地词典桥（浏览器伴侣扩展经此查询词典）。端口被占等故障只记诊断
+  // 信号，不阻断启动——热键、macOS Services、深度链接三条查词路径都不依赖它
+  // （spec: local-dictionary-bridge「桥故障不得影响宿主应用」）。
+  try {
+    await LocalDictionaryBridge.instance.start();
+  } catch (e, stack) {
+    debugPrint('[main] 本地词典桥启动异常（查词浮窗不受影响）: $e\n$stack');
+  }
+
   runAppWithErrorHandling(const V8WorkToolboxApp());
 }
 
@@ -367,6 +377,13 @@ Future<void> runShutdownCleanup({bool forTest = false}) async {
     await NetworkProxyService.instance.shutdown();
   } catch (e, stack) {
     debugPrint('[main] SIGTERM 清理失败（仍然退出）: $e\n$stack');
+  }
+  // 本地词典桥：不关就会留下孤儿监听持有端口，下次启动只能落在 fail-soft
+  // 分支上（与 mihomo 子进程同一类问题，故并入同一清理函数）。
+  try {
+    await LocalDictionaryBridge.instance.stop();
+  } catch (e, stack) {
+    debugPrint('[main] 本地词典桥关闭失败（仍然退出）: $e\n$stack');
   }
   if (forTest) {
     exitOverride?.call(0);
@@ -490,12 +507,15 @@ class _NotebookWindowFocusListener extends WindowListener {
 
 final _notebookFocusListener = _NotebookWindowFocusListener();
 
-/// 主窗口关闭监听：退出前停止 mihomo 子进程，避免孤儿进程。
+/// 主窗口关闭监听：退出前停止 mihomo 子进程与本地词典桥，避免孤儿进程/端口。
 class _MainWindowCloseListener extends WindowListener {
   @override
   Future<void> onWindowClose() async {
     try {
       await NetworkProxyService.instance.shutdown();
+    } catch (_) {}
+    try {
+      await LocalDictionaryBridge.instance.stop();
     } catch (_) {}
   }
 }
