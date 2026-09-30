@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/privacy_security_service.dart';
+import '../services/settings_store.dart';
 import '../theme/app_theme.dart';
 import '../tools/network_proxy/ui/network_proxy_page.dart';
 import '../tools/registry.dart';
@@ -9,7 +10,7 @@ import 'ai_config_page.dart';
 import 'privacy_lock_view.dart';
 import 'tool_panel.dart';
 
-/// 「常用软件」入口展示的工具数量上限。纵使 `recentTools` 持久化了更多条目，
+/// 「常用软件」入口展示的工具数量上限。纵使累计使用次数覆盖了更多工具，
 /// 该入口只取最常用的几个，避免把快捷入口变成第二个「全部工具」。
 const int kFrequentToolLimit = 5;
 
@@ -131,15 +132,27 @@ class AppShellState extends State<AppShell> {
         _recentToolIds = _recentToolIds.sublist(0, 8);
       }
     });
+    // 计数 + 落盘都经 SettingsStore（一次写盘同时含 recentTools 与次数）。
+    // 计数是同步改内存，所以紧随其后的 setState 已能读到新值——常用软件的
+    // 排序在点击当次即刷新，不必等重启。
     widget.onToolUsed?.call(toolId);
   }
 
   List<ToolDefinition> _frequentTools() {
-    // 频率数据 = recentTools 的 move-to-front 序，取前 5。过滤掉已不存在的
-    // id（工具下线/改名）与隐私分类工具——常用软件入口无需解锁隐私空间即可
-    // 见，把隐私工具排进去等于在解锁前泄露它们的存在。
+    // 排名依据是**累计使用次数**的降序，不是最近使用次序——「刚才用过」和
+    // 「用得最多」是两个问题。同次数按 id 字典序，保证排序稳定可复现。
+    //
+    // 过滤规则：
+    //   * 已不存在的 id（工具下线/改名）——点进去会打开空气；
+    //   * 隐私分类工具——常用软件无需解锁即可见，排进去等于在解锁前泄露
+    //     它们的存在。密码工具虽是独立窗口，但用户在问题里明确要求「和其他
+    //     工具一样统计」，故它仍在被统计之列（它属 system 分类，不在隐私分类）。
+    // 排序规则由 SettingsStore.getMostUsedToolIds 单点持有，此处不做第二份实现。
+    // 取 limit 个之后还要过滤（隐私工具、已下线的 id），所以先多取一倍，
+    // 否则前几名里只要有一个隐私工具，入口就只剩 4 个。
     final out = <ToolDefinition>[];
-    for (final id in _recentToolIds) {
+    for (final id in SettingsStore.instance
+        .getMostUsedToolIds(limit: kFrequentToolLimit * 2)) {
       final tool = ToolRegistry.findById(id);
       if (tool == null) continue;
       if (tool.category == ToolCategory.privacy) continue;

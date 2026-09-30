@@ -371,7 +371,60 @@ class SettingsStore {
       list.removeRange(8, list.length);
     }
     _appConfig['recentTools'] = list;
+    // 使用次数与「最近使用」分成两份数据：recentTools 仍是 move-to-front 序
+    // （启动时选哪个工具靠它），次数则单调递增（常用软件的排名靠它）。
+    // 二者答的是不同问题——「刚才用过」和「用得最多」不是一回事。两者合并成
+    // 一次写盘，不让每次点击都触发两次文件写。
+    bumpToolUsageCount(toolId);
     await _saveAppConfig();
+  }
+
+  // -------------------------------------------------------------------------
+  // 工具使用次数（常用软件的排名依据）
+  // -------------------------------------------------------------------------
+
+  /// 各工具的累计使用次数。缺省空表——没有任何历史数据时常用软件排名为空。
+  ///
+  /// 上限由工具总数决定（16 个），不会膨胀；不下发衰减，因为「用得最多」
+  /// 这个排序不因一次长时间不用就该被推翻。
+  Map<String, int> getToolUsageCounts() {
+    final raw = _appConfig['toolUsageCounts'];
+    if (raw is! Map) return const {};
+    final out = <String, int>{};
+    raw.forEach((key, value) {
+      final mapped = removedToolRedirects[key] ?? key;
+      if (value is int && value > 0) {
+        out[mapped] = (out[mapped] ?? 0) + value;
+      }
+    });
+    return out;
+  }
+
+  /// 递增某个工具的使用次数，只改内存；落盘由调用方合并到同一次
+  /// [_saveAppConfig]。[recordToolUsed] 与它共用一次写盘，避免每次点击都
+  /// 触发两次文件写。
+  void bumpToolUsageCount(String toolId) {
+    final counts = Map<String, int>.from(getToolUsageCounts());
+    counts[toolId] = (counts[toolId] ?? 0) + 1;
+    _appConfig['toolUsageCounts'] = counts;
+  }
+
+  /// 整体替换使用次数表。仅测试注入用——产品代码只经 [bumpToolUsageCount]
+  /// 递增，不做赋值。
+  @visibleForTesting
+  void setToolUsageCountsForTest(Map<String, int> counts) {
+    _appConfig['toolUsageCounts'] = Map<String, int>.from(counts);
+  }
+
+  /// 按累计次数降序返回工具 id。同次数时按 id 字典序，保证排序稳定可复现
+  /// （同一份数据两次渲染不会因为 map 遍历次序而换位）。
+  List<String> getMostUsedToolIds({int limit = 5}) {
+    final entries = getToolUsageCounts().entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        return byCount != 0 ? byCount : a.key.compareTo(b.key);
+      });
+    return entries.take(limit).map((e) => e.key).toList(growable: false);
   }
 
   HotKeyConfig getHotKeyConfig() {

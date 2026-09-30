@@ -17,7 +17,7 @@
 ## 3. 「常用软件」入口
 
 - [x] 3.1 `ActivityViewType` 新增 `frequent`；`_getToolsForCurrentView()` 返回频率列表，`_getPanelTitle()` 返回「常用软件」
-- [x] 3.2 频率数据取 `_recentToolIds` 前 5 个（`kFrequentToolLimit`），过滤掉已不存在的工具 id 与隐私分类工具
+- [x] 3.2 排名按**累计使用次数**降序取前 5（`kFrequentToolLimit`），过滤掉已不存在的工具 id 与隐私分类工具；因过滤发生在截断之后，取双倍候选再截断，避免一个隐私工具就让入口只剩 4 个（用户明确要求真使用次数而非最近使用序）
 - [x] 3.3 无使用记录时（`_frequentTools().isEmpty`）活动栏不渲染该入口；有记录时才出现（`hasFrequentTools`）
 - [x] 3.4 `selectTool()` 的 `openInNewWindow` 分支在 `openNewWindow()` 之前也记录使用频率，隐私分类工具除外——这是笔记本/密码工具/磐石运维从不进频率列表的根因
 - [ ] 3.5 确认「常用软件」与「全部工具」两个入口的选中态不互相污染（切换分类时 `_currentView` 回到原值）
@@ -33,9 +33,9 @@
 
 ## 5. 测试与验证
 
-- [x] 5.1 单测：频率列表取前 5、按频率排序、过滤不存在的 id、隐私工具被排除、空历史为空（`test/frequently_used_tools_test.dart`，5 例）
-- [x] 5.2 单测：无使用记录时不渲染常用软件入口（有记录时渲染）——由 `pickFrequent(const [])` 为空 + AppShell 的 `hasFrequentTools: _frequentTools().isEmpty` 接线共同保证
-- [x] 5.3 单测：分类断言守卫「每个分类非空、系统与配置只剩 4 个且语义相符、迁移的 5 个工具各归其位、publicTools 与隐私分类无交叠」（同文件，4 例）。独立窗口工具记频率一事由接线保证（`selectTool` 的 `openInNewWindow` 分支调 `_recordUsage`），并使 3.4 完成
+- [x] 5.1 单测：排名按次数降序、截断到 5、过滤后仍凑满 5、一次使用不翻盘、无计数为空、仅隐私工具为空、已下线 id 被忽略（`test/frequently_used_tools_test.dart`，7 例）
+- [x] 5.2 单测：无计数时不渲染常用软件入口（有计数时渲染）——由 `pickFrequent({})` 为空 + AppShell 的 `hasFrequentTools: _frequentTools().isNotEmpty` 接线共同保证
+- [x] 5.3 单测：分类断言守卫「每个分类非空、系统与配置的成员集合、迁移的 5 个工具各归其位、publicTools 与隐私分类无交叠」（同文件，4 例）。独立窗口工具记次数由接线保证（`selectTool` 的 `openInNewWindow` 分支调 `_recordUsage`），并使 3.4 完成
 - [x] 5.4 单测：`NewsBriefingItem` 的 sources 序列化往返；旧条目（无该字段）、null、脏数据均不致命（`test/briefing_sources_test.dart`，5 例）
 - [x] 5.5 单测：每个 `ToolCategory` 至少有一个工具，且「系统与配置」的成员全部语义相符（`frequently_used_tools_test.dart` 的 category membership 组）
 - [ ] 5.6 运行 `flutter analyze` 与全量测试，确认无回归

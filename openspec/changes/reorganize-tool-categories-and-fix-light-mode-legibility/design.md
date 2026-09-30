@@ -6,8 +6,8 @@ Relevant current state:
 
 - `ToolCategory` (`lib/tools/tool_definition.dart:15`) has four values. `ToolRegistry` (`lib/tools/registry.dart:350`) holds 16 tools; their distribution is file:4, build:1, system:10, privacy:2.
 - `ActivityBar` (`lib/shell/activity_bar.dart:86`) renders `ToolCategory.values` minus `privacy` directly — adding an enum value automatically adds an activity-bar entry, with no per-category wiring.
-- `AppShell` already maintains a frequency list: `SettingsStore.getRecentToolIds()/recordToolUsed()` (`lib/services/settings_store.dart:355`), mirrored in memory by `AppShell._recentToolIds` (`lib/shell/app_shell.dart:44`). It is read only once, in `initState()`, to pick the initial selection.
-- `AppShell.selectTool()` (`lib/shell/app_shell.dart:91`) returns early for `openInNewWindow` tools, **before** `_recordUsage()`. That is why the three separate-window tools never enter the frequency list.
+- `AppShell` mirrors a recency list in memory: `SettingsStore.getRecentToolIds()/recordToolUsed()` (`lib/services/settings_store.dart:355`) → `AppShell._recentToolIds` (`lib/shell/app_shell.dart:44`). It is read once in `initState()` to pick the initial selection, and is **not** a usage counter — the distinction matters for Decision 2.
+- `AppShell.selectTool()` (`lib/shell/app_shell.dart:96`) returns early for `openInNewWindow` tools, **before** `_recordUsage()`. That is why the three separate-window tools never entered the recency list at all.
 - Theme tokens are complete: `accentText`, `accentSolid`, `onAccentSolid` (`lib/theme/app_theme.dart:345-349`), with light values `#4F46E5` / `#4F46E5` / white and dark `#A5B4FC` / `#4F46E5` / white (`app_theme.dart:411-413`).
 - The project already opens external URLs with `Process.run('open', [...])` in 8 places, including local file paths; `url_launcher` is not a dependency and is not needed for a macOS-targeted app.
 - `NewsBriefingItem` (`lib/services/scheduled_news_service.dart:58`) is persisted to `AppPaths.newsBriefingsFile` and read back through `fromJson`, which tolerates missing keys via `??` defaults — so a new field needs no data migration.
@@ -21,7 +21,7 @@ Relevant current state:
 - Make every briefing traceable to its original pages, without trusting the summariser to repeat URLs.
 
 **Non-Goals:**
-- Manual pinning, drag-to-reorder, or custom frequency ranking — recency-weighted top 5 covers the stated need.
+- Manual pinning, drag-to-reorder, or custom ranking — cumulative top 5 covers the stated need.
 - Retiring `AppBadge`'s existing neutral appearance or changing dark-mode switch appearance; both already work.
 - Opening links on non-macOS platforms (out of the project's target scope).
 - Restructuring `ToolRegistry` itself, or renaming tool ids (they are persisted config keys).
@@ -36,13 +36,15 @@ Relevant current state:
   - Pinning a "常用" group at the top of the existing 全部工具 list. Rejected: it makes 全部工具 mean two things and gives no separate entry to tap.
 - **Rationale**: The user confirmed a tool appears in both places. A projection, not an attribute, expresses that cleanly.
 
-### Decision 2: Frequency = the existing recency-ordered list, top 5
+### Decision 2: Ranking = cumulative usage counts, top 5
 
-- **Choice**: `_recentToolIds.sublist(0, 5)` filtered to tools that still exist. No counters, no decay.
+- **Choice**: A separate `toolUsageCounts` map in `app.json`, incremented on every tool open, sorted descending with ties broken by tool id. `recentTools` keeps its existing move-to-front semantics and is *not* used for ranking.
+- **How this was decided**: the first implementation reused `recentTools` and I documented that as a decision, arguing counters were not worth a persisted-shape change. The user then explicitly asked for real usage counts ("真使用次数"). Their reading of their own requirement overrides my inference from it — "按使用频率排序" says frequency, and recency is not frequency. Recorded here so the reversal is visible rather than silently rewritten.
 - **Alternatives considered**:
-  - True usage counts per tool. Rejected: `recentTools` already implements the move-to-front recency order the user described ("按使用频率排序"), and it is the data that exists. Adding counts would require a migration of the persisted shape for a marginal difference — move-to-front ordering already pushes a daily tool above an occasional one.
-  - Raising the persisted cap from 8. Rejected as unnecessary: 5 fits inside 8, and raising it would widen the stored data for no visible benefit.
-- **Cost, accepted**: a tool used 3 times this week and a tool used 3 times this month rank identically if their last use is more recent. Acceptable for 5 slots.
+  - Reuse `recentTools` as before. Rejected: it answers "what did I just use", not "what do I use most". A tool used twice today outranks a tool used thirty times this month if the latter was last opened an hour ago.
+  - Counts with time decay (e.g. halve every 7 days). Rejected for now: decay reorders the list as time passes with no user action, which makes the entry feel unstable. Cumulative counts are predictable. Revisit only if the list proves sticky in practice.
+  - Replacing `recentTools` outright. Rejected: it still has a job — choosing which tool to select at startup — and two existing tests pin its behaviour.
+- **Cost, accepted**: counts never decay, so a tool used heavily once and abandoned stays ranked. Acceptable for 5 slots, and the escape hatch is that 常用软件 is one of several entries.
 
 ### Decision 3: Record usage for separate-window tools at the `selectTool` fork
 
