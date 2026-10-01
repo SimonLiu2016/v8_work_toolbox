@@ -1,5 +1,6 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../../services/settings_store.dart';
 import '../../../theme/app_theme.dart';
@@ -7,6 +8,67 @@ import '../../lookup_panel/services/dictionary_service.dart';
 import '../../notebook/note_store.dart';
 import '../models/vocab_entry.dart';
 import '../services/vocab_store.dart';
+
+/// 生词词条的「列表展示签名」。
+///
+/// 刻意**不是**全字段：列表只展示 word / 词性缩写 / `definitions.first` /
+/// 掌握程度 / 标签，筛选栏另外展示按 mastery 与 tag 的计数。
+/// `phrases`、`examples`、`audioUrl`、`addedAt` 不在列表里，把它们算进签名
+/// 会让一次无谓的外部改动触发重建 —— 用户看到的就是列表白闪一下。
+///
+/// `definitions.first` 而不是整份 definitions：第二条释义进来，列表看起来
+/// 一模一样，不该闪。
+@visibleForTesting
+String vocabEntrySignature(VocabEntryModel e) {
+  return [
+    e.id,
+    e.word,
+    e.partOfSpeech ?? '',
+    e.definitions.isEmpty ? '' : e.definitions.first,
+    e.masteryLevel,
+    e.tags.join('\u0000'),
+  ].join('\u0001');
+}
+
+/// 两份词条列表的展示内容是否不同。
+///
+/// 聚焦刷新靠它决定要不要 `setState`：返回 false 就什么都不做。少了这一层，
+/// 每次窗口获得焦点都会重建一次列表——用户看到的是闪烁。
+/// 标签集合是否一致。顺序无关——筛选栏按 `allTags()` 的次序展示，
+/// 内容相同就不该为它重建。
+bool _sameTags(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  final sa = Set<String>.from(a);
+  return sa.length == b.toSet().length && sa.containsAll(b.toSet());
+}
+
+@visibleForTesting
+bool vocabListChanged(
+  List<VocabEntryModel> before,
+  List<VocabEntryModel> after,
+) {
+  if (before.length != after.length) return true;
+  for (var i = 0; i < before.length; i++) {
+    if (vocabEntrySignature(before[i]) != vocabEntrySignature(after[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// 把「窗口获得焦点」转发成一次回调。
+///
+/// `WindowListener` 在 window_manager 0.5.x 里是**抽象类**而不是 mixin，
+/// 所以 State 不能 `with` 它；用一个只覆写 onWindowFocus 的薄壳转接，
+/// 比把整个 State 改成继承它干净。
+class _WindowFocusRelay extends WindowListener {
+  _WindowFocusRelay(this._onFocus);
+
+  final VoidCallback _onFocus;
+
+  @override
+  void onWindowFocus() => _onFocus();
+}
 
 /// 生词本主页面
 class VocabBookPage extends StatefulWidget {
@@ -17,6 +79,7 @@ class VocabBookPage extends StatefulWidget {
 }
 
 class _VocabBookPageState extends State<VocabBookPage> {
+  late final _WindowFocusRelay _focusRelay = _WindowFocusRelay(_onWindowFocus);
   final VocabStore _store = VocabStore.instance;
   final AudioPlayer _audioPlayer = AudioPlayer();
 
@@ -38,17 +101,58 @@ class _VocabBookPageState extends State<VocabBookPage> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(_focusRelay);
     _loadData();
   }
 
   @override
   void dispose() {
+    windowManager.removeListener(_focusRelay);
     _audioPlayer.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadData() async {
+  /// 窗口重新获得焦点时重新查库。
+  ///
+  /// 为什么需要：生词本可能被**其他进程**改过——浏览器伴侣浮窗、独立的查词
+  /// 窗口都是 desktop_multi_window 起的独立进程，写的是同一个 SQLite 库。
+  /// `VocabStore` 不是 ChangeNotifier，且 ChangeNotifier 本来也跨不了进程；
+  /// 「用户切回窗口」是唯一免费可得的"该刷新了"信号。
+  ///
+  /// 走 [_loadData]（全量查询）而非按筛选重查：_loadData 拿全量后
+  /// _filteredEntries 会按当前筛选重新过滤，结果与"按筛选查询"等价，
+  /// 且不会把用户已应用的筛选冲掉。
+  void _onWindowFocus() {
+    if (_isLoading) return; // 首次加载未完成，不并发再起一次
+    _loadData(silent: true);
+  }
+
+  Future<void> _loadData({bool silent = false}) async {
+    if (silent) {
+      // 聚焦刷新：不显示 loading、不清空列表。用户切回窗口时列表必须原样
+      // 在那儿，内容变了就地更新——闪一下比不刷新更烦。
+      final all = await _store.queryAll();
+      final tags = await _store.allTags();
+      if (!mounted) return;
+      if (!vocabListChanged(_entries, all) && _sameTags(_tags, tags)) {
+        return; // 没变化：什么都不做
+      }
+      setState(() {
+        _entries = all;
+        _tags = tags;
+        if (_selectedEntry != null) {
+          // 选中项按 id 跟踪：刷新后仍在同一条上（它可能刚被别处改过）。
+          final found = all.where((e) => e.id == _selectedEntry!.id);
+          _selectedEntry =
+              found.isNotEmpty ? found.first : (all.isNotEmpty ? all.first : null);
+        } else if (all.isNotEmpty) {
+          _selectedEntry = all.first;
+        }
+      });
+      return;
+    }
+
     setState(() => _isLoading = true);
     final all = await _store.queryAll();
     final tags = await _store.allTags();
