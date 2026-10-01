@@ -554,9 +554,25 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     switch host {
     case "lookup":
       let text = getParam("text")
+      let mode = getParam("mode")
       if !text.isEmpty {
         DispatchQueue.main.async { [weak self] in
-          self?.contextServicesChannel?.invokeMethod("lookup", arguments: text)
+          // mode 一路带到 Flutter：用户在浏览器点了「问 AI 深度解析」，
+          // 这里丢掉它，浮窗就会按普通查词走一遍词典——那正是用户报的 Bug。
+          // 空 mode = 词典优先（既有调用方都不带 mode）。
+          self?.contextServicesChannel?.invokeMethod("lookup", arguments: [
+            "text": text,
+            "mode": mode
+          ])
+        }
+      }
+    case "vocab":
+      // 只加生词，不开窗口、不查词典。独立 host 而不是 lookup 的一个 mode：
+      // 这个动作压根没有 UI，走查词窗口的流程再"不打开它"是自相矛盾。
+      let text = getParam("text")
+      if !text.isEmpty {
+        DispatchQueue.main.async { [weak self] in
+          self?.contextServicesChannel?.invokeMethod("addToVocab", arguments: text)
         }
       }
     case "savenote":

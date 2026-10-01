@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../../services/context_services_bridge.dart';
 import '../../../services/note_capture_service.dart';
+import '../../../components/markdown_view.dart';
 import '../../../services/settings_store.dart';
 import '../../../theme/app_theme.dart';
 import '../../notebook/appflowy_codec.dart';
@@ -16,9 +17,16 @@ import '../services/lookup_coordinator.dart';
 
 /// 查词浮窗独立应用
 class LookupWindowApp extends StatelessWidget {
-  const LookupWindowApp({super.key, required this.initialQuery});
+  const LookupWindowApp({
+    super.key,
+    required this.initialQuery,
+    this.initialMode = LookupStartMode.dict,
+  });
 
   final String initialQuery;
+
+  /// 首屏走词典还是直接问 AI。见 [LookupStartMode]。
+  final LookupStartMode initialMode;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +45,11 @@ class LookupWindowApp extends StatelessWidget {
             // 此处不能改成 context.bg*，否则会盖掉窗口的透明通道，
             // 让圆角外沿出现一圈不透明的矩形毛边。
             backgroundColor: Colors.transparent,
-            body: LookupPanelView(initialQuery: initialQuery, isSubWindow: true),
+            body: LookupPanelView(
+            initialQuery: initialQuery,
+            initialMode: initialMode,
+            isSubWindow: true,
+          ),
           ),
         );
       },
@@ -49,8 +61,13 @@ class LookupWindowApp extends StatelessWidget {
 class LookupWindowLauncher {
   static const windowType = 'lookup:';
 
-  static Future<void> open(String query) async {
+  /// 打开查词浮窗。
+  ///
+  /// [mode] 见 [LookupStartMode]：`dict` 走词典优先，`ai` 直接问 AI。缺省
+  /// `dict` —— 既有调用方（右键查词、⌘D 热键）行为不变。
+  static Future<void> open(String query, {LookupStartMode mode = LookupStartMode.dict}) async {
     final cleanQuery = query.trim();
+    if (cleanQuery.isEmpty) return;
     try {
       final windows = await WindowController.getAll();
       for (final win in windows) {
@@ -60,7 +77,9 @@ class LookupWindowLauncher {
       }
       final controller = await WindowController.create(
         WindowConfiguration(
-          arguments: '$windowType$cleanQuery',
+          // mode 也编进 arguments：子进程要从这里知道"直接问 AI"，
+          // 而 WindowController.create 只有 arguments 一个传参通道。
+          arguments: '$windowType${mode.name}:$cleanQuery',
           hiddenAtLaunch: false,
         ),
       );
@@ -72,6 +91,32 @@ class LookupWindowLauncher {
   }
 }
 
+/// 查词模式。
+///
+/// 值名会跨进程写在子窗口 arguments 里，**改名等于改协议**——不要顺手改。
+enum LookupStartMode {
+  /// 词典优先（缺省）。
+  dict,
+
+  /// 跳过词典，直接 AI 分析。
+  ai,
+}
+
+/// 解析查词模式。生产与测试都用（子窗口入口据它决定首屏走哪条路）。
+///
+/// 未知值一律回落 [LookupStartMode.dict]：深链是外部输入（浏览器可以拼出任意
+/// 字符串），把它当错误拒绝会让用户在浏览器里点了没反应；当 dict 处理至少有
+/// 词典结果可用。
+LookupStartMode parseLookupStartMode(String? raw) {
+  switch ((raw ?? '').trim().toLowerCase()) {
+    case 'ai':
+      return LookupStartMode.ai;
+    case 'dict':
+    default:
+      return LookupStartMode.dict;
+  }
+}
+
 /// 查词面板主体视图
 class LookupPanelView extends StatefulWidget {
   const LookupPanelView({
@@ -79,11 +124,13 @@ class LookupPanelView extends StatefulWidget {
     required this.initialQuery,
     this.isSubWindow = false,
     this.onClose,
+    this.initialMode = LookupStartMode.dict,
   });
 
   final String initialQuery;
   final bool isSubWindow;
   final VoidCallback? onClose;
+  final LookupStartMode initialMode;
 
   @override
   State<LookupPanelView> createState() => _LookupPanelViewState();
@@ -107,12 +154,25 @@ class _LookupPanelViewState extends State<LookupPanelView> with WindowListener {
 
     _queryController.text = widget.initialQuery;
     if (widget.initialQuery.trim().isNotEmpty) {
-      _doLookup(widget.initialQuery.trim());
+      // 按入口意图分派：从「问 AI 深度解析」进来的直接走 AI，其余走词典。
+      // 走错分支的后果是用户被强迫看一次他没要的词典查询结果。
+      switch (widget.initialMode) {
+        case LookupStartMode.ai:
+          _forceAi();
+        case LookupStartMode.dict:
+          _doLookup(widget.initialQuery.trim());
+      }
     }
   }
 
   Future<void> _setupWindowStyle() async {
     try {
+      // 尺寸由本窗口自己声明。原生侧（MainFlutterWindow）原来会把每个子窗口
+      // 一律 setFrame(screen.visibleFrame) 铺满屏幕；那里现在只管样式，
+      // 尺寸交给知道自己是哪种窗口的这一侧。420×520 是配置浮窗的老尺寸
+      // （configureLookupWindow 一直用这个值）。
+      await windowManager.setSize(const Size(420, 520), animate: false);
+      await windowManager.setMinimumSize(const Size(360, 320));
       await windowManager.setAlwaysOnTop(true);
       await windowManager.setTitle('查词');
       await windowManager.setTitleBarStyle(TitleBarStyle.hidden, windowButtonVisibility: false);
@@ -596,9 +656,14 @@ class _LookupPanelViewState extends State<LookupPanelView> with WindowListener {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    res.aiTranslation!,
-                    style: TextStyle(fontSize: 13, color: textPrimary, height: 1.5),
+                  // 用共享的 Markdown 渲染，不是 Text：AI 返回的是 Markdown，
+                  // 用 Text 会把 `**`、`##`、`- ` 这些源码裸呈给用户。
+                  // AppMarkdownView 已是 AI 助手/资讯快报/磁盘报告/笔记问答
+                  // 四处的标准组件，唯独查词浮窗漏了它。
+                  AppMarkdownView(
+                    data: res.aiTranslation!,
+                    baseStyle: TextStyle(fontSize: 13, color: textPrimary, height: 1.5),
+                    // 默认 selectable —— AI 文本要能选中复制。
                   ),
                 ],
               ),

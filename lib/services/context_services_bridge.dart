@@ -1,17 +1,26 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// 上下文服务桥接（macOS Services + 全局热键 → Flutter）
+/// 上下文服务桥接（macOS Services + 全局热键 + 浏览器深链 → Flutter）
 ///
-/// 监听 v8_work_toolbox/context_services 通道，分发查词和保存笔记事件。
+/// 监听 v8_work_toolbox/context_services 通道，分发查词、保存笔记、加生词三类事件。
+/// 深链协议（`v8toolbox://`）的全部入口都在这里落地 —— 本文件是桌面端唯一
+/// 知道"深链能表达什么"的地方。
 class ContextServicesBridge {
   ContextServicesBridge._();
   static final ContextServicesBridge instance = ContextServicesBridge._();
 
   static const _channel = MethodChannel('v8_work_toolbox/context_services');
 
-  /// 查词回调：text 为查询词
-  void Function(String text)? onLookup;
+  /// 查词回调：[text] 为查询词，[mode] 为 `'dict'`（词典优先）或 `'ai'`
+  /// （跳过词典直接问 AI）。
+  ///
+  /// mode 从深链一路带到这里：用户已经在浏览器里点过「问 AI 深度解析」，
+  /// 丢掉它就等于把那次点击当作没发生。
+  void Function(String text, String mode)? onLookup;
+
+  /// 加生词回调：text 为要加入生词本的词。只加词，不开窗口、不查词典。
+  void Function(String text)? onAddToVocab;
 
   /// 保存笔记回调：text 为正文，html 为富文本，sourceApp 为来源 bundle ID
   void Function({
@@ -31,10 +40,27 @@ class ContextServicesBridge {
     try {
       switch (call.method) {
         case 'lookup':
+          // 两种历史形态都要认：纯 String（早期）与 Map（带 mode 的版本）。
+          // 契约变更不能把还没升级的原生层挡死。
+          late final String text;
+          late final String mode;
+          if (call.arguments is String) {
+            text = call.arguments as String;
+            mode = 'dict';
+          } else {
+            final args = Map<String, dynamic>.from(call.arguments as Map);
+            text = args['text'] as String? ?? '';
+            // 缺省 dict：既有调用方不带 mode，必须保持词典优先。
+            mode = (args['mode'] as String?)?.trim().toLowerCase() ?? 'dict';
+          }
+          if (text.isNotEmpty) onLookup?.call(text, mode.isEmpty ? 'dict' : mode);
+          return null;
+
+        case 'addToVocab':
           final text = call.arguments is String
               ? call.arguments as String
               : (call.arguments as Map?)?['text'] as String? ?? '';
-          if (text.isNotEmpty) onLookup?.call(text);
+          if (text.isNotEmpty) onAddToVocab?.call(text);
           return null;
 
         case 'saveNote':

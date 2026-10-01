@@ -17,6 +17,7 @@ import 'services/local_dictionary_bridge.dart';
 import 'services/note_capture_service.dart';
 import 'services/privacy_security_service.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
+import 'tools/vocab_book/services/vocab_store.dart';
 import 'services/proxy_settings.dart';
 import 'services/scheduled_news_service.dart';
 import 'services/settings_store.dart';
@@ -232,18 +233,21 @@ Future<void> main(List<String> args) async {
   if (isSubWindow && subWindowArgument == 'password-vault') {
     // 密码工具子窗口：VaultStore 自管加载与 DEK，不消费 AI。
     await WindowServices.initFor(WindowKind.passwordVault);
+    await _sizeSubWindow(const Size(900, 600));
     runAppWithErrorHandling(const _PasswordVaultWindowApp());
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'notebook') {
     await WindowServices.initFor(WindowKind.notebook);
+    await _sizeSubWindow(const Size(1100, 700));
     runAppWithErrorHandling(const _NotebookWindowApp());
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'ops-tool') {
     await WindowServices.initFor(WindowKind.opsTool);
+    await _sizeSubWindow(const Size(1200, 800));
     runAppWithErrorHandling(const _OpsToolWindowApp());
     return;
   }
@@ -252,14 +256,23 @@ Future<void> main(List<String> args) async {
     // Sub-window mode for a single note.
     final noteId = subWindowArgument.substring('note:'.length);
     await WindowServices.initFor(WindowKind.singleNote);
+    await _sizeSubWindow(const Size(900, 650));
     runAppWithErrorHandling(_SingleNoteWindowApp(noteId: noteId));
     return;
   }
 
   if (isSubWindow && subWindowArgument.startsWith('lookup:')) {
-    final query = subWindowArgument.substring('lookup:'.length);
+    // arguments 形态是 'lookup:<mode>:<query>'，mode 缺省视为 dict。
+    // 旧版本只写 'lookup:<query>'，所以 split 后要能两种都认。
+    final rest = subWindowArgument.substring('lookup:'.length);
+    final splitAt = rest.indexOf(':');
+    final hasMode = splitAt > 0 && (rest.startsWith('dict:') || rest.startsWith('ai:'));
+    final mode = hasMode ? rest.substring(0, splitAt) : 'dict';
+    final query = hasMode ? rest.substring(splitAt + 1) : rest;
     await WindowServices.initFor(WindowKind.lookupPanel);
-    runAppWithErrorHandling(LookupWindowApp(initialQuery: query));
+    runAppWithErrorHandling(
+      LookupWindowApp(initialQuery: query, initialMode: parseLookupStartMode(mode)),
+    );
     return;
   }
 
@@ -319,9 +332,18 @@ Future<void> main(List<String> args) async {
 
   // 初始化上下文服务桥接（macOS Services + 热键）
   ContextServicesBridge.instance.init();
-  ContextServicesBridge.instance.onLookup = (text) {
-    debugPrint('[Bridge] lookup: $text');
-    LookupWindowLauncher.open(text);
+  ContextServicesBridge.instance.onLookup = (text, mode) {
+    debugPrint('[Bridge] lookup: $text (mode: $mode)');
+    // 深链带来的 mode 决定首屏走哪条路：'ai' 直接问 AI，其余词典优先。
+    LookupWindowLauncher.open(
+      text,
+      mode: parseLookupStartMode(mode),
+    );
+  };
+
+  ContextServicesBridge.instance.onAddToVocab = (text) {
+    debugPrint('[Bridge] addToVocab: $text');
+    _addWordToVocabFromBridge(text);
   };
   ContextServicesBridge.instance.onSaveNote = ({
     required text,
@@ -354,6 +376,52 @@ Future<void> main(List<String> args) async {
   }
 
   runAppWithErrorHandling(const V8WorkToolboxApp());
+}
+
+/// 子窗口尺寸声明。
+///
+/// [size] 由各窗口种类自己决定：查词浮窗是 420×520 的贴口气泡，单篇笔记
+/// 900×650，笔记本克隆主窗口的 1100×700，运维工具多面板要 1200×800，
+/// 密码库 900×600。原生的 MainFlutterWindow 原来会把所有子窗口一律
+/// setFrame(screen.visibleFrame) 铺满屏幕，那里现在只管样式；尺寸交给
+/// 持有着 arguments、知道自己是哪种窗口的这一侧。
+///
+/// 失败不抛：窗口尺寸声明失败时窗口仍会打开（用包默认的 800×600），
+/// 比让窗口打不开好。
+Future<void> _sizeSubWindow(Size size) async {
+  try {
+    await windowManager.setSize(size, animate: false);
+    await windowManager.center();
+  } catch (e) {
+    debugPrint('[main] 子窗口尺寸声明失败: $e');
+  }
+}
+
+/// 从浏览器深链来的加生词请求。
+///
+/// 不开窗口、不查词典 —— 用户点的就是「加入词本」，那本该只是个数据写入。
+/// 判重靠 [VocabStore.existsWord]：重复点击不该产生重复词条。
+///
+/// 注意本函数运行在主窗口进程，而生词本页面也在主窗口里；浮窗进程写库后
+/// 页面不刷新的问题由 `refresh-vocab-book-on-window-focus` 负责，不在这里
+/// 顺手解决——那是另一个 change 的范围。
+Future<void> _addWordToVocabFromBridge(String text) async {
+  final word = text.trim();
+  if (word.isEmpty) return;
+  try {
+    if (await VocabStore.instance.existsWord(word)) {
+      debugPrint("[Bridge] addToVocab: '$word' 已在生词本，跳过");
+      return;
+    }
+    await VocabStore.instance.insertFromDictionary(
+      word: word,
+      definitions: const [],
+      examples: const [],
+    );
+    debugPrint("[Bridge] addToVocab: '$word' 已加入生词本");
+  } catch (e, stack) {
+    debugPrint('[Bridge] addToVocab 失败 ($word): $e\n$stack');
+  }
 }
 
 /// 主应用全局导航 Key，供平台服务在需要时弹出对话框

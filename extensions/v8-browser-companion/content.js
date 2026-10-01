@@ -315,11 +315,13 @@
       setTimeout(dismissBubble, 1200);
     });
 
-    // 加入生词本
+    // 加入生词本：走 vocab 深链 —— 只加词，不开窗口、不查词典。
+    // 这里原来链到 lookup 深链（桌面端没有 vocab host），按钮却写"呼起生词本"，
+    // 实际做的是打开查词窗口：文案描述了一个从不存在的动作。
     shadow.querySelector('#v8-btn-vocab').addEventListener('click', () => {
-      window.location.href = `v8toolbox://lookup?text=${encodeURIComponent(text)}`;
+      window.location.href = `v8toolbox://vocab?text=${encodeURIComponent(text)}`;
       const btn = shadow.querySelector('#v8-btn-vocab');
-      btn.innerText = '已呼起生词本 ✓';
+      btn.innerText = '已加入生词本 ✓';
       setTimeout(dismissBubble, 1200);
     });
 
@@ -388,7 +390,11 @@
           </div>
         `;
         shadow.querySelector('#v8-ask-ai-btn')?.addEventListener('click', () => {
-          window.location.href = `v8toolbox://lookup?text=${encodeURIComponent(word)}`;
+          // mode=ai：用户已经点过"问 AI"，桌面端就该直接问 AI。少了这个参数，
+          // 浮窗会先在词典里查一遍、显示"未收录"，再让用户点一次 AI —— 等于
+          // 把他的点击当作没发生。见 spec 的 browser-lookup-deep-link。
+          window.location.href =
+            `v8toolbox://lookup?text=${encodeURIComponent(word)}&mode=ai`;
           dismissBubble();
         });
         return;

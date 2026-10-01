@@ -28,15 +28,18 @@ class MainFlutterWindow: NSWindow {
 
       DispatchQueue.main.async {
         if let window = controller.view.window {
-          window.minSize = NSSize(width: 960, height: 640)
-          if let screen = NSScreen.main {
-            window.setFrame(screen.visibleFrame, display: true)
-          } else {
-            var frame = window.frame
-            frame.size = NSSize(width: 1200, height: 750)
-            window.setFrame(frame, display: true)
-            window.center()
-          }
+          // 尺寸由各窗口的 Dart 入口自己声明（windowManager.setSize），
+          // 这里不再替它们决定大小。
+          //
+          // 曾经这里无条件 setFrame(screen.visibleFrame)，即所有子窗口一律铺满
+          // 屏幕可见区（实测查词浮窗被撑到 1680×921 = 整块屏幕）。查词浮窗本该是
+          // 420×520 的贴口气泡，笔记本/密码/运维同理都该有自己的尺寸。
+          //
+          // 为什么不在这一侧按窗口种类查表：这个回调只给 FlutterViewController，
+          // 包既不把 arguments 存进 CustomWindow 也不挂到 NSWindow 上——原生侧
+          // 根本判断不出自己在给哪种窗口定尺寸。所以尺寸必须由持有着
+          // arguments 的 Dart 侧声明。
+          window.minSize = NSSize(width: 400, height: 400)
 
           // 沉浸式透明标题栏与全尺寸内容视图（与主窗口完全一致）
           window.titlebarAppearsTransparent = true
