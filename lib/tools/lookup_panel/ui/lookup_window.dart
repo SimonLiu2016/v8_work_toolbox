@@ -75,7 +75,7 @@ class LookupWindowLauncher {
           await win.hide();
         }
       }
-      final controller = await WindowController.create(
+      await WindowController.create(
         WindowConfiguration(
           // mode 也编进 arguments：子进程要从这里知道"直接问 AI"，
           // 而 WindowController.create 只有 arguments 一个传参通道。
@@ -83,7 +83,19 @@ class LookupWindowLauncher {
           hiddenAtLaunch: false,
         ),
       );
-      await controller.show();
+      // 这里**不能**调 controller.show()。
+      //
+      // 包的 window_show 是三连：makeKeyAndOrderFront + setIsVisible(true) +
+      // NSApp.activate(ignoringOtherApps: true)。第三者把整个 App——连同
+      // 主窗口——带到前台，把用户正在看的网页盖掉。查词浮窗的定位是"不打断
+      // 阅读的气泡"，激活 App 与这个定位直接矛盾。
+      //
+      // 而 setIsVisible 那两步在 CreateWindow 里已经做过了
+      // （hiddenAtLaunch: false 时 orderFront + setIsVisible），所以这行
+      // show() 在这个场景下是纯多余的，净效果只有激活。
+      //
+      // 其余四个子窗口（笔记本 / 单篇笔记 / 运维 / 密码）仍然调 show()——
+      // 对它们，用户点了"打开笔记本"，激活 App 是预期结果。
       await ContextServicesBridge.instance.styleLookupWindow();
     } catch (e) {
       debugPrint('[LookupWindowLauncher] 打开浮窗失败: $e');
