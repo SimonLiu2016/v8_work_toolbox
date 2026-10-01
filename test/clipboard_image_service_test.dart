@@ -86,6 +86,21 @@ void main() {
       expect(result.asFailure()?.$1, ClipboardImageFailure.nothingPasteable);
     });
 
+    test('a bitmap on the clipboard wins over clipboard text', () async {
+      // 有些应用往剪贴板里同时放位图和一个自造 URL。位图才是用户想粘的，
+      // 所以 readImage 必须先试位图，拿到就不再往下走。
+      final fake = track('both.png', pngBytes);
+      service.processRunner = fakeRunnerOk(fileToReturn: fake);
+      clipboardText('https://example.com/also-here.png');
+
+      final result = await service.readImage();
+
+      final image = result.asSuccess();
+      expect(image, isNotNull);
+      expect(image!.source, ClipboardImageSource.clipboardBitmap,
+          reason: '位图优先于剪贴板里的图片 URL');
+    });
+
     test('osascript throws → bitmapReadFailed, distinguishable', () async {
       service.processRunner = (exe, args) async => throw StateError(
             '模拟 osascript 崩溃',

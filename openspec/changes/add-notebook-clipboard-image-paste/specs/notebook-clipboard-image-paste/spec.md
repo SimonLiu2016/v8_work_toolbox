@@ -61,15 +61,23 @@ Taking over the editor's paste command SHALL NOT degrade pasting plain text: mul
 - **THEN** the image is inserted, because an image paste is the more specific intent.
 
 ### Requirement: Paste failures are visible
-Every stage of pasting an image SHALL report a distinguishable, human-readable failure rather than doing nothing.
+Every stage of pasting an image SHALL report a distinguishable, human-readable failure rather than doing nothing — except the case where the clipboard holds no image at all, which is the normal text-paste case and must stay silent.
 
-#### Scenario: Nothing pasteable on the clipboard
+#### Scenario: Clipboard without any image form pastes as text, silently
 - **WHEN** the user pastes while the clipboard holds neither a bitmap image, an image URL, nor a local image path
-- **THEN** the user is told no image was recognised, rather than the keystroke silently disappearing.
+- **THEN** the paste proceeds as a plain-text paste and no image-related message is shown, because pressing ⌘V with no image on the clipboard is the ordinary text-paste case and not a failure.
+
+#### Scenario: Bitmap present but unreadable is reported
+- **WHEN** the clipboard holds a bitmap image that cannot be read out
+- **THEN** the user is told the clipboard image could not be read, with a hint about automation permission, and the editor is left unchanged.
 
 #### Scenario: Image URL download fails
 - **WHEN** the clipboard holds an image URL that cannot be downloaded (unreachable host, non-image response, timeout)
 - **THEN** the user is told the image could not be fetched, with the reason, and the editor is left unchanged rather than half-updated.
+
+#### Scenario: Image beyond the size cap is reported
+- **WHEN** the clipboard holds an image URL whose response exceeds the size cap
+- **THEN** the user is told the image exceeded the cap and the paste was cancelled, rather than a partial write arriving in the note.
 
 #### Scenario: Writing the image into note storage fails
 - **WHEN** the image was obtained but could not be written into the note's attachment storage

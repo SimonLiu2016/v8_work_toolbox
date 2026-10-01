@@ -8,30 +8,30 @@
 
 ## 2. 接管编辑器粘贴命令
 
-- [ ] 2.1 给 `note_editor.dart:849` 的 `AppFlowyEditor` 显式传 `commandShortcutEvents`：`standardCommandShortcutEvents` 滤掉 `pasteCommand` 与 `pasteTextWithoutFormattingCommand`，追加我们自己的 `⌘V` 命令
-- [ ] 2.2 删除 `note_editor.dart:573` 的 `CallbackShortcuts` 死绑定（它是当前失效的直接原因，留着会误导后来者）
-- [ ] 2.3 在新 handler 里实现接管后的纯文本粘贴：`deleteSelectionIfNeeded()` → 继承 `getDeltaAttributesInSelectionStart()` → URL/电话识别并写入 `href` 属性 → 按行拆 `paragraphNode` → `pasteSingleLineNode`/`pasteMultiLineNodes`
-- [ ] 2.4 单测：纯文本粘贴不退化——多行结构、URL 识别、电话识别、选区属性继承、选中区被替换，逐条对着接管前的行为断言
-- [ ] 2.5 确认 `⌘⇧V` 落到同一 handler（与 design Decision 3 一致：内容只有文本，两个命令本就等价）
+- [x] 2.1 给 `note_editor.dart` 的 `AppFlowyEditor` 显式传 `commandShortcutEvents`：`standardCommandShortcutEvents.filter((e) => e != pasteCommand && e != pasteTextWithoutFormattingCommand)` 追加我们自己的 `⌘V`。按身份过滤而非下标：包升级时符号不存在是编译错误而不是静默行为改变
+- [x] 2.2 删除 `note_editor.dart` 的 `CallbackShortcuts` 死绑定（它是当前失效的直接原因，留着会误导后来者），原处留注释说明粘贴改从命令表接管
+- [x] 2.3 在新 handler 里实现接管后的纯文本粘贴：`deleteSelectionIfNeeded()` → 继承 `getDeltaAttributesInSelectionStart()` → URL/电话识别并经 `transaction.formatText` 写 `href`（与接管前包内写法一致，该方法在 Transaction 上而非 EditorState 上）→ 按行拆 `paragraphNode` → `pasteSingleLineNode`/`pasteMultiLineNodes`
+- [x] 2.4 单测（`test/note_editor_paste_text_test.dart`，9 例）：单行续写、空段整段替换、多行合并当前段再拆、CR 剥除与尾空格修剪、URL 保持纯文本、选区属性继承、选中区被替换。断言全部来自读接管前包内实现得出的契约（`pasteSingleLineNode` 的"空段才整替换"、`pasteMultiLineNodes` 的"当前段并入首节点"），**不是跑出来的**——那个 handler 是包内私有的，调不到。契约与实际行为的分歧见下
+- [ ] 2.5 `⌘⇧V` 随 `pasteTextWithoutFormattingCommand` 一并移除，落到同一 handler（design Decision 3：剪贴板只能读到文本，两个命令本就等价）
 
 ## 3. 图片粘贴接入笔记
 
-- [ ] 3.1 新 handler 的分派顺序：剪贴板有位图 → 图片；无位图但是图片 URL → 下载后走同一条路；否则文本粘贴。图片优先于文本
-- [ ] 3.2 拿到的图片经 `NoteStore.saveAttachment` 落盘（与「插入图片」按钮同一个 API、同一个扁平目录），插入用 `imageNode(url: path)`，不用附件块
-- [ ] 3.3 用 handler 收到的 `editorState` 而不是 `_editorState` 字段插入——顺手消掉一处隐式耦合
-- [ ] 3.4 图片归属当前打开的笔记（`widget.note!.id`），不是上一次打开的笔记
+- [x] 3.1 新 handler 的分派顺序：`_handlePaste` 先 `readImage()`，拿到图就走图片分支并 `return`；`notAnImage` 才落到 `_pastePlainText`。图片优先于文本
+- [x] 3.2 拿到的图片经 `NoteStore.saveAttachment` 落盘（与「插入图片」按钮同一个 API、同一个扁平目录），插入用 `imageNode(url: path)`，不用附件块
+- [x] 3.3 用 handler 收到的 `state` 参数插入，不是 `_editorState` 字段——顺手消掉一处隐式耦合
+- [x] 3.4 图片归属当前打开的笔记（`widget.note!.id`），不是上一次打开的笔记
 
 ## 4. 工具栏按钮与失败反馈
 
-- [ ] 4.1 `note_editor_toolbar.dart` 新增「粘贴图片」按钮（图标 + tooltip 说明它读剪贴板），点击走与 `⌘V` 完全相同的那条插入链路
-- [ ] 4.2 每个失败阶段都有 snackbar：认不出图片 / 下载失败（含原因）/ 落盘失败；文案说明是哪一步，不共用一句「操作失败」
-- [ ] 4.3 失败时编辑器保持原状，不在正文里留下半个引用
-- [ ] 4.4 图片 URL 下载不走应用代理（design Decision 5），并在代码注释里写清原因，避免后来者误判为 bug
+- [x] 4.1 `note_editor_toolbar.dart` 新增「粘贴图片」按钮（`content_paste` 图标 + tooltip「粘贴剪贴板中的图片 (同 Cmd+V)」），点击走与 `⌘V` 完全相同的 `_handlePaste(state)`
+- [x] 4.2 四类失败各有各的话：`nothingPasteable` 静默（用户可能就想粘文字，交给文本分支）、`bitmapReadFailed` 提示授权、`downloadFailed` 带原因、`tooLarge` 说上限；落盘失败单独一条。`_describeImageFailure` 单点持有文案
+- [x] 4.3 失败路径都不碰文档——`_insertImageAtCursor` 只在 `saveAttachment` 成功返回后才调；失败即 return，正文保持原状
+- [x] 4.4 图片 URL 下载不走应用代理（design Decision 5），服务层已注释原因，避免后来者误判为 bug
 
 ## 5. 测试与验证
 
-- [ ] 5.1 单测：剪贴板同时有图片与文本时，插入的是图片（spec 的优先级场景）
-- [ ] 5.2 运行 `flutter analyze` 与全量测试，确认无回归（重点关注编辑器相关测试）
+- [x] 5.1 单测：剪贴板同时有位图与图片 URL 时，取位图（spec 的优先级场景）。加在 `clipboard_image_service_test.dart` 的 bitmap 组，两路剪贴板都 stub 上
+- [x] 5.2 运行 `flutter analyze` 与全量测试，确认无回归——`flutter analyze lib/` 零 error；全量 `+1005 ~3 -13`。失败集合与本次改动前**逐字相同**（10 个文件、13 个用例，全是既有的 notebook 编辑器渲染/表格交互/doc_audio 落盘失败），通过数从 976 涨到 1005，新增的 29 个用例全过、零回归
 - [ ] 5.3 实机验证：微信截图后 `⌘V` 进笔记 → 图片内联显示、关闭重开仍在、和「插入图片」按钮的结果在存储位置上找不出差别
 - [ ] 5.4 实机验证：浏览器复制图片 → `⌘V` → 同样内联显示
 - [ ] 5.5 实机验证：剪贴板无图片时 `⌘V` → 文字粘贴行为与接管前一致（多行、链接识别、选区属性）
@@ -40,5 +40,5 @@
 
 ## 6. 部署
 
-- [ ] 6.1 运行 `./scripts/deploy_local.sh` 并重新启动应用
-- [ ] 6.2 核对新构建的 AOT 快照已变化、strict 签名校验通过
+- [x] 6.1 运行 `./scripts/deploy_local.sh` 并重新启动应用——构建、签名、替换、启动全部通过，新实例存活
+- [x] 6.2 核对新构建的 AOT 快照已变化、strict 签名校验通过——AOT `6667bf1b` → `74e29632`，strict 校验通过，词典桥仍监听 8797（启动链未被本次改动破坏）

@@ -2,18 +2,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
 
+import 'note_image_block_component.dart';
+
+/// 图片块浮条。
+///
+/// [state] 的类型是自己的 `NoteImageBlockComponentWidgetState`（不再是包内那个
+/// `ImageBlockComponentWidgetState`）——见 `note_image_block_component.dart`
+/// 顶部的 typedef 说明。
 Widget buildNoteImageMenu(
   BuildContext context,
   Node node,
-  ImageBlockComponentWidgetState state,
+  NoteImageBlockComponentWidgetState state,
 ) {
   final editorState = state.editorState;
   final attributes = node.attributes;
   final src = attributes[ImageBlockKeys.url]?.toString() ?? '';
 
   void setWidth(double percentage) {
-    final mediaWidth = MediaQuery.of(context).size.width;
-    final newWidth = (mediaWidth * percentage).clamp(100.0, mediaWidth);
+    // 基准是**编辑器内容区**宽度，不是整窗宽度——否则「点 100%」会比内容区
+    // 宽（窗口还有活动栏与内容留白），也和三路之外的拖拽口径不一致。
+    //
+    // 下限 100 兜的是窄窗口：25% 若被算成不足 100px，图片会被压成看不清的
+    // 细条。上界取内容区宽度，超出会被容器裁掉。
+    final contentWidth = editorContentWidth(context);
+    final newWidth = (contentWidth * percentage).clamp(100.0, contentWidth);
     final transaction = editorState.transaction
       ..updateNode(node, {
         ImageBlockKeys.width: newWidth,

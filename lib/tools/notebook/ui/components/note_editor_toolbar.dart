@@ -31,11 +31,20 @@ class NoteEditorToolbar extends StatelessWidget {
   /// 由编辑器插入附件块节点。
   final Future<List<AttachmentRef>> Function(List<File> files)? onAddAttachments;
 
+  /// 粘贴剪贴板图片。与 ⌘V 走同一条链路，由编辑器实现（读剪贴板 → 存附件 →
+  /// 插图片块），失败反馈也由它负责。
+  ///
+  /// 为什么要有这个按钮：⌘V 这条路断过一次——包的 pasteCommand 吞掉按键，
+  /// 而外层 Shortcuts 结构性轮不到，三个月没人发现。最常用的功能不该只有
+  /// 一条会被人抢走的隐形路径。
+  final VoidCallback? onPasteImage;
+
   const NoteEditorToolbar({
     super.key,
     required this.editorState,
     this.onSaveAttachment,
     this.onAddAttachments,
+    this.onPasteImage,
   });
 
   void _formatHeading(int level) {
@@ -224,6 +233,18 @@ class NoteEditorToolbar extends StatelessWidget {
             _actionBtn(Icons.code_rounded, '插入代码', _insertCodeBlock),
             const SizedBox(width: 4),
             _actionBtn(Icons.image_outlined, '插入图片', () => _insertImage(context)),
+            if (onPasteImage != null) ...[
+              const SizedBox(width: 4),
+              Tooltip(
+                message: '粘贴剪贴板中的图片 (同 Cmd+V)',
+                preferBelow: true,
+                child: _iconBtn(
+                  Icons.content_paste_rounded,
+                  '粘贴剪贴板中的图片',
+                  onPasteImage!,
+                ),
+              ),
+            ],
             if (onAddAttachments != null) ...[
               const SizedBox(width: 4),
               _actionBtn(Icons.attach_file_rounded, '添加附件', _addAttachments),

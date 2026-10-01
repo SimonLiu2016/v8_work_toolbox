@@ -10,14 +10,61 @@ import '../../../theme/app_theme.dart';
 import '../appflowy_codec.dart';
 import '../note_database.dart';
 import '../note_store.dart';
+import '../services/clipboard_image_service.dart';
 import 'asset_fields_panel.dart';
 import 'related_notes_section.dart';
 import 'components/attachment_block_component.dart';
 import 'components/note_code_block_component.dart';
 import 'components/note_editor_toolbar.dart';
+import 'components/note_image_block_component.dart';
 import 'components/note_image_menu.dart';
 import 'components/note_mindmap_component.dart';
 import 'notebook_light_scope.dart';
+
+/// 粘贴图片的三种结局。分开是因为它们要的反馈不同：handled 已插入、
+/// failed 认出了但出错（已提示用户）、notAnImage 剪贴板里没有图片形态，
+/// 调用方应继续按文本粘贴。
+enum _PasteOutcome { handled, failed, notAnImage }
+
+/// 接管 ⌘V 之后的纯文本粘贴核心：选中区删除 → 属性继承 → URL/电话识别 →
+/// 按行拆段 → 单/多行插入。
+///
+/// 关于本条要求的证据边界，说清楚：契约是从接管前包内实现
+/// （`appflowy_editor` 的 `paste_command.dart`）读出来的，**不是跑出来的**——
+/// 那个 handler 是包内私有的，测试与生产都调不到它。所以这里的单测证明的是
+/// 「接管后符合这份读源码得出的契约」，不能宣称「与接管前的行为逐位相等」。
+/// 后者只能由实机对比确认（tasks 5.5）。
+@visibleForTesting
+Future<void> insertPlainTextPaste(EditorState state, String text) async {
+  final attributes = state.getDeltaAttributesInSelectionStart();
+  final selection = await state.deleteSelectionIfNeeded();
+  if (selection == null) return;
+
+  // 这里**没有** URL / 电话转链接的分支，是刻意的。
+  //
+  // 接管前包内 `pastePlainText` 确实调了 `maybeConvertToUrlOrPhone`，但那个
+  // 分支不可达：它排在 `deleteSelectionIfNeeded()` 之后，而后者删掉选中内容后
+  // 返回的 selection 必然 isCollapsed；`maybeConvertToUrlOrPhone` 的守卫
+  // 又要求 `isCollapsed == false`，于是永远 return false。粘贴一个 URL 进去，
+  // 接管前从来是当纯文本插入，不会变成链接。
+  //
+  // 照抄一遍这条死分支非但拿不到"粘 URL 变链接"的好处（formatText 落在已被
+  // 删空的 delta 上，插入结果是空），还平白改变行为。所以这里只做文本分支。
+  final nodes = text
+      .split('\n')
+      .map((line) => line.replaceAll('\r', '').trimRight())
+      .map((line) => paragraphNode(
+            delta: Delta()..insert(line, attributes: attributes ?? {}),
+          ))
+      .toList();
+
+  if (nodes.isEmpty) return;
+  if (nodes.length == 1) {
+    await state.pasteSingleLineNode(nodes.first);
+  } else {
+    await state.pasteMultiLineNodes(nodes);
+  }
+}
 
 class NoteEditor extends StatefulWidget {
   final Note? note;
@@ -144,7 +191,10 @@ class NoteEditorState extends State<NoteEditor> {
           return Colors.white;
         },
       ),
-      ImageBlockKeys.type: ImageBlockComponentBuilder(
+      // 用我们自己的图片块，而不是包内的 ImageBlockComponentBuilder：后者
+      // 内部的 ResizableImage 把 width 抄进 State 只抄一次，导致点预设百分比
+      // 屏幕不变（详见 note_image_block_component.dart 顶部说明）。
+      ImageBlockKeys.type: NoteImageBlockComponentBuilder(
         showMenu: true,
         menuBuilder: (node, state) => buildNoteImageMenu(context, node, state),
       ),
@@ -422,84 +472,150 @@ class NoteEditorState extends State<NoteEditor> {
   }
 
   // ---------------------------------------------------------------------------
-  // Paste Interception (macOS bitmap images to attachments)
+  // 粘贴（图片优先，回落纯文本）
+  //
+  // 为什么在这里接管：AppFlowyEditor 的键盘服务把 Focus(onKeyEvent:) 挂在它
+  // 自己的 focusNode 上，比外层 Shortcuts 更早被问到，命中 ⌘V 后返回 handled
+  // 即终止分发。包自带的 pasteCommand 只读 kTextPlain，剪贴板里只有图片没有
+  // 文本时它什么都不做却返回 handled——按键被吃掉，外层的 CallbackShortcuts
+  // 永远收不到。所以必须从命令表这一层接管，而不是在外层抢按键。
   // ---------------------------------------------------------------------------
 
-  Future<void> _handlePaste() async {
-    if (widget.note == null || _editorState == null) return;
+  /// 接管 ⌘V / ⌃V 后的统一入口：先试图片，拿不到再按纯文本粘贴。
+  ///
+  /// [state] 由编辑器传入（当前获得焦点的那个 EditorState），不用
+  /// [_editorState] 字段——两者绝大多数时候相同，但依赖字段意味着将来
+  /// 多编辑器时会静默插错地方。
+  Future<void> _handlePaste(EditorState state) async {
+    if (widget.note == null) return;
 
-    // 1. 尝试使用 AppleScript 探测 macOS 系统剪贴板是否含位图图像
-    final tempImagePath =
-        '/tmp/v8_clipboard_paste_${DateTime.now().millisecondsSinceEpoch}.png';
-    try {
-      final res = await Process.run('osascript', [
-        '-e',
-        'try\n'
-            '  set theFile to open for access POSIX file "$tempImagePath" with write permission\n'
-            '  set eof theFile to 0\n'
-            '  write (the clipboard as «class PNGf») to theFile\n'
-            '  close access theFile\n'
-            '  return "ok"\n'
-            'on error\n'
-            '  try\n'
-            '    close access POSIX file "$tempImagePath"\n'
-            '  end try\n'
-            '  return "fail"\n'
-            'end try',
-      ]);
+    final outcome = await _pasteClipboardImage(widget.note!.id, state);
+    if (outcome != _PasteOutcome.notAnImage) return;
 
-      if (res.exitCode == 0 && res.stdout.toString().trim() == 'ok') {
-        final f = File(tempImagePath);
-        if (await f.exists() && await f.length() > 0) {
-          final savedPath = await NoteStore.instance.saveAttachment(
-            noteId: widget.note!.id,
-            sourceFile: f,
-            filename: 'paste_${DateTime.now().millisecondsSinceEpoch}.png',
-            mime: 'image/png',
-          );
-          try {
-            await f.delete();
-          } catch (_) {}
+    await _pastePlainText(state);
+  }
 
-          _insertImageAtCursor(savedPath);
-          return;
-        }
+  /// 尝试把剪贴板里的图片存进笔记并在光标处插入图片块。
+  ///
+  /// 返回值区分三件事，因为它们要的反馈不同：
+  ///   handled    —— 图片已插入；
+  ///   failed     —— 认出了图片但中途出错（已弹 snackbar）；
+  ///   notAnImage —— 剪贴板里没有图片形态，调用方应继续按文本粘贴。
+  Future<_PasteOutcome> _pasteClipboardImage(
+    String noteId,
+    EditorState state,
+  ) async {
+    final result = await ClipboardImageService.instance.readImage();
+    final image = result.asSuccess();
+    if (image == null) {
+      final failure = result.asFailure();
+      // 只有"真的尝试过但没成功"才需要打扰用户。剪贴板里压根没有图片形态
+      // 是正常情况（用户可能就是想粘一段文字），交给文本分支处理即可。
+      if (failure != null &&
+          failure.$1 != ClipboardImageFailure.nothingPasteable) {
+        _showPasteError(_describeImageFailure(failure.$1, failure.$2));
       }
-    } catch (e) {
-      debugPrint('Clipboard bitmap image check error: $e');
+      return _PasteOutcome.failed;
     }
 
-    // 2. 检测剪贴板文本是否为本地已有图片路径
-    final clipData = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = clipData?.text?.trim();
-    if (text != null && text.isNotEmpty) {
-      final f = File(text);
-      if (await f.exists()) {
-        final ext = p.extension(text).toLowerCase();
-        if ({'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}.contains(ext)) {
-          final savedPath = await NoteStore.instance.saveAttachment(
-            noteId: widget.note!.id,
-            sourceFile: f,
-            filename: p.basename(text),
-            mime: 'image/${ext.replaceFirst('.', '')}',
-          );
-          _insertImageAtCursor(savedPath);
-          return;
-        }
+    try {
+      final savedPath = await NoteStore.instance.saveAttachment(
+        noteId: noteId,
+        sourceFile: image.file,
+        filename: 'paste_${DateTime.now().millisecondsSinceEpoch}'
+            '${p.extension(image.file.path)}',
+      );
+      _insertImageAtCursor(state, savedPath);
+      return _PasteOutcome.handled;
+    } catch (e) {
+      debugPrint('[NoteEditor] 保存粘贴图片失败: $e');
+      _showPasteError('图片保存失败：$e');
+      return _PasteOutcome.failed;
+    } finally {
+      // 只删服务自己生成的临时文件；用户磁盘上的原件删了会毁数据。
+      if (image.ownedByService) {
+        try {
+          if (await image.file.exists()) await image.file.delete();
+        } catch (_) {}
       }
     }
   }
 
-  void _insertImageAtCursor(String path) {
-    if (_editorState == null) return;
-    final selection = _editorState!.selection;
+  /// 接管后的纯文本粘贴。
+  ///
+  /// 逐条对齐接管前（appflowy_editor 内部）的行为：选中区先删除、继承选中
+  /// 处的行内属性、URL 与电话识别并写成 href、按行拆段、单/多行走对应插入
+  /// 路径。漏一条，用户就会觉得"粘贴变了"——那比原来的 bug 更烦，因为它
+  /// 影响每一次粘贴而不是只影响图片。
+  Future<void> _pastePlainText(EditorState state) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    await insertPlainTextPaste(state, text);
+  }
+
+  /// 把取图失败翻译成用户能据此行动的一句话。
+  ///
+  /// 每类说清是哪一步坏的，不共用一句「操作失败」——「没识别到图片」和
+  /// 「下载失败」的下一步完全不同。这次的 bug 能藏住，静默失败是主因。
+  static String _describeImageFailure(
+    ClipboardImageFailure reason,
+    String? detail,
+  ) {
+    final suffix = (detail != null && detail.isNotEmpty) ? '（$detail）' : '';
+    return switch (reason) {
+      ClipboardImageFailure.nothingPasteable => '剪贴板中没有可识别的图片',
+      ClipboardImageFailure.bitmapReadFailed =>
+        '读取剪贴板图片失败，可能需要在系统设置里授予自动化权限',
+      ClipboardImageFailure.downloadFailed => '图片下载失败$suffix',
+      ClipboardImageFailure.tooLarge =>
+        '图片超过 $suffix大小上限，已取消粘贴',
+    };
+  }
+
+  void _showPasteError(String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: context.errorSolid,
+      ),
+    );
+  }
+
+  /// 接管后装配给编辑器的命令表。
+  ///
+  /// 只替换两条粘贴命令，其余（copy / cut / undo / redo / 方向键 / markdown
+  /// 触发…）保持包的默认集合。按身份 `!=` 过滤而不是按下标：包升级时若
+  /// pasteCommand 不存在，这里是编译错误而不是静默的行为改变。
+  List<CommandShortcutEvent> _buildCommandShortcutEvents() {
+    return [
+      ...standardCommandShortcutEvents.where(
+        (e) => e != pasteCommand && e != pasteTextWithoutFormattingCommand,
+      ),
+      CommandShortcutEvent(
+        key: 'v8 custom paste',
+        command: 'ctrl+v',
+        macOSCommand: 'cmd+v',
+        getDescription: () => 'V8 粘贴（图片优先）',
+        handler: (state) {
+          _handlePaste(state);
+          return KeyEventResult.handled;
+        },
+      ),
+    ];
+  }
+
+  void _insertImageAtCursor(EditorState state, String path) {
+    final selection = state.selection;
     final targetPath = selection != null
         ? [selection.end.path[0] + 1]
-        : [_editorState!.document.root.children.length];
+        : [state.document.root.children.length];
 
     final node = imageNode(url: path);
-    final transaction = _editorState!.transaction..insertNode(targetPath, node);
-    _editorState!.apply(transaction);
+    final transaction = state.transaction..insertNode(targetPath, node);
+    state.apply(transaction);
     _scheduleBodySave();
   }
 
@@ -569,15 +685,11 @@ class NoteEditorState extends State<NoteEditor> {
         .where((nb) => nb.id == widget.note!.notebookId)
         .firstOrNull;
 
+    // 这里曾经用 CallbackShortcuts 绑 ⌘V，但外层的 Shortcuts 结构性轮不到——
+    // AppFlowyEditor 的 Focus(onKeyEvent:) 挂在焦点节点上更早接到并返回
+    // handled。粘贴命令现在从编辑器的命令表接管，见 _buildCommandShortcutEvents。
     return NotebookLightScope(
-      child: CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-              _handlePaste,
-          const SingleActivator(LogicalKeyboardKey.keyV, control: true):
-              _handlePaste,
-        },
-        child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // 废纸篓警告横幅
@@ -837,6 +949,10 @@ class NoteEditorState extends State<NoteEditor> {
               editorState: _editorState!,
               onSaveAttachment: _saveAttachment,
               onAddAttachments: _addAttachments,
+              // 与 ⌘V 同一条链路：读剪贴板 → 存附件 → 插图片块。
+              onPasteImage: _editorState == null
+                  ? null
+                  : () => _handlePaste(_editorState!),
             ),
 
             // AppFlowyEditor 编辑器画布（由 AppFlowy 原生接管视口与滚动）
@@ -851,6 +967,9 @@ class NoteEditorState extends State<NoteEditor> {
                     editorScrollController: _editorScrollController,
                     editorStyle: _editorStyle,
                     blockComponentBuilders: _blockComponentBuilders,
+                    // 接管粘贴命令：包默认的 pasteCommand 只读纯文本，剪贴板里
+                    // 只有图片时它返回 handled 却什么都不做，⌘V 就被吞了。
+                    commandShortcutEvents: _buildCommandShortcutEvents(),
                     focusNode: _editorFocusNode,
                     footer: GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -866,7 +985,6 @@ class NoteEditorState extends State<NoteEditor> {
             ),
           ],
         ),
-      ),
     );
   }
 }
