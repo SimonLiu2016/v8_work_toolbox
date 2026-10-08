@@ -3,7 +3,7 @@
 Provides a block-based rich text editor using `appflowy_editor` for creating and editing notes with support for native inline tables, code blocks with syntax highlighting, media blocks, Markdown paste conversion, and multi-format export.
 ## Requirements
 ### Requirement: Block-based rich text editing with AppFlowy Editor
-The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, supporting native inline tables, code blocks with syntax highlighting, and media blocks under a single unified focus and selection engine.
+The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, supporting native inline tables, code blocks with syntax highlighting, and media blocks under a single unified focus and selection engine. Clipboard images pasted into the editor SHALL become inline image blocks through the same storage and rendering path as images inserted from a file, reachable both by keyboard shortcut and from an explicit toolbar control; the editor's paste command is taken over to make room for image handling, and plain-text pasting behaviour SHALL be preserved unchanged.
 
 #### Scenario: Format text
 - **WHEN** user applies formatting (bold, italic, underline, strikethrough, headings, lists, quotes)
@@ -18,7 +18,7 @@ The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, s
 - **THEN** focus advances seamlessly across cells, and rows/columns can be added or deleted without disrupting document state.
 
 #### Scenario: Code block with syntax highlighting and copy
-- **WHEN** user inserts a code block or edits code
+- **WHEN** user inserts a code block or edits its contents
 - **THEN** the editor renders a native `CodeBlock` with language selection, syntax highlighting, line numbers, and a one-click copy button.
 
 #### Scenario: Interactive image manipulation
@@ -29,12 +29,20 @@ The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, s
 - **WHEN** a note contains Evernote mind map payload
 - **THEN** the editor renders the mind map as an interactive vector block with SVG preview and zoom controls.
 
+#### Scenario: Clipboard image pasted into the editor
+- **WHEN** user pastes while the clipboard holds a bitmap image or an image URL
+- **THEN** the image is stored through the same attachment mechanism as a file-inserted image and appears as an inline image block at the cursor, and the same result is reachable from the toolbar's paste-image control.
+
 ### Requirement: Markdown paste conversion
 The system SHALL automatically detect and convert Markdown text pasted from the clipboard or fed from the Evernote import pipeline into native rich text blocks.
 
 #### Scenario: Paste Markdown content
 - **WHEN** user pastes text containing Markdown syntax (headings, bold, lists, code blocks, tables)
 - **THEN** the editor decodes the Markdown into native document blocks (including `TableBlock` and `CodeBlock`), rendering rich text instead of literal Markdown syntax.
+
+#### Scenario: Pasting text never silently does nothing
+- **WHEN** the user pastes clipboard text into the editor and the clipboard holds no image in any recognised form
+- **THEN** the text reaches the document body, so a paste keystroke always has an observable outcome in the note rather than being consumed without effect.
 
 ### Requirement: Export to multiple formats
 The system SHALL support exporting the current note to Markdown, HTML, PDF, and plain text formats.

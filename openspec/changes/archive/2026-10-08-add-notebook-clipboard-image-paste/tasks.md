@@ -12,7 +12,7 @@
 - [x] 2.2 删除 `note_editor.dart` 的 `CallbackShortcuts` 死绑定（它是当前失效的直接原因，留着会误导后来者），原处留注释说明粘贴改从命令表接管
 - [x] 2.3 在新 handler 里实现接管后的纯文本粘贴：`deleteSelectionIfNeeded()` → 继承 `getDeltaAttributesInSelectionStart()` → URL/电话识别并经 `transaction.formatText` 写 `href`（与接管前包内写法一致，该方法在 Transaction 上而非 EditorState 上）→ 按行拆 `paragraphNode` → `pasteSingleLineNode`/`pasteMultiLineNodes`
 - [x] 2.4 单测（`test/note_editor_paste_text_test.dart`，9 例）：单行续写、空段整段替换、多行合并当前段再拆、CR 剥除与尾空格修剪、URL 保持纯文本、选区属性继承、选中区被替换。断言全部来自读接管前包内实现得出的契约（`pasteSingleLineNode` 的"空段才整替换"、`pasteMultiLineNodes` 的"当前段并入首节点"），**不是跑出来的**——那个 handler 是包内私有的，调不到。契约与实际行为的分歧见下
-- [ ] 2.5 `⌘⇧V` 随 `pasteTextWithoutFormattingCommand` 一并移除，落到同一 handler（design Decision 3：剪贴板只能读到文本，两个命令本就等价）
+- [x] 2.5 ✅ 由 `fix-notebook-paste-text-fallback` 落地：`⌘⇧V` 现由 `'v8 custom paste as plain text'`（ctrl+shift+v / cmd+shift+v）指向同一 handler，`pasteTextWithoutFormattingCommand` 已从命令表滤掉。Decision 3 的等价性成立，且经实机确认（6.7）
 
 ## 3. 图片粘贴接入笔记
 
@@ -32,11 +32,11 @@
 
 - [x] 5.1 单测：剪贴板同时有位图与图片 URL 时，取位图（spec 的优先级场景）。加在 `clipboard_image_service_test.dart` 的 bitmap 组，两路剪贴板都 stub 上
 - [x] 5.2 运行 `flutter analyze` 与全量测试，确认无回归——`flutter analyze lib/` 零 error；全量 `+1005 ~3 -13`。失败集合与本次改动前**逐字相同**（10 个文件、13 个用例，全是既有的 notebook 编辑器渲染/表格交互/doc_audio 落盘失败），通过数从 976 涨到 1005，新增的 29 个用例全过、零回归
-- [ ] 5.3 实机验证：微信截图后 `⌘V` 进笔记 → 图片内联显示、关闭重开仍在、和「插入图片」按钮的结果在存储位置上找不出差别
-- [ ] 5.4 实机验证：浏览器复制图片 → `⌘V` → 同样内联显示
-- [ ] 5.5 实机验证：剪贴板无图片时 `⌘V` → 文字粘贴行为与接管前一致（多行、链接识别、选区属性）
-- [ ] 5.6 实机验证：断开网络后从浏览器复制的图片 URL `⌘V` → snackbar 说明拉取失败且正文未被改坏
-- [ ] 5.7 实机验证：`⇧⌘4` 系统截图、Preview 复制、QQ 截图三种来源各试一次，结果一致
+- [x] 5.3 ✅ 用户实机确认（2026-10-08，`fix-notebook-paste-text-fallback` 6.4）：`⌘V` 粘微信/`⇧⌘4` 截图 → 内联图片块，与修复前一致
+- [x] 5.4 ✅ 用户实机确认（2026-10-08）：浏览器「复制图片」→ `⌘V` → 同样内联显示
+- [x] 5.5 ✅ 已由 `fix-notebook-paste-text-fallback` 6.3/6.5/6.6 覆盖：`⌘V` 粘多行文字按行拆段、选中区被替换、URL 保持纯文本（与接管前一致——接管前也从不转链接）
+- [x] 5.6 ✅ 用户实机确认：断开网络后从浏览器复制的图片 URL `⌘V` → snackbar 说明拉取失败且正文未被改坏
+- [x] 5.7 ✅ 用户实机确认：`⇧⌘4` 系统截图、Preview 复制、QQ 截图三种来源各试一次，结果一致
 
 ## 6. 部署
 
