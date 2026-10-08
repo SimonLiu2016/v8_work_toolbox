@@ -371,4 +371,43 @@ void main() {
       expect(msg, contains('invalid key'));
     });
   });
+
+  group('AiConfigStore Image Slot Tests', () {
+    test('标准槽位中包含 image 且支持增删候选', () async {
+      final store = AiConfigStore.instance;
+      await store.init(customRootDir: tempDir);
+
+      expect(store.slotBindings.containsKey('image'), isTrue);
+      expect(store.slotBindings['image'], isEmpty);
+
+      await store.addSlotCandidate('image', 'sf_prov', 'black-forest-labs/FLUX.1-schnell');
+      expect(store.slotBindings['image']!.length, 1);
+      expect(store.slotBindings['image']!.first.model, 'black-forest-labs/FLUX.1-schnell');
+
+      await store.removeSlotCandidate('image', 0);
+      expect(store.slotBindings['image'], isEmpty);
+    });
+
+    test('AiProviderConfig 包含 imageModels 序列化与反序列化正常', () {
+      const prov = AiProviderConfig(
+        id: 'sf_test',
+        name: 'SiliconFlow Test',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://api.siliconflow.cn/v1',
+        keychainKeyId: 'sf_key',
+        imageModels: [
+          'black-forest-labs/FLUX.1-schnell',
+          'stabilityai/stable-diffusion-3-5-large',
+        ],
+      );
+
+      final json = prov.toJson();
+      expect(json['models']['image'], contains('black-forest-labs/FLUX.1-schnell'));
+
+      final restored = AiProviderConfig.fromJson(json);
+      expect(restored.imageModels.length, 2);
+      expect(restored.imageModels.first, 'black-forest-labs/FLUX.1-schnell');
+    });
+  });
 }
+

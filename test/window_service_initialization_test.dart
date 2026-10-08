@@ -161,6 +161,20 @@ void main() {
       }
     });
 
+    test('安全工具箱子窗口声明 AI、代理、基础存储等服务，但不声明 NoteStore', () {
+      final names = WindowServices.requiredNames(WindowKind.securityToolbox);
+      expect(
+        names,
+        containsAll([
+          'AppPaths',
+          'SettingsStore',
+          'ProxySettings',
+          'AiConfigStore',
+        ]),
+      );
+      expect(names, isNot(contains('NoteStore')));
+    });
+
     test('主窗口清单是各子窗口清单的超集', () {
       final mainNames = WindowServices.requiredNames(WindowKind.main);
       for (final kind in [
@@ -168,6 +182,8 @@ void main() {
         WindowKind.singleNote,
         WindowKind.passwordVault,
         WindowKind.opsTool,
+        WindowKind.securityToolbox,
+        WindowKind.aiVideoStudio,
       ]) {
         for (final name in WindowServices.requiredNames(kind)) {
           expect(mainNames, contains(name), reason: '主窗口缺少 $name');

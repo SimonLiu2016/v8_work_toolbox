@@ -345,38 +345,46 @@ void main() {
         title: 't',
         body: 'b',
         isMac: false,
-        dispatch: (_) async => called = true,
+        dispatch: ({required title, required body, subtitle, actionType, payload}) async => called = true,
       );
       expect(called, isFalse);
     });
 
-    test('macOS 环境走 osascript 文案并转义引号', () async {
-      String? args;
+    test('macOS 环境走原生通知通道并正确传递参数', () async {
+      String? recTitle;
+      String? recSub;
+      String? recBody;
+      String? recAction;
+
       await OpsNotifier.showNotification(
         title: 'ArgoCD Tag 变更',
         body: '行1 "带引号"\n行2',
         isMac: true,
-        dispatch: (a) async => args = a,
+        dispatch: ({required title, required body, subtitle, actionType, payload}) async {
+          recTitle = title;
+          recSub = subtitle;
+          recBody = body;
+          recAction = actionType;
+        },
       );
-      expect(args, isNotNull);
-      expect(args, contains('display notification'));
-      expect(args, contains('V8 运维工具'));
-      expect(args, isNot(contains('"带引号"'))); // 引号已转义
-      expect(args, isNot(contains('\n'))); // 换行已替换为空格
-      expect(args, contains('行1 '));
-      expect(args, contains('行2'));
+      expect(recTitle, equals('V8 运维工具'));
+      expect(recSub, equals('ArgoCD Tag 变更'));
+      expect(recBody, equals('行1 "带引号"\n行2'));
+      expect(recAction, equals('ops'));
     });
 
-    test('subtitle 会附加为副标题参数', () async {
-      String? args;
+    test('subtitle 会优先作为副标题传递', () async {
+      String? recSub;
       await OpsNotifier.showNotification(
         title: 't',
         body: 'b',
-        subtitle: '子标题',
+        subtitle: '显式子标题',
         isMac: true,
-        dispatch: (a) async => args = a,
+        dispatch: ({required title, required body, subtitle, actionType, payload}) async {
+          recSub = subtitle;
+        },
       );
-      expect(args, contains('subtitle "子标题"'));
+      expect(recSub, equals('显式子标题'));
     });
   });
 

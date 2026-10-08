@@ -32,7 +32,7 @@ Color? _textColorOf(WidgetTester tester, String text) {
 
 void main() {
   group('渲染级对比度：选中态标签', () {
-    // 对应 A 类三处（folder_compare / image_resize / kma）的共同形态：
+    // 对应 A 类三处（folder_compare / image_resize / batch_rename）的共同形态：
     // 选中容器 = bgSelected / bgInput / accentSubtle，前景 = accent 文字。
     // 此处用 AppColors 的对应 token 复现该组合。
     for (final mode in ['light', 'dark']) {
