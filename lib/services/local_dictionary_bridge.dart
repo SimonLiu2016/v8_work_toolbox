@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../tools/lookup_panel/services/dictionary_service.dart';
 import '../tools/lookup_panel/services/youdao_service.dart';
+import '../tools/vocab_book/services/vocab_store.dart';
 import 'settings_store.dart';
 
 /// 本地词典桥（capability: `local-dictionary-bridge`）。
@@ -129,7 +130,7 @@ class LocalDictionaryBridge {
       return;
     }
 
-    if (request.method != 'GET') {
+    if (request.method != 'GET' && request.method != 'POST') {
       await _safeRespond(
         request,
         statusCode: HttpStatus.methodNotAllowed,
@@ -138,7 +139,7 @@ class LocalDictionaryBridge {
       return;
     }
 
-    // 密钥校验先于任何解析与查询：不匹配时不做词典查询（spec 的显式要求）。
+    // 密钥校验先于任何解析与查询：不匹配时不做处理（spec 的显式要求）。
     final expected = SettingsStore.instance.localDictionaryBridgeSecretOrEmpty;
     final supplied =
         request.headers.value('Authorization') ??
@@ -153,15 +154,28 @@ class LocalDictionaryBridge {
     }
 
     final path = request.uri.path;
-    if (path != '/dictionary' && path != '/dictionary/') {
+    if (path == '/dictionary' || path == '/dictionary/') {
+      if (request.method != 'GET') {
+        await _safeRespond(
+          request,
+          statusCode: HttpStatus.methodNotAllowed,
+          body: {'ok': false, 'reason': 'method_not_allowed'},
+        );
+        return;
+      }
+      await _handleDictionary(request);
+    } else if (path == '/vocab' || path == '/vocab/') {
+      await _handleVocab(request);
+    } else {
       await _safeRespond(
         request,
         statusCode: HttpStatus.notFound,
         body: {'ok': false, 'reason': 'not_found'},
       );
-      return;
     }
+  }
 
+  Future<void> _handleDictionary(HttpRequest request) async {
     final word = (request.uri.queryParameters['q'] ?? '').trim();
     if (word.isEmpty || word.length > 200) {
       await _safeRespond(
@@ -187,11 +201,137 @@ class LocalDictionaryBridge {
         'matched': matched,
         'phonetic': matched ? (result.phonetic ?? '') : '',
         'audioUrl': matched ? (result.audioUrl ?? '') : '',
-        // 降平：气泡按 `adj. 短暂的` 这整串渲染，词性 chip 由 content.js 用
-        // 正则从串首切出来，与桌面端 `allDefinitions` 的展示一致。
+        // 降平：给只要"一串串释义"的客户端保留（浏览器气泡的老渲染路径、以及
+        // 任何将来复用这条桥的简单调用方）。它与桌面端 allDefinitions 逐字一致。
         'definitions': matched ? result.allDefinitions : <String>[],
+        // 按词性分组：给要渲染分组的客户端（气泡新版渲染、以及任何想复用桌面
+        // 端展示结构的调用方）。desktop lookup panel 与「存为笔记」用的就是这个
+        // 形状——桥此前把它丢了，气泡只能用正则从释义串首切词性，例句则彻底
+        // 拿不到。
+        //
+        // 为什么两个形状并存而不是只给分组：flat 是既有契约（桌面端、扩展旧版、
+        // test 的断言都在用），删掉是 breaking；只给分组的客户端自己会拍平，但
+        // 那正是气泡改来改去的那段代码。加字段是纯增量，老客户端不读即无用。
+        //
+        // 没有 `phrases`（常用短语）字段，而且这不是遗漏：有道的 jsonapi 响应里
+        // 不存在任何短语分区（实测扫过全部键），VocabEntryModel.phrases 有列但
+        // 从未被填充。详见 spec 的 in-page-browser-bubble「常用短语是刻意缺席」。
+        'meanings': matched
+            ? result.meanings
+                  .map(
+                    (m) => {
+                      'partOfSpeech': m.partOfSpeech,
+                      'definitions': m.definitions,
+                      'examples': m.examples,
+                    },
+                  )
+                  .toList()
+            : const <Map<String, dynamic>>[],
       },
     );
+  }
+
+  Future<void> _handleVocab(HttpRequest request) async {
+    String word = '';
+    String? phonetic;
+    String? audioUrl;
+    String? partOfSpeech;
+    List<String> definitions = const [];
+    List<String> examples = const [];
+
+    if (request.method == 'POST') {
+      try {
+        final content = await utf8.decoder.bind(request).join();
+        if (content.isNotEmpty) {
+          final data = jsonDecode(content);
+          if (data is Map<String, dynamic>) {
+            word = (data['word'] as String? ?? '').trim();
+            phonetic = data['phonetic'] as String?;
+            audioUrl = data['audioUrl'] as String?;
+            partOfSpeech = data['partOfSpeech'] as String?;
+            if (data['definitions'] is List) {
+              definitions = (data['definitions'] as List).map((e) => e.toString()).toList();
+            }
+            if (data['examples'] is List) {
+              examples = (data['examples'] as List).map((e) => e.toString()).toList();
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[LocalDictionaryBridge] 解析 POST /vocab 请求体异常: $e');
+      }
+    }
+
+    if (word.isEmpty) {
+      word = (request.uri.queryParameters['word'] ??
+              request.uri.queryParameters['q'] ??
+              request.uri.queryParameters['text'] ??
+              '')
+          .trim();
+    }
+
+    if (word.isEmpty || word.length > 200) {
+      await _safeRespond(
+        request,
+        statusCode: HttpStatus.badRequest,
+        body: {'ok': false, 'reason': 'bad_word'},
+      );
+      return;
+    }
+
+    try {
+      if (await VocabStore.instance.existsWord(word)) {
+        await _safeRespond(
+          request,
+          statusCode: HttpStatus.ok,
+          body: {
+            'ok': true,
+            'status': 'already_exists',
+            'word': word,
+          },
+        );
+        return;
+      }
+
+      // 若未携带释义，尝试通过词典服务解析补全
+      if (definitions.isEmpty) {
+        try {
+          final res = await (_resolver ?? YoudaoService.lookupFull)(word);
+          if (res != null && res.meanings.isNotEmpty) {
+            phonetic ??= res.phonetic;
+            audioUrl ??= res.audioUrl;
+            partOfSpeech ??= res.primaryPartOfSpeech;
+            definitions = res.allDefinitions;
+          }
+        } catch (_) {}
+      }
+
+      await VocabStore.instance.insertFromDictionary(
+        word: word,
+        phonetic: phonetic,
+        audioUrl: audioUrl,
+        partOfSpeech: partOfSpeech,
+        definitions: definitions,
+        examples: examples,
+      );
+
+      await _safeRespond(
+        request,
+        statusCode: HttpStatus.ok,
+        body: {
+          'ok': true,
+          'status': 'added',
+          'word': word,
+        },
+      );
+    } catch (e, stack) {
+      debugPrint('[LocalDictionaryBridge] /vocab 写入异常 ($word): $e\n$stack');
+      await _safeRespond(
+        request,
+        statusCode: HttpStatus.internalServerError,
+        body: {'ok': false, 'reason': 'internal_error'},
+      );
+    }
   }
 
   /// 写入 CORS 响应头。只有带上 `Origin` 的跨域调用方（即扩展上下文）才需要
@@ -203,7 +343,7 @@ class LocalDictionaryBridge {
     final headers = request.response.headers;
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Vary', 'Origin');
-    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     headers.set('Access-Control-Max-Age', '600');
   }

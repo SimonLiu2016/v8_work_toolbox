@@ -250,6 +250,26 @@
           color: #4338ca;
           margin-right: 6px;
         }
+        /* 例句：与释义明显区分（底色 + 细一号 + 斜体），且不抢首屏。
+           上限 2 条 —— 卡片只有 340px 宽、220px 高。 */
+        .v8-examples { margin: 2px 0 10px; }
+        .v8-example {
+          font-size: 11.5px;
+          font-style: italic;
+          color: #64748b;
+          background: rgba(0, 0, 0, 0.03);
+          border-left: 2px solid #e0e7ff;
+          padding: 4px 8px;
+          margin-top: 3px;
+          white-space: pre-line;
+        }
+        @media (prefers-color-scheme: dark) {
+          .v8-example {
+            color: #94a3b8;
+            background: rgba(255, 255, 255, 0.05);
+            border-left-color: #4338ca;
+          }
+        }
         .v8-footer {
           display: flex;
           align-items: center;
@@ -315,18 +335,52 @@
       setTimeout(dismissBubble, 1200);
     });
 
-    // 加入生词本：走 vocab 深链 —— 只加词，不开窗口、不查词典。
-    // 这里原来链到 lookup 深链（桌面端没有 vocab host），按钮却写"呼起生词本"，
-    // 实际做的是打开查词窗口：文案描述了一个从不存在的动作。
+    let resolvedData = null;
+
+    // 加入生词本：走本地词典桥（HTTP）静默写入 —— 绝不开窗、绝不弹主窗口
     shadow.querySelector('#v8-btn-vocab').addEventListener('click', () => {
-      window.location.href = `v8toolbox://vocab?text=${encodeURIComponent(text)}`;
       const btn = shadow.querySelector('#v8-btn-vocab');
-      btn.innerText = '已加入生词本 ✓';
-      setTimeout(dismissBubble, 1200);
+      btn.disabled = true;
+      btn.innerText = '正在添加…';
+
+      chrome.runtime.sendMessage({
+        action: 'addToVocab',
+        data: {
+          word: text,
+          phonetic: resolvedData?.phonetic || '',
+          audioUrl: resolvedData?.audioUrl || '',
+          definitions: resolvedData?.definitions || [],
+          // 例句一并带上：桥侧本就在收（background.js 一直在转发），桌面浮窗
+          // 那条路本来就会写例句，只有气泡这条漏了——补上之后，气泡里看到的
+          // 例句和存进生词本的例句是同一份。
+          examples: collectExamples(resolvedData),
+        },
+      }, (res) => {
+        const channelError = chrome.runtime.lastError?.message || '';
+        if (channelError || !res || !res.success) {
+          const reason = res?.reason || '';
+          if (reason === 'bridge_offline' || reason === 'bridge_unreachable') {
+            btn.innerText = '桌面端未启动';
+          } else {
+            btn.innerText = '添加失败';
+          }
+          setTimeout(dismissBubble, 1500);
+          return;
+        }
+
+        if (res.data?.status === 'already_exists') {
+          btn.innerText = '已在生词本 ✓';
+        } else {
+          btn.innerText = '已加入生词本 ✓';
+        }
+        setTimeout(dismissBubble, 1200);
+      });
     });
 
     // 发起词典查询（经本地词典桥，见 background.js 顶部说明）
-    fetchDictionary(text, shadow);
+    fetchDictionary(text, shadow, (data) => {
+      resolvedData = data;
+    });
   }
 
   // 词典解析：把请求交给 background，由它打桌面应用的本地词典桥。
@@ -334,7 +388,7 @@
   // 四种结果分开渲染——原实现把「桥没起来」「密钥不对」「词典没收录」揉成同一个
   // "查询失败"，用户无法判断该启动桌面端还是该换个词。这三种的下一步动作完全
   // 不同，混在一起文案就是骗人的。
-  function fetchDictionary(word, shadow) {
+  function fetchDictionary(word, shadow, onResolved) {
     const contentEl = shadow.querySelector('#v8-content');
     const phEl = shadow.querySelector('#v8-ph');
     const speakBtn = shadow.querySelector('#v8-speak-btn');
@@ -377,6 +431,7 @@
       }
 
       const data = response.data || {};
+      if (onResolved) onResolved(data);
 
       // 没收录不是失败：桌面应用明确知道词典里没有这个词，气泡该说"未收录"
       // 并给 AI 深度解析的出路，而不是冒充网络故障。
@@ -403,6 +458,9 @@
       const phonetic = data.phonetic || '';
       const audioUrl = data.audioUrl || '';
       const definitions = data.definitions || [];
+      // 分组释义（词性 + 该组释义 + 该组例句）。老版本桌面应用不返回它，此时是
+      // undefined，下面走原来的扁平渲染——两条路都必须能用。
+      const meanings = Array.isArray(data.meanings) ? data.meanings : null;
 
       if (phonetic && phEl) {
         phEl.innerText = phonetic;
@@ -415,17 +473,78 @@
         };
       }
 
-      contentEl.innerHTML = definitions.map((def) => {
+      contentEl.innerHTML = meanings
+        ? renderGrouped(meanings)
+        : renderFlat(definitions);
+    });
+  }
+
+  // 分组渲染：词性标签 + 该组释义 + 该组例句。
+  //
+  // 为什么优先这条路：桥此前只回拍平的 definitions，词性不过是释义串的前缀，
+  // 例句整个拿不到。桌面浮窗和「存为笔记」早就用分组结构，气泡是唯一被降级的
+  // 一路。有了 meanings 之后，气泡与桌面端看到同一份数据。
+  function renderGrouped(meanings) {
+    return meanings
+      .map((m) => {
+        const pos = (m && m.partOfSpeech) || '';
+        const defs = m && Array.isArray(m.definitions) ? m.definitions : [];
+        // 例句限量：卡片只有 340px 宽、220px 高，全量会把释义挤出首屏。
+        // 不提供「展开更多」——隐藏起来等于没修（用户报的就是例句看不到）。
+        const exs = (m && Array.isArray(m.examples) ? m.examples : []).slice(
+          0,
+          2,
+        );
+
+        const parts = [];
+        // 词性标签单独一行：不再让它充当释义串的前缀（那既是桌面端的老形状，
+        // 也是"看不出词性"的来源）。短语这类没有词性的分组则不渲染标签。
+        if (pos) {
+          parts.push(`<div class="v8-def-group"><span class="v8-pos">${escapeHtml(pos)}</span></div>`);
+        }
+        for (const d of defs) {
+          parts.push(`<div class="v8-def-group"><span>${escapeHtml(d)}</span></div>`);
+        }
+        // 例句区块只在真的有例句时出现：空占位会让人以为例句加载失败。
+        if (exs.length) {
+          parts.push(
+            `<div class="v8-examples">${exs
+              .map((e) => `<div class="v8-example">${escapeHtml(e)}</div>`)
+              .join('')}</div>`,
+          );
+        }
+        return parts.join('');
+      })
+      .join('');
+  }
+
+  // 扁平渲染：老桥（不返回 meanings）的路径，与本次改动前逐位一致。
+  //
+  // 保留它不是冗余：扩展是未打包的、要手动 reload，桌面应用要重新构建，两者
+  // 会实实在在错开一个版本。此时气泡必须仍能用，而不是白屏。
+  function renderFlat(definitions) {
+    return definitions
+      .map((def) => {
         const match = def.match(/^([a-z]+\.)\s*(.*)$/i);
         if (match) {
           return `<div class="v8-def-group"><span class="v8-pos">${match[1]}</span><span>${escapeHtml(match[2])}</span></div>`;
         }
         return `<div class="v8-def-group"><span>${escapeHtml(def)}</span></div>`;
-      }).join('');
-    });
+      })
+      .join('');
+  }
+
+  // 汇总例句，供「加生词本」写入。与气泡展示的是同一份数据。
+  function collectExamples(data) {
+    if (!data) return [];
+    if (Array.isArray(data.meanings)) {
+      return data.meanings.flatMap((m) =>
+        Array.isArray(m.examples) ? m.examples : []);
+    }
+    return [];
   }
 
   function escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 })();

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:appflowy_editor/appflowy_editor.dart';
 
@@ -21,13 +20,154 @@ import 'components/note_image_menu.dart';
 import 'components/note_mindmap_component.dart';
 import 'notebook_light_scope.dart';
 
-/// 粘贴图片的三种结局。分开是因为它们要的反馈不同：handled 已插入、
-/// failed 认出了但出错（已提示用户）、notAnImage 剪贴板里没有图片形态，
-/// 调用方应继续按文本粘贴。
-enum _PasteOutcome { handled, failed, notAnImage }
+/// 图片落盘的方式。生产走 [NoteStore.saveAttachment]；测试注入替身，免得为了
+/// 验一条分派去初始化整座笔记数据库。
+typedef ImageSaver = Future<String> Function({
+  required String noteId,
+  required File sourceFile,
+  String? filename,
+});
 
-/// 接管 ⌘V 之后的纯文本粘贴核心：选中区删除 → 属性继承 → URL/电话识别 →
-/// 按行拆段 → 单/多行插入。
+/// 从剪贴板粘贴进笔记：图片优先，没有图片就粘文字。
+///
+/// 这是 [NoteEditorState] 私有 `_handlePaste` 抽出的分派核心，[NoteEditorState]
+/// 里只留"读剪贴板 + 接气泡"那两件只有 widget 才知道的事。抽出来的理由不是
+/// 洁癖：**上一次粘贴全线失效恰恰发生在这一层，而它当时是私有的，测不到。**
+/// 三态 enum 里表示"没有图片"的那个值没有任何生产者，文字出口从落地起就没
+/// 通过，同一时期的 29 个单测全绿——测的是叶子函数 `insertPlainTextPaste`，
+/// 没测"什么时候才调它"。
+///
+/// 三条出路，返回值 = 这一下是否真的对文档或用户做了点什么：
+///   true  —— 图片已插入，或文字已插入；
+///   false —— 真的没东西可粘（剪贴板里既无文字也无图片），或取图失败已提示。
+///
+/// [result] 必须来自一次真实的剪贴板读取。文字分支用的是它携带的
+/// `clipboardText`——也就是判断"有没有图片"时读到的那一份。不再读第二次剪贴板：
+/// 多一趟平台通道、绕开可注入的 `clipboardTextReader`（于是测试覆盖不到），
+/// 更糟是两次读可能读到不同内容。
+///
+/// 【证据边界】这里断言的是"分派逻辑符合预期"，不是"与接管前的包行为逐位
+/// 相等"——那个 handler 是包内私有的，调不到。实机对比见 tasks 6.3-6.7。
+@visibleForTesting
+Future<bool> handleClipboardPaste(
+  EditorState state,
+  String noteId,
+  ClipboardImageResult result, {
+  required void Function(String message) onError,
+  ImageSaver saveImage = _defaultImageSaver,
+}) async {
+  final image = result.asSuccess();
+  if (image != null) {
+    return _saveAndInsertImage(
+      state,
+      noteId,
+      image,
+      saveImage: saveImage,
+      onError: onError,
+    );
+  }
+
+  final failure = result.asFailure();
+  if (failure != null && failure.$1 != ClipboardImageFailure.nothingPasteable) {
+    // 真的尝试过取图但失败（位图读不出、下载失败、超限）。说清是哪一步，
+    // 文档保持不动。nothingPasteable 不在此列：那是"剪贴板里没有图片"，
+    // 正是接下来要走的普通文字粘贴，不是失败。
+    onError(_describeImageFailure(failure.$1, failure.$2));
+    return false;
+  }
+
+  // 没有图片：把同一路读到的文本粘出去。null / 空串 = 真的没东西可粘。
+  final text = result.clipboardText;
+  if (text == null || text.isEmpty) return false;
+  await insertPlainTextPaste(state, text);
+  return true;
+}
+
+/// 生产的图片落盘路径：与「插入图片」按钮同一个 API、同一个扁平目录。
+Future<String> _defaultImageSaver({
+  required String noteId,
+  required File sourceFile,
+  String? filename,
+}) {
+  return NoteStore.instance.saveAttachment(
+    noteId: noteId,
+    sourceFile: sourceFile,
+    filename: filename,
+  );
+}
+
+/// 存盘并在光标处插入图片块。失败时弹气泡、返回 false，文档不动。
+Future<bool> _saveAndInsertImage(
+  EditorState state,
+  String noteId,
+  ClipboardImage image, {
+  required ImageSaver saveImage,
+  required void Function(String message) onError,
+}) async {
+  try {
+    final savedPath = await saveImage(
+      noteId: noteId,
+      sourceFile: image.file,
+      filename: 'paste_${DateTime.now().millisecondsSinceEpoch}'
+          '${p.extension(image.file.path)}',
+    );
+    insertImageNodeAtCursor(state, savedPath);
+    return true;
+  } catch (e) {
+    debugPrint('[NoteEditor] 保存粘贴图片失败: $e');
+    onError('图片保存失败：$e');
+    return false;
+  } finally {
+    // 只删服务自己生成的临时文件；用户磁盘上的原件删了会毁数据。
+    if (image.ownedByService) {
+      try {
+        if (await image.file.exists()) await image.file.delete();
+      } catch (_) {}
+    }
+  }
+}
+
+/// 在光标处插入一个图片块（不落盘，不安排保存）。
+///
+/// 从 State 方法提升为顶层函数：[handleClipboardPaste] 这条可测路径要用它，
+/// 而顶层函数不能反向依赖 [NoteEditorState]。保存不需要调用方操心——
+/// `EditorState.transactionStream` 会因这次 apply 触发 `_scheduleBodySave`，
+/// 图片与文字粘贴走的是同一条自动保存轨道。
+void insertImageNodeAtCursor(EditorState state, String path) {
+  final selection = state.selection;
+  final targetPath = selection != null
+      ? [selection.end.path[0] + 1]
+      : [state.document.root.children.length];
+
+  final node = imageNode(url: path);
+  final transaction = state.transaction..insertNode(targetPath, node);
+  state.apply(transaction);
+}
+
+/// 把取图失败翻译成用户能据此行动的一句话。
+///
+/// 每类说清是哪一步坏的，不共用一句「操作失败」——「没识别到图片」和
+/// 「下载失败」的下一步完全不同。静默失败是上上个 bug 能藏住的主因。
+///
+/// `nothingPasteable` 走不到这里（分派层把它当"没有图片"处理），留在这个
+/// switch 里是为了穷尽性：服务端新增失败类型时这里是编译错误，逼着补文案。
+String _describeImageFailure(ClipboardImageFailure reason, String? detail) {
+  final suffix = (detail != null && detail.isNotEmpty) ? '（$detail）' : '';
+  return switch (reason) {
+    ClipboardImageFailure.nothingPasteable => '剪贴板中没有可识别的图片',
+    ClipboardImageFailure.bitmapReadFailed =>
+      '读取剪贴板图片失败，可能需要在系统设置里授予自动化权限',
+    ClipboardImageFailure.downloadFailed => '图片下载失败$suffix',
+    ClipboardImageFailure.tooLarge => '图片超过 $suffix大小上限，已取消粘贴',
+  };
+}
+
+/// 接管 ⌘V 之后的纯文本粘贴核心：选中区删除 → 属性继承 → 按行拆段 →
+/// 单/多行插入。
+///
+/// 注意这里**没有** URL / 电话识别并写 href 的一步（理由见下方 :51- 的注释）：
+/// 接管前那条分支不可达，接管后照抄只会把行为改坏。本文档的措辞曾与此相反，
+/// 是过期注释，实际契约以代码和单测为准。
 ///
 /// 关于本条要求的证据边界，说清楚：契约是从接管前包内实现
 /// （`appflowy_editor` 的 `paste_command.dart`）读出来的，**不是跑出来的**——
@@ -479,98 +619,53 @@ class NoteEditorState extends State<NoteEditor> {
   // 即终止分发。包自带的 pasteCommand 只读 kTextPlain，剪贴板里只有图片没有
   // 文本时它什么都不做却返回 handled——按键被吃掉，外层的 CallbackShortcuts
   // 永远收不到。所以必须从命令表这一层接管，而不是在外层抢按键。
+  //
+  // 接管之后的形状：一条「读剪贴板」的路，两个出口。
+  //
+  //     readImage()
+  //        ├─ 有图 ────────────▶ 存附件 + 插图片块（失败弹气泡）
+  //        ├─ 取图失败 ────────▶ 弹气泡说清哪一步，文档不动
+  //        └─ nothingPasteable ▶ 用同一路读到的文本粘文字（拿不到就什么都不做）
+  //
+  // 曾经这里是「两条独立读剪贴板的路 + 一个三态 enum」，其中表示"没有图片"的
+  // 那个值没有任何生产者，文字出口从落地起就没通过。事故全貌记在文件顶部
+  // [handleClipboardPaste] 的注释里——那是这次改动真正的交付物。
   // ---------------------------------------------------------------------------
 
-  /// 接管 ⌘V / ⌃V 后的统一入口：先试图片，拿不到再按纯文本粘贴。
+  /// 接管 ⌘V / ⌘⇧V 后的私有入口：读剪贴板，交给可测的
+  /// [handleClipboardPaste] 分派。
   ///
-  /// [state] 由编辑器传入（当前获得焦点的那个 EditorState），不用
-  /// [_editorState] 字段——两者绝大多数时候相同，但依赖字段意味着将来
-  /// 多编辑器时会静默插错地方。
+  /// 这一层只做三件只有 widget 才知道的事：取 `widget.note!.id`、用单例服务
+  /// （测试替身驱动不了私有方法，只能驱动 [handleClipboardPaste]——那正是上次
+  /// 失效测不到的原因）、把气泡接到 ScaffoldMessenger。分派逻辑本身一行都不在
+  /// 这里。
+  ///
+  /// 异步：读剪贴板要过平台通道，位图探测还要跑一次 osascript，都不能卡在
+  /// 按键处理里。按键本身的归属见 [_runPasteCommand]。
   Future<void> _handlePaste(EditorState state) async {
     if (widget.note == null) return;
 
-    final outcome = await _pasteClipboardImage(widget.note!.id, state);
-    if (outcome != _PasteOutcome.notAnImage) return;
-
-    await _pastePlainText(state);
-  }
-
-  /// 尝试把剪贴板里的图片存进笔记并在光标处插入图片块。
-  ///
-  /// 返回值区分三件事，因为它们要的反馈不同：
-  ///   handled    —— 图片已插入；
-  ///   failed     —— 认出了图片但中途出错（已弹 snackbar）；
-  ///   notAnImage —— 剪贴板里没有图片形态，调用方应继续按文本粘贴。
-  Future<_PasteOutcome> _pasteClipboardImage(
-    String noteId,
-    EditorState state,
-  ) async {
     final result = await ClipboardImageService.instance.readImage();
-    final image = result.asSuccess();
-    if (image == null) {
-      final failure = result.asFailure();
-      // 只有"真的尝试过但没成功"才需要打扰用户。剪贴板里压根没有图片形态
-      // 是正常情况（用户可能就是想粘一段文字），交给文本分支处理即可。
-      if (failure != null &&
-          failure.$1 != ClipboardImageFailure.nothingPasteable) {
-        _showPasteError(_describeImageFailure(failure.$1, failure.$2));
-      }
-      return _PasteOutcome.failed;
-    }
-
-    try {
-      final savedPath = await NoteStore.instance.saveAttachment(
-        noteId: noteId,
-        sourceFile: image.file,
-        filename: 'paste_${DateTime.now().millisecondsSinceEpoch}'
-            '${p.extension(image.file.path)}',
-      );
-      _insertImageAtCursor(state, savedPath);
-      return _PasteOutcome.handled;
-    } catch (e) {
-      debugPrint('[NoteEditor] 保存粘贴图片失败: $e');
-      _showPasteError('图片保存失败：$e');
-      return _PasteOutcome.failed;
-    } finally {
-      // 只删服务自己生成的临时文件；用户磁盘上的原件删了会毁数据。
-      if (image.ownedByService) {
-        try {
-          if (await image.file.exists()) await image.file.delete();
-        } catch (_) {}
-      }
-    }
+    await handleClipboardPaste(
+      state,
+      widget.note!.id,
+      result,
+      onError: _showPasteError,
+    );
   }
 
-  /// 接管后的纯文本粘贴。
+  /// 命令表里 ⌘V / ⌘⇧V 共用的按键包装。
   ///
-  /// 逐条对齐接管前（appflowy_editor 内部）的行为：选中区先删除、继承选中
-  /// 处的行内属性、URL 与电话识别并写成 href、按行拆段、单/多行走对应插入
-  /// 路径。漏一条，用户就会觉得"粘贴变了"——那比原来的 bug 更烦，因为它
-  /// 影响每一次粘贴而不是只影响图片。
-  Future<void> _pastePlainText(EditorState state) async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
-    if (text == null || text.isEmpty) return;
-    await insertPlainTextPaste(state, text);
-  }
-
-  /// 把取图失败翻译成用户能据此行动的一句话。
+  /// 没有笔记可写时返回 `ignored`：那时我们什么都做不了，把按键交还系统，比
+  /// 安静吃掉好。有笔记时返回 `handled` 并启动异步粘贴。
   ///
-  /// 每类说清是哪一步坏的，不共用一句「操作失败」——「没识别到图片」和
-  /// 「下载失败」的下一步完全不同。这次的 bug 能藏住，静默失败是主因。
-  static String _describeImageFailure(
-    ClipboardImageFailure reason,
-    String? detail,
-  ) {
-    final suffix = (detail != null && detail.isNotEmpty) ? '（$detail）' : '';
-    return switch (reason) {
-      ClipboardImageFailure.nothingPasteable => '剪贴板中没有可识别的图片',
-      ClipboardImageFailure.bitmapReadFailed =>
-        '读取剪贴板图片失败，可能需要在系统设置里授予自动化权限',
-      ClipboardImageFailure.downloadFailed => '图片下载失败$suffix',
-      ClipboardImageFailure.tooLarge =>
-        '图片超过 $suffix大小上限，已取消粘贴',
-    };
+  /// 关于"什么都没粘成时是否也该 ignored"：那要等 `readImage()` 的 await 结果
+  /// 才知道，而按键处理是同步的。这一层能同步判断的只有"有没有笔记"；剩下的
+  /// 交给 [handleClipboardPaste] 的返回值（false = 什么都没做）与它的气泡。
+  KeyEventResult _runPasteCommand(EditorState state) {
+    if (widget.note == null) return KeyEventResult.ignored;
+    _handlePaste(state);
+    return KeyEventResult.handled;
   }
 
   void _showPasteError(String message) {
@@ -586,37 +681,31 @@ class NoteEditorState extends State<NoteEditor> {
 
   /// 接管后装配给编辑器的命令表。
   ///
-  /// 只替换两条粘贴命令，其余（copy / cut / undo / redo / 方向键 / markdown
-  /// 触发…）保持包的默认集合。按身份 `!=` 过滤而不是按下标：包升级时若
-  /// pasteCommand 不存在，这里是编译错误而不是静默的行为改变。
+  /// 只替换粘贴命令（包的 `pasteCommand` 与 `pasteTextWithoutFormattingCommand`），
+  /// 其余（copy / cut / undo / redo / 方向键 / markdown 触发…）保持包的默认集合。
+  /// 按身份 `!=` 过滤而不是按下标：包升级时若 `pasteCommand` 不存在，这里是编译
+  /// 错误而不是静默的行为改变。
   List<CommandShortcutEvent> _buildCommandShortcutEvents() {
     return [
-      ...standardCommandShortcutEvents.where(
-        (e) => e != pasteCommand && e != pasteTextWithoutFormattingCommand,
-      ),
+      ...standardCommandShortcutEvents.where((e) => e != pasteCommand),
       CommandShortcutEvent(
         key: 'v8 custom paste',
         command: 'ctrl+v',
         macOSCommand: 'cmd+v',
         getDescription: () => 'V8 粘贴（图片优先）',
-        handler: (state) {
-          _handlePaste(state);
-          return KeyEventResult.handled;
-        },
+        handler: (state) => _runPasteCommand(state),
+      ),
+      // ⌘⇧V 与 ⌘V 等价，不是遗漏。包的 pasteTextWithoutFormattingCommand 被
+      // 移走后由这里接管：它俩的差别是"去掉富文本格式"，而我们从剪贴板只能读
+      // 到文本（html 恒为 null），没有格式可去，两个命令在实现里逐位相同。
+      CommandShortcutEvent(
+        key: 'v8 custom paste as plain text',
+        command: 'ctrl+shift+v',
+        macOSCommand: 'cmd+shift+v',
+        getDescription: () => 'V8 粘贴（图片优先，纯文本）',
+        handler: (state) => _runPasteCommand(state),
       ),
     ];
-  }
-
-  void _insertImageAtCursor(EditorState state, String path) {
-    final selection = state.selection;
-    final targetPath = selection != null
-        ? [selection.end.path[0] + 1]
-        : [state.document.root.children.length];
-
-    final node = imageNode(url: path);
-    final transaction = state.transaction..insertNode(targetPath, node);
-    state.apply(transaction);
-    _scheduleBodySave();
   }
 
   Future<String> _saveAttachment(File file, String filename) async {
@@ -949,7 +1038,8 @@ class NoteEditorState extends State<NoteEditor> {
               editorState: _editorState!,
               onSaveAttachment: _saveAttachment,
               onAddAttachments: _addAttachments,
-              // 与 ⌘V 同一条链路：读剪贴板 → 存附件 → 插图片块。
+              // 与 ⌘V 同一条链路：读剪贴板 → 分派 → 插图片块。
+              // 点按钮时焦点通常已在编辑器里，所以直接传当前 editorState。
               onPasteImage: _editorState == null
                   ? null
                   : () => _handlePaste(_editorState!),

@@ -135,6 +135,12 @@ class ClipboardImageService {
   ///
   /// 顺序即优先级：位图优先于 URL。两者同时存在时（有些应用既放位图又放
   /// 一个自造的 URL），位图是用户真正想粘的东西。
+  ///
+  /// **返回的 `clipboardText` 是这一路上真正读到的那份剪贴板文本**，不是让
+  /// 调用方再读一次。文字粘贴分支必须复用它：二次读取既多一趟平台通道，又绕
+  /// 开可注入的 [clipboardTextReader]（于是测试替身覆盖不到文字粘贴），更糟
+  /// 是两次读可能读到不同内容——图片判断基于一份、粘贴基于另一份。成功拿到
+  /// 图片时它为 null（那条路没读文本）。
   Future<ClipboardImageResult> readImage() async {
     final bitmap = await _readClipboardBitmap();
     if (bitmap != null) return bitmap;
@@ -276,14 +282,16 @@ class ClipboardImageService {
   Future<ClipboardImageResult> _adoptLocalPath(String text) async {
     final file = File(text);
     if (!await file.exists()) {
-      return const ClipboardImageResult.failure(
+      return ClipboardImageResult.failure(
         ClipboardImageFailure.nothingPasteable,
+        clipboardText: text,
       );
     }
     final ext = p.extension(text).toLowerCase();
     if (!_supportedExtensions.contains(ext)) {
-      return const ClipboardImageResult.failure(
+      return ClipboardImageResult.failure(
         ClipboardImageFailure.nothingPasteable,
+        clipboardText: text,
       );
     }
     // 不复制到临时目录：调用方的 saveAttachment 会自己复制一份进附件目录。
@@ -341,6 +349,10 @@ class ProcessOutcome {
 ///
 /// 用 [asFailure] / [asSuccess] 判别，而不是让调用方 switch 私有子类——
 /// 那样测试就用不到它们了。
+///
+/// 为什么失败也要带 `clipboardText`：调用方（编辑器粘贴）在判"剪贴板里没有
+/// 图片"之后要把同一份文本粘出去。让它自己再读一次剪贴板，就多了一次平台
+/// 通道和一次与图片判断不一致的机会。拿到图片时该字段为 null。
 sealed class ClipboardImageResult {
   const ClipboardImageResult();
 
@@ -350,12 +362,19 @@ sealed class ClipboardImageResult {
   const factory ClipboardImageResult.failure(
     ClipboardImageFailure reason, {
     String? detail,
+    String? clipboardText,
   }) = _ClipboardImageFailure;
 
   /// 失败时返回 `(原因, 细节)`；成功时返回 null。
   (ClipboardImageFailure, String?)? asFailure() {
     final self = this;
     return self is _ClipboardImageFailure ? (self.reason, self.detail) : null;
+  }
+
+  /// 失败时返回这一次真正读到的剪贴板文本；成功时返回 null。
+  String? get clipboardText {
+    final self = this;
+    return self is _ClipboardImageFailure ? self.clipboardText : null;
   }
 
   /// 成功时返回图片；失败时返回 null。
@@ -371,9 +390,21 @@ final class _ClipboardImageSuccess extends ClipboardImageResult {
 }
 
 final class _ClipboardImageFailure extends ClipboardImageResult {
-  const _ClipboardImageFailure(this.reason, {this.detail});
+  const _ClipboardImageFailure(
+    this.reason, {
+    this.detail,
+    this.clipboardText,
+  });
+
   final ClipboardImageFailure reason;
 
   /// 附加细节（HTTP 状态、异常文本），用于诊断信息。
   final String? detail;
+
+  /// 这一路读到的剪贴板文本。文字粘贴分支复用它，不再读第二次剪贴板。
+  ///
+  /// 与下面的 getter 同名是有意的：public 面是 getter（sealed class 上对外只
+  /// 暴露"拿得到拿不到文本"），私有子类上同名字段承接构造参数。
+  @override
+  final String? clipboardText;
 }

@@ -236,6 +236,67 @@ void main() {
       expect(result.asFailure()?.$1, ClipboardImageFailure.nothingPasteable);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 失败结局携带剪贴板文本（分派层不再二次读取的前提）
+  //
+  // 上一轮粘贴全线失效的修复里，文字分支改用 readImage() 这一路已经读到的文本，
+  // 不再自己读第二次剪贴板。这两个用例钉住那个前提：没有图片时，读到的文本必须
+  // 随失败结局一起交出来。少了它，编辑器要么二次读盘（把注入点绕开、测试覆盖
+  // 不到），要么把"没有图片"误判成"出错"——而那正是这次的 bug。
+  // ---------------------------------------------------------------------------
+  group('failure carries the clipboard text', () {
+    test('普通文字 → nothingPasteable 且带着原文', () async {
+      service.processRunner = fakeRunnerOk(stdoutText: 'fail');
+      clipboardText('一段普通的粘贴文字');
+
+      final result = await service.readImage();
+
+      final failure = result.asFailure();
+      expect(failure?.$1, ClipboardImageFailure.nothingPasteable);
+      expect(result.clipboardText, '一段普通的粘贴文字');
+    });
+
+    test('非图片本地路径 → nothingPasteable 且带着路径', () async {
+      final file = track('notes.txt', utf8.encode('hello'));
+      service.processRunner = fakeRunnerOk(stdoutText: 'fail');
+      clipboardText(file.path);
+
+      final result = await service.readImage();
+
+      expect(result.asFailure()?.$1, ClipboardImageFailure.nothingPasteable);
+      expect(result.clipboardText, file.path);
+    });
+
+    test('空剪贴板 → nothingPasteable 且文本为 null', () async {
+      service.processRunner = fakeRunnerOk(stdoutText: 'fail');
+      clipboardText('');
+
+      final result = await service.readImage();
+
+      expect(result.asFailure()?.$1, ClipboardImageFailure.nothingPasteable);
+      expect(
+        result.clipboardText,
+        isNull,
+        reason: '什么都没读到时分派层据此判断"没东西可粘"',
+      );
+    });
+
+    test('取到图片时不带文本（那条路根本没读）', () async {
+      final fake = track('has-image.png', pngBytes);
+      service.processRunner = fakeRunnerOk(fileToReturn: fake);
+      clipboardText('https://example.com/also-here.png');
+
+      final result = await service.readImage();
+
+      expect(result.asSuccess(), isNotNull);
+      expect(
+        result.clipboardText,
+        isNull,
+        reason: '位图优先，文本分支走不到，不该凭空带一份出来',
+      );
+    });
+  });
 }
 
 /// 注入剪贴板文本。走服务自身的注入点，不去桩 Flutter 的平台消息通道——

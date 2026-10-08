@@ -126,7 +126,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
     return true; // 保持异步消息通道开放
   }
+
+  if (message.action === 'addToVocab') {
+    handleAddToVocab(message.data || { word: message.word })
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) =>
+        sendResponse({ success: false, reason: err.reason || 'unknown', message: err.message || String(err) }),
+      );
+    return true;
+  }
 });
+
+async function handleAddToVocab(data) {
+  const cleanWord = (data?.word || '').trim();
+  if (!cleanWord) throw Object.assign(new Error('Empty word'), { reason: 'bad_request' });
+
+  const url = `http://127.0.0.1:${BRIDGE_PORT}/vocab`;
+
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: BRIDGE_SECRET,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        word: cleanWord,
+        phonetic: data.phonetic || '',
+        audioUrl: data.audioUrl || '',
+        partOfSpeech: data.partOfSpeech || '',
+        definitions: Array.isArray(data.definitions) ? data.definitions : [],
+        examples: Array.isArray(data.examples) ? data.examples : [],
+      }),
+      signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const reason = e.name === 'TimeoutError' || e.name === 'AbortError'
+      ? 'bridge_timeout'
+      : 'bridge_offline';
+    throw Object.assign(new Error(`${reason}: ${e.message}`), { reason });
+  }
+
+  if (resp.status === 401 || resp.status === 403) {
+    throw Object.assign(new Error('bridge unauthorized'), { reason: 'bridge_unauthorized' });
+  }
+  if (!resp.ok) {
+    throw Object.assign(new Error(`bridge http ${resp.status}`), { reason: 'bridge_error' });
+  }
+
+  let payload;
+  try {
+    payload = await resp.json();
+  } catch (e) {
+    throw Object.assign(new Error('bridge bad json'), { reason: 'bridge_error' });
+  }
+
+  return {
+    word: cleanWord,
+    status: payload?.status || 'added',
+  };
+}
 
 async function handleFetchDictionary(word) {
   const cleanWord = (word || '').trim();
@@ -170,7 +231,14 @@ async function handleFetchDictionary(word) {
   // 桥的"没收录"是 200 + matched:false，不是错误：要让气泡能把它和传输失败
   // 区分开，否则文案会骗人（这也是原实现的坑：兜底链死掉和真没收录长得一样）。
   if (!payload || payload.matched !== true) {
-    return { word: cleanWord, matched: false, phonetic: '', audioUrl: '', definitions: [] };
+    return {
+      word: cleanWord,
+      matched: false,
+      phonetic: '',
+      audioUrl: '',
+      definitions: [],
+      meanings: [],
+    };
   }
 
   return {
@@ -179,6 +247,9 @@ async function handleFetchDictionary(word) {
     phonetic: payload.phonetic || '',
     audioUrl: payload.audioUrl || '',
     definitions: Array.isArray(payload.definitions) ? payload.definitions : [],
+    // 按词性分组（词性 + 该组释义 + 该组例句）。老版本桌面应用不返回这个字段，
+    // 那时它是 undefined，气泡回落到扁平渲染——两条路都要能用。
+    meanings: Array.isArray(payload.meanings) ? payload.meanings : null,
   };
 }
 

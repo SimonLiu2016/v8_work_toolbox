@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../notebook/note_database.dart';
@@ -14,8 +16,22 @@ class VocabStore {
 
   static const _uuid = Uuid();
 
+  final StreamController<void> _changeController = StreamController<void>.broadcast();
+
+  /// 数据变更事件流。外部（如 VocabBookPage）订阅此流以实现即时刷新。
+  Stream<void> get onEntriesChanged => _changeController.stream;
+
+  void _notifyChanged() {
+    if (!_changeController.isClosed) {
+      _changeController.add(null);
+    }
+  }
+
+  @visibleForTesting
+  NoteDatabase? testDb;
+
   // 复用 NoteStore 已有的数据库实例（notebook 与生词本共享同一 SQLite 文件）
-  NoteDatabase get _db => NoteStore.instance.db;
+  NoteDatabase get _db => testDb ?? NoteStore.instance.db;
 
   Future<List<VocabEntryModel>> queryAll() async {
     final rows = await _db.allVocabEntries();
@@ -44,6 +60,7 @@ class VocabStore {
     final id = entry.id.isNotEmpty ? entry.id : _uuid.v4();
     final model = entry.copyWith(id: id);
     await _db.insertVocabEntry(_toCompanion(model));
+    _notifyChanged();
     return id;
   }
 
@@ -74,15 +91,22 @@ class VocabStore {
     ));
   }
 
-  Future<void> deleteEntry(String id) => _db.deleteVocabEntry(id);
+  Future<void> deleteEntry(String id) async {
+    await _db.deleteVocabEntry(id);
+    _notifyChanged();
+  }
 
-  Future<void> deleteEntries(List<String> ids) => _db.deleteVocabEntries(ids);
+  Future<void> deleteEntries(List<String> ids) async {
+    await _db.deleteVocabEntries(ids);
+    _notifyChanged();
+  }
 
   Future<void> updateMasteryLevel(String id, int level) async {
     await _db.updateVocabEntry(
       id,
       VocabEntriesCompanion(masteryLevel: Value(level.clamp(0, 5))),
     );
+    _notifyChanged();
   }
 
   Future<void> updateTags(String id, List<String> tags) async {
@@ -90,6 +114,7 @@ class VocabStore {
       id,
       VocabEntriesCompanion(tags: Value(jsonEncode(tags))),
     );
+    _notifyChanged();
   }
 
   Future<List<String>> allTags() async {

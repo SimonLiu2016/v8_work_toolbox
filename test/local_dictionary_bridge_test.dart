@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/local_dictionary_bridge.dart';
 import 'package:V8WorkToolbox/services/settings_store.dart';
 import 'package:V8WorkToolbox/tools/lookup_panel/services/dictionary_service.dart';
+import 'package:V8WorkToolbox/tools/notebook/note_database.dart';
+import 'package:V8WorkToolbox/tools/vocab_book/services/vocab_store.dart';
 
 /// 本地词典桥（capability: `local-dictionary-bridge`）。
 ///
@@ -25,6 +28,7 @@ void main() {
   late LocalDictionaryBridge bridge;
   late int port;
   late String secret;
+  late NoteDatabase noteDb;
 
   /// 确定性解析器：`hello` 当作已收录，其余当作未收录。
   void stubResolver() {
@@ -55,6 +59,8 @@ void main() {
   setUp(() async {
     tempRoot = await Directory.systemTemp.createTemp('v8_bridge_test_');
     await SettingsStore.instance.init(rootDir: tempRoot);
+    noteDb = NoteDatabase.forTesting(NativeDatabase.memory());
+    VocabStore.instance.testDb = noteDb;
     bridge = LocalDictionaryBridge.instance;
     stubResolver();
     // 端口 0 = 让 OS 分配临时端口：测试不碰生产固定端口，也不与并行用例争抢。
@@ -64,6 +70,8 @@ void main() {
   });
 
   tearDown(() async {
+    VocabStore.instance.testDb = null;
+    await noteDb.close();
     bridge.resolverForTest = null;
     await bridge.stop();
     if (await tempRoot.exists()) {
@@ -144,6 +152,77 @@ void main() {
       expect(body['definitions'], ['int. 喂，你好', 'n. 表示问候']);
     });
 
+    test('grouped meanings accompany the flat definitions', () async {
+      final resp = await authedGet('/dictionary?q=hello');
+
+      expect(resp.statusCode, 200);
+      final body = resp.json;
+      expect(body['ok'], isTrue);
+      expect(body['matched'], isTrue);
+
+      // 分组结构是本次新增的字段：气泡要靠它按词性渲染，并把例句带出去。
+      // 这个存根两组都设了 partOfSpeech 为空、例句为空，正好钉住"存根有的字段
+      // 一个不少地过去"，以及空 partOfSpeech 照样成组（短语就是这种形状）。
+      final meanings = body['meanings'] as List;
+      expect(meanings, hasLength(2));
+      expect(meanings[0]['partOfSpeech'], '');
+      expect(meanings[0]['definitions'], ['int. 喂，你好']);
+      expect(meanings[0]['examples'], isEmpty);
+      expect(meanings[1]['definitions'], ['n. 表示问候']);
+    });
+
+    test('flat definitions and grouped meanings carry the same definitions', () async {
+      final resp = await authedGet('/dictionary?q=hello');
+
+      final body = resp.json;
+      final flat = (body['definitions'] as List).cast<String>();
+      final grouped = (body['meanings'] as List)
+          .expand((m) => (m['definitions'] as List).cast<String>())
+          .toList();
+
+      // 两种形状必须内容一致：渲染任一个都该得到同一批释义。这条是这个变更
+      // 的核心不变量——分组数据不是"另一份数据"，是同一份的另一种形状。
+      expect(grouped, flat);
+    });
+
+    test('grouped meanings carry examples instead of dropping them', () async {
+      // 例句此前在这条桥上整个丢掉（响应只有 allDefinitions），气泡想显示也没有。
+      // 这里用带例句的存根钉住"例句随它的词性分组一起过去"。
+      bridge.resolverForTest = (word) async {
+        return const DictionaryResult(
+          word: 'ephemeral',
+          phonetic: '/ɪˈfemərəl/',
+          audioUrl: 'https://dict.youdao.com/dictvoice?audio=ephemeral&type=2',
+          meanings: [
+            DictionaryMeaning(
+              partOfSpeech: 'adj.',
+              definitions: ['短暂的'],
+              examples: ['the ephemeral joys of childhood\n童年短暂的快乐'],
+            ),
+            DictionaryMeaning(
+              partOfSpeech: 'n.',
+              definitions: ['短生植物'],
+              examples: [],
+            ),
+          ],
+        );
+      };
+
+      final resp = await authedGet('/dictionary?q=ephemeral');
+
+      expect(resp.statusCode, 200);
+      final body = resp.json;
+      final meanings = body['meanings'] as List;
+      expect(meanings[0]['examples'], hasLength(1));
+      expect(
+        meanings[0]['examples'].first,
+        contains('the ephemeral joys of childhood'),
+      );
+      // 第二组没有例句就是空数组，不是 null——JS 侧 `(m.examples || [])` 两种
+      // 都吃得下，但空数组让 schema 稳定，别让客户端判 null。
+      expect(meanings[1]['examples'], isEmpty);
+    });
+
     test('unknown word is a 200 no-match, not an error', () async {
       final resp = await authedGet('/dictionary?q=zzzqqqxxx');
 
@@ -156,6 +235,9 @@ void main() {
       expect(body['definitions'], isEmpty);
       expect(body['phonetic'], '');
       expect(body['audioUrl'], '');
+      // 没收录时分组数组也是空的：别让客户端看到一个非空 meanings 却配着
+      // matched:false，那会上屏一个"查到了但没释义"的怪状态。
+      expect(body['meanings'], isEmpty);
     });
 
     test('emits Access-Control-Allow-Origin echoing the caller and Vary: Origin', () async {
@@ -312,6 +394,80 @@ void main() {
         body: '{}',
       );
       expect(resp.statusCode, 405);
+    });
+  });
+
+  group('Loopback vocabulary mutation endpoint', () {
+    test('rejects request without authorization header (401)', () async {
+      final resp = await rawRequest(
+        'POST',
+        '/vocab',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'word': 'ephemeral'}),
+      );
+      expect(resp.statusCode, 401);
+      expect(resp.json['reason'], 'unauthorized');
+    });
+
+    test('valid word added successfully (200, status: added)', () async {
+      final resp = await rawRequest(
+        'POST',
+        '/vocab',
+        headers: {
+          'Authorization': secret,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'word': 'serendipity',
+          'phonetic': '/ˌserənˈdɪpəti/',
+          'definitions': ['意外发现珍奇事物的本领'],
+        }),
+      );
+      expect(resp.statusCode, 200);
+      expect(resp.json['ok'], isTrue);
+      expect(resp.json['status'], 'added');
+      expect(resp.json['word'], 'serendipity');
+
+      // 验证数据库中确实写入了
+      expect(await VocabStore.instance.existsWord('serendipity'), isTrue);
+    });
+
+    test('duplicate word returns already_exists without creating duplicate', () async {
+      await VocabStore.instance.insertFromDictionary(
+        word: 'duplicate',
+        definitions: ['重复的'],
+        examples: [],
+      );
+
+      final resp = await rawRequest(
+        'POST',
+        '/vocab',
+        headers: {
+          'Authorization': secret,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'word': 'duplicate'}),
+      );
+      expect(resp.statusCode, 200);
+      expect(resp.json['ok'], isTrue);
+      expect(resp.json['status'], 'already_exists');
+    });
+
+    test('GET request with query parameter word is also supported', () async {
+      final resp = await rawRequest(
+        'GET',
+        '/vocab?word=hello',
+        headers: {'Authorization': secret},
+      );
+      expect(resp.statusCode, 200);
+      expect(resp.json['ok'], isTrue);
+      expect(resp.json['status'], 'added');
+      expect(resp.json['word'], 'hello');
+
+      // 验证通过 resolver 自动补全了释义
+      final entry = await VocabStore.instance.findByWord('hello');
+      expect(entry, isNotNull);
+      expect(entry!.definitions, isNotEmpty);
     });
   });
 }

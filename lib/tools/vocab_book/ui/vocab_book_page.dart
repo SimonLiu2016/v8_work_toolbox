@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -97,16 +99,22 @@ class _VocabBookPageState extends State<VocabBookPage> {
   final Set<String> _selectedIds = {};
 
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription<void>? _storeSub;
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(_focusRelay);
+    _storeSub = _store.onEntriesChanged.listen((_) {
+      if (!mounted || _isLoading) return;
+      _loadData(silent: true);
+    });
     _loadData();
   }
 
   @override
   void dispose() {
+    _storeSub?.cancel();
     windowManager.removeListener(_focusRelay);
     _audioPlayer.dispose();
     _searchController.dispose();

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'note_store.dart';
 import '../../../services/app_paths.dart';
+import '../../../services/context_services_bridge.dart';
 
 /// 资产到期提醒服务。
 ///
@@ -123,12 +124,12 @@ class AssetReminderService extends ChangeNotifier {
   void _dispatchMacNotification(String title, String body) {
     if (!Platform.isMacOS) return;
     try {
-      final safeTitle = title.replaceAll('"', '\\"');
-      final safeBody = body.replaceAll('"', '\\"').replaceAll('\n', ' ');
-      Process.run('osascript', [
-        '-e',
-        'display notification "$safeBody" with title "V8 资产提醒" subtitle "$safeTitle"',
-      ]);
+      ContextServicesBridge.instance.showNotification(
+        title: 'V8 资产提醒 🔔',
+        subtitle: title,
+        body: body.replaceAll('\n', ' ').trim(),
+        actionType: 'asset',
+      );
     } catch (_) {}
   }
 
