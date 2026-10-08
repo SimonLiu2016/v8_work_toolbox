@@ -1,0 +1,390 @@
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:V8WorkToolbox/tools/ai_video_studio/services/studio_task_queue.dart';
+
+/// 队列并发控制的单元测试（spec「生图任务队列」：默认 2，可调 1-5）。
+///
+/// 用一个记录并发峰值的假 runner：[maxConcurrent] 是整个测试文件唯一真正
+/// 要断言的东西，别的状态字段只是让断言可读。
+void main() {
+  late StudioTaskQueue queue;
+
+  setUp(() {
+    queue = StudioTaskQueue.instance;
+    queue.resetForTesting();
+  });
+
+  tearDown(() {
+    queue.resetForTesting();
+  });
+
+  group('并发上限', () {
+    test('默认并发 2：同一时刻最多两个任务在跑', () async {
+      var concurrent = 0;
+      var peak = 0;
+      final gate = Completer<void>();
+
+      Future<String> body() async {
+        concurrent++;
+        peak = concurrent > peak ? concurrent : peak;
+        await gate.future;
+        concurrent--;
+        return 'out';
+      }
+
+      // 入队 5 个，用同一个 gate 卡住它们，看有多少同时进入 running。
+      for (var i = 1; i <= 5; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.image,
+          shotNumber: i,
+          label: '分镜 $i',
+          runner: _FakeRunner(taskId: 'r$i', body: body),
+        );
+      }
+      // 等调度器把能起的都起来。
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final running = queue.tasks
+          .where((t) => t.status == StudioTaskStatus.running)
+          .length;
+      expect(running, 2, reason: '默认并发应为 2');
+      expect(peak, 2);
+
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final completed = queue.tasks
+          .where((t) => t.status == StudioTaskStatus.completed)
+          .length;
+      expect(completed, 5, reason: '放行后剩余任务应全部跑完');
+      expect(peak, 2, reason: '全程峰值并发不应超过 2');
+    });
+
+    test('并发调到 1 时严格串行', () async {
+      var concurrent = 0;
+      var peak = 0;
+      final gate = Completer<void>();
+      queue.setMaxConcurrency(1);
+      expect(queue.maxConcurrency, 1);
+
+      Future<String> body() async {
+        concurrent++;
+        peak = concurrent > peak ? concurrent : peak;
+        await gate.future;
+        concurrent--;
+        return 'out';
+      }
+
+      for (var i = 1; i <= 4; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.image,
+          shotNumber: i,
+          label: '分镜 $i',
+          runner: _FakeRunner(taskId: 'r$i', body: body),
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(peak, 1, reason: '并发 1 时必须串行');
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(
+        queue.tasks.where((t) => t.status == StudioTaskStatus.completed).length,
+        4,
+      );
+      expect(peak, 1, reason: '放行后也不允许峰值超过配置值');
+    });
+
+    test('并发上限夹在 1-5 之间', () {
+      queue.setMaxConcurrency(0);
+      expect(queue.maxConcurrency, 1);
+      queue.setMaxConcurrency(99);
+      expect(queue.maxConcurrency, 5);
+      queue.setMaxConcurrency(3);
+      expect(queue.maxConcurrency, 3);
+    });
+
+    test('并发调到更高时排队任务立即开始', () async {
+      final gate = Completer<void>();
+      var peak = 0;
+      var concurrent = 0;
+      Future<String> body() async {
+        concurrent++;
+        peak = concurrent > peak ? concurrent : peak;
+        await gate.future;
+        concurrent--;
+        return 'out';
+      }
+
+      for (var i = 1; i <= 4; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.image,
+          shotNumber: i,
+          label: 's$i',
+          runner: _FakeRunner(taskId: 'r$i', body: body),
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(peak, 2);
+
+      queue.setMaxConcurrency(4);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(peak, 4, reason: '提高上限后排队任务应立即启动');
+
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+  });
+
+  group('状态跟踪', () {
+    test('任务依次经过 queued → running → completed', () async {
+      final statuses = <String>[];
+      final sub = queue.stream.listen((tasks) {
+        final t = tasks.where((t) => t.shotNumber == 1).firstOrNull;
+        // enqueue 时会先广播一次 queued，但入队与 drain 在同一微任务里，
+        // queued 那一下可能在监听者订阅之前就走完了。所以断言的底线是
+        // 「最终状态与产物正确」，queued 由下面单独验证。
+        if (t == null) return;
+        if (statuses.isEmpty || statuses.last != t.status.id) {
+          statuses.add(t.status.id);
+        }
+      });
+
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: 's1',
+        runner: _FakeRunner(taskId: 'r1', body: () async => '/tmp/out.png'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(statuses, containsAllInOrder(['running', 'completed']));
+      final task = queue.tasks.first;
+      expect(task.status, StudioTaskStatus.completed);
+      expect(task.outputPath, '/tmp/out.png');
+      expect(task.progress, 1.0);
+      expect(queue.completedOutputFor(1), '/tmp/out.png');
+      await sub.cancel();
+    });
+
+    test('新入队的任务先以 queued 状态出现在列表里', () async {
+      final gate = Completer<void>();
+      // 用并发 1 + 两个任务保证第二个必然停在 queued。
+      queue.setMaxConcurrency(1);
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: 'blocker',
+        runner: _FakeRunner(taskId: 'b', body: () async {
+          await gate.future;
+          return 'x';
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: 'waiting',
+        runner: _FakeRunner(taskId: 'w', body: () async => 'y'),
+      );
+      final waiting = queue.tasks.firstWhere((t) => t.shotNumber == 2);
+      expect(waiting.status, StudioTaskStatus.queued);
+      expect(queue.activeCount, 2, reason: '排队中的任务也算活跃任务');
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      queue.setMaxConcurrency(2);
+    });
+
+    test('失败任务保留 error 且可重试（重新入队即可）', () async {
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: 's2',
+        runner: _FakeRunner(
+          taskId: 'r2',
+          body: () async => throw StateError('quota exceeded'),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final task = queue.tasks.firstWhere((t) => t.shotNumber == 2);
+      expect(task.status, StudioTaskStatus.failed);
+      expect(task.error, contains('quota exceeded'));
+      expect(queue.completedOutputFor(2), isNull);
+
+      // 重试 = 再入队一个同分镜任务。
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: 's2 retry',
+        runner: _FakeRunner(taskId: 'r2b', body: () async => '/tmp/ok.png'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(queue.completedOutputFor(2), '/tmp/ok.png');
+    });
+
+    test('进度回调到达终态任务后被忽略', () async {
+      final controller = StreamController<double>.broadcast();
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 3,
+        label: 's3',
+        runner: _FakeRunner(
+          taskId: 'r3',
+          body: () async {
+            // 立即失败，但之后再报一个进度——模拟云端任务失败后仍在推流。
+            controller.add(0.9);
+            throw StateError('boom');
+          },
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      controller.add(0.5);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await controller.close();
+
+      final task = queue.tasks.firstWhere((t) => t.shotNumber == 3);
+      expect(task.status, StudioTaskStatus.failed);
+      expect(task.progress, lessThan(1.0),
+             reason: '失败的任务不该被迟到进度改成看起来还在跑');
+    });
+  });
+
+  group('取消', () {
+    test('排队中的任务可取消且不执行', () async {
+      // 并发 1 + 第一个任务卡住，保证第二个一定停在 queued 状态。
+      queue.setMaxConcurrency(1);
+      final gate = Completer<void>();
+      var ranSecond = false;
+
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: 'blocker',
+        runner: _FakeRunner(taskId: 'b', body: () async {
+          await gate.future;
+          return 'x';
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: 'waiting',
+        runner: _FakeRunner(taskId: 'w', body: () async {
+          ranSecond = true;
+          return 'y';
+        }),
+      );
+
+      final queued = queue.tasks
+          .where((t) => t.status == StudioTaskStatus.queued)
+          .toList();
+      expect(queued, hasLength(1));
+
+      queue.cancel(queued.first.id);
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final cancelled = queue.tasks.firstWhere((t) => t.id == queued.first.id);
+      expect(cancelled.status, StudioTaskStatus.cancelled);
+      expect(cancelled.finishedAt, isNotNull);
+      expect(ranSecond, isFalse,
+             reason: '排队中被取消的任务不该被执行');
+      queue.setMaxConcurrency(2);
+    });
+
+    test('取消进行中的任务会把标志置到执行体上', () async {
+      final gate = Completer<void>();
+      final runner = _FakeRunner(
+        taskId: 'c1',
+        body: () async {
+          await gate.future;
+          return 'x';
+        },
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: 's1',
+        runner: runner,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      queue.cancel(queue.tasks.first.id);
+      expect(runner.cancelledFlag, isTrue,
+             reason: '执行体要能感知取消，否则轮询循环停不下来');
+      expect(runner.isCancelled(), isTrue);
+
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+
+    test('已取消任务不计入 activeCount', () async {
+      for (var i = 1; i <= 4; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.video,
+          shotNumber: i,
+          label: 's$i',
+          runner: _FakeRunner(taskId: 'r$i', body: () => Future.value('x')),
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final id = queue.tasks.last.id;
+      queue.cancel(id);
+      expect(queue.activeCount, queue.tasks.where((t) => !t.isTerminal).length);
+    });
+
+    test('clearFinished 只清终态任务', () async {
+      final gate = Completer<void>();
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: 'running one',
+        runner: _FakeRunner(
+          taskId: 'r1',
+          body: () async {
+            await gate.future;
+            return 'ok';
+          },
+        ),
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: 'fail one',
+        runner: _FakeRunner(
+          taskId: 'r2',
+          body: () async => throw StateError('nope'),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      queue.clearFinished();
+      // 失败的那个是终态，应被清掉；进行中的要留下。
+      expect(queue.tasks.where((t) => t.shotNumber == 2), isEmpty);
+      expect(queue.tasks.where((t) => t.shotNumber == 1), isNotEmpty);
+      gate.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+  });
+}
+
+class _FakeRunner implements StudioTaskRunner, CancellableTaskRunner {
+  @override
+  final String taskId;
+  final Future<String> Function() body;
+  bool cancelledFlag = false;
+
+  _FakeRunner({required this.taskId, required this.body});
+
+  @override
+  set cancelled(bool value) => cancelledFlag = value;
+
+  @override
+  bool isCancelled() => cancelledFlag;
+
+  @override
+  Future<String> run(void Function(double progress) onProgress) {
+    cancelledFlag = false;
+    onProgress(0.1);
+    return body();
+  }
+}

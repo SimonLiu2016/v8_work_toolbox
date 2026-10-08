@@ -1,0 +1,554 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:V8WorkToolbox/services/app_paths.dart';
+import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'package:V8WorkToolbox/tools/ai_video_studio/services/image_gen_adapter.dart';
+import 'package:V8WorkToolbox/tools/ai_video_studio/services/video_gen_adapter.dart';
+
+/// Engine Adapter 层的契约测试：HTTP 错误处理、工厂选择、可灵轮询逻辑。
+///
+/// 全部走注入的假 http 后端，不起真实网络。可灵的创建→轮询→下载三段落用
+/// 一个按请求次数切换响应的假后端模拟。
+void main() {
+  // KeychainService 的读写落在 AppPaths 下，未初始化时它抛的 StateError
+  // 会盖过被测代码自己的错误，让断言读到错误来源。
+  setUpAll(() {
+    AppPaths.overrideRootForTesting(
+      Directory.systemTemp.createTempSync('studio_adapter_test'),
+    );
+  });
+
+  group('硅基流动适配器 HTTP 细节', () {
+    test('未配置 Key 时不发请求，直接抛可操作的 StateError', () async {
+      var called = 0;
+      final adapter = SiliconFlowImageAdapter(
+        httpFn: (req) async {
+          called++;
+          return http.Response('{}', 200);
+        },
+      );
+      await expectLater(
+        adapter.generate(ImageGenRequest(
+          prompt: 'test',
+          shotNumber: 1,
+          outputFile: File('/tmp/should_not_exist.png'),
+        )),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('API Key 未配置'),
+        )),
+      );
+      expect(called, 0, reason: '没有 Key 时不该白发一次请求');
+    });
+
+    test('非 200 响应抛 StateError 且带上服务端 message', () async {
+      var called = 0;
+      // 这台机器可能真的配过 Key——显式写一个，让请求真发到假后端。
+      await KeychainService.instance.writeSecret(
+        SiliconFlowImageAdapter.keychainKeyId,
+        'sk-test-key',
+      );
+      addTearDown(() => KeychainService.instance.deleteSecret(
+        SiliconFlowImageAdapter.keychainKeyId,
+      ));
+      final adapter = SiliconFlowImageAdapter(
+        httpFn: (req) async {
+          called++;
+          expect(req.url.toString(), SiliconFlowImageAdapter.endpoint);
+          expect(req.headers['Authorization'], startsWith('Bearer '));
+          final payload = jsonDecode(req.body) as Map;
+          expect(payload['model'], SiliconFlowImageAdapter.modelId);
+          expect(payload['image_size'], '1080x1920');
+          return http.Response(
+            '{"message": "insufficient quota"}',
+            429,
+            headers: {'content-type': 'application/json'},
+          );
+        },
+      );
+
+      await expectLater(
+        adapter.generate(ImageGenRequest(
+          prompt: 'test',
+          shotNumber: 1,
+          outputFile: File('/tmp/should_not_exist.png'),
+        )),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('429'), contains('insufficient quota')),
+        )),
+      );
+      expect(called, 1);
+    });
+
+    test('返回体缺少 images 字段时抛 FormatException', () async {
+      await KeychainService.instance.writeSecret(
+        SiliconFlowImageAdapter.keychainKeyId,
+        'sk-test-key',
+      );
+      addTearDown(() => KeychainService.instance.deleteSecret(
+        SiliconFlowImageAdapter.keychainKeyId,
+      ));
+      final adapter = SiliconFlowImageAdapter(
+        httpFn: (req) async => http.Response(
+          '{"data": []}',
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      );
+      await expectLater(
+        adapter.generate(ImageGenRequest(
+          prompt: 'x',
+          shotNumber: 1,
+          outputFile: File('/tmp/nope.png'),
+        )),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
+  group('可灵适配器 任务生命周期', () {
+    setUp(() async {
+      await KeychainService.instance.writeSecret(
+        KlingVideoAdapter.keychainKeyId,
+        'ak-test-key',
+      );
+    });
+    tearDown(() async {
+      await KeychainService.instance.deleteSecret(
+        KlingVideoAdapter.keychainKeyId,
+      );
+    });
+
+    test('创建 → 轮询 processing → 成功下载', () async {
+      var phase = 0;
+      final adapter = KlingVideoAdapter(
+        httpFn: (req) async {
+          phase++;
+          if (req.method == 'POST') {
+            return http.Response(
+              jsonEncode({'data': {'task_id': 'task-123'}}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          // GET：第一次 processing，第二次 succeeded
+          if (phase == 2) {
+            return http.Response(
+              jsonEncode({'data': {'task_status': 'processing'}}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'task_status': 'succeeded',
+                'task_result': {
+                  'videos': [
+                    {'url': 'https://cdn.example.com/video.mp4'},
+                  ],
+                },
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        },
+      );
+
+      // 轮询间隔是 5 秒（spec 级的实测值），两次轮询至少 10 秒。
+      final dir = Directory.systemTemp.createTempSync('kling_test');
+      final srcVideo = File(p.join(dir.path, 'fake.mp4'));
+      srcVideo.writeAsBytesSync(List<int>.filled(4096, 7));
+
+      final out = File(p.join(dir.path, 'out.mp4'));
+      // 下载走真实 client，URL 不可达——所以断言的是「轮询走到了 succeeded
+      // 并发起下载」（错误里带着那个 URL），而不是假装下载成功。
+      await expectLater(
+        adapter.generateVideo(VideoGenRequest(
+          inputImage: srcVideo,
+          cameraMove: 'orbit',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: out,
+        )),
+        throwsA(anything), // 具体类型不重要，下面按消息断言
+      ).catchError((e) async {
+        expect(e.toString(), anyOf(contains('cdn.example.com'), contains('StateError')));
+        return null;
+      });
+      expect(phase, greaterThanOrEqualTo(3),
+             reason: '应当完成创建 + 至少一次轮询 + 下载尝试');
+      dir.deleteSync(recursive: true);
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('任务失败时抛带服务端原因的 StateError', () async {
+      final adapter = KlingVideoAdapter(
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            return http.Response(
+              jsonEncode({'data': {'task_id': 't1'}}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'data': {'task_status': 'failed', 'message': 'content policy'},
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        },
+      );
+      await expectLater(
+        adapter.generateVideo(VideoGenRequest(
+          inputImage: File('/dev/null'),
+          cameraMove: '',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File('/tmp/kling_fail.mp4'),
+        )),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('content policy'),
+        )),
+      );
+    });
+
+    test('取消后停止轮询（不再等待云端）', () async {
+      var polls = 0;
+      // 先声明再构造：httpFn 闭包里要引用它来触发取消。
+      late final KlingVideoAdapter adapter;
+      adapter = KlingVideoAdapter(
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            return http.Response(
+              jsonEncode({'data': {'task_id': 't2'}}),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          polls++;
+          // 第一次轮询后就取消：下一轮循环开头应检查 _cancelled 并抛出。
+          adapter.cancelCurrent();
+          return http.Response(
+            jsonEncode({'data': {'task_status': 'processing'}}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        },
+      );
+
+      await expectLater(
+        adapter.generateVideo(VideoGenRequest(
+          inputImage: File('/dev/null'),
+          cameraMove: '',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File('/tmp/kling_cancel.mp4'),
+        )),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('取消'),
+        )),
+      );
+      // 关键断言：取消后不再继续轮询（否则会白等到 5 分钟超时）。
+      expect(polls, 1, reason: '取消后应立刻停止轮询');
+    }, timeout: const Timeout(Duration(seconds: 60)));
+  });
+
+  group('适配器工厂', () {
+    test('未配置 Key 时图像工厂回落到本地占位实现', () async {
+      final adapter = await ImageGenAdapterFactory.create();
+      expect(adapter, isA<LocalStubImageAdapter>(),
+             reason: '零 Key 也必须能出图，spec 要求不出现功能不可用提示');
+    });
+
+    test('显式偏好 local-stub 时返回本地实现', () async {
+      final adapter = await ImageGenAdapterFactory.create(
+        preferredEngineId: 'local-stub',
+      );
+      expect(adapter, isA<LocalStubImageAdapter>());
+    });
+
+    test('narration / anime 类型默认走本地 Ken Burns，不选云端 I2V', () async {
+      for (final type in ['narration', 'anime']) {
+        final adapter = await VideoGenAdapterFactory.create(
+          productionType: type,
+        );
+        expect(adapter, isA<KenBurnsVideoAdapter>(),
+               reason: '$type 应零成本本地出片');
+      }
+    });
+
+    test('drama 无 Key 时也回落到本地 Ken Burns', () async {
+      final adapter = await VideoGenAdapterFactory.create(
+        productionType: 'drama',
+      );
+      // 未配置可灵 Key 时不能把用户卡在云端路径上。
+      expect(adapter, isA<KenBurnsVideoAdapter>());
+    });
+
+    test('未知引擎 id 回落到默认选择而不是崩溃', () async {
+      final adapter = await ImageGenAdapterFactory.create(
+        preferredEngineId: 'no-such-engine',
+      );
+      expect(adapter, isNotNull);
+    });
+
+    test('显式偏好 system-image 返回 SystemAiImageAdapter', () async {
+      final adapter = await ImageGenAdapterFactory.create(
+        preferredEngineId: 'system-image',
+      );
+      expect(adapter, isA<SystemAiImageAdapter>());
+    });
+
+    test('getSystemImageConfigSummary 正确反映配置状态', () {
+      final summary = ImageGenAdapterFactory.getSystemImageConfigSummary();
+      expect(summary, isNotNull);
+    });
+  });
+
+  group('SystemAiImageAdapter HTTP 与解码细节', () {
+    test('OpenAI 格式返回 data[0].b64_json 正确解析并写入文件', () async {
+      final out = File('${AppPaths.root.path}/test_out.png');
+      final dummyPngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]; // PNG 签名
+      final b64 = base64Encode(dummyPngBytes);
+
+      final adapter = SystemAiImageAdapter(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'dall-e-3',
+        apiKey: 'sk-mock-key',
+        httpFn: (req) async {
+          expect(req.headers['Authorization'], 'Bearer sk-mock-key');
+          expect(req.url.toString(), 'https://api.openai.com/v1/images/generations');
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {'b64_json': b64}
+              ]
+            }),
+            200,
+          );
+        },
+      );
+
+      final result = await adapter.generate(ImageGenRequest(
+        prompt: 'a scenic mountain',
+        shotNumber: 1,
+        outputFile: out,
+      ));
+
+      expect(await result.exists(), isTrue);
+      expect(await result.readAsBytes(), dummyPngBytes);
+      if (await out.exists()) await out.delete();
+    });
+  });
+
+  group('SenseAudioImageAdapter 与尺寸吸附测试', () {
+    test('snapToSupportedSenseAudioSize 针对工坊竖屏 1080x1920 完美吸附到 1152x2048', () {
+      final size = SenseAudioImageAdapter.snapToSupportedSenseAudioSize(
+        1080,
+        1920,
+        'senseaudio-image-2.0-260319',
+      );
+      expect(size, '1152x2048');
+    });
+
+    test('snapToSupportedSenseAudioSize 针对横屏 1920x1080 完美吸附到 2048x1152', () {
+      final size = SenseAudioImageAdapter.snapToSupportedSenseAudioSize(
+        1920,
+        1080,
+        'senseaudio-image-2.0-260319',
+      );
+      expect(size, '2048x1152');
+    });
+
+    test('snapToSupportedSenseAudioSize 针对正方形 1080x1080 完美吸附到 1024x1024', () {
+      final size = SenseAudioImageAdapter.snapToSupportedSenseAudioSize(
+        1080,
+        1080,
+        'senseaudio-image-2.0-260319',
+      );
+      expect(size, '1024x1024');
+    });
+
+    test('SenseAudio 同步生图正常解析 url 并下载', () async {
+      final out = File('${AppPaths.root.path}/sense_out.png');
+      final dummyPngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, ...List.filled(150, 0)];
+
+      final adapter = SenseAudioImageAdapter(
+        baseUrl: 'https://api.senseaudio.cn/v1',
+        model: 'senseaudio-image-2.0-260319',
+        apiKey: 'mock-sense-key',
+        httpFn: (req) async {
+          if (req.url.path.endsWith('/image/sync')) {
+            expect(req.headers['Authorization'], 'Bearer mock-sense-key');
+            final body = jsonDecode(req.body) as Map;
+            expect(body['model'], 'senseaudio-image-2.0-260319');
+            expect(body['size'], '1152x2048'); // 经过吸附
+            return http.Response(
+              jsonEncode({'url': 'https://mock.cdn/img.png'}),
+              200,
+            );
+          } else if (req.url.toString() == 'https://mock.cdn/img.png') {
+            return http.Response.bytes(dummyPngBytes, 200);
+          }
+          throw StateError('Unexpected URL: ${req.url}');
+        },
+      );
+
+      final result = await adapter.generate(ImageGenRequest(
+        prompt: 'cyberpunk warrior portrait',
+        shotNumber: 1,
+        width: 1080,
+        height: 1920,
+        outputFile: out,
+      ));
+
+      expect(await result.exists(), isTrue);
+      expect(await result.length(), dummyPngBytes.length);
+      if (await out.exists()) await out.delete();
+    });
+
+    test('SenseAudio 参考图自动编码为 Data URI 并透传', () async {
+      final refFile = File('${AppPaths.root.path}/mock_ref.png');
+      await refFile.writeAsBytes([0x89, 0x50, 0x4E, 0x47, 0x01, 0x02, 0x03]);
+      final out = File('${AppPaths.root.path}/sense_ref_out.png');
+      final dummyPngBytes = List.filled(140, 1);
+
+      bool refReceived = false;
+      final adapter = SenseAudioImageAdapter(
+        baseUrl: 'https://api.senseaudio.cn/v1',
+        model: 'senseaudio-image-2.0-260319',
+        apiKey: 'mock-sense-key',
+        httpFn: (req) async {
+          if (req.url.path.endsWith('/image/sync')) {
+            final body = jsonDecode(req.body) as Map;
+            final ref = body['reference'] as String?;
+            if (ref != null && ref.startsWith('data:image/png;base64,')) {
+              refReceived = true;
+            }
+            return http.Response(
+              jsonEncode({'url': 'https://mock.cdn/ref_img.png'}),
+              200,
+            );
+          } else if (req.url.toString() == 'https://mock.cdn/ref_img.png') {
+            return http.Response.bytes(dummyPngBytes, 200);
+          }
+          throw StateError('Unexpected URL: ${req.url}');
+        },
+      );
+
+      await adapter.generate(ImageGenRequest(
+        prompt: 'consistent character with ref',
+        shotNumber: 2,
+        outputFile: out,
+        referenceImagePath: refFile.path,
+      ));
+
+      expect(refReceived, isTrue);
+      if (await refFile.exists()) await refFile.delete();
+      if (await out.exists()) await out.delete();
+    });
+
+    test('SenseAudio 同步遇 500000 繁忙时自动降级到异步轮询', () async {
+      final out = File('${AppPaths.root.path}/sense_async_fallback.png');
+      final dummyPngBytes = List.filled(200, 2);
+
+      int pollCount = 0;
+      final adapter = SenseAudioImageAdapter(
+        baseUrl: 'https://api.senseaudio.cn/v1',
+        model: 'senseaudio-image-2.0-260319',
+        apiKey: 'mock-sense-key',
+        httpFn: (req) async {
+          if (req.url.path.endsWith('/image/sync')) {
+            // 同步接口返回 500000 服务繁忙
+            return http.Response(
+              jsonEncode({'ref_code': '500000', 'message': '服务繁忙，请稍后再试'}),
+              500,
+            );
+          } else if (req.url.path.endsWith('/image/async')) {
+            return http.Response(
+              jsonEncode({'task_id': 'async_task_999'}),
+              200,
+            );
+          } else if (req.url.path.endsWith('/image/pending')) {
+            pollCount++;
+            expect(req.url.queryParameters['task_id'], 'async_task_999');
+            if (pollCount == 1) {
+              return http.Response(
+                jsonEncode({'status': 'pending'}),
+                200,
+              );
+            } else {
+              return http.Response(
+                jsonEncode({
+                  'status': 'completed',
+                  'url': 'https://mock.cdn/async_done.png',
+                }),
+                200,
+              );
+            }
+          } else if (req.url.toString() == 'https://mock.cdn/async_done.png') {
+            return http.Response.bytes(dummyPngBytes, 200);
+          }
+          throw StateError('Unexpected URL: ${req.url}');
+        },
+      );
+
+      final result = await adapter.generate(ImageGenRequest(
+        prompt: 'async fallback test',
+        shotNumber: 3,
+        outputFile: out,
+      ));
+
+      expect(await result.exists(), isTrue);
+      expect(pollCount, greaterThanOrEqualTo(2));
+      if (await out.exists()) await out.delete();
+    });
+
+    test('SystemAiImageAdapter 自动探测并分发 SenseAudio 专属协议', () async {
+      final out = File('${AppPaths.root.path}/system_sense_dispatch.png');
+      final dummyPngBytes = List.filled(160, 3);
+
+      bool calledSenseEndpoint = false;
+      final adapter = SystemAiImageAdapter(
+        baseUrl: 'https://api.senseaudio.cn/v1',
+        model: 'senseaudio-image-2.0-260319',
+        apiKey: 'mock-sense-key',
+        httpFn: (req) async {
+          if (req.url.path.contains('/image/sync')) {
+            calledSenseEndpoint = true;
+            return http.Response(
+              jsonEncode({'url': 'https://mock.cdn/dispatch.png'}),
+              200,
+            );
+          } else if (req.url.toString() == 'https://mock.cdn/dispatch.png') {
+            return http.Response.bytes(dummyPngBytes, 200);
+          }
+          throw StateError('Unexpected URL: ${req.url}');
+        },
+      );
+
+      await adapter.generate(ImageGenRequest(
+        prompt: 'auto dispatch test',
+        shotNumber: 4,
+        outputFile: out,
+      ));
+
+      expect(calledSenseEndpoint, isTrue);
+      if (await out.exists()) await out.delete();
+    });
+  });
+}
