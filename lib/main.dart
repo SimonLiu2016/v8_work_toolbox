@@ -26,6 +26,7 @@ import 'shell/app_shell.dart';
 import 'tools/network_proxy/services/network_proxy_service.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
+import 'tools/ai_video_studio/ui/studio_shell.dart';
 import 'tools/notebook/asset_reminder_service.dart';
 import 'tools/notebook/note_database.dart';
 import 'tools/notebook/note_store.dart';
@@ -35,6 +36,7 @@ import 'tools/ops_tool/ui/ops_tool_main_page.dart';
 import 'tools/password/ui/password_page.dart';
 import 'tools/private_player/services/media_history_store.dart';
 import 'tools/private_player/services/private_storage_manager.dart';
+import 'tools/security_toolbox/ui/security_toolbox_main_page.dart';
 
 // ---------------------------------------------------------------------------
 // 窗口类型与必需服务清单
@@ -64,6 +66,12 @@ enum WindowKind {
 
   /// 查词独立浮窗：轻量词典查询、发音与 AI 深度解析
   lookupPanel,
+
+  /// 安全工具箱独立窗口：渗透工作流，长任务扫描，复用 AI 配置与代理
+  securityToolbox,
+
+  /// AI 短视频工坊独立窗口：长时合成（FFmpeg / 云端图生视频），复用 AI 配置与代理
+  aiVideoStudio,
 }
 
 /// 按窗口类型声明的必需服务。
@@ -140,6 +148,18 @@ class WindowServices {
       ..._proxy,
       ..._aiConfig,
       ..._noteStore,
+    ],
+    WindowKind.securityToolbox: [
+      ..._appPaths,
+      ..._settingsStore,
+      ..._proxy,
+      ..._aiConfig,
+    ],
+    WindowKind.aiVideoStudio: [
+      ..._appPaths,
+      ..._settingsStore,
+      ..._proxy,
+      ..._aiConfig,
     ],
   };
 
@@ -249,6 +269,20 @@ Future<void> main(List<String> args) async {
     await WindowServices.initFor(WindowKind.opsTool);
     await _sizeSubWindow(const Size(1200, 800));
     runAppWithErrorHandling(const _OpsToolWindowApp());
+    return;
+  }
+
+  if (isSubWindow && subWindowArgument == 'security-toolbox') {
+    await WindowServices.initFor(WindowKind.securityToolbox);
+    await _sizeSubWindow(const Size(1300, 850));
+    runAppWithErrorHandling(const _SecurityToolboxWindowApp());
+    return;
+  }
+
+  if (isSubWindow && subWindowArgument == 'ai-video-studio') {
+    await WindowServices.initFor(WindowKind.aiVideoStudio);
+    await _sizeSubWindow(const Size(1400, 900));
+    runAppWithErrorHandling(const _AiVideoStudioWindowApp());
     return;
   }
 
@@ -704,4 +738,70 @@ class _OpsToolWindowApp extends StatelessWidget {
     );
   }
 }
+
+class _SecurityToolboxWindowApp extends StatelessWidget {
+  const _SecurityToolboxWindowApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: '安全工具箱',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const Scaffold(
+            body: Padding(
+              padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+              child: SecurityToolboxMainPage(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// AI 短视频工坊独立子窗口 app。
+class _AiVideoStudioWindowApp extends StatelessWidget {
+  const _AiVideoStudioWindowApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: 'AI 短视频工坊',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const Scaffold(
+            body: Padding(
+              padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+              child: StudioShellPage(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 

@@ -8,6 +8,19 @@ import '../services/ai_assistant_service.dart';
 import '../../tool_definition.dart';
 import 'scheduled_tasks_drawer.dart';
 
+/// 用于在外部（如通知点击、主导航深链）触发 AI 资讯页面的抽屉展开或快速交互
+class AiAssistantNavigation {
+  AiAssistantNavigation._();
+  static final AiAssistantNavigation instance = AiAssistantNavigation._();
+
+  /// 待展开的抽屉 Tab 索引（0: 任务配置, 1: 快报历史），消费后置空
+  final ValueNotifier<int?> openDrawerNotifier = ValueNotifier<int?>(null);
+
+  void openScheduledTasksDrawer({int initialIndex = 1}) {
+    openDrawerNotifier.value = initialIndex;
+  }
+}
+
 class AiAssistantPage extends StatefulWidget {
   const AiAssistantPage({super.key});
 
@@ -25,16 +38,32 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
   void initState() {
     super.initState();
     _service.addListener(_onServiceUpdate);
+    AiAssistantNavigation.instance.openDrawerNotifier.addListener(_onDrawerRequest);
     _service.init();
+
+    if (AiAssistantNavigation.instance.openDrawerNotifier.value != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _onDrawerRequest();
+      });
+    }
   }
 
   @override
   void dispose() {
+    AiAssistantNavigation.instance.openDrawerNotifier.removeListener(_onDrawerRequest);
     _service.removeListener(_onServiceUpdate);
     _textCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onDrawerRequest() {
+    final idx = AiAssistantNavigation.instance.openDrawerNotifier.value;
+    if (idx != null && mounted) {
+      AiAssistantNavigation.instance.openDrawerNotifier.value = null;
+      _openScheduledTasksDrawer(initialIndex: idx);
+    }
   }
 
   void _onServiceUpdate() {
@@ -64,12 +93,12 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
     _focusNode.requestFocus();
   }
 
-  void _openScheduledTasksDrawer() {
+  void _openScheduledTasksDrawer({int initialIndex = 0}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => ScheduledTasksDrawer(),
+      builder: (ctx) => ScheduledTasksDrawer(initialIndex: initialIndex),
     );
   }
 

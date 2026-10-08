@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:flutter/foundation.dart';
 import '../../../services/app_paths.dart';
 import 'ai_service.dart';
+import 'context_services_bridge.dart';
 import 'web_search_service.dart';
 
 /// 定时检索任务配置
@@ -404,8 +405,8 @@ class ScheduledNewsService extends ChangeNotifier {
         _updateUnreadCount();
         await _saveBriefings();
 
-        // 4. 发送 macOS 系统通知
-        _dispatchMacNotification(task.title, summary);
+        // 4. 发送 macOS 系统原生通知
+        _dispatchMacNotification(task, summary);
       }
 
       await _saveTasks();
@@ -417,17 +418,24 @@ class ScheduledNewsService extends ChangeNotifier {
     }
   }
 
-  /// 唤起 macOS 系统通知
-  void _dispatchMacNotification(String title, String body) {
+  /// 唤起 macOS 系统原生通知
+  void _dispatchMacNotification(ScheduledNewsTask task, String summary) {
     if (!Platform.isMacOS) return;
     try {
-      final safeTitle = title.replaceAll('"', '\\"');
-      final safeBody = body.replaceAll('"', '\\"').replaceAll('\n', ' ');
-      Process.run('osascript', [
-        '-e',
-        'display notification "$safeBody" with title "V8 资讯提醒" subtitle "$safeTitle"',
-      ]);
-    } catch (_) {}
+      final safeSummary = summary.replaceAll('\n', ' ').trim();
+      ContextServicesBridge.instance.showNotification(
+        title: '资讯快报提醒 📰',
+        subtitle: task.title,
+        body: safeSummary,
+        actionType: 'news',
+        payload: {
+          'taskId': task.id,
+          'taskTitle': task.title,
+        },
+      );
+    } catch (e) {
+      debugPrint('[ScheduledNewsService] 原生通知发送失败: $e');
+    }
   }
 
   @override

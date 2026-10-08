@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import '../../../services/proxy_settings.dart';
+import '../../ai_video_studio/services/studio_asset_bridge.dart';
 import 'private_storage_manager.dart';
 import 'ytdlp_video_parser.dart';
 
@@ -20,6 +22,11 @@ enum DownloadStatus {
 
 /// 下载任务条目模型
 class DownloadTask extends ChangeNotifier {
+  /// 完成后是否把文件复制进 AI 短视频工坊的当前集 `frames/`（spec 16.1/16.2）。
+  ///
+  /// 只是**复制**：yt-dlp 仍然写它自己的下载目录，用户原来的浏览习惯不变。
+  bool importToStudio = false;
+
   final String id;
   final String url;
   String title;
@@ -31,6 +38,8 @@ class DownloadTask extends ChangeNotifier {
   String? outputPath;
   String? errorMessage;
   String? thumbnailUrl;
+  final String triggeredBy; // 'manual' | 'browser'
+  String? directStreamUrl;
   Process? _process;
 
   DownloadTask({
@@ -45,6 +54,8 @@ class DownloadTask extends ChangeNotifier {
     this.outputPath,
     this.errorMessage,
     this.thumbnailUrl,
+    this.triggeredBy = 'manual',
+    this.directStreamUrl,
   });
 
   void update({
@@ -98,6 +109,9 @@ class DownloadQueueManager extends ChangeNotifier {
     String? title,
     String? formatId,
     String? thumbnailUrl,
+    String triggeredBy = 'manual',
+    String? directStreamUrl,
+    bool importToStudio = false,
   }) {
     final cleanUrl = url.trim();
     final existing = _tasks
@@ -110,6 +124,9 @@ class DownloadQueueManager extends ChangeNotifier {
       if (thumbnailUrl != null && existing.thumbnailUrl == null) {
         existing.thumbnailUrl = thumbnailUrl;
       }
+      if (directStreamUrl != null && existing.directStreamUrl == null) {
+        existing.directStreamUrl = directStreamUrl;
+      }
       return existing;
     }
 
@@ -120,7 +137,10 @@ class DownloadQueueManager extends ChangeNotifier {
       title: title ?? cleanUrl,
       formatId: formatId ?? 'bestvideo+bestaudio/best',
       thumbnailUrl: thumbnailUrl,
+      triggeredBy: triggeredBy,
+      directStreamUrl: directStreamUrl,
     );
+    task.importToStudio = importToStudio;
 
     _tasks.add(task);
     notifyListeners();
@@ -196,6 +216,22 @@ class DownloadQueueManager extends ChangeNotifier {
     }
   }
 
+  /// 下载完成后按需把文件复制进工坊素材目录（spec 16.2）。
+  ///
+  /// 复制失败不影响下载本身的状态：文件已经好好躺在下载目录里了，工坊那份
+  /// 是附加价值，为它把「已完成」改成「失败」会让用户以为视频没了。
+  Future<void> _maybeImportToStudio(DownloadTask task, String path) async {
+    if (!task.importToStudio || path.isEmpty) return;
+    final result = await StudioAssetImporter.importDownloadedFile(
+      downloadedFilePath: path,
+    );
+    if (result.ok) {
+      task.update(newEta: '已复制到工坊素材目录');
+    } else {
+      task.update(newEta: '复制到工坊失败：${result.error}');
+    }
+  }
+
   Future<void> _startTask(DownloadTask task) async {
     _activeCount++;
     task.update(newStatus: DownloadStatus.downloading);
@@ -217,6 +253,8 @@ class DownloadQueueManager extends ChangeNotifier {
     final outTemplate = p.join(outDir, '%(title).80s.%(ext)s');
 
     final platform = YtdlpVideoParser.instance.detectPlatform(task.url);
+    final proxy = ProxySettings.instance;
+
     final args = <String>[
       '--newline',
       '--no-playlist',
@@ -225,7 +263,13 @@ class DownloadQueueManager extends ChangeNotifier {
       '-f', task.formatId,
       '--merge-output-format', 'mp4',
       '-o', outTemplate,
+      '--user-agent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     ];
+
+    if (proxy.isConfigured) {
+      args.addAll(['--proxy', 'http://${proxy.host}:${proxy.port}']);
+    }
 
     if (ffmpeg != null) {
       args.addAll(['--ffmpeg-location', ffmpeg]);
@@ -239,6 +283,11 @@ class DownloadQueueManager extends ChangeNotifier {
         '--extractor-args',
         'generic:impersonate',
         '--force-ipv4',
+      ]);
+    } else if (platform == 'PornHub' || task.url.contains('pornhub')) {
+      args.addAll([
+        '--add-header', 'Referer:https://www.pornhub.com/',
+        '--add-header', 'Cookie:age_verified=1; platform=pc',
       ]);
     }
 
@@ -280,7 +329,79 @@ class DownloadQueueManager extends ChangeNotifier {
           newEta: '已完成',
           newOutputPath: lastDownloadedPath.isNotEmpty ? lastDownloadedPath : null,
         );
+        await _maybeImportToStudio(task, lastDownloadedPath);
       } else {
+        // 双轨回退机制：当主页面解析遇到反爬或 410 报错时，若有已嗅探到的有效媒体流直链，自动回退下载
+        if (task.status != DownloadStatus.cancelled &&
+            task.directStreamUrl != null &&
+            task.directStreamUrl!.isNotEmpty &&
+            task.directStreamUrl != task.url &&
+            !task.directStreamUrl!.startsWith('blob:') &&
+            !isSuspectAdUrl(task.directStreamUrl!)) {
+          task.update(
+            newStatus: DownloadStatus.downloading,
+            newSpeed: '',
+            newEta: '切换直链下载中',
+          );
+
+          final fallbackArgs = <String>[
+            '--newline',
+            '--no-playlist',
+            '--no-warnings',
+            '--no-check-certificates',
+            '--merge-output-format', 'mp4',
+            '-o', outTemplate,
+            '--user-agent',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            '--add-header', 'Referer:${task.url}',
+            '--add-header', 'Cookie:age_verified=1; platform=pc',
+          ];
+
+          if (proxy.isConfigured) {
+            fallbackArgs.addAll(['--proxy', 'http://${proxy.host}:${proxy.port}']);
+          }
+          if (ffmpeg != null) {
+            fallbackArgs.addAll(['--ffmpeg-location', ffmpeg]);
+          }
+          fallbackArgs.add(task.directStreamUrl!);
+
+          final fallbackProcess = await Process.start(ytdlp, fallbackArgs);
+          task._process = fallbackProcess;
+
+          fallbackProcess.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+            final match = _progressRegex.firstMatch(line);
+            if (match != null) {
+              final pct = double.tryParse(match.group(1) ?? '0') ?? 0.0;
+              final spd = match.group(3) ?? '';
+              final eta = match.group(4) ?? '';
+              task.update(
+                newProgress: (pct / 100.0).clamp(0.0, 1.0),
+                newSpeed: spd,
+                newEta: eta,
+              );
+            } else if (line.contains('[Merger]') || line.contains('[ffmpeg]')) {
+              task.update(newStatus: DownloadStatus.merging, newSpeed: '', newEta: '合成中');
+            } else if (line.contains('Destination:')) {
+              final dest = line.split('Destination:').last.trim();
+              if (dest.isNotEmpty) lastDownloadedPath = dest;
+            }
+          });
+
+          final fallbackExitCode = await fallbackProcess.exitCode;
+          task._process = null;
+
+          if (fallbackExitCode == 0) {
+            task.update(
+              newStatus: DownloadStatus.completed,
+              newProgress: 1.0,
+              newSpeed: '',
+              newEta: '已完成',
+              newOutputPath: lastDownloadedPath.isNotEmpty ? lastDownloadedPath : null,
+            );
+            return;
+          }
+        }
+
         if (task.status != DownloadStatus.cancelled) {
           task.update(
             newStatus: DownloadStatus.failed,
@@ -297,5 +418,17 @@ class DownloadQueueManager extends ChangeNotifier {
       _activeCount--;
       _pumpQueue();
     }
+  }
+
+  /// 校验 URL 是否疑似广告流地址（排除广告商域名、贴片广告标记与广告路径）
+  static bool isSuspectAdUrl(String url) {
+    final lower = url.toLowerCase();
+    const adKeywords = [
+      'trafficjunky', 'doubleclick', 'googlesyndication', 'adzerk',
+      'scorecardresearch', 'spotx', '/ads/', '/ad/', '_ad.', '-ad.',
+      'preroll', 'vast', 'vmap', 'delivery', 'adcontent', 'ad_video',
+      'advertisement', 'adnxs', 'exponential', 'adservice', 'commercial',
+    ];
+    return adKeywords.any((k) => lower.contains(k));
   }
 }

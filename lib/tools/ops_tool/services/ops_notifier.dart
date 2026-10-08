@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../../services/context_services_bridge.dart';
 import 'argocd_service.dart';
 
 /// 运维工具的桌面通知通道。
@@ -49,26 +50,32 @@ class OpsNotifier {
     required String body,
     String? subtitle,
     bool isMac = true,
-    Future<void> Function(String args)? dispatch,
+    Future<void> Function({
+      required String title,
+      required String body,
+      String? subtitle,
+      String? actionType,
+      Map<String, dynamic>? payload,
+    })? dispatch,
   }) async {
     if (!isMac) return;
 
-    final safeBody = body.replaceAll('"', '\\"').replaceAll('\n', ' ');
-    final args = <String>[
-      '-e',
-      'display notification "$safeBody" with title "V8 运维工具"',
-    ];
-    if (subtitle != null && subtitle.trim().isNotEmpty) {
-      args.add('subtitle "${_safe(subtitle)}"');
-    }
-
     if (dispatch != null) {
-      await dispatch(args.join(' '));
+      await dispatch(
+        title: 'V8 运维工具',
+        subtitle: subtitle ?? title,
+        body: body,
+        actionType: 'ops',
+        payload: null,
+      );
       return;
     }
-    await Process.run('osascript', args);
-  }
 
-  static String _safe(String value) =>
-      value.replaceAll('"', '\\"').replaceAll('\n', ' ');
+    await ContextServicesBridge.instance.showNotification(
+      title: 'V8 运维工具',
+      subtitle: subtitle ?? title,
+      body: body,
+      actionType: 'ops',
+    );
+  }
 }

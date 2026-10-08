@@ -14,6 +14,9 @@ class MediaPlayRecord {
   final DateTime lastPlayedAt;
   final bool isFavorite;
   final String? subtitlePath;
+  final String? sourceUrl;
+  final String? platform;
+  final String? aiSummary;
 
   const MediaPlayRecord({
     required this.id,
@@ -26,6 +29,9 @@ class MediaPlayRecord {
     required this.lastPlayedAt,
     this.isFavorite = false,
     this.subtitlePath,
+    this.sourceUrl,
+    this.platform,
+    this.aiSummary,
   });
 
   Duration get duration => Duration(milliseconds: durationMs);
@@ -43,6 +49,9 @@ class MediaPlayRecord {
     DateTime? lastPlayedAt,
     bool? isFavorite,
     String? subtitlePath,
+    String? sourceUrl,
+    String? platform,
+    String? aiSummary,
   }) {
     return MediaPlayRecord(
       id: id,
@@ -55,6 +64,9 @@ class MediaPlayRecord {
       lastPlayedAt: lastPlayedAt ?? this.lastPlayedAt,
       isFavorite: isFavorite ?? this.isFavorite,
       subtitlePath: subtitlePath ?? this.subtitlePath,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      platform: platform ?? this.platform,
+      aiSummary: aiSummary ?? this.aiSummary,
     );
   }
 
@@ -69,6 +81,9 @@ class MediaPlayRecord {
     'lastPlayedAt': lastPlayedAt.toIso8601String(),
     'isFavorite': isFavorite,
     'subtitlePath': subtitlePath,
+    'sourceUrl': sourceUrl,
+    'platform': platform,
+    'aiSummary': aiSummary,
   };
 
   factory MediaPlayRecord.fromJson(Map<String, dynamic> json) {
@@ -83,6 +98,9 @@ class MediaPlayRecord {
       lastPlayedAt: DateTime.tryParse(json['lastPlayedAt'] as String? ?? '') ?? DateTime.now(),
       isFavorite: json['isFavorite'] as bool? ?? false,
       subtitlePath: json['subtitlePath'] as String?,
+      sourceUrl: json['sourceUrl'] as String?,
+      platform: json['platform'] as String?,
+      aiSummary: json['aiSummary'] as String?,
     );
   }
 }

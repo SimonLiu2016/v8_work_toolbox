@@ -35,6 +35,8 @@ class AiProviderConfig {
   final List<String> multimodalModels;
   final List<String> ttsModels;
   final List<String> sttModels;
+  final List<String> videoModels;
+  final List<String> imageModels;
 
   const AiProviderConfig({
     required this.id,
@@ -47,6 +49,8 @@ class AiProviderConfig {
     this.multimodalModels = const [],
     this.ttsModels = const [],
     this.sttModels = const [],
+    this.videoModels = const [],
+    this.imageModels = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -61,6 +65,8 @@ class AiProviderConfig {
       'multimodal': multimodalModels,
       'tts': ttsModels,
       'stt': sttModels,
+      'video': videoModels,
+      'image': imageModels,
     },
   };
 
@@ -77,6 +83,8 @@ class AiProviderConfig {
       multimodalModels: List<String>.from(models['multimodal'] ?? []),
       ttsModels: List<String>.from(models['tts'] ?? []),
       sttModels: List<String>.from(models['stt'] ?? []),
+      videoModels: List<String>.from(models['video'] ?? []),
+      imageModels: List<String>.from(models['image'] ?? []),
     );
   }
 
@@ -89,6 +97,8 @@ class AiProviderConfig {
     List<String>? multimodalModels,
     List<String>? ttsModels,
     List<String>? sttModels,
+    List<String>? videoModels,
+    List<String>? imageModels,
   }) {
     return AiProviderConfig(
       id: id,
@@ -101,6 +111,8 @@ class AiProviderConfig {
       multimodalModels: multimodalModels ?? this.multimodalModels,
       ttsModels: ttsModels ?? this.ttsModels,
       sttModels: sttModels ?? this.sttModels,
+      videoModels: videoModels ?? this.videoModels,
+      imageModels: imageModels ?? this.imageModels,
     );
   }
 }
@@ -379,7 +391,7 @@ class AiConfigStore {
       });
 
       // 确保所有标准槽位存在
-      for (final slot in ['text', 'multimodal', 'tts', 'stt']) {
+      for (final slot in ['text', 'multimodal', 'tts', 'stt', 'video', 'image']) {
         _slotBindings.putIfAbsent(slot, () => <SlotCandidate>[]);
       }
 
@@ -416,6 +428,8 @@ class AiConfigStore {
       'multimodal': <SlotCandidate>[],
       'tts': <SlotCandidate>[],
       'stt': <SlotCandidate>[],
+      'video': <SlotCandidate>[],
+      'image': <SlotCandidate>[],
     };
     _mcpClients = [McpClientConfig.firecrawlPreset()];
   }

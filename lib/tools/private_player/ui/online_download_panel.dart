@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import '../../../theme/app_theme.dart';
 import '../services/ai_subtitle_service.dart';
+import '../../ai_video_studio/services/studio_asset_bridge.dart';
 import '../services/download_queue_manager.dart';
 import '../services/private_storage_manager.dart';
 import '../services/ytdlp_video_parser.dart';
@@ -32,6 +33,10 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
   VideoFormatOption? _selectedFormat;
   String _parseError = '';
 
+  /// 「保存至剧集素材目录」勾选态。只有工坊有活跃剧集时才显示这一项。
+  bool _importToStudio = false;
+  String _studioShortcutLabel = '';
+
   // 批量下载状态
   final TextEditingController _batchController = TextEditingController();
 
@@ -40,6 +45,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
   @override
   void initState() {
     super.initState();
+    _studioShortcutLabel = StudioActiveProjectStore.instance.shortcutLabel;
     _tabController = TabController(length: 3, vsync: this);
   }
 
@@ -365,6 +371,15 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                               );
                             },
                           ),
+                        if (_studioShortcutLabel.isNotEmpty) ...[
+                          SizedBox(width: 12),
+                          _StudioImportToggle(
+                            label: _studioShortcutLabel,
+                            value: _importToStudio,
+                            onChanged: (v) =>
+                                setState(() => _importToStudio = v),
+                          ),
+                        ],
                         SizedBox(width: 12),
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
@@ -380,6 +395,7 @@ class _OnlineDownloadPanelState extends State<OnlineDownloadPanel>
                               title: info.title,
                               formatId: _selectedFormat?.formatId ?? 'bestvideo+bestaudio/best',
                               thumbnailUrl: info.thumbnailUrl,
+                              importToStudio: _importToStudio,
                             );
                             _tabController.animateTo(2);
                           },
@@ -965,6 +981,63 @@ class _OfflineSubtitleDialogState extends State<_OfflineSubtitleDialog> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「保存至剧集素材目录」勾选行（spec 16.1）。
+///
+/// 只有工坊里有活跃剧集时才出现。勾选只影响**是否额外复制一份**，不改变
+/// yt-dlp 的下载目录——用户原来的存放位置不受影响。
+class _StudioImportToggle extends StatelessWidget {
+  const _StudioImportToggle({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '复制一份到工坊当前集的 frames/ 目录，原下载目录文件不变',
+      child: InkWell(
+        borderRadius: AppTheme.borderRadiusSmall,
+        onTap: () => onChanged(!value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: value ? context.accentSubtle : context.bgInput,
+            borderRadius: AppTheme.borderRadiusSmall,
+            border: Border.all(
+              color: value ? context.accentText : context.borderSubtle,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                value
+                    ? Icons.check_box_outlined
+                    : Icons.check_box_outline_blank,
+                size: 16,
+                color: value ? context.accentText : context.textTertiary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: value ? context.accentText : context.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

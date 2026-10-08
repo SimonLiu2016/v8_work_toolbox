@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
+import '../../../services/proxy_settings.dart';
 import 'private_storage_manager.dart';
 import 'ytdlp_video_parser.dart';
 
@@ -34,15 +35,26 @@ class ThumbnailManager {
       return targetFile.path;
     }
 
-    // 1. 若提供了远程在线封面 URL，优先下载落盘
+    // 1. 若提供了远程在线封面 URL，优先使用支持代理的 HTTP 客户端下载落盘
     final posterUrl = remoteThumbnailUrl ?? (urlOrPath.startsWith('http') ? null : null);
     if (posterUrl != null && (posterUrl.startsWith('http://') || posterUrl.startsWith('https://'))) {
       try {
-        final res = await http.get(Uri.parse(posterUrl)).timeout(const Duration(seconds: 15));
-        if (res.statusCode == 200 && res.bodyBytes.length > 200) {
-          await targetFile.writeAsBytes(res.bodyBytes, flush: true);
-          _cachedPaths[urlOrPath] = targetFile.path;
-          return targetFile.path;
+        final client = HttpClient();
+        final proxy = ProxySettings.instance;
+        if (proxy.isConfigured) {
+          client.findProxy = (uri) => 'PROXY ${proxy.host}:${proxy.port};';
+        }
+        client.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+        final req = await client.getUrl(Uri.parse(posterUrl)).timeout(const Duration(seconds: 15));
+        req.headers.set('Referer', urlOrPath);
+        final res = await req.close().timeout(const Duration(seconds: 15));
+        if (res.statusCode == 200) {
+          final bytes = await res.fold<List<int>>([], (acc, chunk) => acc..addAll(chunk));
+          if (bytes.length > 200) {
+            await targetFile.writeAsBytes(bytes, flush: true);
+            _cachedPaths[urlOrPath] = targetFile.path;
+            return targetFile.path;
+          }
         }
       } catch (e) {
         debugPrint('下载远程视频封面失败: $e');
@@ -56,6 +68,35 @@ class ThumbnailManager {
       if (ok && targetFile.existsSync()) {
         _cachedPaths[urlOrPath] = targetFile.path;
         return targetFile.path;
+      }
+    }
+
+    // 3. 在线网络视频兜底：尝试使用 yt-dlp 快速拉取远程视频海报封面
+    if (isOnline) {
+      final ytdlp = await YtdlpVideoParser.instance.resolveYtdlpPath();
+      if (ytdlp != null) {
+        try {
+          final proxy = ProxySettings.instance;
+          final args = [
+            '--skip-download',
+            '--write-thumbnail',
+            '--convert-thumbnails', 'jpg',
+            '-o', targetFile.path,
+          ];
+          if (proxy.isConfigured) {
+            args.addAll(['--proxy', 'http://${proxy.host}:${proxy.port}']);
+          }
+          args.addAll([
+            '--user-agent',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            urlOrPath,
+          ]);
+          await Process.run(ytdlp, args);
+          if (targetFile.existsSync() && targetFile.lengthSync() > 100) {
+            _cachedPaths[urlOrPath] = targetFile.path;
+            return targetFile.path;
+          }
+        } catch (_) {}
       }
     }
 

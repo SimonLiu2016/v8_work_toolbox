@@ -22,7 +22,8 @@ Future<void> _openExternalUrl(String url) async {
 }
 
 class ScheduledTasksDrawer extends StatefulWidget {
-  const ScheduledTasksDrawer({super.key});
+  final int initialIndex;
+  const ScheduledTasksDrawer({super.key, this.initialIndex = 0});
 
   @override
   State<ScheduledTasksDrawer> createState() => _ScheduledTasksDrawerState();
@@ -35,7 +36,11 @@ class _ScheduledTasksDrawerState extends State<ScheduledTasksDrawer> with Single
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 2, vsync: this);
+    _tabCtrl = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialIndex.clamp(0, 1),
+    );
     _service.addListener(_onServiceUpdate);
   }
 

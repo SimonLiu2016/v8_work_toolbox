@@ -13,6 +13,21 @@ import 'private_player_view.dart';
 class PrivateMediaPlayerPage extends StatefulWidget {
   const PrivateMediaPlayerPage({super.key});
 
+  static void Function(String urlOrPath, {String? title, String? thumbnail})? onPlayRequest;
+  static String? pendingPlayPath;
+  static String? pendingPlayTitle;
+  static String? pendingPlayThumbnail;
+
+  static void requestPlay(String urlOrPath, {String? title, String? thumbnail}) {
+    if (onPlayRequest != null) {
+      onPlayRequest!(urlOrPath, title: title, thumbnail: thumbnail);
+    } else {
+      pendingPlayPath = urlOrPath;
+      pendingPlayTitle = title;
+      pendingPlayThumbnail = thumbnail;
+    }
+  }
+
   @override
   State<PrivateMediaPlayerPage> createState() => _PrivateMediaPlayerPageState();
 }
@@ -32,6 +47,20 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
     _mainTabController = TabController(length: 4, vsync: this);
     _playerController = PrivatePlayerController();
 
+    // 绑定全局媒体播放调用请求
+    PrivateMediaPlayerPage.onPlayRequest = _playMedia;
+    if (PrivateMediaPlayerPage.pendingPlayPath != null) {
+      final pPath = PrivateMediaPlayerPage.pendingPlayPath!;
+      final pTitle = PrivateMediaPlayerPage.pendingPlayTitle;
+      final pThumb = PrivateMediaPlayerPage.pendingPlayThumbnail;
+      PrivateMediaPlayerPage.pendingPlayPath = null;
+      PrivateMediaPlayerPage.pendingPlayTitle = null;
+      PrivateMediaPlayerPage.pendingPlayThumbnail = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _playMedia(pPath, title: pTitle, thumbnail: pThumb);
+      });
+    }
+
     // 注册媒体播放状态锁屏抑制器：播放中绝不触发自动锁定
     _playbackInhibitor = () => _playerController.isPlaying;
     _privacyService.registerPlaybackInhibitor(_playbackInhibitor);
@@ -48,6 +77,9 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
 
   @override
   void dispose() {
+    if (PrivateMediaPlayerPage.onPlayRequest == _playMedia) {
+      PrivateMediaPlayerPage.onPlayRequest = null;
+    }
     _privacyService.unregisterPlaybackInhibitor(_playbackInhibitor);
     _privacyService.isUnlockedNotifier.removeListener(_onPrivacyLockStateChanged);
     _mainTabController.dispose();
@@ -322,14 +354,36 @@ class _PrivateMediaPlayerPageState extends State<PrivateMediaPlayerPage>
                   child: Icon(Icons.star_rounded, color: Colors.amber, size: 14),
                 ),
               ),
-              title: Text(
-                item.title,
-                style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              title: Row(
+                children: [
+                  if (item.platform != null && item.platform!.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        color: context.accentSolid.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(
+                        item.platform!,
+                        style: TextStyle(color: context.accentText, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                  Expanded(
+                    child: Text(
+                      item.title,
+                      style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
               subtitle: Text(
-                item.urlOrPath,
+                item.aiSummary != null && item.aiSummary!.isNotEmpty
+                    ? '${item.aiSummary!} • ${item.urlOrPath}'
+                    : item.urlOrPath,
                 style: TextStyle(color: context.textSecondary, fontSize: 11),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

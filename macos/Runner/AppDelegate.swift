@@ -6,7 +6,7 @@ import Foundation
 import UserNotifications
 
 @main
-class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
+class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCenterDelegate {
 
   static weak var shared: AppDelegate?
 
@@ -36,6 +36,7 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     // 导致整个生命周期初始化中断，进而使托盘图标和热键均无法加载。
     AppDelegate.shared = self
 
+    NSUserNotificationCenter.default.delegate = self
     setupStatusItem()
     installCarbonEventHandlerIfNeeded()
     // 默认注册 ⌥Space (modifiers: 2048, keyCode: 49)
@@ -523,14 +524,58 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
     }
   }
 
-  // MARK: - Native Notification for Note Capture
+  // MARK: - Native Notification Support
 
   func showNoteNotification(title: String, notebook: String) {
+    deliverNotification(
+      title: "已保存笔记 📝",
+      subtitle: nil,
+      body: "「\(title)」已存入「\(notebook)」",
+      actionType: "note",
+      payload: ["title": title, "notebook": notebook]
+    )
+  }
+
+  func deliverNotification(
+    title: String,
+    subtitle: String?,
+    body: String,
+    actionType: String,
+    payload: [String: Any]
+  ) {
     let notification = NSUserNotification()
-    notification.title = "已保存笔记 📝"
-    notification.informativeText = "「\(title)」已存入「\(notebook)」"
+    notification.title = title
+    if let subtitle = subtitle, !subtitle.isEmpty {
+      notification.subtitle = subtitle
+    }
+    notification.informativeText = body
     notification.soundName = NSUserNotificationDefaultSoundName
+    notification.userInfo = [
+      "actionType": actionType,
+      "payload": payload,
+    ]
     NSUserNotificationCenter.default.deliver(notification)
+  }
+
+  // MARK: - NSUserNotificationCenterDelegate
+
+  func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
+    return true
+  }
+
+  func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
+    showMainWindow()
+
+    if let userInfo = notification.userInfo {
+      let actionType = userInfo["actionType"] as? String ?? ""
+      let payload = userInfo["payload"] as? [String: Any] ?? [:]
+      DispatchQueue.main.async { [weak self] in
+        self?.contextServicesChannel?.invokeMethod("notificationAction", arguments: [
+          "actionType": actionType,
+          "payload": payload,
+        ])
+      }
+    }
   }
 
   // MARK: - Incoming URL Schemes (v8toolbox://)
@@ -828,15 +873,136 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate {
         ])
       case "showNotification":
         let args = call.arguments as? [String: Any] ?? [:]
-        let title = args["title"] as? String ?? ""
-        let notebook = args["notebook"] as? String ?? "默认笔记本"
-        self.showNoteNotification(title: title, notebook: notebook)
+        let title: String
+        let body: String
+        let subtitle = args["subtitle"] as? String
+        let actionType = args["actionType"] as? String ?? ""
+        let payload = args["payload"] as? [String: Any] ?? [:]
+
+        if let notebook = args["notebook"] as? String {
+          let noteTitle = args["title"] as? String ?? ""
+          title = "已保存笔记 📝"
+          body = "「\(noteTitle)」已存入「\(notebook)」"
+        } else {
+          title = args["title"] as? String ?? "V8 工作工具箱"
+          body = args["body"] as? String ?? ""
+        }
+        self.deliverNotification(
+          title: title,
+          subtitle: subtitle,
+          body: body,
+          actionType: actionType,
+          payload: payload
+        )
         result(true)
       default:
         result(FlutterMethodNotImplemented)
       }
     }
     self.contextServicesChannel = contextServices
+
+    // 4. 隐私空间私密浏览器通道
+    let browserChannel = FlutterMethodChannel(
+      name: "v8_work_toolbox/private_browser",
+      binaryMessenger: messenger
+    )
+    browserChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "openBrowser":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let urlStr = args["url"] as? String ?? "https://www.youtube.com"
+        DispatchQueue.main.async {
+          if PrivateBrowserWindowController.shared == nil {
+            PrivateBrowserWindowController.shared = PrivateBrowserWindowController(channel: browserChannel)
+          }
+          guard let controller = PrivateBrowserWindowController.shared else {
+            result(false)
+            return
+          }
+          if let url = URL(string: urlStr) {
+            controller.webView.load(URLRequest(url: url))
+          }
+          controller.showWindow(nil)
+          controller.window?.makeKeyAndOrderFront(nil)
+          NSApp.activate(ignoringOtherApps: true)
+          result(true)
+        }
+      case "loadUrl":
+        guard let args = call.arguments as? [String: Any],
+              let urlStr = args["url"] as? String,
+              let url = URL(string: urlStr) else {
+          result(FlutterError(code: "INVALID_ARGS", message: "url required", details: nil))
+          return
+        }
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.webView.load(URLRequest(url: url))
+          result(true)
+        }
+      case "closeBrowser":
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.close()
+          PrivateBrowserWindowController.shared = nil
+          result(true)
+        }
+      case "mountSubtitles":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let segs = args["subtitles"] as? [[String: Any]] ?? []
+        DispatchQueue.main.async {
+          guard let ctrl = PrivateBrowserWindowController.shared else {
+            result(false)
+            return
+          }
+          ctrl.subtitles = segs
+          ctrl.showSubtitles = true
+          result(true)
+        }
+      case "toggleSubtitles":
+        let visible = (call.arguments as? [String: Any])?["visible"] as? Bool ?? false
+        DispatchQueue.main.async {
+          guard let ctrl = PrivateBrowserWindowController.shared else {
+            result(false)
+            return
+          }
+          ctrl.showSubtitles = visible
+          if !visible {
+            ctrl.subtitleTextLayer?.isHidden = true
+          }
+          result(true)
+        }
+      case "updateDownloadStatus":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let progress = args["progress"] as? Double ?? 0.0
+        let status = args["status"] as? String ?? ""
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.updateDownloadStatus(progress: progress, status: status)
+          result(true)
+        }
+      case "updateFavoriteStatus":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let isFav = args["isFavorite"] as? Bool ?? false
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.updateFavoriteStatus(isFavorite: isFav)
+          result(true)
+        }
+      case "goBack":
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.webView.goBack()
+          result(true)
+        }
+      case "goForward":
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.webView.goForward()
+          result(true)
+        }
+      case "reload":
+        DispatchQueue.main.async {
+          PrivateBrowserWindowController.shared?.webView.reload()
+          result(true)
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
 
     channelInitialized = true
     print("MethodChannels已初始化")

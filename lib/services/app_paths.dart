@@ -148,6 +148,42 @@ abstract final class AppPaths {
   static Directory get readerConfigDir =>
       Directory(p.join(root.path, 'reader_config'));
 
+  /// 隐私空间私密浏览器目录（`tools/private_browser/`）。
+  static Directory get privateBrowserDir =>
+      Directory(p.join(root.path, 'PrivateBrowser'));
+
+  /// 隐私空间私密浏览器 SQLite 数据库文件。
+  static File get privateBrowserDbFile =>
+      File(p.join(privateBrowserDir.path, 'PrivateBrowser.sqlite'));
+
+  /// 隐私空间私密浏览器缩略图与图标缓存目录。
+  static Directory get privateBrowserThumbnailsDir =>
+      Directory(p.join(privateBrowserDir.path, 'thumbnails'));
+
+  /// 安全工具箱根目录（`tools/security_toolbox/`）。
+  static Directory get securityDir => Directory(p.join(root.path, 'security'));
+
+  /// 安全工具箱 SQLite 库（`tools/security_toolbox/database/security_database.dart`）。
+  ///
+  /// 与 note.db 分开：渗透会话的 Finding 数量级远高于笔记，导出与备份互不影响。
+  static File get securityDbFile =>
+      File(p.join(securityDir.path, 'security.db'));
+
+  /// 脚本模板库（`tools/security_toolbox/services/script_template_store.dart`）。
+  static File get scriptTemplatesFile =>
+      File(p.join(securityDir.path, 'script_templates.json'));
+
+  /// AI 短视频工坊根目录（`tools/ai_video_studio/`）。
+  static Directory get videoStudioDir => Directory(p.join(root.path, 'video_studio'));
+
+  /// 全局公共库：跨剧通用资产（BGM / SFX / 风格预设）。
+  static Directory get videoStudioGlobalLibDir =>
+      Directory(p.join(videoStudioDir.path, 'global_library'));
+
+  /// 连续剧 IP 主库：每部剧一个子目录（`series_library/<series-id>/`）。
+  static Directory get videoStudioSeriesDir =>
+      Directory(p.join(videoStudioDir.path, 'series_library'));
+
   /// 全部导出路径，供回归测试断言单一性。
   static List<File> get allFiles => [
     aiConfigFile,
@@ -162,6 +198,9 @@ abstract final class AppPaths {
     aiLogFile,
     newsBriefingsFile,
     aiAssistantHistoryFile,
+    privateBrowserDbFile,
+    securityDbFile,
+    scriptTemplatesFile,
   ];
 
   /// 全部导出目录，供回归测试断言单一性。
@@ -172,5 +211,11 @@ abstract final class AppPaths {
     opsToolDir,
     privateMediaDir,
     readerConfigDir,
+    privateBrowserDir,
+    privateBrowserThumbnailsDir,
+    securityDir,
+    videoStudioDir,
+    videoStudioGlobalLibDir,
+    videoStudioSeriesDir,
   ];
 }

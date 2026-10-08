@@ -7,13 +7,16 @@ import '../bc_config_shell.dart';
 import '../bc_config_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
-import '../kma_package_tool.dart';
 import 'ai_assistant/ui/ai_assistant_page.dart';
+import 'ai_video_studio/ui/studio_shell.dart';
 import 'notebook/ui/notebook_page.dart';
 import 'ops_tool/ui/ops_tool_main_page.dart';
 import 'password/ui/password_page.dart';
+import 'private_browser/ui/private_browser_page.dart';
+import 'private_browser/ui/video_library_view.dart';
 import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
+import 'security_toolbox/ui/security_toolbox_main_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
@@ -83,21 +86,6 @@ class BcConfigShellToolDefinition extends ToolDefinition {
   ToolCategory get category => ToolCategory.system;
   @override
   Widget buildPage(BuildContext context) => const BcConfigShellPage();
-}
-
-class KmaPackageToolDefinition extends ToolDefinition {
-  @override
-  String get id => 'kma-package';
-  @override
-  String get title => 'KMA 包生成';
-  @override
-  String get subtitle => '生成加密的 KMA 资源包';
-  @override
-  IconData get icon => Icons.archive;
-  @override
-  ToolCategory get category => ToolCategory.build;
-  @override
-  Widget buildPage(BuildContext context) => const KmaPackageToolPage();
 }
 
 class ImageResizeToolDefinition extends ToolDefinition {
@@ -190,6 +178,36 @@ class PrivateMediaPlayerToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const PrivateMediaPlayerPage();
 }
 
+class PrivateBrowserToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'private-browser';
+  @override
+  String get title => '私密浏览器';
+  @override
+  String get subtitle => '内置隐私浏览器，无痕浏览、视频探测、一键下载、实时字幕';
+  @override
+  IconData get icon => Icons.public_rounded;
+  @override
+  ToolCategory get category => ToolCategory.privacy;
+  @override
+  Widget buildPage(BuildContext context) => const PrivateBrowserPage();
+}
+
+class VideoLibraryToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'video-library';
+  @override
+  String get title => '私密视频库';
+  @override
+  String get subtitle => '多级分类与标签管理，AI 智能打标与语义搜索';
+  @override
+  IconData get icon => Icons.video_library_rounded;
+  @override
+  ToolCategory get category => ToolCategory.privacy;
+  @override
+  Widget buildPage(BuildContext context) => const VideoLibraryView();
+}
+
 class AiAssistantToolDefinition extends ToolDefinition {
   @override
   String get id => kToolIdAiAssistant;
@@ -203,6 +221,51 @@ class AiAssistantToolDefinition extends ToolDefinition {
   ToolCategory get category => ToolCategory.ai;
   @override
   Widget buildPage(BuildContext context) => const AiAssistantPage();
+}
+
+class AiVideoStudioToolDefinition extends ToolDefinition {
+  AiVideoStudioToolDefinition();
+
+  @override
+  String get id => kToolIdAiVideoStudio;
+  @override
+  String get title => 'AI 短视频工坊';
+  @override
+  String get subtitle => '从创意到成片：剧本分镜、角色资产、配音字幕与双轨交付';
+  @override
+  IconData get icon => Icons.movie_creation_outlined;
+  @override
+  ToolCategory get category => ToolCategory.ai;
+
+  // 独立窗口：FFmpeg 合成与云端图生视频都是分钟级任务，主窗口被其他工具挤占
+  // 时不该中断；合成进度条也需要一个不会被切走的可见区域。
+  @override
+  bool get openInNewWindow => true;
+
+  @override
+  Future<void> openNewWindow() async {
+    try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == kToolIdAiVideoStudio) {
+          await window.show();
+          return;
+        }
+      }
+      final controller = await WindowController.create(
+        WindowConfiguration(
+          arguments: kToolIdAiVideoStudio,
+          hiddenAtLaunch: false,
+        ),
+      );
+      await controller.show();
+    } catch (e) {
+      debugPrint('Failed to open AI video studio window: $e');
+    }
+  }
+
+  @override
+  Widget buildPage(BuildContext context) => const StudioShellPage();
 }
 
 class NotebookToolDefinition extends ToolDefinition {
@@ -347,23 +410,68 @@ class OpsToolDefinition extends ToolDefinition {
 /// 工具注册表 (唯一的编译期注册点)
 /// ---------------------------------------------------------------------------
 
+class SecurityToolboxDefinition extends ToolDefinition {
+  @override
+  String get id => 'security-toolbox';
+  @override
+  String get title => '安全工具箱';
+  @override
+  String get subtitle => '渗透测试工作台：侦察、漏洞扫描、利用、情报与报告';
+  @override
+  IconData get icon => Icons.security_outlined;
+  @override
+  ToolCategory get category => ToolCategory.security;
+
+  // 独立窗口：工具链执行是长进程，主窗口被其他工具挤占时不该中断扫描。
+  @override
+  bool get openInNewWindow => true;
+
+  @override
+  Future<void> openNewWindow() async {
+    try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == 'security-toolbox') {
+          await window.show();
+          return;
+        }
+      }
+      final controller = await WindowController.create(
+        WindowConfiguration(
+          arguments: 'security-toolbox',
+          hiddenAtLaunch: false,
+        ),
+      );
+      await controller.show();
+    } catch (e) {
+      debugPrint('Failed to open security toolbox window: $e');
+    }
+  }
+
+  @override
+  Widget buildPage(BuildContext context) => const SecurityToolboxMainPage();
+}
+
 class ToolRegistry {
   ToolRegistry._();
 
   static final List<ToolDefinition> tools = <ToolDefinition>[
     // 隐私空间
     PrivateMediaPlayerToolDefinition(),
+    PrivateBrowserToolDefinition(),
+    VideoLibraryToolDefinition(),
     PasswordVaultToolDefinition(),
+    // 安全工具
+    SecurityToolboxDefinition(),
     // 文件处理
     DocAudioReaderToolDefinition(),
     BatchRenameToolDefinition(),
     FolderCompareToolDefinition(),
     ImageResizeToolDefinition(),
-    // 包与构建
-    KmaPackageToolDefinition(),
     // 系统与配置
     OpsToolDefinition(),
     AiAssistantToolDefinition(),
+    AiVideoStudioToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
     NotebookToolDefinition(),
     VocabBookToolDefinition(),

@@ -31,10 +31,16 @@ class ContextServicesBridge {
     String? title,
   })? onSaveNote;
 
+  /// 原生通知点击回调：actionType 为业务动作类型（如 'news'），payload 为关联数据
+  void Function(String actionType, Map<String, dynamic> payload)? onNotificationAction;
+
   /// 初始化，监听来自原生层的方法调用
   void init() {
     _channel.setMethodCallHandler(_handleMethodCall);
   }
+
+  @visibleForTesting
+  Future<dynamic> handleMethodCallForTest(MethodCall call) => _handleMethodCall(call);
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     try {
@@ -74,6 +80,17 @@ class ContextServicesBridge {
             url: args['url'] as String?,
             title: args['title'] as String?,
           );
+          return null;
+
+        case 'notificationAction':
+          final args = call.arguments is Map
+              ? Map<String, dynamic>.from(call.arguments as Map)
+              : <String, dynamic>{};
+          final actionType = args['actionType'] as String? ?? '';
+          final payload = args['payload'] is Map
+              ? Map<String, dynamic>.from(args['payload'] as Map)
+              : <String, dynamic>{};
+          onNotificationAction?.call(actionType, payload);
           return null;
 
         default:
@@ -123,12 +140,25 @@ class ContextServicesBridge {
   }
 
   /// 发送 macOS 原生横幅通知
-  Future<void> showNotification({required String title, required String notebook}) async {
+  Future<void> showNotification({
+    required String title,
+    String? subtitle,
+    String? body,
+    String? notebook,
+    String? actionType,
+    Map<String, dynamic>? payload,
+  }) async {
     try {
-      await _channel.invokeMethod('showNotification', {
+      final args = <String, dynamic>{
         'title': title,
-        'notebook': notebook,
-      });
+      };
+      if (subtitle != null) args['subtitle'] = subtitle;
+      if (body != null) args['body'] = body;
+      if (notebook != null) args['notebook'] = notebook;
+      if (actionType != null) args['actionType'] = actionType;
+      if (payload != null) args['payload'] = payload;
+
+      await _channel.invokeMethod('showNotification', args);
     } catch (e) {
       debugPrint('[ContextServicesBridge] showNotification error: $e');
     }

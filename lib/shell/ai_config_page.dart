@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../components/app_components.dart';
 import '../services/ai_config_store.dart';
 import '../services/ai_service.dart';
-import '../services/app_http_client.dart';
 import '../services/keychain_service.dart';
 import '../services/mcp_service.dart';
 import '../theme/app_theme.dart';
@@ -290,6 +288,16 @@ class _AiConfigPageState extends State<AiConfigPage>
       },
       {'key': 'tts', 'label': '文本转语音 (TTS)', 'desc': '用于语音合成与播报'},
       {'key': 'stt', 'label': '语音识别 (STT)', 'desc': '用于音频转文字与语音输入'},
+      {
+        'key': 'video',
+        'label': '视频生成模型 (Video)',
+        'desc': '用于短视频工坊分镜视频生成，支持 SenseAudio / 可灵等',
+      },
+      {
+        'key': 'image',
+        'label': '图像生成模型 (Image)',
+        'desc': '用于短视频工坊分镜关键帧生成，支持 SiliconFlow (FLUX / SD) / OpenAI (DALL-E 3) 等',
+      },
     ];
 
     return ListView(
@@ -659,7 +667,29 @@ class _AiConfigPageState extends State<AiConfigPage>
                 keychainKeyId: '',
               ),
             );
-            availableModels = provider.textModels;
+            if (slotKey == 'video') {
+              availableModels = provider.videoModels.isNotEmpty
+                  ? provider.videoModels
+                  : provider.textModels;
+            } else if (slotKey == 'image') {
+              availableModels = provider.imageModels.isNotEmpty
+                  ? provider.imageModels
+                  : provider.textModels;
+            } else if (slotKey == 'tts') {
+              availableModels = provider.ttsModels.isNotEmpty
+                  ? provider.ttsModels
+                  : provider.textModels;
+            } else if (slotKey == 'stt') {
+              availableModels = provider.sttModels.isNotEmpty
+                  ? provider.sttModels
+                  : provider.textModels;
+            } else if (slotKey == 'multimodal') {
+              availableModels = provider.multimodalModels.isNotEmpty
+                  ? provider.multimodalModels
+                  : provider.textModels;
+            } else {
+              availableModels = provider.textModels;
+            }
           }
 
           return AlertDialog(
@@ -1044,6 +1074,12 @@ class _AiConfigPageState extends State<AiConfigPage>
     final modelsCtrl = TextEditingController(
       text: provider?.textModels.join(', ') ?? '',
     );
+    final videoModelsCtrl = TextEditingController(
+      text: provider?.videoModels.join(', ') ?? '',
+    );
+    final imageModelsCtrl = TextEditingController(
+      text: provider?.imageModels.join(', ') ?? '',
+    );
     AiProtocolType protocol = provider?.protocol ?? AiProtocolType.openai;
     bool isDetecting = false;
     bool isSaving = false;
@@ -1140,6 +1176,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                             protocol = AiProtocolType.openai;
                             urlCtrl.text = 'https://api.openai.com/v1';
                             modelsCtrl.text = 'gpt-4o, gpt-4o-mini';
+                            imageModelsCtrl.text = 'dall-e-3, dall-e-2';
                           });
                         },
                       ),
@@ -1200,6 +1237,32 @@ class _AiConfigPageState extends State<AiConfigPage>
                             urlCtrl.text = 'https://api.siliconflow.cn/v1';
                             modelsCtrl.text =
                                 'deepseek-ai/DeepSeek-V3, deepseek-ai/DeepSeek-R1';
+                            imageModelsCtrl.text =
+                                'black-forest-labs/FLUX.1-schnell, black-forest-labs/FLUX.1-dev, stabilityai/stable-diffusion-3-5-large';
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.auto_awesome_mosaic_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'SenseAudio(视/图多模态)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'SenseAudio';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = 'https://api.senseaudio.cn/v1';
+                            modelsCtrl.text =
+                                'doubao-seedance-2-0-260128, senseaudio-image-2.0-260319';
+                            videoModelsCtrl.text =
+                                'doubao-seedance-2-0-260128, doubao-seedance-1-5-pro';
+                            imageModelsCtrl.text =
+                                'senseaudio-image-2.0-260319, doubao-seedream-5-0-260128, sensenova-u1-fast';
                           });
                         },
                       ),
@@ -1259,13 +1322,13 @@ class _AiConfigPageState extends State<AiConfigPage>
                               // 编辑态且字段为空：先把已存密钥载入输入框再显示，
                               // 否则用户点了眼睛也只看到一片空白。
                               if (!keyVisible &&
-                                  isEditing &&
+                                  provider != null &&
                                   keyCtrl.text.isEmpty &&
                                   !keyLoadedFromStore) {
                                 setDialogState(() => keyLoading = true);
                                 try {
                                   final stored = await KeychainService.instance
-                                      .readSecret(provider!.keychainKeyId);
+                                      .readSecret(provider.keychainKeyId);
                                   if (stored == null || stored.isEmpty) {
                                     if (ctx.mounted) {
                                       ScaffoldMessenger.of(ctx).showSnackBar(
@@ -1401,6 +1464,22 @@ class _AiConfigPageState extends State<AiConfigPage>
                     maxLines: 2,
                     hintText: '如 gpt-4o, gpt-4o-mini',
                   ),
+                  const SizedBox(height: AppTheme.space12),
+                  const Text('视频生成模型 (逗号分隔，可选)', style: AppTheme.fontCaption),
+                  const SizedBox(height: AppTheme.space4),
+                  AppTextField(
+                    controller: videoModelsCtrl,
+                    maxLines: 2,
+                    hintText: '如 doubao-seedance-2-0-260128, doubao-seedance-1-5-pro',
+                  ),
+                  const SizedBox(height: AppTheme.space12),
+                  const Text('图像生成模型 (逗号分隔，可选)', style: AppTheme.fontCaption),
+                  const SizedBox(height: AppTheme.space4),
+                  AppTextField(
+                    controller: imageModelsCtrl,
+                    maxLines: 2,
+                    hintText: '如 black-forest-labs/FLUX.1-schnell, dall-e-3',
+                  ),
                 ],
               ),
             ),
@@ -1427,6 +1506,16 @@ class _AiConfigPageState extends State<AiConfigPage>
                             .map((s) => s.trim())
                             .where((s) => s.isNotEmpty)
                             .toList();
+                        final videoModels = videoModelsCtrl.text
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList();
+                        final imageModels = imageModelsCtrl.text
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList();
 
                         final newProv = AiProviderConfig(
                           id: id,
@@ -1437,6 +1526,12 @@ class _AiConfigPageState extends State<AiConfigPage>
                           baseUrl: urlCtrl.text.trim(),
                           keychainKeyId: keyId,
                           textModels: models,
+                          multimodalModels:
+                              provider?.multimodalModels ?? const [],
+                          ttsModels: provider?.ttsModels ?? const [],
+                          sttModels: provider?.sttModels ?? const [],
+                          videoModels: videoModels,
+                          imageModels: imageModels,
                         );
 
                         AiService.instance.invalidateProviderEndpoint(id);

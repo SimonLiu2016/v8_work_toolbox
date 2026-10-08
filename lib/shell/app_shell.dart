@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../services/context_services_bridge.dart';
 import '../services/privacy_security_service.dart';
 import '../services/settings_store.dart';
 import '../theme/app_theme.dart';
+import '../tools/ai_assistant/ui/ai_assistant_page.dart';
 import '../tools/network_proxy/ui/network_proxy_page.dart';
 import '../tools/registry.dart';
 import 'activity_bar.dart';
@@ -36,6 +38,8 @@ class AppShell extends StatefulWidget {
 }
 
 class AppShellState extends State<AppShell> {
+  static AppShellState? current;
+
   ActivityViewType _currentView = ActivityViewType.all;
   ToolCategory? _currentCategory;
   late String _selectedToolId;
@@ -52,6 +56,8 @@ class AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    current = this;
+    ContextServicesBridge.instance.onNotificationAction = _handleNotificationAction;
     PrivacySecurityService.instance.isUnlockedNotifier.addListener(_onUnlockStateChanged);
     _recentToolIds = List<String>.from(widget.initialRecentToolIds);
 
@@ -77,8 +83,20 @@ class AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    if (current == this) current = null;
+    if (ContextServicesBridge.instance.onNotificationAction == _handleNotificationAction) {
+      ContextServicesBridge.instance.onNotificationAction = null;
+    }
     PrivacySecurityService.instance.isUnlockedNotifier.removeListener(_onUnlockStateChanged);
     super.dispose();
+  }
+
+  void _handleNotificationAction(String actionType, Map<String, dynamic> payload) {
+    debugPrint('[AppShell] onNotificationAction: actionType=$actionType, payload=$payload');
+    if (actionType == 'news') {
+      selectTool(kToolIdAiAssistant);
+      AiAssistantNavigation.instance.openScheduledTasksDrawer(initialIndex: 1);
+    }
   }
 
   void _onUnlockStateChanged() {
