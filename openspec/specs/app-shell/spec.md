@@ -37,7 +37,13 @@
 #### Scenario: 工具按分类分组
 
 - **WHEN** 用户查看侧边栏
-- **THEN** 工具按分类（如 文件、包与构建、系统）分组展示，组标题可辨识
+- **THEN** 工具按分类（如 文件处理、系统与配置）分组展示，组标题可辨识。
+
+#### Scenario: 分类不出现空置入口
+
+- **WHEN** 某个分类下的最后一个工具被移除
+- **THEN** 该分类本身 SHALL 随之从可切换的分类集合中消失
+- **AND** 侧边栏 MUST NOT 留下一个点进去没有任何工具的分类入口
 
 #### Scenario: 工具集自洽不依赖硬编码枚举
 
@@ -60,7 +66,7 @@
 
 ### Requirement: 最近使用
 
-应用 SHALL 记录工具使用顺序，并在侧边栏或搜索默认态中优先展示最近使用的工具。最近使用记录 MUST 持久化，重启后保留。最近使用中引用已不再注册的工具标识时，系统 MUST NOT 显示一个无法打开的条目，MUST NOT 崩溃，且 MUST 将其重定向到功能承接的工具而非静默丢弃用户的使用记录。
+应用 SHALL 记录工具使用顺序，并在侧边栏或搜索默认态中优先展示最近使用的工具。最近使用记录 MUST 持久化，重启后保留。最近使用中引用已不再注册的工具标识时，系统 MUST NOT 显示一个无法打开的条目，MUST NOT 崩溃。仅当被移除工具的功能被另一个工具承接时，系统 SHALL 将其重定向到该承接工具；无承接工具时，历史标识 SHALL 被静默忽略——MUST NOT 为了填满条目而重定向到功能不相关的工具。
 
 #### Scenario: 最近使用排序
 
@@ -71,6 +77,12 @@
 
 - **WHEN** 最近使用记录中保存了"清理构建产物"的历史条目，而该工具已并入智能磁盘瘦身
 - **THEN** 最近使用区域呈现"智能磁盘瘦身"，点击后打开智能磁盘瘦身工具，且不出现空条目或报错
+
+#### Scenario: 无承接者的已移除工具标识被忽略
+
+- **WHEN** 最近使用记录或使用次数中保存了一个已移除且无功能承接者的工具标识（如"KMA 包生成"）
+- **THEN** 该标识不出现在任何可见区域，不产生空条目、不报错、不跳转到功能不相关的工具
+- **AND** 应用仍能正常启动并选中一个已注册的工具
 
 ### Requirement: Uncaught async failures leave a diagnostic trace
 Every window entry point SHALL install a global error handler so that an uncaught exception from an asynchronous operation (for example one started from a button handler) is recorded with a diagnostic message, rather than being silently swallowed.

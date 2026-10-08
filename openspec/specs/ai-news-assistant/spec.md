@@ -47,7 +47,11 @@ The application SHALL support configuring scheduled information retrieval tasks 
 
 #### Scenario: User notification on fresh news
 - **WHEN** a scheduled retrieval task finishes and detects newly discovered items
-- **THEN** the application increments the unread notification badge on the AI assistant tab, displays an in-app alert banner, and sends a macOS system notification with the brief summary.
+- **THEN** the application increments the unread notification badge on the AI assistant tab, displays an in-app alert banner, and sends a native macOS desktop notification attributed to V8 Work Toolbox.
+
+#### Scenario: Clicking news notification opens briefing history
+- **WHEN** user clicks the news notification or clicks "Show"
+- **THEN** the application main window is brought to the foreground, switches the active tool to AI News Assistant, and opens the scheduled tasks drawer showing the news briefing history.
 
 #### Scenario: Scheduled briefing markdown is visually rendered
 - **WHEN** a scheduled retrieval task's summarized digest contains markdown constructs such as headings, emphasis, lists, or inline code
