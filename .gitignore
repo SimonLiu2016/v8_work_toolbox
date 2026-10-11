@@ -111,3 +111,6 @@ Icon?
 
 # Bundled mihomo core binary (43MB, provisioned locally, not versioned)
 macos/Runner/Resources/
+
+# Node sidecar dependencies (registrar_sidecar; 100MB+, restored via npm install)
+packages/registrar_sidecar/node_modules/
