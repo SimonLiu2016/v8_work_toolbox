@@ -20,10 +20,17 @@
 
 应用 SHALL 提供工具注册表机制，每个工具以声明方式注册元数据（标识、名称、描述、图标、分类、页面构建器）。新增或移除一个工具 MUST NOT 需要修改外壳导航代码。
 
+注册表 SHALL 同时暴露工具的唯一标识作为持久化配置键与代理通道键；新增工具时其标识 SHALL 在 `tool_definition.dart` 中以常量声明，而不是在使用处散落字面量。
+
 #### Scenario: 注册即出现
 
 - **WHEN** 开发者向注册表注册一个新工具
 - **THEN** 该工具自动出现在侧边栏对应分类下，可被导航打开，无需改动外壳代码
+
+#### Scenario: 新增工具标识有单一来源
+
+- **WHEN** 新增一个需要持久化配置或代理开关的工具
+- **THEN** 该工具的标识以常量形式集中声明，配置读取、代理判断与注册表条目引用同一常量
 
 ### Requirement: 侧边栏导航与分类分组
 
@@ -37,7 +44,7 @@
 #### Scenario: 工具按分类分组
 
 - **WHEN** 用户查看侧边栏
-- **THEN** 工具按分类（如 文件处理、系统与配置）分组展示，组标题可辨识。
+- **THEN** 工具按分类（如 文件处理、系统与配置）分组展示，组标题可辨识
 
 #### Scenario: 分类不出现空置入口
 
@@ -83,6 +90,11 @@
 - **WHEN** 最近使用记录或使用次数中保存了一个已移除且无功能承接者的工具标识（如"KMA 包生成"）
 - **THEN** 该标识不出现在任何可见区域，不产生空条目、不报错、不跳转到功能不相关的工具
 - **AND** 应用仍能正常启动并选中一个已注册的工具
+
+#### Scenario: 新增工具进入常用集合
+
+- **WHEN** 新增一个工具并被用户使用
+- **THEN** 该工具与其他工具一样参与常用统计与排序，不需要为它单独维护一份工具清单
 
 ### Requirement: Uncaught async failures leave a diagnostic trace
 Every window entry point SHALL install a global error handler so that an uncaught exception from an asynchronous operation (for example one started from a button handler) is recorded with a diagnostic message, rather than being silently swallowed.

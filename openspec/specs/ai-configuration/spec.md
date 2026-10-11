@@ -14,11 +14,15 @@ The application SHALL store all sensitive provider API keys and authentication t
 - **THEN** the system surfaces a clear error identifying the recovery path (restore from key backup), and does not silently fall back to an obfuscated plaintext-equivalent store; previously stored credentials are not silently exposed or overwritten.
 
 ### Requirement: Multi-protocol AI provider management
-The AI configuration module SHALL support configuring multiple providers adhering to OpenAI-compatible, Anthropic, or Google Gemini protocols, executing authentic HTTP connection handshakes and chat requests according to each protocol's API specification, with adaptive path normalization and dual authentication header compatibility for third-party reverse proxies and gateways.
+The AI configuration module SHALL support configuring multiple providers adhering to OpenAI-compatible, Anthropic, Google Gemini, or Agnes protocols, executing authentic HTTP connection handshakes and chat/image/video requests according to each protocol's API specification, with adaptive path normalization, fixed endpoint conventions, and credential compatibility for third-party reverse proxies and gateways.
 
 #### Scenario: Adding an OpenAI-compatible provider
 - **WHEN** user specifies an endpoint URL, protocol type "OpenAI Compatible", and associated credentials
 - **THEN** the provider is persisted in `ai_config.json`, validated via a real HTTP `/models` connection test, and made available for model discovery.
+
+#### Scenario: Adding an Agnes provider protocol
+- **WHEN** user selects protocol type "Agnes" (or quick preset "Agnes / 中转站 (视/图多模态)")
+- **THEN** the provider supports text chat via OpenAI-compatible endpoints (`/v1/chat/completions`), image generation via `/v1/images/generations` with standard payload `{model, prompt}`, and video generation via `/v1/videos`.
 
 #### Scenario: Adding an Anthropic provider
 - **WHEN** user specifies an Anthropic API Key and baseUrl (or defaults to `https://api.anthropic.com`)
@@ -68,7 +72,7 @@ The application SHALL allow discovering available models via authentic provider 
 - **THEN** each legacy binding is automatically migrated to a single-element candidate list, and the config is re-saved in the new format without data loss
 
 ### Requirement: External MCP client configuration
-The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting. The application SHALL persist modifications and deletions of MCP servers, honoring empty client configurations across application restarts without automatically re-injecting deleted presets. The tool inventory discovered by the connection test SHALL remain visible in the configuration tab, and SHALL NOT be truncated to a fixed number of entries in any transient notification.
+The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting. The application SHALL persist modifications and deletions of MCP servers, honoring empty client configurations across application restarts without automatically re-injecting deleted presets. Connection testing MUST distinguish between reachability of the locally launched MCP process and reachability of the remote service that process ultimately talks to, and MUST NOT report a server as healthy on the basis of local process reachability alone.
 
 #### Scenario: Registering external MCP server
 - **WHEN** user provides MCP server identifier, display name, transport type (stdio or SSE), launch command, argument list, and environment variable key-value pairs (such as `FIRECRAWL_API_URL` and `FIRECRAWL_API_KEY`)
@@ -82,6 +86,17 @@ The application SHALL allow configuring connection parameters for external third
 #### Scenario: Testing MCP connection and discovering available tools
 - **WHEN** user clicks "Test Connection" for an active MCP server in the AI configuration interface
 - **THEN** the runtime MCP engine performs an authentic JSON-RPC 2.0 handshake (`initialize`, `notifications/initialized`), executes `tools/list`, displays the count and names of discovered tools, and updates the server status indicator to healthy or surfaces descriptive connection errors.
+
+#### Scenario: Connection test must probe the real remote backend
+- **WHEN** user clicks "Test Connection" for a stdio MCP server whose tools are backed by a remote HTTP service
+- **THEN** the test additionally issues a single lightweight tool call that forces a genuine network request to that remote service
+- **AND** the status indicator reflects whether the remote service actually responded, not merely whether the local MCP process launched and enumerated its locally-defined tool list
+- **AND** the test output separately indicates the local process state and the remote service state, so the user can tell which layer failed
+
+#### Scenario: Local process healthy but remote backend down
+- **WHEN** the MCP process launches and enumerates tools successfully, but the remote service behind it rejects or resets the connection
+- **THEN** the connection test reports the remote backend as unhealthy with the concrete transport-level failure reason
+- **AND** the test MUST NOT report the server as healthy or display a successful tool list as if the integration were functional
 
 #### Scenario: Pre-populating Firecrawl MCP template
 - **WHEN** user chooses to add the Firecrawl MCP server from the preset templates or configuration manual
