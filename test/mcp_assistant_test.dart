@@ -4,6 +4,7 @@ import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/mcp_service.dart';
 import 'package:V8WorkToolbox/services/proxy_settings.dart';
 import 'package:V8WorkToolbox/services/scheduled_news_service.dart';
+import 'package:V8WorkToolbox/services/web_search_service.dart';
 import 'package:V8WorkToolbox/tools/ai_assistant/services/ai_assistant_service.dart';
 
 void main() {
@@ -363,6 +364,153 @@ void main() {
       expect(prompt.contains('web_search: 全网实时搜索引擎检索'), isTrue);
       expect(prompt.contains('web_scrape: 抓取指定网址的正文内容'), isTrue);
       expect(prompt.contains('绝对不要声称自己“无法脱离 MCP 工具访问互联网或 Google”'), isTrue);
+    });
+
+    // 模型曾经自己猜年份：实机上问"今天股市为什么大跌"，它拼出的 query 是
+    // "… 2024"（当天 2026-10-08），检索关键词从第一步就错。所以 prompt 必须
+    // 带上真实日期，且用注入的时钟断言——写死某一天会随时间腐烂。
+    test('system prompt carries the current date so the model does not guess a year', () {
+      final original = todayProvider;
+      try {
+        todayProvider = () => DateTime(2026, 10, 8); // 星期四
+        final prompt = AiAssistantService.instance.buildSystemPromptForTesting([]);
+        expect(prompt.contains('2026-10-08'), isTrue, reason: 'prompt 必须含当天日期');
+        expect(prompt.contains('星期四'), isTrue);
+        expect(prompt.contains('今天是 2026-10-08 星期四'), isTrue);
+      } finally {
+        todayProvider = original;
+      }
+    });
+
+    test('formatTodayForPrompt pads and names the weekday', () {
+      expect(formatTodayForPrompt(DateTime(2026, 1, 2)), '2026-01-02 星期五');
+      expect(formatTodayForPrompt(DateTime(2026, 10, 8)), '2026-10-08 星期四');
+      // 周日是 weekday 7，不能越界。
+      expect(formatTodayForPrompt(DateTime(2026, 10, 11)), '2026-10-11 星期日');
+    });
+  });
+
+  // 检索结果与问题不相关时必须能被识别出来。
+  //
+  // 这条测试的存在理由是一场实机事故：问"今天股市为什么大跌"，web_search 显示
+  // 执行成功，回来的却是十条日历网/老黄历。模型看着这份材料答不出股市问题，
+  // 于是说"我无法实时联网获取最新股市数据"——与界面上的"执行成功"直接矛盾。
+  // 它不是无故撒谎：系统从没告诉它这份材料不相关。
+  group('searchResultsLookRelevant', () {
+    SearchResult r(String title, String snippet) =>
+        SearchResult(title: title, url: 'https://example.com', snippet: snippet);
+
+    test('the real failure case is detected: stock question, calendar results', () {
+      // 实机复现的那批结果。
+      final results = [
+        r('日历网', '日历网提供万年历查询'),
+        r('今日黄历宜忌查询,今日老黄历,今天是什么日子老黄历_天天黄历', '老黄历查询'),
+        r('万年历_日历网', '万年历,农历,黄历'),
+      ];
+      expect(
+        searchResultsLookRelevant('今天 股市 大跌 原因 A股 2024', results),
+        isFalse,
+        reason: '十条日历网里没有任何一条命中股市/A股/大跌',
+      );
+    });
+
+    test('relevant results are not flagged', () {
+      final results = [
+        r('A股今日大跌原因分析', '沪指收跌2.3%，市场情绪谨慎'),
+        r('股市调整的深层逻辑', '资金面变化是主因'),
+      ];
+      expect(searchResultsLookRelevant('今天股市为什么大跌', results), isTrue);
+    });
+
+    test('partial overlap counts as relevant — 宁可漏判不可错判', () {
+      // 设计原则：只有"明显不相关"才提醒模型。这里五条里只有一条命中片段
+      // "下行"，仍然算相关。错判会让模型被误导着说"没检索到"，那比多灌一份
+      // 材料更糟。
+      final results = [
+        r('大盘下行趋势何时结束', '沪指收跌2.3%，市场情绪谨慎'),
+        r('宏观经济观察', '政策预期影响市场'),
+      ];
+      expect(searchResultsLookRelevant('今日股指下行原因', results), isTrue);
+    });
+
+    test('pure synonymy is a documented miss, not a bug', () {
+      // 「股指」≠「指数」、「下行」≠「调整」——真正的同义改写，这个启发式
+      // 明确声明测不出来（项目无中文分词器）。这两种情况它会判"不相关"。
+      //
+      // 钉住这个行为而不是掩饰它：将来若有人误以为漏判是缺陷而放宽匹配，
+      // 这条测试会告诉他"不，这是代价，而且被记录在案"。
+      final synonymOnly = [
+        r('A股三大指数集体调整', '沪指收跌2.3%'),
+        r('宏观经济观察', '政策预期影响市场'),
+      ];
+      expect(searchResultsLookRelevant('今日股指下行原因', synonymOnly), isFalse);
+    });
+
+    test('empty query terms are treated as relevant (nothing to judge)', () {
+      final results = [r('日历网', '万年历')];
+      // 全是停用词/时间词 → 无从判定 → 不插话
+      expect(searchResultsLookRelevant('今天 最新 为什么', results), isTrue);
+      expect(searchResultsLookRelevant('', results), isTrue);
+    });
+
+    test('no results is not our call', () {
+      expect(searchResultsLookRelevant('股市大跌', const []), isTrue);
+    });
+
+    test('match is case-insensitive for latin queries', () {
+      final relevant = [r('Stock market falls after Fed decision', 'S&P 500 down 1.8%')];
+      expect(searchResultsLookRelevant('why did the stock market drop', relevant), isTrue);
+
+      final unrelated = [r('Best pizza recipes', 'cheese and tomato')];
+      expect(searchResultsLookRelevant('why did the stock market drop', unrelated), isFalse);
+    });
+  });
+
+  // MCP 未启用时，搜索链不该包含 MCP 后端。
+  //
+  // 此前 `McpSearchBackend()` 无条件入链，而用户的 `ai_config.json` 里
+  // `mcp_firecrawl.enabled: false` —— 每次搜索都白发一次注定失败的请求、
+  // 还把后端名丢进冷却表。用户为一个没启用的服务承担等待与噪声。
+  group('search chain excludes MCP backend when no server is enabled', () {
+    test('AiConfigStore defaults to a disabled firecrawl preset', () async {
+      // 复现实机状态：配置过 mcpServers 且全部未启用。
+      final dir = await Directory.systemTemp.createTemp('v8_mcp_chain_test_');
+      try {
+        await AiConfigStore.instance.init(customRootDir: dir);
+        await AiConfigStore.instance.saveMcpClient(
+          McpClientConfig.firecrawlPreset().copyWith(enabled: false),
+        );
+        expect(
+          AiConfigStore.instance.mcpClients.every((m) => !m.enabled),
+          isTrue,
+          reason: '测试前提：没有任何启用的 MCP server',
+        );
+        expect(
+          WebSearchService.instance.debugSearchChainNames.any((n) => n.contains('MCP')),
+          isFalse,
+          reason: 'MCP 未启用时搜索链不该含 MCP 后端',
+        );
+      } finally {
+        await AiConfigStore.instance.deleteMcpClient('mcp_firecrawl');
+        if (await dir.exists()) await dir.delete(recursive: true);
+      }
+    });
+
+    test('an enabled MCP server puts the backend back in the chain', () async {
+      final dir = await Directory.systemTemp.createTemp('v8_mcp_chain_test2_');
+      try {
+        await AiConfigStore.instance.init(customRootDir: dir);
+        await AiConfigStore.instance.saveMcpClient(
+          McpClientConfig.firecrawlPreset().copyWith(enabled: true),
+        );
+        expect(
+          WebSearchService.instance.debugSearchChainNames.any((n) => n.contains('MCP')),
+          isTrue,
+        );
+      } finally {
+        await AiConfigStore.instance.deleteMcpClient('mcp_firecrawl');
+        if (await dir.exists()) await dir.delete(recursive: true);
+      }
     });
   });
 }

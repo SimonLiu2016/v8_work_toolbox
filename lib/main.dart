@@ -16,6 +16,8 @@ import 'services/launcher_service.dart';
 import 'services/local_dictionary_bridge.dart';
 import 'services/note_capture_service.dart';
 import 'services/privacy_security_service.dart';
+import 'tools/artex_engine/services/artex_compose_service.dart';
+import 'tools/toonflow_studio/services/toonflow_compose_service.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
 import 'tools/vocab_book/services/vocab_store.dart';
 import 'services/proxy_settings.dart';
@@ -245,6 +247,9 @@ Future<void> main(List<String> args) async {
     debugPrint('windowManager.ensureInitialized failed: $e');
   }
 
+  // 全局多媒体运行时（必须在任何主窗口或子窗口启动前初始化，供私有播放器、AI视频工坊等原生纹理渲染使用）
+  MediaKit.ensureInitialized();
+
   // Check if this is a sub-window by looking at args
   // desktop_multi_window passes ["multi_window", windowId, arguments] for sub-windows
   final isSubWindow = args.isNotEmpty && args.first == 'multi_window';
@@ -316,8 +321,6 @@ Future<void> main(List<String> args) async {
   windowManager.addListener(_mainWindowCloseListener);
 
   // Main window mode
-  MediaKit.ensureInitialized();
-
   // 主窗口的服务初始化走同一份清单（见 WindowServices.required）。
   await WindowServices.initFor(WindowKind.main);
 
@@ -486,6 +489,20 @@ Future<void> runShutdownCleanup({bool forTest = false}) async {
     await LocalDictionaryBridge.instance.stop();
   } catch (e, stack) {
     debugPrint('[main] 本地词典桥关闭失败（仍然退出）: $e\n$stack');
+  }
+  // ARTEX 引擎容器：按「退出即停」开关决定是否 stop。该方法只调 compose
+  // stop，绝不碰数据卷（spec: 应用退出时的容器处置）。
+  try {
+    await ArtexComposeService.instance.disposeOnExit();
+  } catch (e, stack) {
+    debugPrint('[main] ARTEX 引擎清理失败（仍然退出）: $e\n$stack');
+  }
+  // Toonflow 工作台容器：同上，只 stop 不动数据卷。它的数据目录是 bind
+  // mount，stop 之后 settings.json 与工作区都留在宿主机上。
+  try {
+    await ToonflowComposeService.instance.disposeOnExit();
+  } catch (e, stack) {
+    debugPrint('[main] Toonflow 容器清理失败（仍然退出）: $e\n$stack');
   }
   if (forTest) {
     exitOverride?.call(0);

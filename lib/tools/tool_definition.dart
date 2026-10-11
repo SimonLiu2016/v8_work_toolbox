@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 const String kToolIdAiAssistant = 'ai-assistant';
 const String kToolIdDocAudioReader = 'doc-audio-reader';
 const String kToolIdAiVideoStudio = 'ai-video-studio';
+const String kToolIdToonflowStudio = 'toonflow-studio';
 
 /// 工具分类枚举。
 ///

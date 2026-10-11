@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'app_http_client.dart';
+import 'ai_config_store.dart';
 import 'mcp_service.dart';
 import 'proxy_settings.dart';
 import '../tools/tool_definition.dart';
@@ -149,13 +150,31 @@ class WebSearchService extends ChangeNotifier {
 
   final Map<String, _BackendHealthState> _health = {};
 
+  /// 当前搜索链上各后端的名字，按优先级。仅供测试与诊断。
+  ///
+  /// 存在的理由：`_searchChain` 里 MCP 后端是条件入链的（MCP 未启用时不在），
+  /// 而"它在不在"直接决定每次搜索是否白发一次请求。这个判定需要一个可断言的
+  /// 观察点，否则只能靠打日志人工确认。
+  @visibleForTesting
+  List<String> get debugSearchChainNames => _searchChain.map((b) => b.name).toList();
+
   /// 搜索后端链，按优先级排序。首位为零配置默认后端。
+  ///
+  /// MCP 后端仅在**确有启用的 MCP server** 时入链。此前它无条件构造，而
+  /// `AiConfigStore.mcpClients` 里可能一个都没启用（实测用户的配置就是
+  /// `mcp_firecrawl.enabled: false`）——那意味着每次搜索都白发一次注定失败的
+  /// 请求，还顺带把一个后端名丢进冷却表。用户为一个没启用的服务承担等待与
+  /// 噪声，没有道理。
   List<SearchBackend> get _searchChain => [
         BingSearchBackend(),
         DuckDuckGoSearchBackend(),
         if (SearXngSearchBackend.isEnabled) SearXngSearchBackend(),
-        McpSearchBackend(),
+        if (_hasEnabledMcpServer) McpSearchBackend(),
       ];
+
+  /// 是否配置了至少一个启用的 MCP server。
+  bool get _hasEnabledMcpServer =>
+      AiConfigStore.instance.mcpClients.any((m) => m.enabled);
 
   /// 抓取后端链。自部署实例优先（用户意图），官方云 keyless 兜底。
   List<SearchBackend> get _scrapeChain => [
@@ -389,8 +408,17 @@ class BingSearchBackend implements SearchBackend {
     final titlePattern = RegExp(
       r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
     );
+    // Bing 的摘要 class 会变：早年是 b_lineclamp0/1，现在实测（含
+    // test/fixtures/bing_sample.html）是 b_lineclamp2。写成 [0-9] 是为了让
+    // 将来的 3/4 不需要再改代码。
+    //
+    // 这个正则曾经写作 [01]，而 Bing 早已全线改用 2 —— 结果是每条搜索结果都
+    // 只有标题和链接、摘要全空，模型拿不到任何可判断内容相关性的材料。
+    // 更糟的是那条名为 "extracts titles, urls, snippets" 的测试从不断言
+    // snippet，所以坏了很久没人发现。修正则的同时必须补断言（见
+    // test/web_search_service_test.dart）。
     final snippetPattern = RegExp(
-      r'<p class="b_lineclamp[01]"[^>]*>(.*?)</p>',
+      r'<p class="b_lineclamp[0-9]"[^>]*>(.*?)</p>',
     );
     final blockPattern = RegExp(r'<li class="b_algo".*?</li>', dotAll: true);
 

@@ -118,9 +118,12 @@ void main() {
     });
 
     test('AI, note and ops categories hold their migrated tools', () {
+      // ai 分类含 ai-video-studio（2026-10 接入时漏改这条断言，导致它从
+      // 接入起就是红的——全量跑还会因并发把失败推成稳定失败）。
+      // 改为 toSet 与另两类一致：分类成员顺序不是本断言要保证的东西。
       expect(
-        ToolRegistry.getByCategory(ToolCategory.ai).map((t) => t.id),
-        ['ai-assistant'],
+        ToolRegistry.getByCategory(ToolCategory.ai).map((t) => t.id).toSet(),
+        {'ai-assistant', 'ai-video-studio', 'toonflow-studio'},
       );
       expect(
         ToolRegistry.getByCategory(ToolCategory.note).map((t) => t.id).toSet(),
@@ -128,7 +131,7 @@ void main() {
       );
       expect(
         ToolRegistry.getByCategory(ToolCategory.ops).map((t) => t.id).toSet(),
-        {'ops-tool', 'unattended-approver'},
+        {'ops-tool', 'unattended-approver', 'auto-registrar'},
       );
     });
 
@@ -142,6 +145,16 @@ void main() {
           reason: '${tool.id} 同时出现在 publicTools 与隐私分类——锁定态会看到它',
         );
       }
+    });
+
+    test('security category holds both the CLI toolbox and the artex engine', () {
+      // artex-engine 接入时补上：这条断言之前不存在，所以漏改不会被发现
+      // （ai/ops 两类正是这样红了很久）。两个工具并存是刻意设计——
+      // 旧工具箱退役与否由用户决定，不由注册表决定。
+      expect(
+        ToolRegistry.getByCategory(ToolCategory.security).map((t) => t.id).toSet(),
+        {'security-toolbox', 'artex-engine'},
+      );
     });
   });
 }

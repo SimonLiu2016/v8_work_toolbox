@@ -48,6 +48,30 @@ void main() {
       }
     });
 
+    test('ARTEX 引擎目录已登记且不与引擎自身数据混放', () {
+      // artexDir 只放本工具产物（override 备份 / 日志副本）；引擎的 PG 卷与
+      // data/ 归 Docker 管，不登记进 AppPaths（design D6）。
+      expect(
+        AppPaths.allDirs.any((d) => d.path == AppPaths.artexDir.path),
+        isTrue,
+      );
+      expect(AppPaths.artexDir.parent.path, AppPaths.root.path);
+    });
+
+    test('短视频工坊目录已登记', () {
+      for (final dir in [
+        AppPaths.videoStudioDir,
+        AppPaths.videoStudioGlobalLibDir,
+        AppPaths.videoStudioSeriesDir,
+      ]) {
+        expect(
+          AppPaths.allDirs.any((d) => d.path == dir.path),
+          isTrue,
+          reason: '${dir.path} 未登记进 allDirs',
+        );
+      }
+    });
+
     test('未初始化时抛出带说明的 StateError，而不是返回 null 路径', () {
       AppPaths.resetForTesting();
       expect(AppPaths.isInitialized, isFalse);
@@ -83,6 +107,31 @@ void main() {
         AppPaths.opsToolDir.parent.path,
         AppPaths.root.path,
         reason: 'ops_tool 必须与 ai_config.json 同目录',
+      );
+    });
+
+    test('Toonflow 工坊目录已登记', () {
+      for (final dir in [AppPaths.toonflowDir, AppPaths.toonflowDataDir]) {
+        expect(
+          AppPaths.allDirs.any((d) => d.path == dir.path),
+          isTrue,
+          reason: '${dir.path} 未登记进 allDirs',
+        );
+      }
+      // toonflowDataDir 必须挂在 root 下：它是 bind mount 的宿主机侧，
+      // 跑到别处去容器就挂了个空目录。
+      expect(AppPaths.toonflowDataDir.parent.path, AppPaths.root.path);
+    });
+
+    test('Toonflow 的 settings.json 绝不登记进 allFiles', () {
+      // 那个文件保存 Toonflow 自己的供应商密钥（明文）。allFiles 的语义是
+      // 「本软件生成并管理的文件」——登记它会诱导后续代码去碰它。
+      final settingsPath =
+          p.join(AppPaths.toonflowDataDir.path, 'settings.json');
+      expect(
+        AppPaths.allFiles.any((f) => f.path == settingsPath),
+        isFalse,
+        reason: 'settings.json 不该被本软件管理',
       );
     });
 

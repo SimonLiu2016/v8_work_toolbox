@@ -169,6 +169,55 @@ class VaultStore extends ChangeNotifier {
     return item;
   }
 
+  /// 批量创建条目（由外部注册工具箱或导入工具调用）
+  Future<List<VaultItem>> createBatch(
+    List<({
+      VaultEntryType type,
+      String title,
+      String url,
+      String username,
+      String secret,
+      String totpSeed,
+      List<String> tags,
+      String notes,
+    })> entries,
+  ) async {
+    if (entries.isEmpty) return [];
+    if (!_loaded) await load();
+    await _ensureSecretsLoaded();
+
+    final now = DateTime.now();
+    final createdItems = <VaultItem>[];
+
+    for (final e in entries) {
+      final id = _uuid.v4();
+      final secretRef = 'sec_$id';
+      final item = VaultItem(
+        id: id,
+        type: e.type,
+        title: e.title,
+        url: e.url,
+        username: e.username,
+        tags: e.tags,
+        notes: e.notes,
+        createdAt: now,
+        updatedAt: now,
+        passwordUpdatedAt: now,
+        secretRef: secretRef,
+      );
+      _items.add(item);
+      createdItems.add(item);
+      if (e.secret.isNotEmpty || e.totpSeed.isNotEmpty) {
+        _secretCache[secretRef] = VaultSecret(secret: e.secret, totpSeed: e.totpSeed);
+      }
+    }
+
+    await _persistMetadata();
+    await _persistSecrets();
+    notifyListeners();
+    return createdItems;
+  }
+
   /// 更新条目元数据；secret/totpSeed 非 null 时同步更新 secret
   Future<VaultItem> update(
     String id, {

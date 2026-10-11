@@ -21,6 +21,45 @@ void main() {
       }
     });
 
+    // 这条断言是本次修复的核心，也是这个 bug 能藏住的原因。
+    //
+    // 上面那条测试的名字里写着 "snippets"，却从不断言 snippet。正则写作
+    // b_lineclamp[01]，而 Bing 早已全线改用 b_lineclamp2 —— 样本文件里 10 个
+    // b_lineclamp2、0 个 [01]，于是摘要全空、形状全部照旧通过。模型拿到的
+    // 每条结果只有标题，判断不了内容是否相关（AI 资讯助手"检索成功却答不出"
+    // 的直接成因之一）。
+    //
+    // 不断言内容，就只会在验形状。
+    test('snippets are actually extracted, not silently empty', () {
+      final html = _bingSample.readAsStringSync();
+      final results = BingSearchBackend.parseHtml(html);
+
+      final withSnippet = results.where((r) => r.snippet.trim().isNotEmpty).length;
+      expect(
+        withSnippet >= results.length - 1,
+        isTrue,
+        reason: '真实样本应有摘要被提取出来；全空说明 b_lineclamp 正则又跟不上 '
+            'Bing 的 class 命名（当前实际为 b_lineclamp2）。'
+            '本次实到 $withSnippet/${results.length} 条带摘要',
+      );
+    });
+
+    test('snippet extraction covers the lineclamp class variants', () {
+      // 钉住"覆盖多个 class 变体"这件事本身：将来 Bing 再改名，先改这里。
+      // 只给最小结构——要验的是 class 匹配，不是整页解析。
+      String block(String cls) => '''
+<li class="b_algo"><h2><a href="https://example.com/a">标题</a></h2>
+<p class="$cls">这是摘要内容</p></li>''';
+
+      for (final cls in ['b_lineclamp0', 'b_lineclamp1', 'b_lineclamp2', 'b_lineclamp3']) {
+        final results = BingSearchBackend.parseHtml(
+          '<html><body>${block(cls)}</body></html>',
+        );
+        expect(results, hasLength(1), reason: '$cls 应被识别');
+        expect(results.single.snippet, '这是摘要内容', reason: '$cls 的摘要应被提取');
+      }
+    });
+
     test('returns empty on structure mismatch (no b_algo blocks)', () {
       final bogus = '<html><body><h1>nothing here</h1></body></html>';
       final results = BingSearchBackend.parseHtml(bogus);

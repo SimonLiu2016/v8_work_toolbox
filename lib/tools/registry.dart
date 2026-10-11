@@ -8,7 +8,9 @@ import '../bc_config_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
 import 'ai_assistant/ui/ai_assistant_page.dart';
+import 'artex_engine/ui/artex_engine_page.dart';
 import 'ai_video_studio/ui/studio_shell.dart';
+import 'auto_registrar/ui/auto_registrar_main_page.dart';
 import 'notebook/ui/notebook_page.dart';
 import 'ops_tool/ui/ops_tool_main_page.dart';
 import 'password/ui/password_page.dart';
@@ -18,6 +20,7 @@ import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'security_toolbox/ui/security_toolbox_main_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
+import 'toonflow_studio/ui/toonflow_studio_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
 import 'vocab_book/ui/vocab_book_page.dart';
@@ -268,6 +271,28 @@ class AiVideoStudioToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const StudioShellPage();
 }
 
+/// Toonflow 漫剧工坊。
+///
+/// 嵌入式页面：页面主体是 Docker 生命周期控制台，真正的创作在 Toonflow 自己
+/// 的工作台里完成（用户点「打开工作台」跳浏览器）。给它独立窗口没有意义——
+/// 容器日志需要盯着，而工作台本身在浏览器里。
+class ToonflowStudioToolDefinition extends ToolDefinition {
+  ToonflowStudioToolDefinition();
+
+  @override
+  String get id => kToolIdToonflowStudio;
+  @override
+  String get title => 'Toonflow 漫剧工坊';
+  @override
+  String get subtitle => 'Docker 托管的 Toonflow 工作台，与短视频工坊互传资产';
+  @override
+  IconData get icon => Icons.auto_awesome_mosaic_outlined;
+  @override
+  ToolCategory get category => ToolCategory.ai;
+  @override
+  Widget buildPage(BuildContext context) => const ToonflowStudioPage();
+}
+
 class NotebookToolDefinition extends ToolDefinition {
   @override
   String get id => 'notebook';
@@ -452,6 +477,43 @@ class SecurityToolboxDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const SecurityToolboxMainPage();
 }
 
+class ArtexEngineDefinition extends ToolDefinition {
+  @override
+  String get id => 'artex-engine';
+
+  @override
+  String get title => 'ARTEX 渗透引擎';
+
+  @override
+  String get subtitle => 'AI 自主渗透测试平台（Docker 容器托管）';
+
+  @override
+  IconData get icon => Icons.hub_outlined;
+
+  @override
+  ToolCategory get category => ToolCategory.security;
+
+  // 主窗口内嵌：本工具不跑任何长进程（干活的是容器），不需要独立窗口
+  // （design D7）。对比安全工具箱的 openInNewWindow=true。
+  @override
+  Widget buildPage(BuildContext context) => const ArtexEnginePage();
+}
+
+class AutoRegistrarToolDefinition extends ToolDefinition {
+  @override
+  String get id => 'auto-registrar';
+  @override
+  String get title => '自动注册工具箱';
+  @override
+  String get subtitle => 'Outlook/Hotmail自动化注册、反爬突破、统一账号资产库与凭证同步';
+  @override
+  IconData get icon => Icons.app_registration_rounded;
+  @override
+  ToolCategory get category => ToolCategory.ops;
+  @override
+  Widget buildPage(BuildContext context) => const AutoRegistrarMainPage();
+}
+
 class ToolRegistry {
   ToolRegistry._();
 
@@ -463,6 +525,9 @@ class ToolRegistry {
     PasswordVaultToolDefinition(),
     // 安全工具
     SecurityToolboxDefinition(),
+    ArtexEngineDefinition(),
+    // 运维与自动化
+    AutoRegistrarToolDefinition(),
     // 文件处理
     DocAudioReaderToolDefinition(),
     BatchRenameToolDefinition(),
@@ -472,6 +537,7 @@ class ToolRegistry {
     OpsToolDefinition(),
     AiAssistantToolDefinition(),
     AiVideoStudioToolDefinition(),
+    ToonflowStudioToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
     NotebookToolDefinition(),
     VocabBookToolDefinition(),

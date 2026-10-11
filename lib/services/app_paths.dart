@@ -173,6 +173,14 @@ abstract final class AppPaths {
   static File get scriptTemplatesFile =>
       File(p.join(securityDir.path, 'script_templates.json'));
 
+  /// ARTEX 引擎工具根目录（`tools/artex_engine/`）。
+  ///
+  /// **只存本工具自己的产物**（override 备份、构建日志副本）。
+  /// 引擎的数据（PostgreSQL 命名卷 + 工程目录下的 `data/`）归 Docker 与
+  /// artex 仓库管，不在这里登记——把它们纳入会破坏 AppPaths「本软件生成的
+  /// 本地数据」这一语义，也会让备份/清理误判引擎数据的归属。
+  static Directory get artexDir => Directory(p.join(root.path, 'artex'));
+
   /// AI 短视频工坊根目录（`tools/ai_video_studio/`）。
   static Directory get videoStudioDir => Directory(p.join(root.path, 'video_studio'));
 
@@ -183,6 +191,25 @@ abstract final class AppPaths {
   /// 连续剧 IP 主库：每部剧一个子目录（`series_library/<series-id>/`）。
   static Directory get videoStudioSeriesDir =>
       Directory(p.join(videoStudioDir.path, 'series_library'));
+
+  /// Toonflow 漫剧工坊根目录（`tools/toonflow_studio/`）。
+  ///
+  /// **只存本工具自己的产物**（override 备份、构建日志副本）。
+  /// Toonflow 的数据（`data/workspaces`、`data/assets`、`data/settings.json`）
+  /// 归容器管，登记在 [toonflowDataDir]——那是要挂进容器的，不是本软件
+  /// 私有的。
+  static Directory get toonflowDir => Directory(p.join(root.path, 'toonflow'));
+
+  /// 挂载到 Toonflow 容器 `/app/data` 的宿主机目录。
+  ///
+  /// **刻意不用 Docker 命名卷**：资产桥要直接文件系统读写工作区与素材，
+  /// 走命名卷就得每次经 HTTP 传输几十兆媒体，导回体验不可接受。
+  ///
+  /// `settings.json` 在这个目录里，它保存 Toonflow 自己的供应商密钥（明文）。
+  /// 本工具**绝不读写**该文件，因此它也**不**登记进 [allFiles]——那个清单
+  /// 的语义是「本软件生成并管理的文件」，登记它会诱导后续代码去碰它。
+  static Directory get toonflowDataDir =>
+      Directory(p.join(root.path, 'toonflow_data'));
 
   /// 全部导出路径，供回归测试断言单一性。
   static List<File> get allFiles => [
@@ -214,8 +241,11 @@ abstract final class AppPaths {
     privateBrowserDir,
     privateBrowserThumbnailsDir,
     securityDir,
+    artexDir,
     videoStudioDir,
     videoStudioGlobalLibDir,
     videoStudioSeriesDir,
+    toonflowDir,
+    toonflowDataDir,
   ];
 }
