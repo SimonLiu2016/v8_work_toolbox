@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../components/app_components.dart';
 import '../services/ai_config_store.dart';
+import '../services/media_capability.dart';
 import '../services/ai_service.dart';
 import '../services/keychain_service.dart';
 import '../services/mcp_service.dart';
@@ -1266,6 +1267,32 @@ class _AiConfigPageState extends State<AiConfigPage>
                           });
                         },
                       ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.movie_creation_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'Agnes / 中转站 (视/图多模态)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'Agnes (中转站)';
+                            protocol = AiProtocolType.agnes;
+                            if (urlCtrl.text.isEmpty || urlCtrl.text.contains('openai.com')) {
+                              urlCtrl.text = 'http://119.29.249.154:3356';
+                            }
+                            modelsCtrl.text =
+                                'deepseek-chat, gpt-4o-mini';
+                            imageModelsCtrl.text =
+                                'agnes-image-2.5-flash';
+                            videoModelsCtrl.text =
+                                'agnes-video-2.5-flash';
+                          });
+                        },
+                      ),
                     ],
                   ),
                   const Divider(height: AppTheme.space24),
@@ -1517,6 +1544,29 @@ class _AiConfigPageState extends State<AiConfigPage>
                             .where((s) => s.isNotEmpty)
                             .toList();
 
+                        // 把内置能力声明挂到本次保存的模型上（spec: 模型能力
+                        // 声明）。用户在供应商上手写的声明优先，预设只补空缺
+                        // ——这样"按了一下 SenseAudio 预设按钮"的用户立刻得到
+                        // 正确的能力矩阵，而不必等到第一次 400。
+                        final capabilities =
+                            <String, MediaModelCapability>{
+                              ...?provider?.mediaCapabilities,
+                            };
+                        for (final modelId in [...videoModels, ...imageModels]) {
+                          capabilities[modelId] ??=
+                              MediaCapabilityPresets.forModel(modelId) ??
+                              // 没有内置声明的模型不占位：留空才能让解析器
+                              // 落到协议默认，UI 也能显示"未经确认"。
+                              const MediaModelCapability();
+                        }
+                        // 全是空壳时整个 map 不落盘（旧配置文件不该被塞噪音）。
+                        capabilities.removeWhere(
+                          (_, v) => v.durations.isEmpty &&
+                              v.resolutions.isEmpty &&
+                              v.maxReferenceImages == 0 &&
+                              v.modes.isEmpty,
+                        );
+
                         final newProv = AiProviderConfig(
                           id: id,
                           name: nameCtrl.text.trim().isEmpty
@@ -1532,6 +1582,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                           sttModels: provider?.sttModels ?? const [],
                           videoModels: videoModels,
                           imageModels: imageModels,
+                          mediaCapabilities: capabilities,
                         );
 
                         AiService.instance.invalidateProviderEndpoint(id);

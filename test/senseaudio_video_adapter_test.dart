@@ -213,4 +213,185 @@ void main() {
       );
     });
   });
+
+  group('AgnesVideoAdapter 协议契约、图像压缩与 429 退避重试测试', () {
+    late File dummyInputImage;
+    late File dummyOutputFile;
+
+    setUp(() {
+      dummyInputImage = File(p.join(tempDir.path, 'agnes_frame_001.png'))..createSync(recursive: true);
+      // 创建一张包含合法 PNG 头的微型图片
+      dummyInputImage.writeAsBytesSync(base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      ));
+      dummyOutputFile = File(p.join(tempDir.path, 'agnes_shot_001.mp4'));
+    });
+
+    test('遇到 429 上游负载饱和时自动重试并最终成功', () async {
+      var postAttempts = 0;
+      Map<String, dynamic>? capturedPayload;
+
+      final adapter = AgnesVideoAdapter(
+        baseUrl: 'http://119.29.249.154:3356/v1',
+        model: 'agnes-video-2.5-flash',
+        apiKey: 'sk-test-key',
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            postAttempts++;
+            capturedPayload = jsonDecode(req.body) as Map<String, dynamic>;
+            if (postAttempts == 1) {
+              return http.Response(
+                jsonEncode({
+                  'code': 'fail_to_fetch_task',
+                  'message': '当前分组上游负载已饱和，请稍后再试',
+                  'data': null,
+                }),
+                429,
+                headers: {'content-type': 'application/json; charset=utf-8'},
+              );
+            }
+            return http.Response(
+              jsonEncode({
+                'data': {'id': 'task_agnes_ok_1'},
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          } else {
+            // GET /v1/videos/task_agnes_ok_1 or download
+            if (req.url.path.endsWith('.mp4')) {
+              return http.Response('video-bytes-success', 200);
+            }
+            return http.Response(
+              jsonEncode({
+                'status': 'completed',
+                'video_url': 'http://119.29.249.154:3356/output.mp4',
+              }),
+              200,
+            );
+          }
+        },
+      );
+
+      final result = await adapter.generateVideo(VideoGenRequest(
+        inputImage: dummyInputImage,
+        cameraMove: 'slow pull-back',
+        durationSec: 5,
+        shotNumber: 1,
+        outputFile: dummyOutputFile,
+      ));
+
+      expect(postAttempts, equals(2));
+      expect(capturedPayload, isNotNull);
+      expect(capturedPayload!['mode'], equals('keyframe'));
+      expect(capturedPayload!['first_frame'], startsWith('data:image/'));
+      expect(capturedPayload!.containsKey('image'), isFalse);
+      expect(capturedPayload!.containsKey('image_url'), isFalse);
+      expect(capturedPayload!.containsKey('size'), isFalse);
+      expect(result.existsSync(), isTrue);
+      expect(result.readAsStringSync(), equals('video-bytes-success'));
+    });
+
+    test('遇到网关坏节点丢弃参数报 400 时自动轮询换路重试并成功', () async {
+      var postAttempts = 0;
+
+      final adapter = AgnesVideoAdapter(
+        baseUrl: 'http://119.29.249.154:3356/v1',
+        model: 'agnes-video-2.5-flash',
+        apiKey: 'sk-test-key',
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            postAttempts++;
+            if (postAttempts == 1) {
+              return http.Response(
+                jsonEncode({
+                  'code': 'invalid_request',
+                  'message': 'keyframe 模式需要 first_frame 或 last_frame (request id: 20261009115315436052795LM9DdUdj)',
+                  'data': {'param': 'first_frame'},
+                }),
+                400,
+                headers: {'content-type': 'application/json; charset=utf-8'},
+              );
+            }
+            return http.Response(
+              jsonEncode({
+                'data': {'id': 'task_recovered_ok_2'},
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          } else {
+            if (req.url.path.endsWith('.mp4')) {
+              return http.Response('video-retry-recovered-mp4', 200);
+            }
+            return http.Response(
+              jsonEncode({
+                'status': 'completed',
+                'video_url': 'http://119.29.249.154:3356/output_rec.mp4',
+              }),
+              200,
+            );
+          }
+        },
+      );
+
+      final result = await adapter.generateVideo(VideoGenRequest(
+        inputImage: dummyInputImage,
+        cameraMove: 'slow zoom',
+        durationSec: 5,
+        shotNumber: 1,
+        outputFile: dummyOutputFile,
+      ));
+
+      expect(postAttempts, equals(2));
+      expect(result.existsSync(), isTrue);
+      expect(result.readAsStringSync(), equals('video-retry-recovered-mp4'));
+    });
+
+    test('分镜图片不存在时自适应回退到 mode: text', () async {
+      final nonExistentImage = File(p.join(tempDir.path, 'no_such_file.png'));
+      Map<String, dynamic>? capturedPayload;
+
+      final adapter = AgnesVideoAdapter(
+        baseUrl: 'http://119.29.249.154:3356/v1',
+        model: 'agnes-video-2.5-flash',
+        apiKey: 'sk-test-key',
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            capturedPayload = jsonDecode(req.body) as Map<String, dynamic>;
+            return http.Response(
+              jsonEncode({
+                'data': {'id': 'task_text_mode'},
+              }),
+              200,
+            );
+          } else {
+            if (req.url.path.endsWith('.mp4')) {
+              return http.Response('video-text-success', 200);
+            }
+            return http.Response(
+              jsonEncode({
+                'status': 'completed',
+                'video_url': 'http://119.29.249.154:3356/output_text.mp4',
+              }),
+              200,
+            );
+          }
+        },
+      );
+
+      final result = await adapter.generateVideo(VideoGenRequest(
+        inputImage: nonExistentImage,
+        cameraMove: 'cinematic pan',
+        durationSec: 5,
+        shotNumber: 2,
+        outputFile: dummyOutputFile,
+      ));
+
+      expect(capturedPayload, isNotNull);
+      expect(capturedPayload!['mode'], equals('text'));
+      expect(capturedPayload!.containsKey('first_frame'), isFalse);
+      expect(result.readAsStringSync(), equals('video-text-success'));
+    });
+  });
 }

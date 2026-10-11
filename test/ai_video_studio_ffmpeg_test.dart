@@ -424,4 +424,65 @@ void main() {
       );
     }, timeout: const Timeout(Duration(seconds: 120)));
   });
+
+  group('片段与分镜产物混拼', () {
+    late Directory dir;
+
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('composer_mixed');
+    });
+
+    tearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+      FfmpegComposer.invalidateCache();
+    });
+
+    test('片段视频与分镜视频可以拼进同一条时间轴', () async {
+      final status = await FfmpegComposer.checkAvailability();
+      if (!status.available) {
+        debugPrint('SKIP mixed compose: ${status.error}');
+        return;
+      }
+
+      final img = File(p.join(dir.path, 'frame.png'));
+      await const LocalStubImageAdapter().generate(ImageGenRequest(
+        prompt: 'mixed fixture',
+        shotNumber: 1,
+        outputFile: img,
+        width: 108,
+        height: 192,
+      ));
+
+      // 一段 4 秒的「片段视频」+ 一段 2 秒的「分镜视频」。合成器只认文件列表，
+      // 不关心它来自 segments/ 还是 clips/——这正是混拼能成立的原因。
+      final segmentClip = File(p.join(dir.path, 'seg-1.mp4'));
+      await KenBurnsVideoAdapter().generateVideo(VideoGenRequest(
+        inputImage: img,
+        cameraMove: 'slow push-in',
+        durationSec: 4,
+        shotNumber: 1,
+        outputFile: segmentClip,
+      ));
+      final shotClip = File(p.join(dir.path, 'shot_3.mp4'));
+      await KenBurnsVideoAdapter().generateVideo(VideoGenRequest(
+        inputImage: img,
+        cameraMove: 'pan right',
+        durationSec: 2,
+        shotNumber: 3,
+        outputFile: shotClip,
+      ));
+
+      final output = File(p.join(dir.path, 'mixed.mp4'));
+      final result = await FfmpegComposer.compose(
+        ComposeRequest(
+          clips: [segmentClip, shotClip],
+          outputFile: output,
+          durationSec: 6,
+        ),
+      );
+
+      expect(result.success, isTrue, reason: result.stderr);
+      expect(await output.exists(), isTrue);
+    }, timeout: const Timeout(Duration(seconds: 120)));
+  });
 }

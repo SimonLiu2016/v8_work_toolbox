@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/app_paths.dart';
+import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'test_keychain_bridge.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/models/studio_models.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/studio_project_manager.dart';
 import 'package:V8WorkToolbox/theme/app_theme.dart';
@@ -31,12 +33,17 @@ Future<void> _prepareEmptyStudio(WidgetTester tester) async {
 }
 
 Future<void> _settle(WidgetTester tester) async {
+  // 外壳的 bootstrap 链路：ensureBaseStructure → listSeries →
+  // _checkEngineStatus（读两次 Keychain，各约 70ms）。总耗时一两百毫秒，
+  // 只等 50ms 会停在 loading 分支。这里轮询到加载指示器消失或超时。
+  for (var i = 0; i < 20; i++) {
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+  }
   await tester.pump();
-  await tester.runAsync(
-    () => Future<void>.delayed(const Duration(milliseconds: 50)),
-  );
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 50));
 }
 
 /// 工坊外壳的冒烟测试：能构建、能建剧、切页不崩。
@@ -45,6 +52,15 @@ Future<void> _settle(WidgetTester tester) async {
 /// 测试覆盖，widget 测试在这里的性价比低于它带来的维护成本。
 void main() {
   setUpAll(() async {
+    // 外壳的 bootstrap 会探测生图/视频引擎可用性，那要读 Keychain。flutter
+    // test 里没有平台通道，真实 Keychain 读取会一直不返回——表现就是加载
+    // 指示器永远转，_settle 多少轮都停在 loading 分支。装内存桥后读密钥
+    // 同步完成，bootstrap 才能跑完。
+    TestKeychainBridge.install();
+    KeychainService.instance.setKekManagerForTesting(
+      TestKeychainBridge.makeManager(),
+    );
+
     AppPaths.overrideRootForTesting(
       Directory.systemTemp.createTempSync('studio_ui'),
     );
@@ -52,6 +68,13 @@ void main() {
     // 测试的 fake async zone 不会等它——目录已存在时那些 IO 全部命中缓存，
     // bootstrap 同步返回，pump 一帧就能看到结果。
     await StudioProjectManager.instance.ensureBaseStructure();
+
+    // 预热 Keychain：外壳的 `_checkEngineStatus` 要读两次密钥，而
+    // `flutter_secure_storage` 在没有平台通道的测试环境里，**第一次**读取
+    // 要等平台调用超时后才回退（约 60ms），后续读取才走缓存同步返回。
+    // 不预热的话第一个 test 的 bootstrap 必然停在 loading——这是测试环境
+    // 的固有行为，不是外壳的 bug。
+    await KeychainService.instance.readSecret('warmup');
   });
 
   testWidgets('外壳可构建并显示工序导航', (tester) async {

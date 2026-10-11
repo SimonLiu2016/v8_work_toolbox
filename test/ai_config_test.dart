@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'package:V8WorkToolbox/services/media_capability.dart';
 import 'package:V8WorkToolbox/tools/password/crypto/kek_manager.dart';
 
 /// 测试用内存 Keychain 桥（flutter test 无平台通道，真实 Keychain 不可用）
@@ -407,6 +408,75 @@ void main() {
       final restored = AiProviderConfig.fromJson(json);
       expect(restored.imageModels.length, 2);
       expect(restored.imageModels.first, 'black-forest-labs/FLUX.1-schnell');
+    });
+
+    test('media_capabilities 序列化往返', () {
+      final prov = AiProviderConfig(
+        id: 'cap-test',
+        name: '能力测试',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://x',
+        keychainKeyId: 'k',
+        videoModels: const ['doubao-seedance-2-0-260128'],
+        mediaCapabilities: const {
+          'doubao-seedance-2-0-260128': MediaModelCapability(
+            durations: [4, 8, 12],
+            ratios: ['9:16'],
+            maxReferenceImages: 3,
+            isDeclared: true,
+          ),
+        },
+      );
+
+      final json = prov.toJson();
+      expect(json.containsKey('media_capabilities'), isTrue);
+
+      final restored = AiProviderConfig.fromJson(json);
+      final cap = restored.mediaCapabilities['doubao-seedance-2-0-260128']!;
+      expect(cap.durations, [4, 8, 12]);
+      expect(cap.maxReferenceImages, 3);
+      expect(cap.isDeclared, isTrue);
+    });
+
+    test('旧版配置文件（无 media_capabilities 键）加载后能力为空', () {
+      // 旧文件加载不该抛，也不该凭空长出能力——否则用户以为限制被验证过。
+      final restored = AiProviderConfig.fromJson({
+        'id': 'legacy',
+        'name': 'Legacy',
+        'protocol': 'openai',
+        'baseUrl': 'https://x',
+        'keychainKeyId': 'k',
+        'enabled': true,
+        'models': {'text': ['gpt-4o'], 'video': ['some-video-model']},
+      });
+      expect(restored.mediaCapabilities, isEmpty);
+      expect(restored.videoModels, ['some-video-model']);
+    });
+
+    test('空能力 map 不写入 media_capabilities 键', () {
+      final prov = AiProviderConfig(
+        id: 'empty-cap',
+        name: '空能力',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://x',
+        keychainKeyId: 'k',
+      );
+      expect(prov.toJson().containsKey('media_capabilities'), isFalse);
+    });
+
+    test('copyWith 保留能力声明', () {
+      final prov = AiProviderConfig(
+        id: 'cw',
+        name: 'CW',
+        protocol: AiProtocolType.openai,
+        baseUrl: 'https://x',
+        keychainKeyId: 'k',
+        mediaCapabilities: const {
+          'm': MediaModelCapability(durations: [4], isDeclared: true),
+        },
+      );
+      final renamed = prov.copyWith(name: 'CW2');
+      expect(renamed.mediaCapabilities.keys, ['m']);
     });
   });
 }

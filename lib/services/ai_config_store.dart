@@ -5,12 +5,14 @@ import 'package:path/path.dart' as p;
 import 'app_paths.dart';
 
 import 'keychain_service.dart';
+import 'media_capability.dart';
 
 /// 协议类型
 enum AiProtocolType {
   openai('OpenAI 兼容协议'),
   anthropic('Anthropic 协议'),
-  gemini('Google Gemini 协议');
+  gemini('Google Gemini 协议'),
+  agnes('Agnes 专用协议');
 
   final String label;
   const AiProtocolType(this.label);
@@ -24,7 +26,7 @@ enum AiProtocolType {
 }
 
 /// 供应商配置
-class AiProviderConfig {
+class AiProviderConfig implements AiProviderConfigLike {
   final String id;
   final String name;
   final AiProtocolType protocol;
@@ -37,6 +39,14 @@ class AiProviderConfig {
   final List<String> sttModels;
   final List<String> videoModels;
   final List<String> imageModels;
+
+  /// 按模型 id 索引的媒体能力声明（spec: 模型能力声明）。
+  ///
+  /// 只对 image / video 槽位有意义；text / tts / stt 模型的能力由协议本身
+  /// 决定，不需要在这里声明。缺省空 map——旧 `ai_config.json` 没有这个字段，
+  /// 加载后所有媒体模型走 [MediaCapabilityDefaults] 的保守默认。
+  @override
+  final Map<String, MediaModelCapability> mediaCapabilities;
 
   const AiProviderConfig({
     required this.id,
@@ -51,6 +61,7 @@ class AiProviderConfig {
     this.sttModels = const [],
     this.videoModels = const [],
     this.imageModels = const [],
+    this.mediaCapabilities = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -68,6 +79,9 @@ class AiProviderConfig {
       'video': videoModels,
       'image': imageModels,
     },
+    // 空 map 时不写这个键：旧版配置文件不该被塞进一个空的 media_capabilities。
+    if (mediaCapabilities.isNotEmpty)
+      'media_capabilities': mediaCapabilities.map((k, v) => MapEntry(k, v.toJson())),
   };
 
   factory AiProviderConfig.fromJson(Map<String, dynamic> json) {
@@ -85,7 +99,27 @@ class AiProviderConfig {
       sttModels: List<String>.from(models['stt'] ?? []),
       videoModels: List<String>.from(models['video'] ?? []),
       imageModels: List<String>.from(models['image'] ?? []),
+      // 旧文件没有这个键 → 空 map → 所有媒体模型走保守默认。
+      mediaCapabilities: _parseCapabilities(json['media_capabilities']),
     );
+  }
+
+  /// 宽容解析能力声明：形状不对的条目跳过，不让整个配置加载失败。
+  ///
+  /// 配置损坏时回退空配置比让 AI 配置页打不开更可用（与 `SettingsStore` 的容错
+  /// 语义一致）。
+  static Map<String, MediaModelCapability> _parseCapabilities(Object? raw) {
+    if (raw is! Map) return const {};
+    final result = <String, MediaModelCapability>{};
+    for (final entry in raw.entries) {
+      final key = entry.key;
+      if (key is! String || key.isEmpty) continue;
+      if (entry.value is! Map) continue;
+      result[key] = MediaModelCapability.fromJson(
+        (entry.value as Map).map((k, v) => MapEntry(k as String, v)),
+      );
+    }
+    return result;
   }
 
   AiProviderConfig copyWith({
@@ -99,6 +133,7 @@ class AiProviderConfig {
     List<String>? sttModels,
     List<String>? videoModels,
     List<String>? imageModels,
+    Map<String, MediaModelCapability>? mediaCapabilities,
   }) {
     return AiProviderConfig(
       id: id,
@@ -113,8 +148,13 @@ class AiProviderConfig {
       sttModels: sttModels ?? this.sttModels,
       videoModels: videoModels ?? this.videoModels,
       imageModels: imageModels ?? this.imageModels,
+      mediaCapabilities: mediaCapabilities ?? this.mediaCapabilities,
     );
   }
+
+  /// 协议类型 id。供 [MediaCapabilityResolver] 使用，避免它反向依赖本文件。
+  @override
+  String get protocolId => protocol.name;
 }
 
 /// 槽位候选绑定项（有序候选列表中的单个条目）

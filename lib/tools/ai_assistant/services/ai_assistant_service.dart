@@ -88,6 +88,101 @@ class ChatMessage {
   }
 }
 
+/// 今天（用于 system prompt 的日期上下文）。
+///
+/// 单独抽成可注入的函数而不是在 `_buildSystemPrompt` 里直接调 `DateTime.now()`：
+/// 测试要断言"prompt 含当天日期"，写死某一天会随时间腐烂，而能注入时钟的
+/// 断言才可以长期跑。
+@visibleForTesting
+typedef TodayProvider = DateTime Function();
+
+TodayProvider todayProvider = () => DateTime.now();
+
+/// 格式化为 prompt 用的一行日期，形如 `2026-10-08 星期四`。
+String formatTodayForPrompt(DateTime now) {
+  const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+  final y = now.year.toString().padLeft(4, '0');
+  final m = now.month.toString().padLeft(2, '0');
+  final d = now.day.toString().padLeft(2, '0');
+  // weekday: 1=周一 … 7=周日。
+  return '$y-$m-$d ${weekdays[now.weekday - 1]}';
+}
+
+/// 检索结果看起来是否与 query 相关。
+///
+/// 启发式，且刻意保守：**只有"明显不相关"才返回 false**。弱相关（部分命中、
+/// 只命中同义词）一律算相关——宁可漏判，不可错判。错判的代价是模型被误导着
+/// 说"没检索到"，而那比多灌一份材料更糟。
+///
+/// 判定方式：从 query 里取若干个有实质意义的**字片段**，再看 top 结果的
+/// 标题+摘要里是否命中至少一个。
+///
+/// 为什么用字片段而不是词：这个项目没有中文分词器（无 jieba 类依赖），
+/// 而整串匹配是无效的——"今天股市为什么大跌"切成词会得到它自己，永远命不中
+/// "A股今日大跌原因分析"里的任何子串。取 2-4 字的滑动片段则能跨这种表述差异
+/// （"股市"/"大跌"/"股指"/"下行" 都可命中）。
+///
+/// 它不可能是完备的：同义改写（"下行" vs "大跌"）测不出来。所以它的产物只是
+/// "是否要提醒模型一句"，不是"结果好不好"的最终裁决。
+@visibleForTesting
+bool searchResultsLookRelevant(String query, List<SearchResult> results) {
+  if (results.isEmpty) return true; // 空结果由既有路径处理，不在此判定
+  final terms = _relevanceTerms(query);
+  if (terms.isEmpty) return true; // 问得太空泛，无从判定
+
+  for (final r in results) {
+    final haystack = '${r.title} ${r.snippet}'.toLowerCase();
+    if (terms.any((t) => haystack.contains(t))) return true;
+  }
+  return false;
+}
+
+/// 从 query 提取用于相关性匹配的字片段。
+///
+///  latin（空格分词）按词取；中文按 2-4 字滑动窗口取，并在停用片段处断开。
+///  停用词既会稀释信号（"今天"在任何结果里都可能出现），也会让整段查询
+///  退化成一个大片段。
+List<String> _relevanceTerms(String query) {
+  final lower = query.toLowerCase();
+  final out = <String>{};
+
+  // 1. 拉丁词：空格/标点切开，长度 ≥2 且非停用。
+  for (final raw in lower.split(RegExp(r'[\s,，。？?！!、；;：:]+'))) {
+    final w = raw.trim();
+    if (w.length >= 2 && !_stopTerms.contains(w)) out.add(w);
+  }
+
+  // 2. 中文字片段：在停用词处把串切成若干段，每段取 2-4 字滑动窗口。
+  for (final seg in lower.split(RegExp(r'[\s,，。？?！!、；;：:]+'))) {
+    if (!_containsHan(seg)) continue;
+    // 去掉段内的纯数字/拉丁部分，只留汉字连续段
+    for (final han in RegExp(r'[一-龥]+').allMatches(seg).map((m) => m.group(0)!)) {
+      if (_stopTerms.contains(han)) continue;
+      final start = han.length >= 4 ? 0 : 0;
+      final end = han.length >= 4 ? han.length - 1 : han.length;
+      for (var i = start; i < end; i++) {
+        for (var len = 2; len <= 4 && i + len <= han.length; len++) {
+          final frag = han.substring(i, i + len);
+          if (_stopTerms.contains(frag)) continue;
+          out.add(frag);
+        }
+      }
+    }
+  }
+
+  // 片段太多时只保留最长的那些：短片段（2 字）误命中率最高。
+  final list = out.toList()..sort((a, b) => b.length.compareTo(a.length));
+  return list.take(24).toList();
+}
+
+const _stopTerms = {
+  '今天', '今日', '现在', '目前', '最新', '最近', '什么', '为什么', '为何',
+  '怎么', '如何', '哪些', '多少', '原因', 'the', 'a', 'an', 'is', 'are', 'of',
+  'to', 'in', 'on', 'for', 'and', 'or', 'what', 'why', 'how',
+};
+
+bool _containsHan(String s) => RegExp(r'[一-龥]').hasMatch(s);
+
 /// AI 检索助手智能体会话服务
 class AiAssistantService extends ChangeNotifier {
   AiAssistantService._();
@@ -195,11 +290,18 @@ class AiAssistantService extends ChangeNotifier {
         ? builtInToolDescs
         : '$builtInToolDescs\n\n$mcpToolDescs';
 
+    // 当前日期。没有它，模型会自己猜年份——实机上见过一次 query 里拼
+    // "2024"（当天其实是 2026-10-08），于是检索关键词从第一步就是错的。
+    final today = formatTodayForPrompt(todayProvider());
+
     return '''
 你是一个集成了全网实时检索与爬虫工具的专业 AI 资讯助手。
 你已内置开箱即用的实时网络检索（web_search）与网页正文抓取（web_scrape）能力，并支持外部高级 MCP 工具：
 
 $toolDescs
+
+【当前时间上下文】
+今天是 $today。涉及"今天/最近/最新"等时间概念时以此为准，不要自行推测年份。
 
 【工具调用与联网规则】
 1. 当用户的提问需要实时资讯、最新动态、客观事实或特定网址内容时，请自主调用合适的工具：
@@ -253,8 +355,31 @@ $toolDescs
           if (res.isError) {
             return AgentToolOutcome.failure(res.error ?? '搜索失败');
           }
-          final text = res.results.map((r) => '### ${r.title}\n链接: ${r.url}\n${r.snippet}').join('\n\n');
-          return AgentToolOutcome.success(text.isEmpty ? '（未搜索到匹配结果）' : text);
+          var text =
+              res.results.map((r) => '### ${r.title}\n链接: ${r.url}\n${r.snippet}').join('\n\n');
+          if (text.isEmpty) {
+            return const AgentToolOutcome.success('（未搜索到匹配结果）');
+          }
+
+          // 检索结果与问题明显无关时，明确告诉模型"这份材料不相关"。
+          //
+          // 为什么要这一段：实机上问"今天股市为什么大跌"，web_search 显示执行
+          // 成功，回来的却是十条日历网/老黄历，且摘要曾经全空。模型看着这份
+          // 材料答不出股市问题，于是说"我无法实时联网获取最新股市数据"——
+          // 与界面上的"执行成功"自相矛盾。它不是无故撒谎，是手上真的只有这份
+          // 材料，而系统从没告诉它这份材料不相关。
+          //
+          // 注意两件事：
+          //   1. 结果本身仍然灌给模型，让它能否决我们的启发式（宁可漏判不可错判）；
+          //   2. 徽章仍是 success——工具确实成功了，把我们的猜测升级成"失败"
+          //      是冒领权威。区分只活在模型读到的内容里。
+          if (!searchResultsLookRelevant(q, res.results)) {
+            text = '【系统提示】以上检索结果与用户的问题看起来不相关'
+                '（关键词未在标题或摘要中出现）。请如实地告诉用户"检索未命中'
+                '相关资料"，不要把这些结果当作答案依据；可以基于通用知识回答，'
+                '但必须说明这一点。\n\n$text';
+          }
+          return AgentToolOutcome.success(text);
         }
 
         if (name == 'web_scrape') {

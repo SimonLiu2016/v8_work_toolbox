@@ -10,8 +10,9 @@ import 'package:V8WorkToolbox/tools/ai_video_studio/services/ai_constraint_engin
 ///    [ConstraintParseError] 且保留原始文本；
 /// 3. 字段级硬约束（台词字数 = 时长 × 5）真的会拒收超标的 AI 输出。
 void main() {
-  /// 27 个汉字，超过 3 秒镜头的 15 字上限（时长 × 5 字/秒）。
-  const tooLongDialogue = '这里有一句非常非常长的台词长到三秒钟绝对说不完这么多字';
+  /// 超过 3 秒镜头上限（3 × 5 = 15 字，即使包含预估秒数标注容差 15 字也超过 30 字）。
+  const tooLongDialogue = '这里有一句非常非常长的台词长到三秒钟绝对说不完这么多字，因为台词太长太长太长了完全无法在一瞬之间全部念完';
+
 
   tearDown(AiConstraintEngine.resetForTesting);
 
@@ -40,11 +41,12 @@ void main() {
       expect(prompt, contains('extreme_long'));
       expect(prompt, contains('depressing'));
       expect(prompt, contains('opening'));
-      // 时长 2-6 秒与 5 字/秒
-      expect(prompt, contains('2 到 6 秒'));
-      expect(prompt, contains('× 5 个汉字'));
-      // 8-12 个分镜
-      expect(prompt, contains('8 到 12 个分镜'));
+      // 时长 3.0 到 5.0 秒
+      expect(prompt, contains('3.0 到 5.0 秒'));
+      // 8-16 个分镜
+      expect(prompt, contains('8 到 16 个分镜'));
+
+
       // JSON Schema 与 Example
       expect(prompt, contains('【Output JSON Schema】'));
       expect(prompt, contains('【Example】'));
@@ -177,7 +179,7 @@ void main() {
       expect(calls, AiConstraintEngine.maxAttempts);
     });
 
-    test('时长超出 2-6 秒时拒收', () async {
+    test('时长超出 3-5 秒时拒收', () async {
       AiConstraintEngine.chatFn = ({
         slot = 'text',
         explicitProviderId,
@@ -298,6 +300,326 @@ void main() {
       expect(capturedUser, contains('上集末尾钩子'));
       expect(capturedUser, contains('林晓'));
       expect(capturedUser, contains('警局审讯室'));
+    });
+
+    test('跨集状态台账注入 user prompt', () async {
+      String? capturedUser;
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        capturedUser = messages.last['content'];
+        return chatOf(
+          '{"shots": [{"number": 1, "duration_sec": 4, "shot_size": "long", '
+          '"mood": "sad", "function": "opening", "action_zh": "离别", '
+          '"dialogue": "", "character_ids": [], "scene_id": "", '
+          '"camera_move": "", "continuity": {"world_position": "巷口", '
+          '"screen_position": "", "holding_left": "", "holding_right": "", '
+          '"lighting_state": "", "state_changes": []}}]}',
+        );
+      };
+
+      await AiConstraintEngine.scriptBreakdown(
+        synopsis: '第二集大纲',
+        context: const ScriptContext(
+          seriesName: '雨夜',
+          episodeIndex: 2,
+          carryOverState: '角色位于巷口左侧，右手持有折叠刀',
+        ),
+      );
+
+      // 措辞必须是「既定初始状态，直接沿用，不得推导其来源」——
+      // 写成「请据此推导」会诱导 AI 补前史。
+      expect(capturedUser, contains('既定初始状态'));
+      expect(capturedUser, contains('不得推导其来源'));
+      expect(capturedUser, contains('右手持有折叠刀'));
+    });
+  });
+
+  group('片段结构校验', () {
+    /// 造一份合法的分镜 JSON（含 continuity），供片段测试复用。
+    String shotsJson() => '''
+{"shots": [
+  {"number": 1, "duration_sec": 3, "shot_size": "medium", "mood": "warm",
+   "function": "opening", "action_zh": "回眸", "dialogue": "",
+   "character_ids": ["c1"], "scene_id": "", "camera_move": "push-in",
+   "continuity": {"world_position": "巷口", "screen_position": "",
+   "holding_left": "", "holding_right": "刀", "lighting_state": "",
+   "state_changes": []}},
+  {"number": 2, "duration_sec": 4, "shot_size": "full", "mood": "warm",
+   "function": "advance", "action_zh": "走近", "dialogue": "",
+   "character_ids": ["c1"], "scene_id": "", "camera_move": "follow",
+   "continuity": {"world_position": "巷口中段", "screen_position": "",
+   "holding_left": "", "holding_right": "刀", "lighting_state": "",
+   "state_changes": []}}
+]}
+''';
+
+    test('片段覆盖全部分镜且镜号不重叠时通过', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 7, '
+          '"boundary_reason": "开场建立空间", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      final result = await AiConstraintEngine.scriptBreakdown(
+        synopsis: '测试',
+        context: const ScriptContext(),
+      );
+
+      expect(result.attempt, 1, reason: '合法片段结构不该重试');
+      final segments = result.data['segments'] as List;
+      expect(segments, hasLength(1));
+      expect(segments.first['shot_numbers'], [1, 2]);
+    });
+
+    test('片段未覆盖全部分镜时拒收', () async {
+      var calls = 0;
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        calls++;
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 3, '
+          '"boundary_reason": "只覆盖第一镜", "shot_numbers": [1]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+      expect(calls, greaterThan(1), reason: '校验失败应该重试');
+    });
+
+    test('片段镜号重叠时拒收', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": ['
+          '{"segment_id": 1, "target_duration_sec": 3, '
+          '"boundary_reason": "第一段", "shot_numbers": [1]},'
+          '{"segment_id": 2, "target_duration_sec": 4, '
+          '"boundary_reason": "第二段重复覆盖第一镜", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+    });
+
+    test('相邻片段衔接不足时拒收', () async {
+      // 两镜景别相同（medium / medium）且出场角色相同 → 不满足
+      // 「主体不同 / 景别差 2 档 / 角度差 90°」中的任何一项。
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": ['
+          '{"segment_id": 1, "target_duration_sec": 3, '
+          '"boundary_reason": "第一段", "shot_numbers": [1]},'
+          '{"segment_id": 2, "target_duration_sec": 4, '
+          '"boundary_reason": "第二段", "shot_numbers": [2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+    });
+
+    test('片段目标时长与分镜时长之和不符时拒收', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 99, '
+          '"boundary_reason": "时长乱填", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+    });
+
+    test('片段目标时长与分镜时长之和不符时拒收', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 3, '
+          '"boundary_reason": "第一段", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+    });
+
+    test('片段时长偏差被算出但不拒收', () async {
+      // 分镜时长之和 = 3 + 4 = 7 秒，片段目标写 8 秒。偏差 +1 秒，落在单片段
+      // 的 ±1 秒硬门槛内，所以不拒收；但 UI 要能看见这个偏差并提示用户
+      // （spec: 单集片段数量与时长自洽）。
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 8, '
+          '"boundary_reason": "整集一段", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      final result = await AiConstraintEngine.scriptBreakdown(
+        synopsis: '测试',
+        context: const ScriptContext(),
+      );
+
+      expect(result.attempt, 1, reason: '±1 秒内的偏差不该触发重试');
+      expect(result.data['duration_deviation_sec'], 1);
+    });
+
+    test('片段时长超出单片段 ±1 秒硬门槛时拒收', () async {
+      // 7 秒的片段目标写 10 秒：这不是"计时漂移"，是 AI 完全没按分镜计时。
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 10, '
+          '"boundary_reason": "整集一段", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      await expectLater(
+        AiConstraintEngine.scriptBreakdown(
+          synopsis: '测试',
+          context: const ScriptContext(),
+        ),
+        throwsA(isA<ConstraintParseError>()),
+      );
+    });
+
+    test('片段时长与分镜时长一致时偏差为 0', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(
+          '{"segments": [{"segment_id": 1, "target_duration_sec": 7, '
+          '"boundary_reason": "整集一段", "shot_numbers": [1, 2]}], '
+          '${shotsJson().substring(1)}',
+        );
+      };
+
+      final result = await AiConstraintEngine.scriptBreakdown(
+        synopsis: '测试',
+        context: const ScriptContext(),
+      );
+
+      expect(result.data['duration_deviation_sec'], 0);
+    });
+
+    test('没有 segments 字段时只返回 shots（旧版数据路径）', () async {
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        return chatOf(shotsJson());
+      };
+
+      final result = await AiConstraintEngine.scriptBreakdown(
+        synopsis: '测试',
+        context: const ScriptContext(),
+      );
+
+      expect(result.attempt, 1);
+      expect(result.data.containsKey('segments'), isFalse);
+      expect(result.data['shots'], hasLength(2));
     });
   });
 
@@ -463,6 +785,88 @@ void main() {
         throwsA(isA<SlotUnavailableException>()),
       );
       expect(calls, 1, reason: '供应商不可用是路由层的问题，重发只会让用户多等');
+    });
+  });
+
+  group('任务超时映射测试', () {
+    test('长篇小说全案解构与单章提炼任务默认超时为 240 秒，普通任务为 120 秒', () {
+      expect(
+        AiConstraintEngine.defaultTimeoutFor(StudioAiTask.novelMasterExtraction),
+        equals(const Duration(seconds: 240)),
+      );
+      expect(
+        AiConstraintEngine.defaultTimeoutFor(StudioAiTask.novelEpisodeSegmentation),
+        equals(const Duration(seconds: 240)),
+      );
+      expect(
+        AiConstraintEngine.defaultTimeoutFor(StudioAiTask.novelChapterAdaptation),
+        equals(const Duration(seconds: 240)),
+      );
+      expect(
+        AiConstraintEngine.defaultTimeoutFor(StudioAiTask.scriptBreakdown),
+        equals(const Duration(seconds: 120)),
+      );
+      expect(
+        AiConstraintEngine.defaultTimeoutFor(StudioAiTask.promptTranslation),
+        equals(const Duration(seconds: 120)),
+      );
+    });
+
+    test('adaptNovelChapter 调用时向 chatFn 传递 240 秒超时且正确校验结构化大纲', () async {
+      Duration? capturedTimeout;
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        capturedTimeout = timeout;
+        return ChatResult(
+          text: '{"title": "密室杀局", "synopsis": "【开局抓手】暴雨之夜韩立推开神手谷密室木门，赫然发现墨大夫面色铁青，手中短刃寒光逼人。【矛盾推进】墨大夫步步紧逼逼问长春功第四层口诀，韩立借取药引为由退至药柜死角暗中周旋。【核心高潮】墨大夫骤然暴起施展鹰爪功锁喉，韩立生死一线间反手掷出毒粉迷其双目。【本集断点】墨大夫临死前双目泛起幽绿魂光，夺舍残魂破体而出。", "summary": "韩立在密室用毒粉反制墨大夫肉身", "hook": "墨大夫残魂即将扑向韩立"}',
+          usedProviderId: 'test-provider',
+          usedModel: 'test-model',
+          routingTrace: const [],
+        );
+      };
+
+      final result = await AiConstraintEngine.adaptNovelChapter(
+        novelText: '韩立进入密室……整章数千字原文……',
+        seriesName: '凡人修仙',
+        worldview: '仙凡两隔',
+        characterNames: ['韩立', '墨大夫'],
+        episodeIndex: 1,
+      );
+
+      expect(capturedTimeout, equals(const Duration(seconds: 240)));
+      expect(result.data['title'], equals('密室杀局'));
+      expect(result.data['synopsis'], contains('【开局抓手】'));
+      expect(result.data['synopsis'], contains('【核心高潮】'));
+      expect(result.data['hook'], contains('残魂'));
+    });
+
+    test('extractNovelMaster 调用时向 chatFn 传递 240 秒超时', () async {
+      Duration? capturedTimeout;
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        capturedTimeout = timeout;
+        return ChatResult(
+          text: '{"worldview": "世界观", "style_tokens": "cinematic", "characters": [{"name": "主角"}], "scenes": []}',
+          usedProviderId: 'test-provider',
+          usedModel: 'test-model',
+          routingTrace: const [],
+        );
+      };
+
+      await AiConstraintEngine.extractNovelMaster(novelText: '测试小说文本');
+      expect(capturedTimeout, equals(const Duration(seconds: 240)));
     });
   });
 }

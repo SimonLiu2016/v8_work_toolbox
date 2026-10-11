@@ -263,6 +263,7 @@ class AiService {
 
     switch (provider.protocol) {
       case AiProtocolType.openai:
+      case AiProtocolType.agnes:
         return _discoverOpenAiModels(provider.baseUrl, key);
       case AiProtocolType.anthropic:
         return _discoverAnthropicModels(provider.baseUrl, key);
@@ -474,6 +475,7 @@ class AiService {
     ];
     switch (provider.protocol) {
       case AiProtocolType.openai:
+      case AiProtocolType.agnes:
         await _chatOpenAi(provider, key, model, pingMessages, maxTokens: 5);
         break;
       case AiProtocolType.anthropic:
@@ -647,6 +649,7 @@ class AiService {
 
     switch (provider.protocol) {
       case AiProtocolType.openai:
+      case AiProtocolType.agnes:
         return _chatOpenAi(
           provider,
           key,

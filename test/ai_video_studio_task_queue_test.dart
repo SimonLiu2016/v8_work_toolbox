@@ -365,6 +365,99 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 30));
     });
   });
+
+  group('片段任务', () {
+    test('segmentKey 从 seg-N 提取 N', () {
+      expect(StudioTaskQueue.segmentKey('seg-1'), 1);
+      expect(StudioTaskQueue.segmentKey('seg-12'), 12);
+    });
+
+    test('segmentKey 对非 seg- 前缀的 id 给稳定值', () {
+      // 同一个 id 在同一进程内必须给同一个键，否则重新入队时对不上旧任务。
+      expect(StudioTaskQueue.segmentKey('custom-id'),
+          StudioTaskQueue.segmentKey('custom-id'));
+    });
+
+    test('tasksForSegment 只返回该片段的任务', () {
+      final runner = _FakeRunner(
+        taskId: 't-seg',
+        body: () async => 'seg-1.mp4',
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.segment,
+        shotNumber: StudioTaskQueue.segmentKey('seg-1'),
+        label: '片段 1 视频',
+        runner: runner,
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.video,
+        shotNumber: 3,
+        label: '分镜 3 视频',
+        runner: _FakeRunner(taskId: 't-3', body: () async => 'shot_3.mp4'),
+      );
+
+      final segTasks = queue.tasksForSegment('seg-1');
+      expect(segTasks, hasLength(1));
+      expect(segTasks.single.kind, StudioTaskKind.segment);
+      expect(segTasks.single.label, '片段 1 视频');
+    });
+
+    test('片段任务与分镜任务共享同一并发上限', () async {
+      // spec 明确：片段级任务的并发与生图任务共享同一配置。这里用 4 个
+      // 任务（2 片段 + 2 分镜）验证峰值不超过 maxConcurrency。
+      queue.setMaxConcurrency(2);
+      var peak = 0;
+      var running = 0;
+      Future<String> body() async {
+        running++;
+        peak = running > peak ? running : peak;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        running--;
+        return 'ok';
+      }
+
+      for (var i = 0; i < 2; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.segment,
+          shotNumber: StudioTaskQueue.segmentKey('seg-$i'),
+          label: '片段 $i',
+          runner: _FakeRunner(taskId: 'seg-$i', body: body),
+        );
+      }
+      for (var i = 0; i < 2; i++) {
+        queue.enqueue(
+          kind: StudioTaskKind.video,
+          shotNumber: i + 1,
+          label: '分镜 $i',
+          runner: _FakeRunner(taskId: 'shot-$i', body: body),
+        );
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(peak, lessThanOrEqualTo(2),
+          reason: '片段与分镜任务必须共享并发上限，不能各跑各的');
+      expect(queue.tasks.every((t) => t.isTerminal), isTrue);
+    });
+
+    test('片段任务可取消', () async {
+      final id = queue.enqueue(
+        kind: StudioTaskKind.segment,
+        shotNumber: StudioTaskQueue.segmentKey('seg-1'),
+        label: '片段 1 视频',
+        runner: _FakeRunner(
+          taskId: 'seg-cancel',
+          body: () async {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+            return 'seg-1.mp4';
+          },
+        ),
+      );
+      queue.cancel(id);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final task = queue.tasks.firstWhere((t) => t.id == id);
+      expect(task.status, StudioTaskStatus.cancelled);
+    });
+  });
 }
 
 class _FakeRunner implements StudioTaskRunner, CancellableTaskRunner {

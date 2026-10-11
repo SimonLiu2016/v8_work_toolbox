@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:V8WorkToolbox/services/app_paths.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
+import 'package:V8WorkToolbox/services/media_capability.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/image_gen_adapter.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/video_gen_adapter.dart';
 
@@ -454,7 +455,7 @@ void main() {
         prompt: 'consistent character with ref',
         shotNumber: 2,
         outputFile: out,
-        referenceImagePath: refFile.path,
+        referenceImages: [refFile.path],
       ));
 
       expect(refReceived, isTrue);
@@ -549,6 +550,213 @@ void main() {
 
       expect(calledSenseEndpoint, isTrue);
       if (await out.exists()) await out.delete();
+    });
+  });
+
+  group('片段级请求的多参考图契约', () {
+    late Directory tempDir;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync('segment_ref_test');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    File writeFakePng(String name) {
+      // 1×1 透明 PNG。适配器只读字节转 base64，不解码内容。
+      final file = File(p.join(tempDir.path, name));
+      file.writeAsBytesSync(const [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      ]);
+      return file;
+    }
+
+    test('SenseAudio content 数组首张 first_frame、其余 reference', () async {
+      final ref1 = writeFakePng('char.png');
+      final ref2 = writeFakePng('scene.png');
+      Map<String, dynamic>? captured;
+
+      final adapter = SenseAudioVideoAdapter(
+        baseUrl: 'https://mock.senseaudio.local',
+        model: 'doubao-seedance-2-0-260128',
+        apiKey: 'mock-key',
+        httpFn: (req) async {
+          if (req.method == 'POST' && req.url.path == '/video/create') {
+            captured = jsonDecode(req.body) as Map<String, dynamic>;
+            return http.Response(jsonEncode({'id': 'task-1'}), 200);
+          }
+          if (req.url.path == '/video/status') {
+            return http.Response(
+              jsonEncode({
+                'data': {
+                  'status': 'succeeded',
+                  'video_url': 'https://mock.cdn/out.mp4',
+                },
+              }),
+              200,
+            );
+          }
+          // 下载分支：返回 4 个字节，够证明整条链路走通了。
+          return http.Response.bytes(const [1, 2, 3, 4], 200);
+        },
+      );
+
+      // 片段级形状：不带首帧，两张参考图 + 完整片段提示词。整条链路走 mock，
+      // 不碰真实网络，所以 generateVideo 会正常返回而不是抛错。
+      final output = File(p.join(tempDir.path, 'seg-1.mp4'));
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          referenceImages: [ref1, ref2],
+          promptZh: 'shot 1 | 回眸\nshot 2 | 走近',
+          durationSec: 8,
+          shotNumber: 1,
+          outputFile: output,
+        ),
+      );
+
+      expect(await output.exists(), isTrue);
+      expect(captured, isNotNull,
+          reason: '请求必须已经发出，否则后面的 payload 断言没有意义');
+      final content = captured!['content'] as List;
+      expect(content, hasLength(3), reason: 'text + 2 张图');
+      expect((content[0] as Map)['type'], 'text');
+      expect((content[0] as Map)['text'], contains('shot 1'));
+      expect((content[1] as Map)['role'], 'first_frame');
+      expect((content[2] as Map)['role'], 'reference');
+      for (final item in content.skip(1)) {
+        final url = (item as Map)['url'] as String;
+        expect(url, startsWith('data:image/png;base64,'));
+      }
+    });
+
+    test('effectivePrompt 优先用片段提示词而非运镜短语', () {
+      final request = VideoGenRequest(
+        inputImage: null,
+        promptZh: 'shot 1 | 回眸，右手持有折叠刀',
+        cameraMove: 'slow push-in',
+        durationSec: 8,
+        shotNumber: 1,
+        outputFile: File(p.join(tempDir.path, 'x.mp4')),
+      );
+      expect(request.effectivePrompt, contains('折叠刀'));
+      expect(request.effectivePrompt, isNot(contains('slow push-in')));
+    });
+
+    test('promptZh 为空时回退运镜短语', () {
+      final request = VideoGenRequest(
+        inputImage: writeFakePng('a.png'),
+        cameraMove: 'slow push-in',
+        durationSec: 5,
+        shotNumber: 1,
+        outputFile: File(p.join(tempDir.path, 'y.mp4')),
+      );
+      expect(request.effectivePrompt, 'slow push-in');
+    });
+
+    test('allImages 去重：首帧与参考图同一路径只出现一次', () {
+      final same = writeFakePng('same.png');
+      final request = VideoGenRequest(
+        inputImage: same,
+        referenceImages: [same, writeFakePng('other.png')],
+        durationSec: 5,
+        shotNumber: 1,
+        outputFile: File(p.join(tempDir.path, 'z.mp4')),
+      );
+      expect(request.allImages, hasLength(2));
+    });
+
+    test('unwrap 取回内层适配器', () async {
+      final inner = SenseAudioVideoAdapter(
+        baseUrl: 'https://mock.local',
+        model: 'doubao-seedance-2-0-260128',
+        apiKey: 'k',
+      );
+      final wrapped = NormalizingVideoAdapter(
+        inner,
+        MediaCapabilityPresets.forModel('doubao-seedance-2-0-260128')!,
+        modelId: 'doubao-seedance-2-0-260128',
+      );
+      expect(identical(wrapped.unwrap(), inner), isTrue);
+      // id/label 透传，UI 上看到的还是同一个引擎。
+      expect(wrapped.id, inner.id);
+      expect(wrapped.label, inner.label);
+    });
+
+    test('规整超限被拒绝时不提交请求', () async {
+      var called = false;
+      final inner = SenseAudioVideoAdapter(
+        baseUrl: 'https://mock.local',
+        model: 'doubao-seedance-2-0-260128',
+        apiKey: 'k',
+        httpFn: (req) async {
+          called = true;
+          return http.Response('{}', 200);
+        },
+      );
+      // 声明最多 1 张参考图，请求带 3 张 → 必须拒绝。
+      final wrapped = NormalizingVideoAdapter(
+        inner,
+        const MediaModelCapability(
+          maxReferenceImages: 1,
+          supportsFirstFrame: true,
+          isDeclared: true,
+        ),
+        modelId: 'doubao-seedance-2-0-260128',
+      );
+
+      final refs = List.generate(
+        3,
+        (i) => File(p.join(tempDir.path, 'r$i.png')),
+      );
+      for (final f in refs) {
+        f.writeAsBytesSync(const [1, 2, 3]);
+      }
+
+      await expectLater(
+        wrapped.generateVideo(
+          VideoGenRequest(
+            inputImage: null,
+            referenceImages: refs,
+            promptZh: 'shot 1',
+            durationSec: 8,
+            shotNumber: 1,
+            outputFile: File(p.join(tempDir.path, 'out.mp4')),
+          ),
+        ),
+        throwsA(isA<MediaCapabilityException>()),
+      );
+      expect(called, isFalse,
+          reason: '被拒绝的请求绝不能到达网络层');
+    });
+
+    test('Ken Burns 无首帧时抛可读错误', () async {
+      final adapter = KenBurnsVideoAdapter();
+      // 不探测 FFmpeg 可用性：错误必须在探测之前抛出，否则测试会依赖本机
+      // 是否装了 FFmpeg。
+      await expectLater(
+        adapter.generateVideo(
+          VideoGenRequest(
+            inputImage: null,
+            referenceImages: [writeFakePng('r.png')],
+            durationSec: 8,
+            shotNumber: 1,
+            outputFile: File(p.join(tempDir.path, 'kb.mp4')),
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('Ken Burns'),
+              contains('首帧'),
+            ),
+          ),
+        ),
+      );
     });
   });
 }

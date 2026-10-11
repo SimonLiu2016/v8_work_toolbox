@@ -56,8 +56,14 @@ void main() {
         preferredEngineId: 'system-video',
       );
 
-      expect(adapter, isA<SenseAudioVideoAdapter>());
-      expect(adapter.label, contains('doubao-seedance-2-0-260128'));
+      // 工厂会把适配器包上能力规整（NormalizingVideoAdapter），所以先
+      // unwrap 再断言具体类型——这是能力矩阵落地后的新形态（spec: 请求参数
+      // 规整）。本地 Ken Burns 不被包装，它对 unwrap 同样成立。
+      final inner = adapter is NormalizingVideoAdapter
+          ? adapter.unwrap()
+          : adapter;
+      expect(inner, isA<SenseAudioVideoAdapter>());
+      expect(inner.label, contains('doubao-seedance-2-0-260128'));
     });
   });
 }

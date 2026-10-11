@@ -345,4 +345,131 @@ void main() {
       }
     });
   });
+
+  group('片段产物', () {
+    /// 造一个「前 2 镜来自片段、第 3 镜单独出片」的混合场景。
+    Future<({String seriesId, StudioEpisode episode})> mixedFixture() async {
+      final series = await manager.createSeries(name: '混合剧');
+      final created = await manager.createEpisode(seriesId: series.id);
+      final episode = created.episode;
+      final clipsDir = manager.episodeClipsDir(series.id, episode.id);
+      final segmentsDir = manager.episodeSegmentsDir(series.id, episode.id);
+      await segmentsDir.create(recursive: true);
+
+      // 片段产物：seg-1 覆盖镜 1、2。
+      File(p.join(segmentsDir.path, 'seg-1.mp4'))
+          .writeAsStringSync('segment-clip');
+      // 分镜产物：镜 3 单独出过片。
+      File(p.join(clipsDir.path, 'shot_3.mp4'))
+          .writeAsStringSync('shot-clip');
+
+      final shots = [
+        StudioShot(
+          number: 1,
+          durationSec: 4,
+          segmentId: 'seg-1',
+          dialogue: '台词 1',
+        ),
+        StudioShot(
+          number: 2,
+          durationSec: 4,
+          segmentId: 'seg-1',
+          dialogue: '台词 2',
+        ),
+        StudioShot(
+          number: 3,
+          durationSec: 3,
+          segmentId: 'seg-2',
+          clipPath: 'shot_3.mp4',
+          dialogue: '台词 3',
+        ),
+      ];
+      final segments = [
+        const StudioSegment(
+          id: 'seg-1',
+          targetDurationSec: 8,
+          shotNumbers: [1, 2],
+          clipPath: 'seg-1.mp4',
+          boundaryReason: '开场建立双人关系',
+        ),
+        const StudioSegment(
+          id: 'seg-2',
+          targetDurationSec: 3,
+          shotNumbers: [3],
+        ),
+      ];
+      final saved = episode.copyWith(shots: shots, segments: segments);
+      await manager.saveEpisode(saved);
+      return (seriesId: series.id, episode: saved);
+    }
+
+    test('片段在视频轨上合成一条，时长用片段目标时长', () async {
+      final f = await mixedFixture();
+      final out = Directory.systemTemp.createTempSync('jianying_seg');
+      try {
+        final result = await JianyingExporter.export(
+          outputDir: out.path,
+          episode: f.episode,
+          shots: f.episode.shots,
+        );
+        final draft = jsonDecode(
+          result.draftContentFile.readAsStringSync(),
+        ) as Map<String, dynamic>;
+        final tracks = draft['tracks'] as List;
+        final video = tracks.firstWhere(
+          (t) => (t as Map)['type'] == 'video',
+        ) as Map;
+        final segments = video['segments'] as List;
+
+        // 镜 1、2 合并成 seg-1 一条（8 秒）；镜 3 单独一条（3 秒）。
+        expect(segments, hasLength(2));
+        expect((segments[0] as Map)['material_id'], 'seg-1.mp4');
+        expect((segments[0] as Map)['duration'], 8000000);
+        expect((segments[1] as Map)['material_id'], 'shot_3.mp4');
+        expect((segments[1] as Map)['duration'], 3000000);
+        // 第二条从 8 秒起——片段那条先占了 8 秒。
+        expect((segments[1] as Map)['start'], 8000000);
+      } finally {
+        out.deleteSync(recursive: true);
+      }
+    });
+
+    test('片段素材软链接到 segments/ 而不是 clips/', () async {
+      final f = await mixedFixture();
+      final out = Directory.systemTemp.createTempSync('jianying_seg_link');
+      try {
+        final result = await JianyingExporter.export(
+          outputDir: out.path,
+          episode: f.episode,
+          shots: f.episode.shots,
+        );
+        final link = Link(p.join(result.materialsDir.path, 'seg-1.mp4'));
+        expect(await link.exists(), isTrue,
+            reason: '片段素材必须被链接，否则草稿里是断链');
+        // 链接目标应在 segments/ 下。
+        expect(await link.target(), contains('segments'));
+      } finally {
+        out.deleteSync(recursive: true);
+      }
+    });
+
+    test('备用导出也拷贝片段视频', () async {
+      final f = await mixedFixture();
+      final out = Directory.systemTemp.createTempSync('jianying_seg_fb');
+      try {
+        final fallback = await JianyingExporter.exportFallback(
+          outputDir: out.path,
+          episode: f.episode,
+          shots: f.episode.shots,
+        );
+        final seg = File(p.join(fallback.path, 'video', 'seg-1.mp4'));
+        expect(await seg.exists(), isTrue,
+            reason: '兜底目录少一个片段就等于少一段成片');
+        final shot = File(p.join(fallback.path, 'video', 'shot_3.mp4'));
+        expect(await shot.exists(), isTrue);
+      } finally {
+        out.deleteSync(recursive: true);
+      }
+    });
+  });
 }

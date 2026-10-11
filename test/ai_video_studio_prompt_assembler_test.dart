@@ -209,4 +209,210 @@ void main() {
       expect(MoodTokens.of('unknown-mood'), 'cinematic lighting');
     });
   });
+
+  group('连续性台账 → 提示词段', () {
+    test('全空台账返回空串', () {
+      expect(ContinuityTokens.of(ShotContinuity.empty), '');
+    });
+
+    test('只填了部分字段时不产生断句', () {
+      // 逐字段拼而不是套模板：用户常常只填一两项，模板会产出
+      // 「角色位于，左手持有」这种断句。
+      final text = ContinuityTokens.of(const ShotContinuity(
+        worldPosition: '巷口左侧',
+        holdingRight: '折叠刀',
+      ));
+      expect(text, '角色位于巷口左侧，右手持有折叠刀');
+      expect(text, isNot(contains('，右手持有。')));
+    });
+
+    test('stateChanges 每项都带「本镜」前缀', () {
+      final text = ContinuityTokens.of(const ShotContinuity(
+        worldPosition: '诊室门口',
+        stateChanges: ['左袖撕裂', '徽章掉落'],
+      ));
+      expect(text, contains('本镜左袖撕裂'));
+      expect(text, contains('本镜徽章掉落'));
+    });
+  });
+
+  group('片段提示词组装', () {
+    CharacterCard character(String name, {String base = ''}) => CharacterCard(
+      id: 'c-$name',
+      name: name,
+      basePromptPositive: base,
+      updatedAt: DateTime(2026),
+    );
+
+    SceneCard scene(String name, {String promptEn = ''}) => SceneCard(
+      id: 's-$name',
+      name: name,
+      promptEn: promptEn,
+      updatedAt: DateTime(2026),
+    );
+
+    test('参考图编号与传入列表一一对应', () {
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          styleTokens: 'cinematic still',
+          targetDurationSec: 8,
+          characters: [character('林晓', base: '1girl, silver hair')],
+          scenes: [scene('雨夜巷道', promptEn: 'rainy alley at night')],
+          shots: const [
+            SegmentShotParts(
+              number: 1,
+              actionZh: '女主背靠砖墙猛然回眸',
+              cameraMove: 'slow push-in',
+              continuity: ShotContinuity(
+                worldPosition: '巷口左侧',
+                holdingRight: '折叠刀',
+              ),
+            ),
+          ],
+        ),
+        references: const [
+          SegmentReference(label: 'lin.png', usage: '林晓角色参考'),
+          SegmentReference(label: 'alley.png', usage: '雨夜巷道场景参考'),
+        ],
+      );
+      expect(result.positive, contains('{{ref 1}}'));
+      expect(result.positive, contains('{{ref 2}}'));
+      // 编号顺序必须与 references 列表一致：1 是角色、2 是场景。
+      expect(result.positive.indexOf('{{ref 1}}'),
+          lessThan(result.positive.indexOf('{{ref 2}}')));
+      expect(result.missingReferences, isEmpty);
+    });
+
+    test('没有参考图时不输出编号，并把缺口报给调用方', () {
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          characters: [character('林晓', base: '1girl')],
+          scenes: [scene('雨夜巷道', promptEn: 'rainy alley')],
+          shots: const [SegmentShotParts(number: 1, actionZh: '回眸')],
+        ),
+      );
+      expect(result.positive, isNot(contains('{{ref')));
+      expect(result.missingReferences, hasLength(2));
+      expect(result.missingReferences, contains('林晓 角色参考图'));
+      expect(result.missingReferences, contains('雨夜巷道 场景参考图'));
+    });
+
+    test('连续性段被钉住：超限时不丢台账', () {
+      // 台账段放在尾部附近，正是默认策略最先丢的位置。这里用超长的风格词
+      // 把额度撑满，验证台账段仍然保留。
+      final filler = List.filled(80, 'fillerword').join(', ');
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          styleTokens: filler,
+          shots: const [
+            SegmentShotParts(
+              number: 1,
+              actionZh: '回眸',
+              continuity: ShotContinuity(
+                worldPosition: '巷口左侧',
+                holdingRight: '折叠刀',
+              ),
+            ),
+          ],
+        ),
+      );
+      // 台账段必须留下，无论总长度是否超限。
+      expect(result.positive, contains('shot 1 state:'));
+      expect(result.positive, contains('右手持有折叠刀'));
+      // 超限时被丢的只能是可牺牲段（风格词/逐镜段），不能是台账。
+      expect(result.droppedSegments.join(' '), isNot(contains('折叠刀')));
+    });
+
+    test('超限时优先丢风格词而不是台账', () {
+      // 把风格词撑到超过 750 词：它必须被丢，台账必须留下。
+      //
+      // 注意：风格词是「单段就超限」的情形。`_joinWithinLimit` 对单段超限的
+      // 处理是整段丢弃（与 buildShotPrompt 的既有行为一致），所以这里断言的是
+      // 「风格词整段消失、台账留下」，而不是「风格词被部分保留」。
+      final filler = List.filled(1200, 'fillerword').join(', ');
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          styleTokens: filler,
+          shots: const [
+            SegmentShotParts(
+              number: 1,
+              actionZh: '回眸',
+              continuity: ShotContinuity(
+                worldPosition: '巷口左侧',
+                holdingRight: '折叠刀',
+              ),
+            ),
+          ],
+        ),
+      );
+      expect(result.truncated, isTrue);
+      expect(result.positive, contains('右手持有折叠刀'));
+    });
+
+    test('多段累积超限时逐段丢弃，台账仍保留', () {
+      // 每段都不超限但总和超限：验证丢弃顺序是从尾部往前，且钉住的台账
+      // 即使排在尾部也不会被丢。
+      //
+      // 注意 wordCount 的分词不看中文逗号，所以动作段要用英文逗号连接的词
+      // 才能真实累积额度。这里造 700 词风格 + 700 词动作，确保总和超限。
+      final filler = List.filled(700, 'styleword').join(', ');
+      final action = List.filled(700, 'actionword').join(', ');
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          styleTokens: filler,
+          shots: [
+            SegmentShotParts(
+              number: 1,
+              actionZh: action,
+              cameraMove: 'slow push-in',
+              continuity: const ShotContinuity(
+                worldPosition: '巷口左侧',
+                holdingRight: '折叠刀',
+              ),
+            ),
+          ],
+        ),
+      );
+      expect(result.truncated, isTrue);
+      expect(result.positive, contains('右手持有折叠刀'));
+      expect(result.droppedSegments.join(' '), isNot(contains('折叠刀')));
+    });
+
+    test('同一角色在多镜出场只写一次身份锚点', () {
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          characters: [character('林晓', base: '1girl, silver hair')],
+          shots: const [
+            SegmentShotParts(number: 1, actionZh: '回眸'),
+            SegmentShotParts(number: 2, actionZh: '咬牙'),
+            SegmentShotParts(number: 3, actionZh: '转身'),
+          ],
+        ),
+      );
+      final occurrences = '1girl, silver hair'.allMatches(result.positive);
+      expect(occurrences, hasLength(1));
+      expect(result.positive, contains('shot 1'));
+      expect(result.positive, contains('shot 2'));
+      expect(result.positive, contains('shot 3'));
+    });
+
+    test('目标时长与逐镜段都出现在提示词里', () {
+      final result = PromptAssembler.buildSegmentPrompt(
+        SegmentPromptParts(
+          targetDurationSec: 12,
+          shots: const [SegmentShotParts(number: 1, actionZh: '回眸')],
+        ),
+      );
+      expect(result.positive, contains('12s'));
+      expect(result.positive, contains('shot 1'));
+    });
+
+    test('空分镜列表不抛异常', () {
+      final result = PromptAssembler.buildSegmentPrompt(
+        const SegmentPromptParts(),
+      );
+      expect(result.positive, isNotEmpty);
+      expect(result.missingReferences, isEmpty);
+    });
+  });
 }
