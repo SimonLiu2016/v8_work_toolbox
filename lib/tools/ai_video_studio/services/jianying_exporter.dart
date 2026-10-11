@@ -66,12 +66,59 @@ abstract final class JianyingExporter {
     final materialRefs = <Map<String, dynamic>>[];
 
     // --- 视频轨 ------------------------------------------------------------
+    //
+    // 片段化后一段视频覆盖多个镜头（spec: 片段媒体存放与交付兼容）。剪映的
+    // 时间轴按「片段」切比按「镜头」切更自然——一个片段就是时间轴上连续的
+    // 一段，用户拖进去就能用。所以这里按片段分组输出，片段内不再拆段。
     var cursorUs = 0; // 微秒
-    for (final shot in shots) {
+    final segmentById = {
+      for (final seg in episode.segments) seg.id: seg,
+    };
+
+    // 按分镜顺序走，遇到属于同一片段的连续镜头就合并成一条轨道项。
+    var i = 0;
+    while (i < shots.length) {
+      final shot = shots[i];
+      final segment = shot.segmentId.isEmpty
+          ? null
+          : segmentById[shot.segmentId];
+
+      // 片段级产物：把该片段中本次要导出的连续镜头合成一条。
+      if (segment != null && segment.hasClip) {
+        final group = <StudioShot>[];
+        while (i < shots.length && shots[i].segmentId == segment.id) {
+          // 单独出过片的镜头不并进片段——它有自己的产物。
+          if (shots[i].clipPath != null && shots[i].clipPath!.isNotEmpty) break;
+          group.add(shots[i]);
+          i++;
+        }
+        if (group.isNotEmpty) {
+          final durationUs =
+              (segment.targetDurationSec * 1000000).round();
+          final linkName = '${segment.id}.mp4';
+          videoTrack.add({
+            'material_id': linkName,
+            'start': cursorUs,
+            'duration': durationUs,
+            'source_start': 0,
+            'speed': 1.0,
+          });
+          materialRefs.add({
+            'id': linkName,
+            'path': segment.clipPath!,
+            'type': 'segment',
+          });
+          cursorUs += durationUs;
+          continue;
+        }
+      }
+
+      // 分镜级产物：一镜一条，与改造前一致。
       final durationUs = (shot.durationSec * 1000000).round();
       if (shot.clipPath == null || shot.clipPath!.isEmpty) {
         // 没有片段的镜头跳过：剪映轨道上留空洞比插入一段空视频更难排查。
         cursorUs += durationUs;
+        i++;
         continue;
       }
       final linkName = 'shot_${shot.number}.mp4';
@@ -88,6 +135,7 @@ abstract final class JianyingExporter {
         'type': 'video',
       });
       cursorUs += durationUs;
+      i++;
     }
 
     // --- 字幕轨（时间码转微秒）---------------------------------------------
@@ -221,12 +269,26 @@ abstract final class JianyingExporter {
       await Directory(p.join(fallback.path, sub)).create(recursive: true);
     }
 
+    // 片段产物也拷进去：兜底目录是给用户手动拖素材用的，少一个片段就等于
+    // 少一段成片，用户不会意识到是"片段视频没导出来"。
+    final segmentById = {for (final seg in episode.segments) seg.id: seg};
+    final copiedSegments = <String>{};
     for (final shot in shots) {
       if (shot.clipPath != null && shot.clipPath!.isNotEmpty) {
         await _copyIfExists(
           File(p.join(episodeClipsDirOf(episode), shot.clipPath!)),
           File(p.join(fallback.path, 'video', 'shot_${shot.number}.mp4')),
         );
+      } else if (shot.segmentId.isNotEmpty) {
+        final segment = segmentById[shot.segmentId];
+        if (segment != null &&
+            segment.hasClip &&
+            copiedSegments.add(segment.id)) {
+          await _copyIfExists(
+            File(p.join(episodeSegmentsDirOf(episode), segment.clipPath!)),
+            File(p.join(fallback.path, 'video', '${segment.id}.mp4')),
+          );
+        }
       }
       if (shot.audioPath != null && shot.audioPath!.isNotEmpty) {
         await _copyIfExists(
@@ -266,9 +328,13 @@ abstract final class JianyingExporter {
     for (final ref in refs) {
       final id = ref['id'] as String;
       final type = ref['type'] as String;
-      final source = type == 'video'
-          ? File(p.join(episodeClipsDirOf(episode), ref['path'] as String))
-          : File(p.join(episodeAudioDirOf(episode), ref['path'] as String));
+      final source = switch (type) {
+        'video' => File(p.join(episodeClipsDirOf(episode), ref['path'] as String)),
+        'segment' => File(
+          p.join(episodeSegmentsDirOf(episode), ref['path'] as String),
+        ),
+        _ => File(p.join(episodeAudioDirOf(episode), ref['path'] as String)),
+      };
       final link = Link(p.join(materialsDir.path, id));
       try {
         if (await link.exists()) await link.delete();
@@ -296,6 +362,12 @@ abstract final class JianyingExporter {
   static String episodeClipsDirOf(StudioEpisode e) =>
       StudioProjectManager.instance
           .episodeClipsDir(e.seriesId, e.id)
+          .path;
+
+  /// 片段级视频目录。与 `clips/` 分开：一个放分镜产物，一个放片段产物。
+  static String episodeSegmentsDirOf(StudioEpisode e) =>
+      StudioProjectManager.instance
+          .episodeSegmentsDir(e.seriesId, e.id)
           .path;
 
   static String episodeAudioDirOf(StudioEpisode e) =>

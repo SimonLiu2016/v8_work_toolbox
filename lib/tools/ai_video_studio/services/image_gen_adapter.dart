@@ -16,6 +16,7 @@ import '../../../services/ai_config_store.dart';
 import '../../../services/ai_logger.dart';
 import '../../../services/app_http_client.dart';
 import '../../../services/keychain_service.dart';
+import '../../../services/media_capability.dart';
 
 /// 一次关键帧生成请求。
 class ImageGenRequest {
@@ -35,8 +36,18 @@ class ImageGenRequest {
   final int width;
   final int height;
 
-  /// 基准参考图路径（角色首图，部分引擎支持垫图）。
-  final String? referenceImagePath;
+  /// 多参考图路径，按序对应提示词里的 `{{ref N}}`（spec: 图像多参考图契约）。
+  ///
+  /// 片段化后一次关键帧生成可能同时带角色参考图与场景参考图——单张字段
+  /// 表达不了"谁约束身份、谁约束空间"。
+  final List<String> referenceImages;
+
+  /// 单张参考图的兼容访问器（取列表首项）。
+  ///
+  /// 保留它是为了不让四个适配器与既有测试在一次改动里全炸：新代码应该用
+  /// [referenceImages]，这个 getter 只服务旧调用点。
+  String? get referenceImagePath =>
+      referenceImages.isEmpty ? null : referenceImages.first;
 
   const ImageGenRequest({
     required this.prompt,
@@ -45,8 +56,21 @@ class ImageGenRequest {
     required this.outputFile,
     this.width = 1080,
     this.height = 1920,
-    this.referenceImagePath,
+    this.referenceImages = const [],
   });
+
+  /// 兼容旧调用点：用单张路径构造。
+  ImageGenRequest.single({
+    required this.prompt,
+    this.negativePrompt = '',
+    required this.shotNumber,
+    required this.outputFile,
+    this.width = 1080,
+    this.height = 1920,
+    String? referenceImagePath,
+  }) : referenceImages = referenceImagePath == null || referenceImagePath.isEmpty
+            ? const []
+            : [referenceImagePath];
 }
 
 /// 图像生成引擎抽象接口。
@@ -69,6 +93,69 @@ abstract interface class ImageGenAdapter {
 
 /// HTTP 后端签名，便于测试注入（不引入真实网络）。
 typedef ImageHttpFn = Future<http.Response> Function(http.Request request);
+
+/// 稳健图像文件下载器：使用独立短连接、标准浏览器标头与自动指数退避重试，
+/// 规避云存储 CDN（如腾讯云 COS、阿里云 OSS 等）偶发的 TCP RST、Connection reset 与握手超时。
+Future<File> downloadImageFileWithRetry({
+  required String url,
+  required File outputFile,
+  http.Client? client,
+  ImageHttpFn? httpFn,
+  int maxRetries = 3,
+}) async {
+  await outputFile.parent.create(recursive: true);
+  final uri = Uri.parse(url);
+
+  dynamic lastError;
+  for (var attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      final http.Response response;
+      if (httpFn != null) {
+        final req = http.Request('GET', uri)
+          ..headers['User-Agent'] =
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+          ..headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+          ..headers['Connection'] = 'close';
+        response = await httpFn(req);
+      } else {
+        // 使用单次独立客户端避免长连接池复用已遭 CDN RST 坏死的 Socket
+        final singleClient = client ?? AppHttpClient.create();
+        final req = http.Request('GET', uri)
+          ..headers['User-Agent'] =
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+          ..headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+          ..headers['Connection'] = 'close';
+        response = await singleClient
+            .send(req)
+            .then(http.Response.fromStream)
+            .timeout(const Duration(seconds: 25));
+      }
+
+      if (response.statusCode != 200) {
+        throw StateError('下载生成图失败 (HTTP ${response.statusCode})');
+      }
+
+      final bytes = response.bodyBytes;
+      if (bytes.length < 128) {
+        throw const FormatException('下载到的图像数据异常（过小）');
+      }
+
+      await outputFile.writeAsBytes(bytes, flush: true);
+      return outputFile;
+    } catch (e) {
+      lastError = e;
+      if (attempt < maxRetries) {
+        AiLogger.logWarning(
+          '下载远程生成图第 $attempt 次失败，正在重试 ($e)...',
+          providerName: 'MediaDownloader',
+        );
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+  }
+
+  throw StateError('下载生成图失败 (重试 $maxRetries 次后均异常): $lastError');
+}
 
 /// 硅基流动 Flux-schnell 图像生成适配器。
 ///
@@ -160,20 +247,12 @@ class SiliconFlowImageAdapter implements ImageGenAdapter {
       throw const FormatException('硅基流动返回的 image 没有 url');
     }
 
-    // URL 下载与生成请求分开：图片 CDN 的失败与 API 的失败要能区分排查。
-    final imageResp = await (_client ?? AppHttpClient.create())
-        .get(Uri.parse(url));
-    if (imageResp.statusCode != 200) {
-      throw StateError('下载生成图失败 (HTTP ${imageResp.statusCode})');
-    }
-    final bytes = imageResp.bodyBytes;
-    if (bytes.length < 128) {
-      // 128 字节以下的"图片"几乎必然是错误页占位。
-      throw const FormatException('下载到的图像数据异常（过小）');
-    }
-    await request.outputFile.parent.create(recursive: true);
-    await request.outputFile.writeAsBytes(bytes, flush: true);
-    return request.outputFile;
+    return downloadImageFileWithRetry(
+      url: url,
+      outputFile: request.outputFile,
+      client: _client,
+      httpFn: _httpFn,
+    );
   }
 
   static String _extractError(String body) {
@@ -263,6 +342,16 @@ class SenseAudioImageAdapter implements ImageGenAdapter {
       '1344x3136',
     ],
   };
+
+  /// 构造一个最小提供者视图，供 [MediaCapabilityResolver] 查询。
+  ///
+  /// SenseAudio 的图像模型声明集中在 [MediaCapabilityPresets.senseAudioImage]，
+  /// 但那个预设只覆盖默认模型；其余模型（seedream / sensenova）的尺寸白名单
+  /// 在本类的 [supportedDimensions] 里。这里把两者缝起来：矩阵优先，白名单
+  /// 兜底。
+  AiProviderConfigLike _providerFor(String targetModel) {
+    return _SenseAudioImageProvider(targetModel);
+  }
 
   /// 智能尺寸吸附算法：根据目标模型与输入高宽（如工坊 1080x1920），挑选宽高比最接近的合法尺寸。
   static String snapToSupportedSenseAudioSize(int width, int height, String targetModel) {
@@ -376,16 +465,29 @@ class SenseAudioImageAdapter implements ImageGenAdapter {
     }
 
     final targetModel = model.trim().isNotEmpty ? model.trim() : defaultModelId;
-    final snappedSize = snapToSupportedSenseAudioSize(
-      request.width,
-      request.height,
+    // 尺寸吸附走能力矩阵（spec: 请求参数规整）。白名单数据仍是
+    // [supportedDimensions]，但"按比例挑最近合法值"这条规则现在只有一份实现
+    // ——以前适配器私有一份、矩阵一份，改一处漏一处是必然的。
+    final capability = MediaCapabilityResolver.resolve(
+      _providerFor(targetModel),
       targetModel,
     );
+    final legalSizes = capability.resolutions.isNotEmpty
+        ? capability.resolutions
+        : (supportedDimensions[targetModel] ??
+            supportedDimensions[defaultModelId]!);
+    final snappedSize = capability.snapResolution(
+      '${request.width}x${request.height}',
+      legalSizes,
+    );
 
+    // 多参考图：SenseAudio 的 `reference` 字段接受 data URI，协议上只认一张。
+    // 取第一张（角色参考图优先于场景参考图——身份漂移比空间感不对更致命），
+    // 降级数量由规整层记录到 AiLogger（spec: 单图引擎降级可见）。
     String? referenceDataUri;
-    if (request.referenceImagePath != null && request.referenceImagePath!.isNotEmpty) {
+    if (request.referenceImages.isNotEmpty) {
       try {
-        final refFile = File(request.referenceImagePath!);
+        final refFile = File(request.referenceImages.first);
         if (await refFile.exists()) {
           final refBytes = await refFile.readAsBytes();
           if (refBytes.isNotEmpty) {
@@ -393,6 +495,13 @@ class SenseAudioImageAdapter implements ImageGenAdapter {
           }
         }
       } catch (_) {}
+    }
+    if (request.referenceImages.length > 1) {
+      AiLogger.logWarning(
+        'SenseAudio 图像模型仅支持单张参考图，本次降级：'
+        '${request.referenceImages.length} 张 → 1 张',
+        providerName: 'SenseAudio',
+      );
     }
 
     final payload = <String, dynamic>{
@@ -574,23 +683,12 @@ class SenseAudioImageAdapter implements ImageGenAdapter {
   }
 
   Future<File> _downloadImage(String url, File outputFile) async {
-    await outputFile.parent.create(recursive: true);
-    final http.Response imageResp;
-    if (_httpFn != null) {
-      imageResp = await _httpFn(http.Request('GET', Uri.parse(url)));
-    } else {
-      final client = _client ?? AppHttpClient.create();
-      imageResp = await client.get(Uri.parse(url));
-    }
-    if (imageResp.statusCode != 200) {
-      throw StateError('下载生成图失败 (HTTP ${imageResp.statusCode})');
-    }
-    final bytes = imageResp.bodyBytes;
-    if (bytes.length < 128) {
-      throw const FormatException('下载到的图像数据异常（过小）');
-    }
-    await outputFile.writeAsBytes(bytes, flush: true);
-    return outputFile;
+    return downloadImageFileWithRetry(
+      url: url,
+      outputFile: outputFile,
+      client: _client,
+      httpFn: _httpFn,
+    );
   }
 
   void disposeForTesting() {
@@ -800,21 +898,25 @@ class SystemAiImageAdapter implements ImageGenAdapter {
 
     final endpoint = _resolveEndpoint();
     final modelName = targetModel;
+    final isAgnes = modelName.toLowerCase().contains('agnes-image') ||
+        activeProvider.protocol == AiProtocolType.agnes;
 
     final payload = <String, dynamic>{
       'model': modelName,
       'prompt': request.prompt,
-      'size': '${request.width}x${request.height}',
-      'image_size': '${request.width}x${request.height}', // 兼容 SiliconFlow / Flux 扩展
-      'n': 1,
-      if (request.negativePrompt.trim().isNotEmpty)
-        'negative_prompt': request.negativePrompt.trim(),
+      if (!isAgnes) ...{
+        'size': '${request.width}x${request.height}',
+        'image_size': '${request.width}x${request.height}', // 兼容 SiliconFlow / Flux 扩展
+        'n': 1,
+        if (request.negativePrompt.trim().isNotEmpty)
+          'negative_prompt': request.negativePrompt.trim(),
+      },
     };
 
     final stopwatch = Stopwatch()..start();
     AiLogger.logRequest(
       providerName: activeProvider.name.isNotEmpty ? activeProvider.name : 'OpenAI-Compatible',
-      protocol: 'openai',
+      protocol: isAgnes ? 'agnes' : 'openai',
       model: modelName,
       endpoint: endpoint,
       promptSummary: request.prompt,
@@ -885,22 +987,12 @@ class SystemAiImageAdapter implements ImageGenAdapter {
     }
 
     if (url != null && url.isNotEmpty) {
-      final http.Response imageResp;
-      if (_httpFn != null) {
-        imageResp = await _httpFn(http.Request('GET', Uri.parse(url)));
-      } else {
-        imageResp = await (_client ?? AppHttpClient.create())
-            .get(Uri.parse(url));
-      }
-      if (imageResp.statusCode != 200) {
-        throw StateError('下载生成图失败 (HTTP ${imageResp.statusCode})');
-      }
-      final bytes = imageResp.bodyBytes;
-      if (bytes.length < 128) {
-        throw const FormatException('下载到的图像数据异常（过小）');
-      }
-      await request.outputFile.writeAsBytes(bytes, flush: true);
-      return request.outputFile;
+      return downloadImageFileWithRetry(
+        url: url,
+        outputFile: request.outputFile,
+        client: _client,
+        httpFn: _httpFn,
+      );
     }
 
     throw const FormatException('返回体中既无 image url 也无 b64_json');
@@ -1297,4 +1389,34 @@ extension on SiliconFlowImageAdapter {
 Uint8List _zlibCompress(Uint8List data) {
   final codec = ZLibCodec(level: 6);
   return Uint8List.fromList(codec.encode(data));
+}
+
+/// SenseAudio 图像模型的最小提供者视图（供 [MediaCapabilityResolver] 用）。
+///
+/// 只为把「模型 id → 尺寸白名单」这张表喂给解析器；协议恒为 openai——
+/// SenseAudio 的图像端点是 OpenAI 兼容形态。
+class _SenseAudioImageProvider implements AiProviderConfigLike {
+  _SenseAudioImageProvider(this._modelId);
+
+  final String _modelId;
+
+  @override
+  String get protocolId => 'openai';
+
+  @override
+  Map<String, MediaModelCapability> get mediaCapabilities {
+    final preset = MediaCapabilityPresets.forModel(_modelId);
+    if (preset != null) return {_modelId: preset};
+    // 预设没覆盖的模型（如 doubao-seedream / sensenova）：把本类的尺寸白名单
+    // 包成一份声明，让吸附规则仍然只有一份实现。
+    final sizes = SenseAudioImageAdapter.supportedDimensions[_modelId];
+    if (sizes == null) return const {};
+    return {
+      _modelId: MediaModelCapability(
+        resolutions: sizes,
+        maxReferenceImages: 1,
+        isDeclared: true,
+      ),
+    };
+  }
 }

@@ -7,6 +7,8 @@ library;
 import 'package:flutter/material.dart';
 
 import '../../../components/app_components.dart';
+import '../../../services/ai_config_store.dart';
+import '../../../services/media_capability.dart';
 import '../../../services/keychain_service.dart';
 import '../../../shell/ai_config_page.dart';
 import '../../../theme/app_theme.dart';
@@ -204,6 +206,7 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
                   engines: _enginesFor(capability),
                   keyController: _keys[capability.id]!,
                   testResult: _testResult[capability.id],
+                  capabilitySummary: _capabilitySummaryFor(capability),
                   onEngineChanged: (value) {
                     if (value == null) return;
                     setState(() {
@@ -227,6 +230,42 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
         ),
       ),
     );
+  }
+
+  /// 当前引擎绑定模型的能力摘要（spec: 设置页展示能力摘要）。
+  ///
+  /// 走与运行时同一条解析链（[MediaCapabilityResolver]），所以用户在这里看到
+  /// 的限制就是生成时真正生效的限制——不存在"设置页说支持、生成时被拒"。
+  _CapabilitySummary _capabilitySummaryFor(StudioCapability capability) {
+    final isVideo = capability == StudioCapability.video;
+    final summary = isVideo
+        ? VideoGenAdapterFactory.getSystemVideoConfigSummary()
+        : ImageGenAdapterFactory.getSystemImageConfigSummary();
+    if (!summary.isConfigured) {
+      return const _CapabilitySummary(
+        available: false,
+        isDeclared: false,
+        lines: [],
+      );
+    }
+    // 从系统槽位反查供应商，才能拿到它的能力声明表。
+    final candidates =
+        AiConfigStore.instance.slotBindings[isVideo ? 'video' : 'image'] ?? [];
+    final providerId = candidates.isNotEmpty ? candidates.first.providerId : '';
+    final provider = AiConfigStore.instance.providers.firstWhere(
+      (p) => p.id == providerId,
+      orElse: () => const AiProviderConfig(
+        id: '',
+        name: '',
+        protocol: AiProtocolType.openai,
+        baseUrl: '',
+        keychainKeyId: '',
+      ),
+    );
+    final capabilityModel = provider.id.isEmpty
+        ? MediaCapabilityDefaults.forProtocolId('openai')
+        : MediaCapabilityResolver.resolve(provider, summary.modelName);
+    return _CapabilitySummary.fromCapability(capabilityModel);
   }
 
   List<({String id, String label, bool needsKey})> _enginesFor(
@@ -265,6 +304,63 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
   }
 }
 
+/// 能力摘要的一行展示。
+class _CapabilityLine {
+  const _CapabilityLine(this.label, this.value);
+
+  final String label;
+  final String value;
+}
+
+/// 当前模型的能力摘要（spec: 设置页展示能力摘要）。
+///
+/// [isDeclared] 为 false 时 UI 必须标注「默认能力，未经确认」——否则用户以为
+/// 限制被验证过，从而不敢调、或照着错误的上限去规划分镜。
+class _CapabilitySummary {
+  const _CapabilitySummary({
+    required this.available,
+    required this.isDeclared,
+    required this.lines,
+  });
+
+  final bool available;
+  final bool isDeclared;
+  final List<_CapabilityLine> lines;
+
+  /// 把能力声明翻成给人看的几行。
+  static _CapabilitySummary fromCapability(MediaModelCapability cap) {
+    final lines = <_CapabilityLine>[];
+    if (cap.durations.isNotEmpty) {
+      lines.add(_CapabilityLine('时长', '${cap.durations.first}–${cap.durations.last} 秒'));
+    }
+    if (cap.resolutions.isNotEmpty) {
+      final shown = cap.resolutions.length > 4
+          ? '${cap.resolutions.take(4).join(' / ')} …'
+          : cap.resolutions.join(' / ');
+      lines.add(_CapabilityLine('分辨率', shown));
+    }
+    if (cap.ratios.isNotEmpty) {
+      lines.add(_CapabilityLine('画幅', cap.ratios.join(' / ')));
+    }
+    lines.add(_CapabilityLine(
+      '参考图',
+      cap.maxReferenceImages == 0 ? '不支持' : '最多 ${cap.maxReferenceImages} 张',
+    ));
+    if (!cap.supportsFirstFrame && !cap.supportsLastFrame) {
+      lines.add(const _CapabilityLine('首尾帧', '不支持'));
+    } else if (cap.supportsLastFrame) {
+      lines.add(const _CapabilityLine('首尾帧', '支持首帧与尾帧'));
+    } else if (cap.supportsFirstFrame) {
+      lines.add(const _CapabilityLine('首尾帧', '仅支持首帧'));
+    }
+    return _CapabilitySummary(
+      available: true,
+      isDeclared: cap.isDeclared,
+      lines: lines,
+    );
+  }
+}
+
 class _CapabilitySection extends StatelessWidget {
   const _CapabilitySection({
     required this.title,
@@ -272,6 +368,7 @@ class _CapabilitySection extends StatelessWidget {
     required this.engines,
     required this.keyController,
     required this.testResult,
+    required this.capabilitySummary,
     required this.onEngineChanged,
     required this.onSave,
     required this.onTest,
@@ -283,6 +380,7 @@ class _CapabilitySection extends StatelessWidget {
   final List<({String id, String label, bool needsKey})> engines;
   final TextEditingController keyController;
   final String? testResult;
+  final _CapabilitySummary capabilitySummary;
   final ValueChanged<String?> onEngineChanged;
   final VoidCallback onSave;
   final VoidCallback onTest;
@@ -423,6 +521,8 @@ class _CapabilitySection extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 8),
+            _CapabilityInfoBox(summary: capabilitySummary),
           ] else if (_needsKey) ...[
             const SizedBox(height: 8),
             TextField(
@@ -496,6 +596,116 @@ class _CapabilitySection extends StatelessWidget {
                 ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 能力摘要展示块（spec: 设置页展示能力摘要）。
+///
+/// 未声明时给一个醒目的「未经确认」标注——这是整个能力矩阵对用户最重要的
+/// 承诺：猜的默认值必须看起来像猜的。
+class _CapabilityInfoBox extends StatelessWidget {
+  const _CapabilityInfoBox({required this.summary});
+
+  final _CapabilitySummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!summary.available) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: context.bgCard,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: context.borderSubtle),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 14, color: context.textTertiary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '当前引擎不受模型能力矩阵约束',
+                style: TextStyle(fontSize: 11, color: context.textTertiary),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                summary.isDeclared
+                    ? Icons.verified_outlined
+                    : Icons.help_outline,
+                size: 13,
+                color: summary.isDeclared
+                    ? context.successText
+                    : context.warningText,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                summary.isDeclared ? '模型能力' : '默认能力，未经确认',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: summary.isDeclared
+                      ? context.textSecondary
+                      : context.warningText,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final line in summary.lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 52,
+                    child: Text(
+                      line.label,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: context.textTertiary,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      line.value,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: context.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (!summary.isDeclared) ...[
+            const SizedBox(height: 4),
+            Text(
+              '这些限制来自协议级保守默认，不是模型官方参数。实际以生成为准。',
+              style: TextStyle(fontSize: 10, color: context.warningText),
+            ),
+          ],
         ],
       ),
     );

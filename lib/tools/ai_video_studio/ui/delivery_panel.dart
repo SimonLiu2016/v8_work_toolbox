@@ -63,12 +63,69 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
     setState(() => _ffmpeg = status);
   }
 
+  /// 有待合成视频的分镜，按分镜顺序。
+  ///
+  /// 片段化后「有视频」有两种来源（spec: 片段媒体存放与交付兼容）：
+  /// - 分镜级产物 `shot.clipPath`（用户单独出的那一镜）
+  /// - 片段级产物 `segment.clipPath`（覆盖该片段的全部镜头）
+  ///
+  /// 这里只回答「哪些镜有视频」。片段产物与分镜产物的时长如何计入时间轴
+  /// 由 [_clipDurationOf] 决定——片段产物按它覆盖的镜头数摊到每镜，而不是
+  /// 按片段总时长重复累加（那会让成片时长虚高）。
   List<StudioShot> get _readyClips {
     final episode = _episode;
     if (episode == null) return const [];
-    return episode.shots
-        .where((s) => s.clipPath != null && s.clipPath!.isNotEmpty)
-        .toList();
+    return episode.shots.where((s) => _clipFileOf(s) != null).toList();
+  }
+
+  /// 某分镜的视频文件：分镜级优先，缺失时回落到所属片段的产物。
+  File? _clipFileOf(StudioShot shot) {
+    final episode = _episode;
+    if (episode == null) return null;
+    final own = shot.clipPath;
+    if (own != null && own.isNotEmpty) {
+      final file = File(
+        p.join(_manager.episodeClipsDir(episode.seriesId, episode.id).path, own),
+      );
+      if (file.existsSync()) return file;
+    }
+    // 回落到片段产物。
+    if (shot.segmentId.isEmpty) return null;
+    final segment = _segmentOf(shot.segmentId);
+    if (segment == null || !segment.hasClip) return null;
+    final file = File(
+      p.join(
+        _manager.episodeSegmentsDir(episode.seriesId, episode.id).path,
+        segment.clipPath!,
+      ),
+    );
+    return file.existsSync() ? file : null;
+  }
+
+  /// 某分镜在时间轴上占用的秒数。
+  ///
+  /// 分镜级产物用该镜的建议时长；片段级产物按「片段目标时长 ÷ 覆盖镜头数」
+  /// 摊分——片段是一次生成的整体，剪回时间轴时必须按镜头摊，否则 N 镜的
+  /// 片段会按整段时长累加，成片时长虚高 N 倍。
+  double _clipDurationOf(StudioShot shot, List<StudioSegment> segments) {
+    if (shot.clipPath != null && shot.clipPath!.isNotEmpty) {
+      return shot.durationSec;
+    }
+    if (shot.segmentId.isEmpty) return shot.durationSec;
+    final matches = segments.where((s) => s.id == shot.segmentId);
+    if (matches.isEmpty) return shot.durationSec;
+    final segment = matches.first;
+    final effective = segment.effectiveShotNumbers.length;
+    if (effective == 0) return shot.durationSec;
+    return segment.targetDurationSec / effective;
+  }
+
+  /// 按 id 找片段；找不到返回 null。
+  StudioSegment? _segmentOf(String segmentId) {
+    final episode = _episode;
+    if (episode == null || segmentId.isEmpty) return null;
+    final matches = episode.segments.where((s) => s.id == segmentId);
+    return matches.isEmpty ? null : matches.first;
   }
 
   int get _missingClipCount =>
@@ -126,11 +183,8 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
     });
 
     final exportsDir = _manager.episodeExportsDir(series.id, episode.id);
-    final clipsDir = _manager.episodeClipsDir(series.id, episode.id);
     final audioDir = _manager.episodeAudioDir(series.id, episode.id);
-    final clips = _readyClips
-        .map((s) => File(p.join(clipsDir.path, s.clipPath!)))
-        .toList();
+    final clips = _readyClips.map(_clipFileOf).whereType<File>().toList();
     final audios = episode.shots
         .where((s) => s.audioPath != null && s.audioPath!.isNotEmpty)
         .map((s) => File(p.join(audioDir.path, s.audioPath!)))
@@ -144,8 +198,12 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
             .firstOrNull;
     final output = File(p.join(exportsDir.path, 'episode.mp4'));
 
-    final totalDuration =
-        episode.shots.fold<double>(0, (sum, s) => sum + s.durationSec);
+    // 总时长只算**有视频**的分镜：没有片段的镜会在拼接时被跳过，把它算进去
+    // 会让进度条走不完（FFmpeg 报的 progress 是按实际输入算的）。
+    final totalDuration = _readyClips.fold<double>(
+      0,
+      (sum, s) => sum + _clipDurationOf(s, episode.segments),
+    );
 
     final result = await FfmpegComposer.compose(
       ComposeRequest(

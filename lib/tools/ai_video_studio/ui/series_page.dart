@@ -1106,7 +1106,17 @@ class _WorldviewTabState extends State<_WorldviewTab> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
+    if (_debounce?.isActive == true) {
+      _debounce?.cancel();
+      // 在销毁瞬间立即执行保存，防止切 Tab 导致未到 600ms 防抖阈值的文本丢失
+      final updated = widget.series.copyWith(
+        worldview: _worldview.text,
+        styleTokens: _style.text,
+        defaultVoiceId: _voice.text.trim(),
+      );
+      _manager.saveSeries(updated);
+      widget.session.select(updated);
+    }
     _worldview.dispose();
     _style.dispose();
     _voice.dispose();

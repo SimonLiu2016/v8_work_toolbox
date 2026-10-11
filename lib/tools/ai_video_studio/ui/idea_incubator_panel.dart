@@ -3,6 +3,10 @@
 /// 支持「全剧主线孵化」与「单集续写扩写」双模式，支持创意方案持久化与全量抽屉编辑。
 library;
 
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_theme.dart';
@@ -10,6 +14,7 @@ import '../models/studio_models.dart';
 import '../services/ai_constraint_engine.dart';
 import '../services/studio_project_manager.dart';
 import 'studio_shell.dart';
+
 
 enum IncubationMode {
   seriesMain('全剧主线孵化', '从模糊概念提炼主线钩子、反转与全剧节奏'),
@@ -49,11 +54,451 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
   List<IdeaDirection> _directions = const [];
   String? _rawText;
 
+  bool _novelImporting = false;
+  String _novelImportStatus = '';
+
   @override
   void initState() {
     super.initState();
     _loadHistoryAndEpisodes();
   }
+
+  Future<void> _importNovelFile() async {
+    final series = widget.session.series;
+    if (series == null) return;
+
+    try {
+      final pickResult = await FilePicker.platform.pickFiles(
+        dialogTitle: '选择小说文本文件 (.txt / .md)',
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'md'],
+      );
+      if (pickResult == null || pickResult.files.isEmpty) return;
+
+      final path = pickResult.files.single.path;
+      if (path == null) return;
+      final file = File(path);
+      if (!await file.exists()) return;
+
+      final novelContent = await file.readAsString();
+      if (novelContent.trim().isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('所选文本文件为空')),
+        );
+        return;
+      }
+
+      // 弹出导入范围与意图确认弹窗
+      final scopeChoice = await _showImportScopeDialog(novelContent);
+      if (scopeChoice == null || !mounted) return;
+
+      var elapsedSec = 0;
+      var currentPhaseText = scopeChoice.isFullSeason
+          ? '正在分析原著内容，提取世界观设定、角色卡与场景库… (Pass 1/2)'
+          : '正在分析本章内容，提炼增量角色卡、场景库与世界观… (Pass 1/2)';
+
+      final ticker = Timer.periodic(const Duration(seconds: 1), (timer) {
+        elapsedSec++;
+        if (mounted && _novelImporting) {
+          setState(() {
+            _novelImportStatus = '$currentPhaseText [已耗时 ${elapsedSec}s]';
+          });
+        }
+      });
+
+      try {
+        setState(() {
+          _novelImporting = true;
+          _novelImportStatus = '$currentPhaseText [已耗时 0s]';
+          _error = null;
+          _rawText = null;
+        });
+
+        // Pass 1: 提取世界观设定、角色卡库与场景库 (重型任务，内置 240s 自适应超时)
+        final masterResult = await AiConstraintEngine.extractNovelMaster(
+          novelText: novelContent,
+          productionType: series.productionType.id,
+        );
+
+        if (!mounted) return;
+
+        if (scopeChoice.isFullSeason) {
+          // 全案多集解构流程
+          elapsedSec = 0;
+          currentPhaseText = '正在基于小说剧情高潮点规划全季推荐分集与前情钩子… (Pass 2/2)';
+          setState(() {
+            _novelImportStatus = '$currentPhaseText [已耗时 0s]';
+          });
+
+          // 提取角色名称列表供 Pass 2 上下文关联
+          final charList = (masterResult.data['characters'] as List?) ?? const [];
+          final charNames = charList
+              .whereType<Map>()
+              .map((c) => (c['name'] as String? ?? '').trim())
+              .where((n) => n.isNotEmpty)
+              .toList();
+
+          final segmentResult = await AiConstraintEngine.segmentNovelEpisodes(
+            novelText: novelContent,
+            worldview: masterResult.data['worldview'] as String? ?? '',
+            characterNames: charNames,
+            productionType: series.productionType.id,
+          );
+
+          if (!mounted) return;
+          currentPhaseText = '正在写入 IP 主库与全季分集大纲…';
+          setState(() {
+            _novelImportStatus = currentPhaseText;
+          });
+
+          final updatedSeries = await _manager.importNovelProject(
+            seriesId: series.id,
+            masterExtraction: masterResult.data,
+            episodeSegmentation: segmentResult.data,
+          );
+
+          widget.session.select(updatedSeries);
+          await _loadHistoryAndEpisodes();
+
+          if (!mounted) return;
+          setState(() {
+            _novelImporting = false;
+            _novelImportStatus = '';
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '全案小说解构成功！增量入库 ${(masterResult.data['characters'] as List).length} 个角色、'
+                '${(masterResult.data['scenes'] as List).length} 个场景，重构 ${(segmentResult.data['episodes'] as List).length} 集大纲。',
+              ),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+            ),
+          );
+        } else {
+          // 单章/单集扩写流程：不破坏已有集数，深度提炼全章影视大纲并沉淀至目标集
+          elapsedSec = 0;
+          currentPhaseText = '正在深入分析本章全篇情节，提炼起承转合影视剧本大纲… (Pass 2/2)';
+          setState(() {
+            _novelImportStatus = '$currentPhaseText [已耗时 0s]';
+          });
+
+          // 提取可用角色名称
+          final charList = (masterResult.data['characters'] as List?) ?? const [];
+          final charNames = charList
+              .whereType<Map>()
+              .map((c) => (c['name'] as String? ?? '').trim())
+              .where((n) => n.isNotEmpty)
+              .toList();
+
+          // 提取已有剧情记忆作为前情上下文
+          final memoryContext = _manager.buildMemoryContext(series);
+
+          // 提炼单章影视剧本大纲（全篇剧情深度理解，不截断）
+          final adaptResult = await AiConstraintEngine.adaptNovelChapter(
+            novelText: novelContent,
+            seriesName: series.name,
+            worldview: (masterResult.data['worldview'] as String? ?? series.worldview).trim(),
+            characterNames: charNames,
+            productionType: series.productionType.id,
+            episodeIndex: scopeChoice.targetEpisodeIndex,
+            memoryContext: memoryContext,
+          );
+
+          if (!mounted) return;
+          currentPhaseText = '正在写入第 ${scopeChoice.targetEpisodeIndex} 集大纲并增量更新资产…';
+          setState(() {
+            _novelImportStatus = currentPhaseText;
+          });
+
+          // 从文本中提炼备用标题
+          final chapterLines = novelContent
+              .split('\n')
+              .map((l) => l.trim())
+              .where((l) => l.isNotEmpty)
+              .toList();
+          final guessedTitle = chapterLines.isNotEmpty && chapterLines.first.length <= 20
+              ? chapterLines.first
+              : '第 ${scopeChoice.targetEpisodeIndex} 集';
+
+          final adaptedTitle = (adaptResult.data['title'] as String? ?? '').trim();
+          final adaptedSynopsis = (adaptResult.data['synopsis'] as String? ?? '').trim();
+          final adaptedSummary = (adaptResult.data['summary'] as String? ?? '').trim();
+          final adaptedHook = (adaptResult.data['hook'] as String? ?? '').trim();
+
+          final updatedSeries = await _manager.importChapterToEpisode(
+            seriesId: series.id,
+            masterExtraction: masterResult.data,
+            targetEpisodeIndex: scopeChoice.targetEpisodeIndex,
+            episodeTitle: adaptedTitle.isNotEmpty ? adaptedTitle : guessedTitle,
+            episodeSynopsis: adaptedSynopsis.isNotEmpty ? adaptedSynopsis : novelContent,
+            episodeSummary: adaptedSummary.isNotEmpty
+                ? adaptedSummary
+                : '【第${scopeChoice.targetEpisodeIndex}集前情】$adaptedSynopsis',
+            episodeHook: adaptedHook.isNotEmpty ? adaptedHook : '章节末尾悬念展开',
+          );
+
+          widget.session.select(updatedSeries);
+          await _loadHistoryAndEpisodes();
+
+          if (!mounted) return;
+          setState(() {
+            _novelImporting = false;
+            _novelImportStatus = '';
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '单章导入成功！已提炼整章影视大纲并沉淀至「第 ${scopeChoice.targetEpisodeIndex} 集」，增量扩充了角色与场景库。',
+              ),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+            ),
+          );
+        }
+
+        // 通知上层跳转至 IP 主库/分镜看板
+        widget.onConfirmed();
+      } finally {
+        ticker.cancel();
+      }
+    } on ConstraintParseError catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _novelImporting = false;
+        _novelImportStatus = '';
+        _error = 'AI 输出无法解析，已保留原文供查看';
+        _rawText = e.rawText;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _novelImporting = false;
+        _novelImportStatus = '';
+        _error = '小说导入解析失败: $e';
+      });
+    }
+  }
+
+  Future<_NovelImportScope?> _showImportScopeDialog(String novelContent) async {
+    final existingEpCount = _existingEpisodes.length;
+    // 智能推断默认模式：如果在单集续写模式或已有剧集，默认单章扩写；否则为全季解构
+    bool isFullSeason = _mode == IncubationMode.seriesMain && existingEpCount == 0;
+    int targetEp = _targetEpisodeIndex ?? (existingEpCount > 0 ? existingEpCount + 1 : 1);
+
+    return showDialog<_NovelImportScope>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final wordCount = novelContent.length;
+            final lineCount = novelContent.split('\n').length;
+
+            return AlertDialog(
+              backgroundColor: context.bgCard,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              title: Row(
+                children: [
+                  Icon(Icons.auto_stories, color: context.accentSolid, size: 22),
+                  const SizedBox(width: 8),
+                  Text(
+                    '确认小说导入范围',
+                    style: TextStyle(
+                      color: context.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 480,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: context.bgInput,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '文本统计: 共约 $wordCount 字 / $lineCount 行',
+                        style: TextStyle(color: context.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '请选择本次导入文本的性质与沉淀目标：',
+                      style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // 选项 1: 单章 / 单集扩写
+                    InkWell(
+                      onTap: () => setDialogState(() => isFullSeason = false),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: !isFullSeason ? context.accentSubtle.withAlpha(40) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: !isFullSeason ? context.accentText : context.borderSubtle,
+                            width: !isFullSeason ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Radio<bool>(
+                                  value: false,
+                                  groupValue: isFullSeason,
+                                  onChanged: (v) => setDialogState(() => isFullSeason = false),
+                                  activeColor: context.accentText,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '单集 / 连载章节内容（增量扩写）',
+                                        style: TextStyle(
+                                          color: context.textPrimary,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '适用于导入某一回/某一章节。增量提取角色卡与场景库并注入本剧，不破坏已有其他分集。',
+                                        style: TextStyle(color: context.textSecondary, fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (!isFullSeason) ...[
+                              const SizedBox(height: 10),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 36),
+                                child: Row(
+                                  children: [
+                                    Text('归属或追加至: ', style: TextStyle(color: context.textPrimary, fontSize: 12)),
+                                    const SizedBox(width: 8),
+                                    DropdownButton<int>(
+                                      value: targetEp,
+                                      isDense: true,
+                                      dropdownColor: context.bgInput,
+                                      style: TextStyle(color: context.textPrimary, fontSize: 13),
+                                      items: [
+                                        for (int i = 1; i <= existingEpCount; i++)
+                                          DropdownMenuItem(
+                                            value: i,
+                                            child: Text('沉淀/更新至 第 $i 集'),
+                                          ),
+                                        DropdownMenuItem(
+                                          value: existingEpCount + 1,
+                                          child: Text('追加为新的一集 (第 ${existingEpCount + 1} 集)'),
+                                        ),
+                                      ],
+                                      onChanged: (v) {
+                                        if (v != null) {
+                                          setDialogState(() => targetEp = v);
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // 选项 2: 全案多集解构
+                    InkWell(
+                      onTap: () => setDialogState(() => isFullSeason = true),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isFullSeason ? context.accentSubtle.withAlpha(40) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isFullSeason ? context.accentText : context.borderSubtle,
+                            width: isFullSeason ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Radio<bool>(
+                              value: true,
+                              groupValue: isFullSeason,
+                              onChanged: (v) => setDialogState(() => isFullSeason = true),
+                              activeColor: context.accentText,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '完整长篇小说（全案重构）',
+                                    style: TextStyle(
+                                      color: context.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '适用于包含多章节的长篇小说。AI 将深度全案分析，提取全剧 IP 库并自动规划推荐全季分集大纲。',
+                                    style: TextStyle(color: context.textSecondary, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text('取消', style: TextStyle(color: context.textSecondary)),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx, _NovelImportScope(
+                      isFullSeason: isFullSeason,
+                      targetEpisodeIndex: targetEp,
+                    ));
+                  },
+                  child: const Text('开始导入'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   @override
   void didUpdateWidget(covariant IdeaIncubatorPanel oldWidget) {
@@ -321,7 +766,7 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
           Row(
             children: [
               FilledButton.icon(
-                onPressed: _running ? null : _generate,
+                onPressed: _running || _novelImporting ? null : _generate,
                 icon: _running
                     ? const SizedBox(
                         width: 14,
@@ -331,8 +776,66 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
                     : const Icon(Icons.auto_awesome, size: 18),
                 label: Text(_running ? '生成中…' : '生成创意方向'),
               ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _running || _novelImporting ? null : _importNovelFile,
+                icon: _novelImporting
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.file_upload_outlined, size: 18),
+                label: Text(_novelImporting ? '解构入库中…' : '直接导入小说文本 (.txt/.md)'),
+              ),
             ],
           ),
+          if (_novelImporting) ...[
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: context.accentSubtle,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: context.accentText.withAlpha(80)),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '小说全案深度解构中',
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _novelImportStatus,
+                          style: TextStyle(
+                            color: context.accentText,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           if (_error != null) ...[
             const SizedBox(height: 16),
             Container(
@@ -642,4 +1145,14 @@ class _IdeaDetailSheetState extends State<_IdeaDetailSheet> {
       ),
     );
   }
+}
+
+class _NovelImportScope {
+  final bool isFullSeason;
+  final int targetEpisodeIndex;
+
+  const _NovelImportScope({
+    required this.isFullSeason,
+    required this.targetEpisodeIndex,
+  });
 }

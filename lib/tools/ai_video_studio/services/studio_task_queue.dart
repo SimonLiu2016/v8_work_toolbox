@@ -29,7 +29,13 @@ enum StudioTaskStatus {
 /// 任务的产能类型。UI 用它在队列面板里分组显示。
 enum StudioTaskKind {
   image('image', '关键帧生成'),
-  video('video', '视频生成');
+  video('video', '视频生成'),
+
+  /// 片段级视频生成（spec: 片段级视频生成任务）。
+  ///
+  /// 与 [video] 分开是为了让队列面板能按 kind 分组——片段任务是分钟级长
+  /// 任务，和分镜级任务混在一起时用户看不出为什么看板"卡住不动了"。
+  segment('segment', '片段生成');
 
   final String id;
   final String label;
@@ -44,7 +50,11 @@ class StudioTask {
   /// 产能类型（生图 / 视频）。
   final StudioTaskKind kind;
 
-  /// 关联的分镜编号，队列面板与分镜徽章都靠它对应。
+  /// 关联键：分镜级任务存镜号，片段级任务存 [segmentKey] 的转换值。
+  ///
+  /// 队列面板与分镜/片段徽章都靠它对应。用同一个整数字段而不是给片段任务
+  /// 单加一个可空 segmentId，是为了让 `tasksForShot` / `completedOutputFor`
+  /// 这些既有查询不必为 kind 分叉。
   final int shotNumber;
 
   /// 人类可读的描述（如 "分镜 3 关键帧"）。
@@ -137,6 +147,24 @@ class StudioTaskQueue {
   List<StudioTask> tasksForShot(int shotNumber) =>
       _tasks.where((t) => t.shotNumber == shotNumber).toList();
 
+  /// 某片段的任务（队列面板与片段卡片都用它判断"这个片段在生成中"）。
+  List<StudioTask> tasksForSegment(String segmentId) => _tasks
+      .where((t) => t.kind == StudioTaskKind.segment && t.shotNumber == _segmentKey(segmentId))
+      .toList();
+
+  /// 片段 id → 用于 [StudioTask.shotNumber] 的稳定整数键。
+  ///
+  /// [StudioTask] 用 shotNumber 做关联键（分镜级任务直接存镜号）。片段没有
+  /// 镜号，这里把 `seg-N` 的 N 提出来当键；提不出就回退到 id 的哈希低位，
+  /// 保证同一个片段在同一进程内键值稳定（重新入队时能对上旧任务）。
+  static int segmentKey(String segmentId) => _segmentKey(segmentId);
+
+  static int _segmentKey(String segmentId) {
+    final match = RegExp(r'(\d+)$').firstMatch(segmentId);
+    if (match != null) return int.parse(match.group(1)!);
+    return segmentId.hashCode & 0xffff;
+  }
+
   /// 某分镜是否已有成功的产物路径（有则 UI 直接显示缩略图）。
   String? completedOutputFor(int shotNumber) {
     final done = _tasks.where(
@@ -159,6 +187,8 @@ class StudioTaskQueue {
     required String label,
     required StudioTaskRunner runner,
   }) {
+    // 片段任务的 shotNumber 由调用方经 [segmentKey] 转换后传入，这里不区分
+    // —— 队列只关心「一个整数关联键」，它是什么语义由 kind 决定。
     final task = StudioTask(
       id: '${kind.id}-$shotNumber-${DateTime.now().microsecondsSinceEpoch}',
       kind: kind,

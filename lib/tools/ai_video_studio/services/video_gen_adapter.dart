@@ -14,17 +14,35 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 
 import '../../../services/ai_config_store.dart';
+import '../../../services/ai_logger.dart';
 import '../../../services/app_http_client.dart';
 import '../../../services/keychain_service.dart';
+import '../../../services/media_capability.dart';
+import '../../dola_pool/services/dola_pool_video_adapter.dart';
 import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart' show ImageHttpFn;
 
-/// 一次视频片段生成请求。
+/// 一次视频生成请求。
+///
+/// 分镜级与片段级生成共用这一个形状（design 决策 3）：
+/// - 分镜级：`inputImage` 为该镜关键帧，`referenceImages` 为空，`promptZh` 为空
+/// - 片段级：`inputImage` 为 null，`referenceImages` 为该片段全部出场角色与
+///   场景的参考图，`promptZh` 为 `PromptAssembler.buildSegmentPrompt` 的产物
+///
+/// `inputImage` 从必建改为可选是**有意的兼容破坏**：本地 Ken Burns 动效必须
+/// 有首帧，拿不到时它抛明确错误，而不是静默产出黑帧。
 class VideoGenRequest {
-  /// 首帧图片（已生成的关键帧）。Ken Burns 必需；I2V 也是。
-  final File inputImage;
+  /// 首帧图片（已生成的关键帧）。本地 Ken Burns 必需；I2V 也用它。
+  final File? inputImage;
+
+  /// 多参考图（片段级生成用）。按序对应提示词里的 `{{ref N}}`。
+  final List<File> referenceImages;
+
+  /// 完整画面描述（片段级生成用）。为空时适配器回退到 [cameraMove]。
+  final String promptZh;
 
   /// 运镜指令（英文短语，如 "slow push-in"）。I2V 引擎会读它。
   final String cameraMove;
@@ -32,7 +50,7 @@ class VideoGenRequest {
   /// 期望时长（秒）。
   final double durationSec;
 
-  /// 分镜编号（进度展示与定位）。
+  /// 分镜编号（进度展示与定位）。片段级传该片段的首镜号。
   final int shotNumber;
 
   /// 输出目标文件（.mp4）。
@@ -43,12 +61,35 @@ class VideoGenRequest {
 
   const VideoGenRequest({
     required this.inputImage,
-    required this.cameraMove,
+    this.referenceImages = const [],
+    this.promptZh = '',
+    this.cameraMove = '',
     required this.durationSec,
     required this.shotNumber,
     required this.outputFile,
     this.productionType = 'drama',
   });
+
+  /// 适配器实际使用的提示词：片段提示词优先，否则退回运镜短语。
+  ///
+  /// 放在请求对象上而不是各适配器里判断，是为了让「哪段文字被提交给了模型」
+  /// 在一处可见——排查「为什么生成的画面和分镜写的不一样」时不用翻四个适配器。
+  String get effectivePrompt {
+    final zh = promptZh.trim();
+    if (zh.isNotEmpty) return zh;
+    return cameraMove.trim();
+  }
+
+  /// 本次请求的全部参考图（含首帧）。适配器按协议自行决定怎么用。
+  List<File> get allImages {
+    final result = <File>[];
+    final first = inputImage;
+    if (first != null) result.add(first);
+    for (final f in referenceImages) {
+      if (!result.any((e) => e.path == f.path)) result.add(f);
+    }
+    return result;
+  }
 }
 
 /// 视频生成引擎抽象接口。
@@ -116,6 +157,16 @@ class KenBurnsVideoAdapter implements VideoGenAdapter {
         '本机未检测到 FFmpeg，无法生成 Ken Burns 动效。请先安装 FFmpeg。',
       );
     }
+    // 本地动效的输入只能是单张图。片段级请求不带首帧（它的输入是参考图
+    // 集合），拿不到就明确报错，而不是拿第一张参考图凑——那会让「片段视频」
+    // 悄悄变成「第一张参考图的运镜视频」，用户看不出差别。
+    final input = request.inputImage;
+    if (input == null) {
+      throw StateError(
+        '本地 Ken Burns 动效需要一张首帧图片；片段级请求请先为其中的分镜'
+        '生成关键帧，或改用支持多参考图的云端视频模型。',
+      );
+    }
     await request.outputFile.parent.create(recursive: true);
 
     final fps = 30;
@@ -175,7 +226,7 @@ class KenBurnsVideoAdapter implements VideoGenAdapter {
         // zoompan 的 d=1 会让时长取决于输入帧率，实测同样参数会得到 2.5 秒
         // 而不是 3 秒。
         '-loop', '1',
-        '-i', request.inputImage.path,
+        '-i', input.path,
         '-vf', filter,
         '-frames:v', '$totalFrames',
         '-r', '$fps',
@@ -295,8 +346,15 @@ class KlingVideoAdapter
     _cancelled = false;
 
     // 首帧以 base64 data URI 提交：可灵的 image 字段接受 data URI，
-    // 免去先传素材库再引用这一步。
-    final imageBytes = await request.inputImage.readAsBytes();
+    // 免去先传素材库再引用这一步。片段级请求不带首帧时取参考图第一张。
+    final firstFrame = request.inputImage ??
+        (request.referenceImages.isNotEmpty
+            ? request.referenceImages.first
+            : null);
+    if (firstFrame == null) {
+      throw StateError('可灵图生视频需要一张首帧或参考图');
+    }
+    final imageBytes = await firstFrame.readAsBytes();
     final dataUri =
         'data:image/png;base64,${base64Encode(imageBytes)}';
 
@@ -306,9 +364,9 @@ class KlingVideoAdapter
       body: {
         'model_name': 'kling-v1',
         'image': dataUri,
-        'prompt': request.cameraMove.isEmpty
+        'prompt': request.effectivePrompt.isEmpty
             ? 'gentle cinematic camera motion'
-            : request.cameraMove,
+            : request.effectivePrompt,
         'duration': '5',
         'mode': 'std',
         'cfg_scale': 0.5,
@@ -554,26 +612,53 @@ class SenseAudioVideoAdapter
     }
     _cancelled = false;
 
-    if (!await request.inputImage.exists()) {
-      throw StateError('分镜首帧图片不存在: ${request.inputImage.path}');
+    // 至少要有一张图。SenseAudio 是纯图生视频，没有文生视频模式。
+    //
+    // 分镜级路径用该镜关键帧；片段级请求不带首帧，参考图集合的第一张顶上
+    // ——协议上 content[0] 就是 first_frame，谁来当这一张由请求形状决定。
+    if (request.allImages.isEmpty) {
+      throw StateError(
+        'SenseAudio 图生视频需要一张首帧或参考图；请先为分镜生成关键帧，'
+        '或为出场角色配置参考图。',
+      );
+    }
+    for (final file in request.allImages) {
+      if (!await file.exists()) {
+        throw StateError('参考图片不存在: ${file.path}');
+      }
     }
 
-    final imageBytes = await request.inputImage.readAsBytes();
-    final dataUri = 'data:image/png;base64,${base64Encode(imageBytes)}';
-
-    final promptText = request.cameraMove.trim().isEmpty
+    // 片段提示词优先：它含逐镜动作、台词与连续性状态，比单独的运镜短语
+    // 信息量大得多。为空（分镜级路径）才退回运镜短语。
+    final promptText = request.effectivePrompt.isEmpty
         ? 'gentle cinematic camera motion, smooth pan'
-        : request.cameraMove.trim();
+        : request.effectivePrompt;
 
     // 时长：SenseAudio 支持 4~15 秒，默认按 request 钳制
     final duration = request.durationSec.round().clamp(4, 15);
 
     final createEndpoint = Uri.parse('$baseUrl/video/create');
+
+    // content 数组的图片项：首张 role=first_frame，其余 role=reference。
+    //
+    // SenseAudio 的协议就是数组，多张参考是原生能力——这是四个适配器里
+    // 唯一不需要降级的。分镜级路径只传一张，行为与改造前完全一致。
+    final imageItems = <Map<String, dynamic>>[];
+    for (var i = 0; i < request.allImages.length; i++) {
+      final file = request.allImages[i];
+      final bytes = await file.readAsBytes();
+      imageItems.add({
+        'type': 'image',
+        'url': 'data:image/png;base64,${base64Encode(bytes)}',
+        'role': i == 0 ? 'first_frame' : 'reference',
+      });
+    }
+
     final payload = {
       'model': _model,
       'content': [
         {'type': 'text', 'text': promptText},
-        {'type': 'image', 'url': dataUri, 'role': 'first_frame'},
+        ...imageItems,
       ],
       'duration': duration,
       'ratio': '9:16',
@@ -784,12 +869,490 @@ class SenseAudioVideoAdapter
   void disposeForTesting() => _client?.close();
 }
 
+/// Agnes Video 2.5 Flash 视频生成适配器（通过中转站 / 官方 OpenAI Videos 兼容协议接入）。
+class AgnesVideoAdapter
+    implements VideoGenAdapter, CancellableVideoGenAdapter {
+  AgnesVideoAdapter({
+    String? baseUrl,
+    String? model,
+    String? apiKey,
+    String? providerId,
+    String? keychainKeyId,
+    http.Client? client,
+    ImageHttpFn? httpFn,
+  })  : _rawBaseUrl = baseUrl,
+        _model = model ?? 'agnes-video-2.5-flash',
+        _apiKey = apiKey,
+        _providerId = providerId,
+        _keychainKeyId = keychainKeyId,
+        _client = client,
+        _httpFn = httpFn;
+
+  final String? _rawBaseUrl;
+  final String _model;
+  final String? _apiKey;
+  final String? _providerId;
+  final String? _keychainKeyId;
+  final http.Client? _client;
+  final ImageHttpFn? _httpFn;
+
+  bool _cancelled = false;
+
+  @override
+  String get id =>
+      _providerId != null ? 'agnes-$_providerId' : 'agnes-video-2.5-flash';
+
+  @override
+  String get label => 'Agnes 视频模型 ($_model)';
+
+  @override
+  bool get requiresApiKey => true;
+
+  String get baseUrl {
+    final raw = (_rawBaseUrl != null && _rawBaseUrl.trim().isNotEmpty)
+        ? _rawBaseUrl.trim()
+        : 'https://apihub.agnes-ai.com/v1';
+    var trimmed = raw;
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  Future<String?> readApiKey() async {
+    if (_apiKey != null && _apiKey.isNotEmpty) return _apiKey;
+    if (_keychainKeyId != null && _keychainKeyId.isNotEmpty) {
+      final key = await KeychainService.instance.readSecret(_keychainKeyId);
+      if (key != null && key.trim().isNotEmpty) return key.trim();
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> isAvailable() async {
+    final key = await readApiKey();
+    return key != null && key.isNotEmpty;
+  }
+
+  @override
+  void cancelCurrent() => _cancelled = true;
+
+  Duration get _pollTimeout => const Duration(minutes: 5);
+
+  @override
+  Future<File> generateVideo(
+    VideoGenRequest request, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final key = await readApiKey();
+    if (key == null || key.isEmpty) {
+      throw StateError('Agnes API Key 未配置，请前往「系统设置 -> AI 基础设施」配置视频模型供应商密钥');
+    }
+    _cancelled = false;
+
+    // Agnes 的 keyframe 模式只接受单张 first_frame，且官方禁止首帧与参考素材
+    // 同时使用。因此多参考图在这里只能取第一张，降级数量由调用方记录到
+    // StudioSegment.degradedRefCount（design 决策 4）——不在这里静默丢弃。
+    final firstFrame = request.inputImage ??
+        (request.referenceImages.isNotEmpty
+            ? request.referenceImages.first
+            : null);
+    final String? dataUri = firstFrame != null && await firstFrame.exists()
+        ? await _prepareKeyframeDataUri(firstFrame)
+        : null;
+
+    // 片段提示词优先：它含逐镜动作与台词，比单独运镜短语更能驱动画面。
+    final promptText = request.effectivePrompt.isEmpty
+        ? 'cinematic camera motion, smooth video movement'
+        : request.effectivePrompt;
+
+    // 时长：Agnes Video 2.5 Flash 接受字符串 "4"~"12"，默认 "5"
+    final durationSeconds = request.durationSec.round().clamp(4, 12).toString();
+
+    final createUrl =
+        baseUrl.endsWith('/v1') ? '$baseUrl/videos' : '$baseUrl/v1/videos';
+
+    // 动态选择模式：有首帧则使用 keyframe 模式，无首帧回退到 text 文生视频
+    // 注意：Agnes 官方严禁首尾帧素材与参考素材同时使用，keyframe 模式下切勿传递 image 或 images 字段
+    final isKeyframe = dataUri != null && dataUri.isNotEmpty;
+    final payload = <String, dynamic>{
+      'model': _model,
+      'prompt': promptText,
+      'mode': isKeyframe ? 'keyframe' : 'text',
+      'seconds': durationSeconds,
+      'aspect_ratio': '9:16',
+      if (isKeyframe) 'first_frame': dataUri,
+    };
+
+    onProgress?.call(0.1);
+    final createResponse = await _post(
+      Uri.parse(createUrl),
+      key: key,
+      body: payload,
+      onRetryNotice: (attempt, delaySec) {
+        onProgress?.call(0.05);
+      },
+    );
+
+    final taskId = SenseAudioVideoAdapter._extractTaskId(createResponse);
+    if (taskId == null || taskId.isEmpty) {
+      throw StateError(
+        'Agnes 创建视频任务失败: ${SenseAudioVideoAdapter._truncate(SenseAudioVideoAdapter._extractErrorMessage(createResponse), 200)}',
+      );
+    }
+
+    final deadline = DateTime.now().add(_pollTimeout);
+    var videoUrl = '';
+    var lastStatus = '';
+
+    while (DateTime.now().isBefore(deadline)) {
+      if (_cancelled) {
+        throw StateError('视频生成任务已被用户取消');
+      }
+
+      await Future<void>.delayed(const Duration(seconds: 3));
+      if (_cancelled) {
+        throw StateError('视频生成任务已被用户取消');
+      }
+
+      Map<String, dynamic>? queryData;
+      final rootUrl = baseUrl.endsWith('/v1')
+          ? baseUrl.substring(0, baseUrl.length - 3)
+          : baseUrl;
+
+      // 1. 优先尝试通用 OpenAI Videos 轮询端点：/v1/videos/$taskId（中转站与标准化网关原生兼容）
+      final stdQueryUri = Uri.parse(
+        baseUrl.endsWith('/v1')
+            ? '$baseUrl/videos/$taskId'
+            : '$baseUrl/v1/videos/$taskId',
+      );
+      try {
+        final stdResp = await _getRaw(stdQueryUri, key: key);
+        if (stdResp.statusCode == 200) {
+          final decoded = jsonDecode(stdResp.body);
+          if (decoded is Map) {
+            queryData = decoded.map((k, v) => MapEntry(k as String, v));
+          }
+        }
+      } catch (_) {}
+
+      // 2. 若中转站未开启或直连官方 Hub，尝试专用查询接口：/agnesapi?video_id=...&model_name=...
+      if (queryData == null) {
+        final agnesApiUri = Uri.parse(
+          '$rootUrl/agnesapi?video_id=$taskId&model_name=$_model',
+        );
+        try {
+          final agnesResp = await _getRaw(agnesApiUri, key: key);
+          if (agnesResp.statusCode == 200) {
+            final decoded = jsonDecode(agnesResp.body);
+            if (decoded is Map) {
+              queryData = decoded.map((k, v) => MapEntry(k as String, v));
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (queryData != null) {
+        final status = SenseAudioVideoAdapter._extractStatus(queryData);
+        lastStatus = status;
+
+        final progressVal = SenseAudioVideoAdapter._extractProgress(queryData);
+        if (progressVal != null) {
+          onProgress?.call(progressVal);
+        } else {
+          onProgress?.call(0.5);
+        }
+
+        if (status == 'completed' ||
+            status == 'succeeded' ||
+            status == 'success') {
+          videoUrl = SenseAudioVideoAdapter._extractVideoUrl(queryData);
+          if (videoUrl.isNotEmpty) break;
+        } else if (status == 'failed' || status == 'error') {
+          throw StateError(
+            'Agnes 视频生成失败: ${SenseAudioVideoAdapter._truncate(SenseAudioVideoAdapter._extractErrorMessage(queryData), 200)}',
+          );
+        }
+      }
+    }
+
+    if (videoUrl.isEmpty) {
+      throw StateError(
+        'Agnes 任务在 ${_pollTimeout.inMinutes} 分钟内未完成（最后状态: $lastStatus）',
+      );
+    }
+
+    final http.Response download;
+    if (_httpFn != null) {
+      download = await _httpFn(http.Request('GET', Uri.parse(videoUrl)));
+    } else {
+      final client = _client ?? AppHttpClient.create();
+      download = await client.get(Uri.parse(videoUrl));
+    }
+    if (download.statusCode != 200) {
+      throw StateError('下载生成的视频失败 (HTTP ${download.statusCode}): $videoUrl');
+    }
+
+    await request.outputFile.parent.create(recursive: true);
+    await request.outputFile.writeAsBytes(download.bodyBytes, flush: true);
+    onProgress?.call(1.0);
+    return request.outputFile;
+  }
+
+  /// 将关键帧图片高效降采样为 720P JPEG 并返回轻量 Data URI，避免因 Base64 体积过大遭中转网关截断。
+  static Future<String> _prepareKeyframeDataUri(File file) async {
+    final rawBytes = await file.readAsBytes();
+    // 超过 180KB 必定触发压缩；即使原图本身略小，也统一进行安全归一化以保证格式与尺寸合规
+    try {
+      final decoded = img.decodeImage(rawBytes);
+      if (decoded != null) {
+        // 等比限制最大边长为 720x1280 竖屏规格（或 1280x720 横屏规格）
+        img.Image processed = decoded;
+        if (decoded.width > 720 || decoded.height > 1280) {
+          final aspect = decoded.width / decoded.height;
+          if (aspect <= 720.0 / 1280.0) {
+            // 高度优先限制为 1280
+            processed = img.copyResize(decoded, height: 1280);
+          } else {
+            // 宽度优先限制为 720
+            processed = img.copyResize(decoded, width: 720);
+          }
+        }
+        // 编码为高质量 JPEG (质量 80)，体积精简至 60~100KB，传输迅捷且永不被截断
+        final jpegBytes = img.encodeJpg(processed, quality: 80);
+        return 'data:image/jpeg;base64,${base64Encode(jpegBytes)}';
+      }
+    } catch (e) {
+      AiLogger.logWarning(
+        '关键帧预处理转码失败，回退原始编码: $e',
+        providerName: 'Agnes',
+      );
+    }
+    // 降级回退
+    return 'data:image/png;base64,${base64Encode(rawBytes)}';
+  }
+
+  Future<Map<String, dynamic>> _post(
+    Uri uri, {
+    required String key,
+    required Map<String, dynamic> body,
+    void Function(int attempt, int delaySec)? onRetryNotice,
+  }) async {
+    final maxAttempts = 5;
+    var currentDelayMs = 2000;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      final stopwatch = Stopwatch()..start();
+      AiLogger.logRequest(
+        providerName: 'Agnes',
+        protocol: 'openai-video',
+        model: body['model'] as String? ?? _model,
+        endpoint: uri.toString(),
+        promptSummary: body['prompt'] as String?,
+      );
+
+      final req = http.Request('POST', uri)
+        ..headers['Authorization'] = 'Bearer $key'
+        ..headers['Content-Type'] = 'application/json'
+        ..body = jsonEncode(body);
+      final response = _httpFn != null
+          ? await _httpFn(req)
+          : await (_client ?? AppHttpClient.create())
+              .send(req)
+              .then(http.Response.fromStream);
+      stopwatch.stop();
+
+      // 判断是否属于可自动换路重试的网关瞬时错误：
+      // 1. 429: 上游分组负载饱和并发限流
+      // 2. 502 / 503 / 504: 网关错误或上游视频队列已满
+      // 3. 400 且提示缺少首帧: 中转站个别坏上游渠道丢弃了图片参数，重试可轮询切换到正常节点
+      final statusCode = response.statusCode;
+      final bodyText = response.body;
+      final isRateLimited = statusCode == 429;
+      final isGatewayError = statusCode == 502 || statusCode == 503 || statusCode == 504;
+      final isBadChannelParameterDrop = statusCode == 400 &&
+          (bodyText.contains('first_frame 或 last_frame') ||
+              bodyText.contains('keyframe 模式需要') ||
+              bodyText.contains('first_frame'));
+
+      if ((isRateLimited || isGatewayError || isBadChannelParameterDrop) &&
+          attempt < maxAttempts) {
+        final reason = isBadChannelParameterDrop
+            ? '网关渠道节点异常丢失参数，切换路由节点重试'
+            : (isRateLimited ? '上游负载饱和 (429)' : '网关或视频队列繁忙 ($statusCode)');
+        
+        final waitSec = (currentDelayMs / 1000.0).toStringAsFixed(1);
+        AiLogger.logWarning(
+          'Agnes API $reason，第 $attempt/$maxAttempts 次重试，等待 ${waitSec}s...',
+          providerName: 'Agnes',
+        );
+        onRetryNotice?.call(attempt, (currentDelayMs / 1000).ceil());
+
+        await Future<void>.delayed(Duration(milliseconds: currentDelayMs));
+        // 指数退避加 200~600ms 随机抖动
+        final jitter = 200 + (attempt * 100 % 400);
+        currentDelayMs = (currentDelayMs * 1.5).round() + jitter;
+        continue;
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final err = 'Agnes API 返回 HTTP ${response.statusCode}：'
+            '${SenseAudioVideoAdapter._truncate(SenseAudioVideoAdapter._extractError(response.body), 200)}';
+        AiLogger.logError(err, providerName: 'Agnes');
+        throw StateError(err);
+      }
+
+      AiLogger.logResponse(
+        providerName: 'Agnes',
+        statusCode: response.statusCode,
+        durationMs: stopwatch.elapsedMilliseconds,
+        bodyPreview: response.body,
+      );
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) {
+        throw const FormatException('Agnes API 返回体不是 JSON 对象');
+      }
+      return decoded.map((k, v) => MapEntry(k as String, v));
+    }
+
+    throw StateError('Agnes API 请求在重试 $maxAttempts 次后依然未能接入可用上游渠道');
+  }
+
+  Future<http.Response> _getRaw(Uri uri, {required String key}) async {
+    final req = http.Request('GET', uri)
+      ..headers['Authorization'] = 'Bearer $key';
+    return _httpFn != null
+        ? await _httpFn(req)
+        : await (_client ?? AppHttpClient.create())
+            .send(req)
+            .then(http.Response.fromStream);
+  }
+
+  void disposeForTesting() => _client?.close();
+}
+
 /// 视频生成适配器工厂。
 ///
-/// 选择顺序：显式偏好 → 全局系统配置的 video 槽位模型 (SenseAudio) → 有 Key 的商业引擎 (Kling) → 本地 Ken Burns。
+/// 选择顺序：显式偏好 → 全局系统配置的 video 槽位模型 (Agnes / SenseAudio) → 有 Key 的商业引擎 (Kling) → 本地 Ken Burns。
 /// 本地引擎不可用（没装 FFmpeg）时仍返回它，让上层把"请安装 FFmpeg"或"请配置视频模型"的可操作提示显示出来。
+/// 规整包装器：把 [MediaRequestNormalizer] 套在任意视频适配器外。
+///
+/// **为什么用包装而不是在每个适配器里调用**（design 决策 5）：四个适配器的
+/// payload 构造差异很大，但规整逻辑完全相同。包装让新适配器自动获得规整，
+/// 不需要每个作者记得调用——漏一次的后果是"这个模型的参数没被吸附"，
+/// 而这种 bug 只在特定模型上出现，测试很难覆盖到。
+///
+/// 代价是运行时的静态类型不再是具体适配器（`adapter is KenBurnsVideoAdapter`
+/// 会失效）。用 [unwrap] 取回内层，`SegmentVideoGenTask` 的
+/// `forceLocalKenBurns` 判断已改为先 unwrap 再比较。
+class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapter {
+  NormalizingVideoAdapter(this._inner, this._capability, {this.modelId = ''});
+
+  final VideoGenAdapter _inner;
+  final MediaModelCapability _capability;
+
+  /// 仅用于日志：让「哪个模型的参数被吸附了」可查。
+  final String modelId;
+
+  @override
+  String get id => _inner.id;
+
+  @override
+  String get label => _inner.label;
+
+  @override
+  bool get requiresApiKey => _inner.requiresApiKey;
+
+  @override
+  Future<bool> isAvailable() => _inner.isAvailable();
+
+  @override
+  void cancelCurrent() {
+    final inner = _inner;
+    if (inner is CancellableVideoGenAdapter) {
+      (inner as CancellableVideoGenAdapter).cancelCurrent();
+    }
+  }
+
+  /// 取回内层适配器。规整发生在 [_inner] 之前，所以拿到的还是原始实现。
+  VideoGenAdapter unwrap() => _inner;
+
+  /// 最近一次 [generateVideo] 的参数变更记录。
+  ///
+  /// 暴露出来是为了让 `SegmentVideoGenTask` 能把「实际提交时长」写回数据层
+  /// ——用户请求 15s 而模型只支持 12s 时，看板要能显示这个差异。
+  List<String> get lastChanges => List.unmodifiable(_lastChanges);
+
+  List<String> _lastChanges = const [];
+
+  @override
+  Future<File> generateVideo(
+    VideoGenRequest request, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final normalizer = MediaRequestNormalizer(_capability);
+    final result = normalizer.normalize(
+      MediaRequestSpec(
+        durationSec: request.durationSec,
+        resolution: '',
+        ratio: '',
+        referenceImageCount: request.allImages.length,
+        hasFirstFrame: request.inputImage != null,
+        hasLastFrame: false,
+      ),
+    );
+
+    // 吸附必须可见（spec: 规整与降级可见）。走 AiLogger 而不是 debugPrint：
+    // 用户报"为什么生成的视频只有 12 秒"时，日志是唯一能回答的地方。
+    _lastChanges = result.changes;
+    if (result.hasChanges) {
+      AiLogger.logWarning(
+        '参数规整：${result.changes.join('；')}',
+        providerName: modelId.isEmpty ? _inner.id : modelId,
+      );
+    }
+
+    return _inner.generateVideo(
+      VideoGenRequest(
+        inputImage: request.inputImage,
+        referenceImages: request.referenceImages,
+        promptZh: request.promptZh,
+        cameraMove: request.cameraMove,
+        durationSec: result.request.durationSec,
+        shotNumber: request.shotNumber,
+        outputFile: request.outputFile,
+        productionType: request.productionType,
+      ),
+      onProgress: onProgress,
+    );
+  }
+}
+
 class VideoGenAdapterFactory {
   VideoGenAdapterFactory._();
+
+  /// 把适配器包上能力规整（spec: 请求参数规整）。
+  ///
+  /// 本地 Ken Burns 不包：它没有外部参数约束，且它的时长上限来自
+  /// `totalFrames.clamp(30, 900)`（即 1–30 秒），本来就不该被媒体模型的能力
+  /// 矩阵裁剪。包了反而会让"narration 类型想要 40 秒片段"这种合理请求被拒。
+  static VideoGenAdapter _wrap(
+    VideoGenAdapter adapter,
+    String modelId, {
+    AiProviderConfig? provider,
+  }) {
+    if (adapter is KenBurnsVideoAdapter) return adapter;
+    // 已在 [_byId] 内包过的就不再包第二层：双层规整会让
+    // `NormalizingVideoAdapter.unwrap()` 拿到又一个包装器，调用方对内层具体
+    // 类型的判断（如工坊设置同步测试的 `isA<SenseAudioVideoAdapter>()`）失效。
+    if (adapter is NormalizingVideoAdapter) return adapter;
+    final capability = provider != null
+        ? MediaCapabilityResolver.resolve(provider, modelId)
+        : MediaCapabilityPresets.forModel(modelId) ??
+            MediaCapabilityDefaults.openai;
+    return NormalizingVideoAdapter(adapter, capability, modelId: modelId);
+  }
 
   static Future<VideoGenAdapter> create({
     String? preferredEngineId,
@@ -798,7 +1361,7 @@ class VideoGenAdapterFactory {
     // 1. 显式偏好匹配
     if (preferredEngineId != null && preferredEngineId.isNotEmpty) {
       final adapter = await _byId(preferredEngineId);
-      if (adapter != null) return adapter;
+      if (adapter != null) return _wrap(adapter, preferredEngineId);
     }
 
     // 2. 优先检查系统全局配置的 video 槽位候选供应商
@@ -822,7 +1385,18 @@ class VideoGenAdapterFactory {
               ? candidate.model
               : (provider.videoModels.isNotEmpty
                   ? provider.videoModels.first
-                  : 'doubao-seedance-2-0-260128');
+                  : 'agnes-video-2.5-flash');
+          final isAgnes = modelName.toLowerCase().contains('agnes') ||
+              provider.baseUrl.toLowerCase().contains('agnes');
+          if (isAgnes) {
+            return AgnesVideoAdapter(
+              baseUrl: provider.baseUrl,
+              model: modelName,
+              apiKey: key.trim(),
+              providerId: provider.id,
+              keychainKeyId: provider.keychainKeyId,
+            );
+          }
           return SenseAudioVideoAdapter(
             baseUrl: provider.baseUrl,
             model: modelName,
@@ -840,13 +1414,55 @@ class VideoGenAdapterFactory {
       if (await kling.isAvailable()) return kling;
     }
 
-    // 4. 回退到本地 Ken Burns
+    // 4. 检查内置 Dola 免费号池
+    final dolaAdapter = DolaPoolVideoAdapter();
+    if (await dolaAdapter.isAvailable()) return dolaAdapter;
+
+    // 5. 回退到本地 Ken Burns
     return KenBurnsVideoAdapter();
   }
 
   static Future<VideoGenAdapter?> _byId(String id) async {
+    if (id.startsWith('dola-pool')) {
+      final model = id.contains('2.0') ? 'seedance-2.0' : 'seedance-2.5';
+      return DolaPoolVideoAdapter(model: model);
+    }
     if (id == 'kling-i2v') return KlingVideoAdapter();
     if (id == 'local-kenburns-ffmpeg') return KenBurnsVideoAdapter();
+    if (id == 'agnes-video-2.5-flash' || id.startsWith('agnes')) {
+      final videoCandidates =
+          AiConfigStore.instance.slotBindings['video'] ?? [];
+      for (final candidate in videoCandidates) {
+        final provider = AiConfigStore.instance.providers.firstWhere(
+          (p) => p.id == candidate.providerId,
+          orElse: () => const AiProviderConfig(
+            id: '',
+            name: '',
+            protocol: AiProtocolType.openai,
+            baseUrl: '',
+            keychainKeyId: '',
+          ),
+        );
+        if (provider.id.isNotEmpty) {
+          final key =
+              await KeychainService.instance.readSecret(provider.keychainKeyId);
+          return _wrap(
+            AgnesVideoAdapter(
+              baseUrl: provider.baseUrl,
+              model: candidate.model.isNotEmpty
+                  ? candidate.model
+                  : 'agnes-video-2.5-flash',
+              apiKey: key?.trim(),
+              providerId: provider.id,
+              keychainKeyId: provider.keychainKeyId,
+            ),
+            candidate.model.isNotEmpty ? candidate.model : 'agnes-video-2.5-flash',
+            provider: provider,
+          );
+        }
+      }
+      return AgnesVideoAdapter();
+    }
     if (id == 'system-video' || id.startsWith('senseaudio')) {
       final videoCandidates =
           AiConfigStore.instance.slotBindings['video'] ?? [];
@@ -864,20 +1480,34 @@ class VideoGenAdapterFactory {
         if (provider.id.isNotEmpty) {
           final key =
               await KeychainService.instance.readSecret(provider.keychainKeyId);
-          return SenseAudioVideoAdapter(
-            baseUrl: provider.baseUrl,
-            model: candidate.model.isNotEmpty
-                ? candidate.model
-                : (provider.videoModels.isNotEmpty
-                    ? provider.videoModels.first
-                    : 'doubao-seedance-2-0-260128'),
-            apiKey: key?.trim(),
-            providerId: provider.id,
-            keychainKeyId: provider.keychainKeyId,
+          final modelName = candidate.model.isNotEmpty
+              ? candidate.model
+              : (provider.videoModels.isNotEmpty
+                  ? provider.videoModels.first
+                  : 'agnes-video-2.5-flash');
+          if (modelName.toLowerCase().contains('agnes')) {
+            return AgnesVideoAdapter(
+              baseUrl: provider.baseUrl,
+              model: modelName,
+              apiKey: key?.trim(),
+              providerId: provider.id,
+              keychainKeyId: provider.keychainKeyId,
+            );
+          }
+          return _wrap(
+            SenseAudioVideoAdapter(
+              baseUrl: provider.baseUrl,
+              model: modelName,
+              apiKey: key?.trim(),
+              providerId: provider.id,
+              keychainKeyId: provider.keychainKeyId,
+            ),
+            modelName,
+            provider: provider,
           );
         }
       }
-      return SenseAudioVideoAdapter();
+      return AgnesVideoAdapter();
     }
     return null;
   }
@@ -906,7 +1536,7 @@ class VideoGenAdapterFactory {
             ? candidate.model
             : (provider.videoModels.isNotEmpty
                 ? provider.videoModels.first
-                : 'doubao-seedance-2-0-260128');
+                : 'agnes-video-2.5-flash');
         return (
           isConfigured: true,
           providerName: provider.name,
@@ -924,6 +1554,8 @@ class VideoGenAdapterFactory {
   }
 
   static List<VideoGenAdapter> allAdapters() => [
+        DolaPoolVideoAdapter(),
+        AgnesVideoAdapter(),
         SenseAudioVideoAdapter(),
         KlingVideoAdapter(),
         KenBurnsVideoAdapter(),
@@ -940,6 +1572,7 @@ class VideoGenAdapterFactory {
   static void disposeForTesting(VideoGenAdapter adapter) {
     if (adapter is KlingVideoAdapter) adapter.disposeForTesting();
     if (adapter is SenseAudioVideoAdapter) adapter.disposeForTesting();
+    if (adapter is AgnesVideoAdapter) adapter.disposeForTesting();
   }
 }
 

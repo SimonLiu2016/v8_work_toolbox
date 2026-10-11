@@ -6,6 +6,8 @@
 /// 直接就是磁盘上的键名，改动字段先想清楚旧文件怎么读。
 library;
 
+import 'package:flutter/foundation.dart' show immutable;
+
 /// 制作类型。三选一，全局只有这三支管线（spec: 制作类型管线预设）。
 ///
 /// 值的字符串形态会写进 `series_profile.json`，所以顺序与拼写都不要变——
@@ -39,6 +41,7 @@ enum StudioShotSize {
   closeUp('close_up', '特写'),
   mediumCloseUp('medium_close_up', '近景'),
   medium('medium', '中景'),
+  full('full', '全景'),
   long('long', '远景'),
   extremeLong('extreme_long', '大远景');
 
@@ -48,7 +51,21 @@ enum StudioShotSize {
   const StudioShotSize(this.id, this.label);
 
   static StudioShotSize fromId(String? value) {
-    return values.firstWhere((s) => s.id == value, orElse: () => medium);
+    if (value == null) return medium;
+    final normalized = value.trim().toLowerCase();
+    return values.firstWhere(
+      (s) =>
+          s.id == normalized ||
+          s.label == value.trim() ||
+          (normalized == 'wide' && s == full) ||
+          (normalized == '全景' && s == full) ||
+          (normalized == '特写' && s == closeUp) ||
+          (normalized == '近景' && s == mediumCloseUp) ||
+          (normalized == '中景' && s == medium) ||
+          (normalized == '远景' && s == long) ||
+          (normalized == '大远景' && s == extremeLong),
+      orElse: () => medium,
+    );
   }
 }
 
@@ -506,6 +523,12 @@ class StudioEpisode {
   /// key = 角色卡 id，value = 形态 id。
   final Map<String, String> variationOverrides;
 
+  /// 片段列表（spec: 片段边界划分）。
+  ///
+  /// 空列表表示这是旧版数据、尚未迁移。加载时由
+  /// [StudioEpisode.migrateSegmentsIfNeeded] 自动补齐，见 design 决策 2。
+  final List<StudioSegment> segments;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -517,6 +540,7 @@ class StudioEpisode {
     this.synopsis = '',
     this.shots = const [],
     this.variationOverrides = const {},
+    this.segments = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -529,6 +553,7 @@ class StudioEpisode {
     String? synopsis,
     List<StudioShot>? shots,
     Map<String, String>? variationOverrides,
+    List<StudioSegment>? segments,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -540,6 +565,7 @@ class StudioEpisode {
       synopsis: synopsis ?? this.synopsis,
       shots: shots ?? this.shots,
       variationOverrides: variationOverrides ?? this.variationOverrides,
+      segments: segments ?? this.segments,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -553,6 +579,7 @@ class StudioEpisode {
     'synopsis': synopsis,
     'shots': shots.map((s) => s.toJson()).toList(),
     'variation_overrides': variationOverrides,
+    'segments': segments.map((s) => s.toJson()).toList(),
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
   };
@@ -577,11 +604,57 @@ class StudioEpisode {
             (k, v) => MapEntry(k as String, v as String),
           ) ??
           const {},
+      segments:
+          (json['segments'] as List?)
+              ?.whereType<Map>()
+              .map((e) =>
+                  StudioSegment.fromJson(e.map((k, v) => MapEntry(k as String, v))))
+              .toList() ??
+          const [],
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ?? now,
       updatedAt:
           DateTime.tryParse(json['updated_at'] as String? ?? '') ?? now,
     );
+  }
+
+  /// 旧版数据迁移：没有 `segments` 时按分镜顺序每 2–3 镜归组（spec: 旧版分镜数据迁移）。
+  ///
+  /// **纯函数，不落盘**（design 决策 2）：读取路径不该有写副作用——失败会污染
+  /// 用户数据，也让「打开即修改」难以解释。结果保留到下一次 [saveEpisode] 自然
+  /// 写回；幂等由「`segments` 非空即跳过」保证。
+  ///
+  /// 迁移分组用 3 镜而不是 2 镜：2 镜一组会让 8 镜的剧集产出 4 个片段，而 AI
+  /// 的片段边界通常更粗（1–4 镜），取中值更接近用户的真实意图。
+  StudioEpisode migrateSegmentsIfNeeded() {
+    if (segments.isNotEmpty || shots.isEmpty) return this;
+    return copyWith(
+      segments: buildLegacySegments(shots.map((s) => s.number).toList()),
+    );
+  }
+
+  /// 按镜号序列构建旧版迁移用的片段分组。
+  ///
+  /// 独立成静态方法以便单测直接验证分组规则，不必构造整个 [StudioEpisode]。
+  static List<StudioSegment> buildLegacySegments(List<int> shotNumbers) {
+    if (shotNumbers.isEmpty) return const [];
+    const legacyReason = '旧版数据自动分组';
+    final result = <StudioSegment>[];
+    var cursor = 0;
+    while (cursor < shotNumbers.length) {
+      // 剩 4 镜时拆 2+2 而不是 3+1：末组只含 1 镜没有「片段」的意义。
+      final remaining = shotNumbers.length - cursor;
+      final size = remaining == 4 ? 2 : (remaining >= 3 ? 3 : remaining);
+      final group = shotNumbers.sublist(cursor, cursor + size);
+      result.add(StudioSegment(
+        id: 'seg-${result.length + 1}',
+        shotNumbers: group,
+        boundaryReason: legacyReason,
+        targetDurationSec: group.length * 4,
+      ));
+      cursor += size;
+    }
+    return result;
   }
 }
 
@@ -650,6 +723,15 @@ class StudioShot {
   /// 选中的 BGM 文件名（相对全局库或 IP 库）。
   final String? bgmPath;
 
+  /// 所属片段 id。空串表示尚未归入任何片段（旧版数据迁移前的中间态）。
+  final String segmentId;
+
+  /// 连续性台账（spec: 连续性台账字段）。
+  ///
+  /// 旧版数据为 [ShotContinuity.empty]；UI 靠 [ShotContinuity.isEmpty] 提示
+  /// 用户补台账，而不是把空值当成真实的「空手」状态。
+  final ShotContinuity continuity;
+
   final ShotGenerationStatus status;
 
   const StudioShot({
@@ -669,6 +751,8 @@ class StudioShot {
     this.audioPath,
     this.audioDurationMs,
     this.bgmPath,
+    this.segmentId = '',
+    this.continuity = ShotContinuity.empty,
     this.status = ShotGenerationStatus.pending,
   });
 
@@ -679,6 +763,18 @@ class StudioShot {
     final trimmed = dialogue.trim();
     if (trimmed.isEmpty) return false;
     return trimmed.length > dialogueCharLimit;
+  }
+
+  /// 预估台词时长（秒）。从台词中解析如“（预估2.5秒）”，无明确标注时按正常语速与时长推算。
+  double get dialogueEstimatedSec {
+    final match = RegExp(r'[（\(]预估\s*([\d\.]+)\s*秒[）\)]').firstMatch(dialogue);
+    if (match != null) {
+      final parsed = double.tryParse(match.group(1) ?? '');
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    final cleanText = dialogue.replaceAll(RegExp(r'[（\(][^）\)]*[）\)]'), '').trim();
+    if (cleanText.isEmpty) return 0.0;
+    return (cleanText.length / 4.0).clamp(1.0, durationSec);
   }
 
   StudioShot copyWith({
@@ -698,6 +794,8 @@ class StudioShot {
     String? audioPath,
     int? audioDurationMs,
     String? bgmPath,
+    String? segmentId,
+    ShotContinuity? continuity,
     ShotGenerationStatus? status,
   }) {
     return StudioShot(
@@ -717,6 +815,8 @@ class StudioShot {
       audioPath: audioPath ?? this.audioPath,
       audioDurationMs: audioDurationMs ?? this.audioDurationMs,
       bgmPath: bgmPath ?? this.bgmPath,
+      segmentId: segmentId ?? this.segmentId,
+      continuity: continuity ?? this.continuity,
       status: status ?? this.status,
     );
   }
@@ -738,10 +838,13 @@ class StudioShot {
     'audio_path': audioPath,
     'audio_duration_ms': audioDurationMs,
     'bgm_path': bgmPath,
+    'segment_id': segmentId,
+    'continuity': continuity.toJson(),
     'status': status.id,
   };
 
   static StudioShot fromJson(Map<String, dynamic> json) {
+    final continuityRaw = json['continuity'];
     return StudioShot(
       number: (json['number'] as num?)?.toInt() ?? 1,
       durationSec: (json['duration_sec'] as num?)?.toDouble() ?? 3,
@@ -760,7 +863,262 @@ class StudioShot {
       audioPath: json['audio_path'] as String?,
       audioDurationMs: (json['audio_duration_ms'] as num?)?.toInt(),
       bgmPath: json['bgm_path'] as String?,
+      segmentId: json['segment_id'] as String? ?? '',
+      continuity: continuityRaw is Map
+          ? ShotContinuity.fromJson(
+              continuityRaw.map((k, v) => MapEntry(k as String, v)))
+          : ShotContinuity.empty,
       status: ShotGenerationStatus.fromId(json['status'] as String?),
+    );
+  }
+}
+
+/// 分镜的连续性台账（spec: 连续性台账字段）。
+///
+/// 存在的唯一目的是让「片段提示词」能写出绝对状态而不是"延续上一镜"。
+/// 字段分两类：
+/// - **可推导**（`worldPosition` / `screenPosition` / `lightingState`）：由 AI 或
+///   系统基于前一镜推导，用户可改。
+/// - **只能来自原文**（`holdingLeft` / `holdingRight` / `stateChanges`）：AI 不得
+///   自行桥接。原文给出初始状态就直接用，不补"道具如何被拿到手里"（spec: 禁止 AI
+///   自行桥接）。所以这三个是必填项——缺一个就意味着 AI 在替用户编剧情。
+@immutable
+class ShotContinuity {
+  /// 相对门、桌、窗等固定地标的世界坐标（与机位无关）。
+  final String worldPosition;
+
+  /// 当前机位下的画面左右/前后/遮挡关系。
+  final String screenPosition;
+
+  /// 左手持有物；空串表示空手。
+  final String holdingLeft;
+
+  /// 右手持有物；空串表示空手。
+  final String holdingRight;
+
+  /// 主光方向与色温。
+  final String lightingState;
+
+  /// 本镜发生的状态变化列表。每项必须来源于剧情原文或用户手动编辑。
+  final List<String> stateChanges;
+
+  const ShotContinuity({
+    this.worldPosition = '',
+    this.screenPosition = '',
+    this.holdingLeft = '',
+    this.holdingRight = '',
+    this.lightingState = '',
+    this.stateChanges = const [],
+  });
+
+  /// 旧版 `storyboard.json` 没有这个对象时的兜底。
+  ///
+  /// 空串而不是 null：下游拼提示词时可以直接 `if (x.isNotEmpty)`，不需要
+  /// 到处判空。代价是「没填」与「空手」共用同一个表示——用
+  /// [isEmpty] 区分，UI 层靠它提示用户补台账。
+  static const ShotContinuity empty = ShotContinuity();
+
+  /// 是否完全未填写（用于提示用户补台账，而不是当成真实的空手状态）。
+  bool get isEmpty =>
+      worldPosition.isEmpty &&
+      screenPosition.isEmpty &&
+      holdingLeft.isEmpty &&
+      holdingRight.isEmpty &&
+      lightingState.isEmpty &&
+      stateChanges.isEmpty;
+
+  ShotContinuity copyWith({
+    String? worldPosition,
+    String? screenPosition,
+    String? holdingLeft,
+    String? holdingRight,
+    String? lightingState,
+    List<String>? stateChanges,
+  }) {
+    return ShotContinuity(
+      worldPosition: worldPosition ?? this.worldPosition,
+      screenPosition: screenPosition ?? this.screenPosition,
+      holdingLeft: holdingLeft ?? this.holdingLeft,
+      holdingRight: holdingRight ?? this.holdingRight,
+      lightingState: lightingState ?? this.lightingState,
+      stateChanges: stateChanges ?? this.stateChanges,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'world_position': worldPosition,
+    'screen_position': screenPosition,
+    'holding_left': holdingLeft,
+    'holding_right': holdingRight,
+    'lighting_state': lightingState,
+    'state_changes': stateChanges,
+  };
+
+  static ShotContinuity fromJson(Map<String, dynamic> json) {
+    return ShotContinuity(
+      worldPosition: json['world_position'] as String? ?? '',
+      screenPosition: json['screen_position'] as String? ?? '',
+      holdingLeft: json['holding_left'] as String? ?? '',
+      holdingRight: json['holding_right'] as String? ?? '',
+      lightingState: json['lighting_state'] as String? ?? '',
+      stateChanges:
+          (json['state_changes'] as List?)?.cast<String>() ?? const [],
+    );
+  }
+}
+
+/// 片段的生成状态。与 [ShotGenerationStatus] 分开：片段状态描述的是「这一次
+/// 云端调用」，分镜状态描述的是「这一镜的产物」。
+enum SegmentStatus {
+  pending('pending', '待生成'),
+  generating('generating', '生成中'),
+  done('done', '完成'),
+  failed('failed', '失败');
+
+  final String id;
+  final String label;
+
+  const SegmentStatus(this.id, this.label);
+
+  static SegmentStatus fromId(String? value) {
+    return values.firstWhere((s) => s.id == value, orElse: () => pending);
+  }
+}
+
+/// 一个片段：连续叙事节拍的最小可生成单元（spec: 片段边界划分）。
+///
+/// **只存元数据与指向，不复制分镜**（design 决策 1）：`shotNumbers` 按顺序指向
+/// `StudioEpisode.shots`。这样 `shots` 保持唯一事实来源，声音设计、SRT、FFmpeg
+/// 合成、剪映导出四处消费方都不需要改。
+class StudioSegment {
+  /// `seg-<n>`，n 从 1 起。
+  final String id;
+
+  /// 目标时长（秒）。AI 划边界时给出，用户可改。
+  final int targetDurationSec;
+
+  /// 边界判定理由（AI 给，用户可编辑）。
+  ///
+  /// 迁移生成的片段写死「旧版数据自动分组」，让用户能区分「AI 划的」与
+  /// 「系统补的」（design Risks 第三条）。
+  final String boundaryReason;
+
+  /// 片段级补充说明。追加在组装提示词末尾，是用户/AI 唯一的「整段润色」入口
+  /// （design 决策 5：提示词主体由确定性组装，不交给 AI 自由发挥）。
+  final String promptNote;
+
+  /// 已生成片段视频的文件名（相对 `segments/`）。
+  final String? clipPath;
+
+  final SegmentStatus status;
+
+  /// 参与的镜号，按分镜顺序。
+  final List<int> shotNumbers;
+
+  /// 被单镜覆盖而移出本次生成的镜号（design Risks 第四条）。
+  ///
+  /// 不做「自动重算片段时长」——那会让用户的确认状态失效。
+  final List<int> excludedShotNumbers;
+
+  /// 参考图被降级的数量。0 表示未降级。
+  ///
+  /// 降级必须可见（design 决策 4）：用户得知道「我传了 3 张，实际只用了 1 张」，
+  /// 否则会以为一致性约束生效了。
+  final int degradedRefCount;
+
+  /// 本次实际提交给模型的时长（秒）。null 表示尚未生成过。
+  ///
+  /// 与 [targetDurationSec] 分开是因为能力矩阵会把超范围的请求吸附到合法值
+  /// ——用户请求 15s、模型只支持到 12s 时，提交的是 12s。UI 必须把两个值并列
+  /// 展示，否则用户以为 15s 生效了（spec: 分镜看板展示本次提交的实际参数）。
+  final int? submittedDurationSec;
+
+  const StudioSegment({
+    required this.id,
+    this.targetDurationSec = 12,
+    this.boundaryReason = '',
+    this.promptNote = '',
+    this.clipPath,
+    this.status = SegmentStatus.pending,
+    this.shotNumbers = const [],
+    this.excludedShotNumbers = const [],
+    this.degradedRefCount = 0,
+    this.submittedDurationSec,
+  });
+
+  /// 本次实际参与生成的镜号。
+  List<int> get effectiveShotNumbers =>
+      shotNumbers.where((n) => !excludedShotNumbers.contains(n)).toList();
+
+  bool get hasClip => clipPath != null && clipPath!.isNotEmpty;
+
+  bool get isDegraded => degradedRefCount > 0;
+
+  /// 实际提交时长与请求时长是否不同（UI 据此决定要不要并列展示）。
+  bool get durationWasAdjusted {
+    final submitted = submittedDurationSec;
+    return submitted != null && submitted != targetDurationSec;
+  }
+
+  StudioSegment copyWith({
+    String? id,
+    int? targetDurationSec,
+    String? boundaryReason,
+    String? promptNote,
+    String? clipPath,
+    SegmentStatus? status,
+    List<int>? shotNumbers,
+    List<int>? excludedShotNumbers,
+    int? degradedRefCount,
+    int? submittedDurationSec,
+  }) {
+    return StudioSegment(
+      id: id ?? this.id,
+      targetDurationSec: targetDurationSec ?? this.targetDurationSec,
+      boundaryReason: boundaryReason ?? this.boundaryReason,
+      promptNote: promptNote ?? this.promptNote,
+      clipPath: clipPath ?? this.clipPath,
+      status: status ?? this.status,
+      shotNumbers: shotNumbers ?? this.shotNumbers,
+      excludedShotNumbers: excludedShotNumbers ?? this.excludedShotNumbers,
+      degradedRefCount: degradedRefCount ?? this.degradedRefCount,
+      submittedDurationSec:
+          submittedDurationSec ?? this.submittedDurationSec,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'target_duration_sec': targetDurationSec,
+    'boundary_reason': boundaryReason,
+    'prompt_note': promptNote,
+    'clip_path': clipPath,
+    'status': status.id,
+    'shot_numbers': shotNumbers,
+    'excluded_shot_numbers': excludedShotNumbers,
+    'degraded_ref_count': degradedRefCount,
+    'submitted_duration_sec': submittedDurationSec,
+  };
+
+  static StudioSegment fromJson(Map<String, dynamic> json) {
+    return StudioSegment(
+      id: json['id'] as String? ?? '',
+      targetDurationSec:
+          (json['target_duration_sec'] as num?)?.toInt() ?? 12,
+      boundaryReason: json['boundary_reason'] as String? ?? '',
+      promptNote: json['prompt_note'] as String? ?? '',
+      clipPath: json['clip_path'] as String?,
+      status: SegmentStatus.fromId(json['status'] as String?),
+      shotNumbers:
+          (json['shot_numbers'] as List?)?.whereType<num>().map((n) => n.toInt()).toList() ??
+          const [],
+      excludedShotNumbers:
+          (json['excluded_shot_numbers'] as List?)?.whereType<num>().map((n) => n.toInt()).toList() ??
+          const [],
+      degradedRefCount:
+          (json['degraded_ref_count'] as num?)?.toInt() ?? 0,
+      submittedDurationSec:
+          (json['submitted_duration_sec'] as num?)?.toInt(),
     );
   }
 }

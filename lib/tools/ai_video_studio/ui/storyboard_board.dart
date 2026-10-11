@@ -27,6 +27,15 @@ import '../../ai_video_studio/services/studio_task_queue.dart';
 import '../../ai_video_studio/services/video_gen_adapter.dart';
 import 'studio_shell.dart';
 
+/// 分镜看板的视图模式（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
+enum _BoardView {
+  /// 按片段：片段为可折叠分组，组头展示目标时长、边界理由与片段视频。
+  bySegment,
+
+  /// 按镜头：改造前的平铺形态，一行一张分镜卡。
+  byShot,
+}
+
 class StoryboardBoard extends StatefulWidget {
   const StoryboardBoard({super.key, required this.session});
 
@@ -54,6 +63,12 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   StudioEpisode? _episode;
   List<StudioEpisode> _allEpisodes = const [];
   List<SceneCard> _scenes = const [];
+
+  /// 看板视图模式（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
+  ///
+  /// 默认按片段：片段是现在的视频生成单元，用户主要在该视图下工作；
+  /// 「按镜头」保留改造前的平铺形态，供逐镜微调台词/动作时使用。
+  _BoardView _view = _BoardView.bySegment;
 
   @override
   void initState() {
@@ -439,6 +454,45 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     );
   }
 
+  /// 提交片段级视频生成任务。
+  ///
+  /// 与 [_enqueueClip] 的差别只在任务类型与执行体：这里入队
+  /// [StudioTaskKind.segment] + [SegmentVideoGenTask]，一次调用覆盖整个片段。
+  /// 前置检查（适配器可用性）与分镜级完全一致——用户看到的提示也一样。
+  Future<void> _enqueueSegment(
+    StudioSegment segment,
+    StudioEpisode episode,
+  ) async {
+    final series = widget.session.series;
+    if (series == null) return;
+
+    // 已在队列中的片段不重复入队，否则用户连点会提交多次云端调用。
+    if (_queue.tasksForSegment(segment.id).isNotEmpty) return;
+
+    final adapter = await VideoGenAdapterFactory.create(
+      productionType: series.productionType.id,
+    );
+    if (!await adapter.isAvailable()) {
+      if (mounted) {
+        _showVideoEngineUnavailableDialog(context);
+      }
+      return;
+    }
+    _queue.enqueue(
+      kind: StudioTaskKind.segment,
+      shotNumber: StudioTaskQueue.segmentKey(segment.id),
+      label: '片段 ${segment.id} 视频',
+      runner: SegmentVideoGenTask(
+        taskId: 'seg-${segment.id}',
+        seriesId: series.id,
+        episodeId: episode.id,
+        segmentId: segment.id,
+        adapter: adapter,
+        onPersisted: (_) => _reload(),
+      ),
+    );
+  }
+
   void _showVideoEngineUnavailableDialog(BuildContext context) {
     showDialog<void>(
       context: context,
@@ -619,7 +673,6 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   @override
   Widget build(BuildContext context) {
     final episode = _episode;
-    final seriesId = widget.session.series?.id ?? '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -639,6 +692,27 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               if (_queue.activeCount > 0)
                 _ActiveBadge(count: _queue.activeCount),
               const Spacer(),
+              SegmentedButton<_BoardView>(
+                segments: const [
+                  ButtonSegment(
+                    value: _BoardView.bySegment,
+                    icon: Icon(Icons.view_column_outlined, size: 15),
+                    tooltip: '按片段',
+                  ),
+                  ButtonSegment(
+                    value: _BoardView.byShot,
+                    icon: Icon(Icons.dashboard_outlined, size: 15),
+                    tooltip: '按镜头',
+                  ),
+                ],
+                selected: {_view},
+                onSelectionChanged: (s) => setState(() => _view = s.first),
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: _queue.activeCount == 0 ? null : _showQueueDrawer,
                 icon: const Icon(Icons.list_alt, size: 16),
@@ -690,7 +764,18 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               ? _buildNoEpisode(context)
               : episode.shots.isEmpty
                   ? _buildNoShots(context)
-                  : ListView.builder(
+                  : _view == _BoardView.bySegment
+                      ? _buildSegmentList(context, episode)
+                      : _buildShotList(context, episode),
+        ),
+      ],
+    );
+  }
+
+  /// 按镜头视图：改造前的平铺形态，一行一张分镜卡。
+  Widget _buildShotList(BuildContext context, StudioEpisode episode) {
+    final seriesId = widget.session.series?.id ?? '';
+    return ListView.builder(
                       padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
                       itemCount: episode.shots.length + 1,
                       itemBuilder: (context, i) {
@@ -725,9 +810,73 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                           onRegenerateShot: () => _regenerateShot(shot),
                         );
                       },
-                    ),
-        ),
-      ],
+      );
+  }
+
+  /// 按片段视图（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
+  ///
+  /// 片段是现在的视频生成单元，所以组头直接承载片段级操作；组内复用现有的
+  /// [_ShotCard]，分镜级的编辑与生成入口完全不变——两种视图共享同一批卡片，
+  /// 只是组织方式不同。
+  Widget _buildSegmentList(BuildContext context, StudioEpisode episode) {
+    final seriesId = widget.session.series?.id ?? '';
+    final framesDir = _manager.episodeFramesDir(seriesId, episode.id).path;
+    final clipsDir = _manager.episodeClipsDir(seriesId, episode.id).path;
+
+    // 没有片段的旧集（尚未迁移或刚建）退回平铺，避免出现空白看板。
+    if (episode.segments.isEmpty) {
+      return _buildShotList(context, episode);
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      itemCount: episode.segments.length + 1,
+      itemBuilder: (context, i) {
+        if (i == 0) return _SynopsisCard(episode: episode);
+        final segment = episode.segments[i - 1];
+        return _SegmentGroupCard(
+          segment: segment,
+          episode: episode,
+          queue: _queue,
+          framesDir: framesDir,
+          clipsDir: clipsDir,
+          seriesName: widget.session.series?.name ?? '',
+          onGenerateSegment: () => _enqueueSegment(segment, episode),
+          shotBuilder: (shot) => _buildShotCard(shot, episode, framesDir, clipsDir),
+        );
+      },
+    );
+  }
+
+  /// 构造一张分镜卡。两种视图共用，保证「按镜头」与「按片段」里的同一分镜
+  /// 长得一模一样、行为也一模一样。
+  Widget _buildShotCard(
+    StudioShot shot,
+    StudioEpisode episode,
+    String framesDir,
+    String clipsDir,
+  ) {
+    return _ShotCard(
+      shot: shot,
+      scenes: _scenes,
+      queue: _queue,
+      framesDir: framesDir,
+      clipsDir: clipsDir,
+      seriesName: widget.session.series?.name ?? '',
+      episodeTitle: episode.title,
+      dialogueController: _dialogueControllers.putIfAbsent(
+        shot.number,
+        () => TextEditingController(text: shot.dialogue),
+      ),
+      actionController: _actionControllers.putIfAbsent(
+        shot.number,
+        () => TextEditingController(text: shot.actionZh),
+      ),
+      onEdited: (updated) => _onShotEdited(shot.number, updated),
+      onGenerateFrame: () => _enqueueFrame(shot),
+      onGenerateClip: () => _enqueueClip(shot),
+      onOpenCameraPanel: () => _openCameraPanel(shot),
+      onRegenerateShot: () => _regenerateShot(shot),
     );
   }
 
@@ -844,6 +993,231 @@ class _SynopsisCard extends StatelessWidget {
           Text(
             episode.synopsis.isEmpty ? '（未填写）' : episode.synopsis,
             style: TextStyle(color: context.textPrimary, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 展示片段生成失败详情。
+///
+/// 与 `add-studio-task-error-log-viewer-and-fix-video-frame` 里那个通用弹窗
+/// 的职责相同（完整错误 + 一键复制），但那个组件在本文件里尚不存在，这里先
+/// 用一个内联实现顶上——片段视图不该因为缺一个弹窗就看不到错误全文。
+Future<void> _showSegmentError(
+  BuildContext context,
+  String title,
+  String message,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: context.bgCard,
+      title: Text(title, style: TextStyle(color: context.textPrimary)),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: SelectableText(
+            message,
+            style: TextStyle(
+              color: context.textSecondary,
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: message));
+            Navigator.pop(context);
+          },
+          child: const Text('复制'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// 片段分组卡（spec: 分镜看板提供「按片段」视图）。
+///
+/// 组头承载片段级信息与操作：目标时长、边界判定理由、片段视频预览、生成按钮。
+/// 组内分镜卡由调用方通过 [shotBuilder] 注入——这样片段视图与平铺视图共享
+/// 同一个 `_ShotCard`，不会出现"两种视图里同一分镜长得不一样"的问题。
+class _SegmentGroupCard extends StatelessWidget {
+  const _SegmentGroupCard({
+    required this.segment,
+    required this.episode,
+    required this.queue,
+    required this.framesDir,
+    required this.clipsDir,
+    required this.seriesName,
+    required this.onGenerateSegment,
+    required this.shotBuilder,
+  });
+
+  final StudioSegment segment;
+  final StudioEpisode episode;
+  final StudioTaskQueue queue;
+  final String framesDir;
+  final String clipsDir;
+  final String seriesName;
+  final VoidCallback onGenerateSegment;
+
+  /// 构造组内一张分镜卡。由看板注入，保证两种视图的卡片实现一致。
+  final Widget Function(StudioShot shot) shotBuilder;
+
+  File? get _segmentClip {
+    final name = segment.clipPath;
+    if (name == null || name.isEmpty) return null;
+    final file = File('$clipsDir/../segments/$name');
+    return file.existsSync() ? file : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shots = episode.shots
+        .where((s) => segment.shotNumbers.contains(s.number))
+        .toList();
+    final tasks = queue.tasksForSegment(segment.id);
+    final running = tasks.any((t) => t.status == StudioTaskStatus.running);
+    final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
+    final clip = _segmentClip;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: AppTheme.borderRadiusSmall,
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // --- 组头 ---
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(Icons.view_column_outlined,
+                    size: 16, color: context.accentText),
+                const SizedBox(width: 8),
+                Text(
+                  segment.id,
+                  style: TextStyle(
+                    color: context.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  // 吸附发生时把两个值并列：用户请求 15s、模型只支持 12s 时
+                  // 必须看到"15s → 12s"，否则会以为 15s 生效了
+                  // （spec: 分镜看板展示本次提交的实际参数）。
+                  segment.durationWasAdjusted
+                      ? '${segment.targetDurationSec}s → '
+                          '${segment.submittedDurationSec}s'
+                      : '${segment.targetDurationSec}s',
+                  style: TextStyle(
+                    color: segment.durationWasAdjusted
+                        ? context.warningText
+                        : context.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    segment.boundaryReason.isEmpty
+                        ? '${shots.length} 个分镜'
+                        : segment.boundaryReason,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: context.textTertiary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                if (running)
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: tasks.any((t) => !t.isTerminal)
+                        ? null
+                        : onGenerateSegment,
+                    icon: const Icon(Icons.movie_creation_outlined, size: 14),
+                    label: Text(segment.hasClip ? '重新生成' : '生成片段'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // 降级提示：用户传了 N 张参考图但模型只用了 1 张。必须可见，
+          // 否则会以为一致性约束生效了（design 决策 4）。
+          if (segment.isDegraded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Text(
+                '参考图被降级：本次实际使用 1 张，共传入 '
+                '${segment.degradedRefCount + 1} 张。当前视频模型不支持多参考图。',
+                style: TextStyle(color: context.warningText, fontSize: 11),
+              ),
+            ),
+          if (failed.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: InkWell(
+                onTap: () => _showSegmentError(
+                  context,
+                  '片段 ${segment.id} 生成失败',
+                  failed.first.error ?? '未知错误',
+                ),
+                child: Text(
+                  '生成失败，点击查看日志',
+                  style: TextStyle(color: context.errorText, fontSize: 11),
+                ),
+              ),
+            ),
+          if (clip != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle_outline,
+                      size: 13, color: context.successText),
+                  const SizedBox(width: 6),
+                  Text(
+                    '片段视频已生成',
+                    style: TextStyle(
+                      color: context.successText,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const Divider(height: 1),
+          // --- 组内分镜 ---
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [for (final shot in shots) shotBuilder(shot)],
+            ),
           ),
         ],
       ),
@@ -1791,45 +2165,78 @@ class _QueueDrawerState extends State<_QueueDrawer> {
                 '队列是空的。',
                 style: TextStyle(color: context.textTertiary, fontSize: 12),
               ),
-            for (final task in tasks)
-              ListTile(
-                dense: true,
-                leading: Icon(
-                  task.kind == StudioTaskKind.image
-                      ? Icons.image_outlined
-                      : Icons.movie_outlined,
-                  color: context.textSecondary,
-                  size: 18,
-                ),
-                title: Text(
-                  task.label,
-                  style: TextStyle(color: context.textPrimary, fontSize: 12),
-                ),
-                subtitle: Text(
-                  task.error ?? task.status.label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+            // 按 kind 分组展示：片段任务是分钟级长任务，和分镜级任务混排在一
+            // 起时用户看不出为什么看板"卡住不动了"（spec: 队列面板按 kind 分组）。
+            for (final entry in _groupByKind(tasks)) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 2),
+                child: Text(
+                  entry.key.label,
                   style: TextStyle(
-                    color: task.status == StudioTaskStatus.failed
-                        ? context.errorText
-                        : context.textTertiary,
+                    color: context.textTertiary,
                     fontSize: 11,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                trailing: task.isTerminal
-                    ? null
-                    : IconButton(
-                        onPressed: () {
-                          widget.queue.cancel(task.id);
-                        },
-                        icon: const Icon(Icons.close, size: 16),
-                        tooltip: '取消',
-                      ),
               ),
+              for (final task in entry.value)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    switch (task.kind) {
+                      StudioTaskKind.image => Icons.image_outlined,
+                      StudioTaskKind.video => Icons.movie_outlined,
+                      StudioTaskKind.segment => Icons.view_column_outlined,
+                    },
+                    color: context.textSecondary,
+                    size: 18,
+                  ),
+                  title: Text(
+                    task.label,
+                    style: TextStyle(color: context.textPrimary, fontSize: 12),
+                  ),
+                  subtitle: Text(
+                    task.error ?? task.status.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: task.status == StudioTaskStatus.failed
+                          ? context.errorText
+                          : context.textTertiary,
+                      fontSize: 11,
+                    ),
+                  ),
+                  trailing: task.isTerminal
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            widget.queue.cancel(task.id);
+                          },
+                          icon: const Icon(Icons.close, size: 16),
+                          tooltip: '取消',
+                        ),
+                ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// 把任务按 kind 分组，保持 `StudioTaskKind` 的声明顺序。
+  ///
+  /// 声明顺序即展示顺序（片段 → 视频 → 关键帧）：片段任务最长，放最上面让
+  /// 用户第一眼看到"还有个大家伙在跑"。
+  List<MapEntry<StudioTaskKind, List<StudioTask>>> _groupByKind(
+    List<StudioTask> tasks,
+  ) {
+    final result = <MapEntry<StudioTaskKind, List<StudioTask>>>[];
+    for (final kind in StudioTaskKind.values) {
+      final group = tasks.where((t) => t.kind == kind).toList();
+      if (group.isEmpty) continue;
+      result.add(MapEntry(kind, group));
+    }
+    return result;
   }
 }
 
