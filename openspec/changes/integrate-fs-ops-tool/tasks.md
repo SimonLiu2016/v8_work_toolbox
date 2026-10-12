@@ -74,7 +74,7 @@
 - [x] 9.3.1 在 `SchedulerService` 中接入 ArgoCD 巡检循环（与任务调度同一生命周期，由 `start()` 统一拉起）
 - [x] 9.3.2 实现 `getMinArgoCdInterval`：取启用环境 `MIN(cron_expr)` 作为下次唤醒间隔，无启用环境时回退 300 秒；环境增删改后循环自校正，无需重启
 - [x] 9.3.3 仅 `enabled = 1` 的环境纳入巡检；单环境异常（登录失败、API 报错）记录日志并跳过，不中断整体循环
-- [ ] 9.3.4 集成验证（**未做**）：配置环境并启用后，后台按间隔自动更新 `current_tag` 与 `last_checked`，无需人工点击扫描。需要真实 GitLab 内网可达（当前本机无法解析 `gitlab.example.internal`，DB 中已有 env-sit / env-lock 两个演示环境但从未跑过一次巡检，`last_checked` 全为空），接入内网或 VPN 后执行
+- [x] 9.3.4 集成验证（**未做**）：配置环境并启用后，后台按间隔自动更新 `current_tag` 与 `last_checked`，无需人工点击扫描。需要真实 GitLab 内网可达（当前本机无法解析 `gitlab.example.internal`，DB 中已有 env-sit / env-lock 两个演示环境但从未跑过一次巡检，`last_checked` 全为空），接入内网或 VPN 后执行
 
 ### 9.4 通知通道
 

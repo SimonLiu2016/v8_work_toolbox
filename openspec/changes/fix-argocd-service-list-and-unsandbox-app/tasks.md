@@ -90,7 +90,7 @@
 
 ## 7. 联调验证（需内网 PAT）
 
-- [ ] 7.1 选中 SIT 环境点「刷新 Tag」，确认列表行数与 `curl` 两次分页得到的 117 个 `values-*.yaml` 一致
-- [ ] 7.2 确认无 `Chart.yaml` / `demo.yaml` / `.gitlab-ci` 行；`values-adpt-b2b-order.yaml` 对应行 `current_tag` 为 `1.6.24.0-54f4f991`（或当前真实值）
-- [ ] 7.3 确认全部行 `current_tag` 非空（除确实不含 tag 的文件）；若有读取失败，toast 显示失败计数
-- [ ] 7.4 环境标签上不再出现铅笔图标，编辑只走详情卡「编辑环境」按钮
+- [x] 7.1 选中 SIT 环境点「刷新 Tag」，确认列表行数与 `curl` 两次分页得到的 117 个 `values-*.yaml` 一致
+- [x] 7.2 确认无 `Chart.yaml` / `demo.yaml` / `.gitlab-ci` 行；`values-adpt-b2b-order.yaml` 对应行 `current_tag` 为 `1.6.24.0-54f4f991`（或当前真实值）
+- [x] 7.3 确认全部行 `current_tag` 非空（除确实不含 tag 的文件）；若有读取失败，toast 显示失败计数
+- [x] 7.4 环境标签上不再出现铅笔图标，编辑只走详情卡「编辑环境」按钮

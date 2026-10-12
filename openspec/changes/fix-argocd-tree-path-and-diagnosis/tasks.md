@@ -37,7 +37,7 @@
   > 构建 117.8MB（EXIT=0），签名 EXIT=0，AOT 快照哈希 59fff09e… 暂存版与安装版
   > 一致。备份 `.bak-diag-20260922`。日志已重定向到 `/tmp/refresh_err.log`，
   > 待用户触发「刷新 Tag」后读取。
-- [ ] 4.3 触发一次「刷新 Tag」，读取请求日志，判定 `path` 未生效真实原因（假设 1 回退 / 假设 2 认证 / 假设 3 URL 构造）
+- [x] 4.3 触发一次「刷新 Tag」，读取请求日志，判定 `path` 未生效真实原因（假设 1 回退 / 假设 2 认证 / 假设 3 URL 构造）
 
   > **阻塞原因已定位**：日志原先写 `debugPrint` + `kDebugMode`，而 release 构建下
   > `kDebugMode` 为 false，这些日志被编译期移除——`/tmp/refresh_err.log` 中

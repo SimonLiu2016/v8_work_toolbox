@@ -43,7 +43,7 @@
 - [x] 6.5 运行 `flutter test`，确认无新增失败（既有 13 处环境依赖型失败清单保持不变）
 
   > 实测 690 通过 / 1 跳过 / 14 失败。ops_tool 相关 0 失败；13 处与基线完全一致（`notebook_editor_test` ×3、`notebook_table_interactive_test` ×2、`table_*` 五个文件各 1、`pointer_tap_table_test`、`notebook_codeblock_interactive_test`、`disk_slimmer_hardening_verify_test` ×2、`evernote_space_routing_test`）。第 14 处是 `evernote_import_test.dart` 的 `detectLocalEvernote` 超时——同一文件内下一行的 `const notesPath = '/Users/simon/Desktop/我的笔记.notes'` 硬编码本机路径且该文件不存在，与 `v8worktoolbox-notes.md` 记忆里「环境依赖型失败」同一类，与本 change 无关。
-- [ ] 6.6 实机验证：新建 ArgoCD 环境（内网 GitLab + PAT）→ 编辑该环境确认弹窗不回填密码 → 刷新 Tag 能拉到远端项目列表
+- [x] 6.6 实机验证：新建 ArgoCD 环境（内网 GitLab + PAT）→ 编辑该环境确认弹窗不回填密码 → 刷新 Tag 能拉到远端项目列表
 
   > 构建部署已于 2026-09-22 09:14 完成（clean → release build → codesign --strict 通过 → AOT 快照哈希 2d4b548e… 安装前后一致 → /Applications 替换，旧版备份为 .bak-20260922）。启动采样 stderr 仅见 notebook.db 的既有 `duplicate column name` 迁移告警（与 ops_tool 无关），无未捕获异常。
   > 剩余待用户操作：打开「磐石运维工具」→ DevOps 流水线 → ArgoCD 监控 → 新建环境（填内网 GitLab + PAT）→ 点详情卡「编辑环境」确认密码框为空 → 点「刷新 Tag」确认能拉到远端 values-*.yaml 列表。

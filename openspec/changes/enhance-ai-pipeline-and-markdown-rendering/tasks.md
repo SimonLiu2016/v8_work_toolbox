@@ -26,4 +26,4 @@
 
 - [x] 5.1 运行 `flutter analyze`，确保 No issues found
 - [x] 5.2 运行 `flutter test test/security_gaps_test.dart`，全部 44 项通过
-- [ ] 5.3 运行 `./scripts/deploy_local.sh` 完成本地部署
+- [x] 5.3 运行 `./scripts/deploy_local.sh` 完成本地部署

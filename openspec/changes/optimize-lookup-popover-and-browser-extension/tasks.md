@@ -35,6 +35,6 @@
 
 - [x] 6.1 Run `flutter analyze` and ensure all tests pass
 - [x] 6.2 Execute `./scripts/deploy_local.sh` to build, sign, and update `/Applications/V8WorkToolbox.app`
-- [ ] 6.3 Verify `⌥D` lookup popover near cursor without screen flash or `\D` leak in external apps
-- [ ] 6.4 Verify `⌥S` silent note capture in external apps with native notification
-- [ ] 6.5 Verify Chrome extension context menu with first-level V8 icon and submenus
+- [x] 6.3 Verify `⌥D` lookup popover near cursor without screen flash or `\D` leak in external apps
+- [x] 6.4 Verify `⌥S` silent note capture in external apps with native notification
+- [x] 6.5 Verify Chrome extension context menu with first-level V8 icon and submenus
