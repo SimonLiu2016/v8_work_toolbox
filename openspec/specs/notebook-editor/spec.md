@@ -3,7 +3,7 @@
 Provides a block-based rich text editor using `appflowy_editor` for creating and editing notes with support for native inline tables, code blocks with syntax highlighting, media blocks, Markdown paste conversion, and multi-format export.
 ## Requirements
 ### Requirement: Block-based rich text editing with AppFlowy Editor
-The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, supporting native inline tables, code blocks with syntax highlighting, and media blocks under a single unified focus and selection engine. Clipboard images pasted into the editor SHALL become inline image blocks through the same storage and rendering path as images inserted from a file, reachable both by keyboard shortcut and from an explicit toolbar control; the editor's paste command is taken over to make room for image handling, and plain-text pasting behaviour SHALL be preserved unchanged.
+The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, supporting native inline tables, code blocks with syntax highlighting, and media blocks under a single unified focus and selection engine. For image blocks specifically, the width applied by the preset percentage controls SHALL be reflected on screen, and presets and drag-resizing SHALL resolve width against the same reference so that the two paths cannot disagree.
 
 #### Scenario: Format text
 - **WHEN** user applies formatting (bold, italic, underline, strikethrough, headings, lists, quotes)
@@ -23,15 +23,21 @@ The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, s
 
 #### Scenario: Interactive image manipulation
 - **WHEN** user selects an embedded image
-- **THEN** the editor displays draggable resize handles, percentage preset scaling (25%, 50%, 75%, 100%, Auto), and a right-click context menu offering copy, cut, and delete actions.
-
-#### Scenario: Vector mind map rendering
-- **WHEN** a note contains Evernote mind map payload
-- **THEN** the editor renders the mind map as an interactive vector block with SVG preview and zoom controls.
+- **THEN** the editor shows a floating control strip above the image offering percentage presets (25%, 50%, 75%, 100%), left/center/right alignment, copy-path and delete actions
+- **AND** choosing a preset visibly changes the rendered image width at once.
+- **AND** dragging the image's left or right edge also resizes it, showing a live preview while dragging and committing the width when the drag ends.
 
 #### Scenario: Clipboard image pasted into the editor
 - **WHEN** user pastes while the clipboard holds a bitmap image or an image URL
 - **THEN** the image is stored through the same attachment mechanism as a file-inserted image and appears as an inline image block at the cursor, and the same result is reachable from the toolbar's paste-image control.
+
+#### Scenario: Preset and drag resizing agree on the reference width
+- **WHEN** the user first drags an image to its widest and then, on another image, chooses the 100% preset
+- **THEN** both images end up the same width, because both paths measure against the editor content area rather than one against the window and the other against an internal pixel value.
+
+#### Scenario: Vector mind map rendering
+- **WHEN** a note contains Evernote mind map payload
+- **THEN** the editor renders the mind map as an interactive vector block with SVG preview and zoom controls.
 
 ### Requirement: Markdown paste conversion
 The system SHALL automatically detect and convert Markdown text pasted from the clipboard or fed from the Evernote import pipeline into native rich text blocks.

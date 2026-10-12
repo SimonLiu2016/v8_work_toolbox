@@ -25,6 +25,10 @@ The system SHALL provide a block-based WYSIWYG editor using `appflowy_editor`, s
 - **AND** choosing a preset visibly changes the rendered image width at once.
 - **AND** dragging the image's left or right edge also resizes it, showing a live preview while dragging and committing the width when the drag ends.
 
+#### Scenario: Clipboard image pasted into the editor
+- **WHEN** user pastes while the clipboard holds a bitmap image or an image URL
+- **THEN** the image is stored through the same attachment mechanism as a file-inserted image and appears as an inline image block at the cursor, and the same result is reachable from the toolbar's paste-image control.
+
 #### Scenario: Preset and drag resizing agree on the reference width
 - **WHEN** the user first drags an image to its widest and then, on another image, chooses the 100% preset
 - **THEN** both images end up the same width, because both paths measure against the editor content area rather than one against the window and the other against an internal pixel value.
