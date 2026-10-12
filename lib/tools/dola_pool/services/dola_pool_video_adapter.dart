@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../../../services/app_http_client.dart';
@@ -56,6 +57,27 @@ class DolaPoolVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapte
   @override
   void cancelCurrent() => _cancelled = true;
 
+  /// 免费版 Dola 只接受的三档时长。
+  static const List<int> _legalDurations = <int>[5, 10, 15];
+
+  /// 把请求时长吸附到 [5, 10, 15] 中的合法档位。
+  ///
+  /// 规则与能力矩阵的 `snapDuration` 一致：取不超过请求值的最大档位；不存在
+  /// 时取最小档位（初值即最小档，天然覆盖「请求值低于下限」）。
+  /// 所以 3 秒 → 5 秒、8 秒 → 5 秒、12 秒 → 10 秒、20 秒 → 15 秒。
+  static int _snapDuration(double requested) {
+    final rounded = requested.round();
+    var best = _legalDurations.first;
+    for (final candidate in _legalDurations) {
+      if (candidate <= rounded) best = candidate;
+    }
+    return best;
+  }
+
+  /// 测试用：暴露 [_snapDuration] 以验证「适配器兜底与能力矩阵一致」。
+  @visibleForTesting
+  static int debugSnapDuration(double requested) => _snapDuration(requested);
+
   @override
   Future<File> generateVideo(
     VideoGenRequest request, {
@@ -81,7 +103,12 @@ class DolaPoolVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapte
           : request.cameraMove.trim();
 
       // 3. 构造请求 Payload
-      final durationInt = request.durationSec.round().clamp(5, 30);
+      //
+      // 时长吸附到免费版的三档（5 / 10 / 15）。这是适配器被单独使用时的
+      // 保险——经工厂创建时 _wrap 已按 MediaCapabilityPresets.dolaVideo
+      // 规整过，两层意图一致所以不会互相打架。之前写 clamp(5, 30) 是错的：
+      // 8 秒落在范围内会原样提交，而上游只认 5/10/15。
+      final durationInt = _snapDuration(request.durationSec);
       final payload = {
         'client_meta': {
           'bot_id': _botId,

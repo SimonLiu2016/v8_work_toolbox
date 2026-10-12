@@ -385,6 +385,9 @@ abstract class AiProviderConfigLike {
 /// - Agnes 视频：`AgnesVideoAdapter` 写死 `seconds.clamp(4, 12)`、
 ///   `aspect_ratio: '9:16'`，且官方文档明确「keyframe 模式下禁止首尾帧与
 ///   参考素材同时使用」——所以 `maxReferenceImages` 只能是 1。
+/// - Dola 视频：免费号池只接受 5 / 10 / 15 秒三档，且请求体只有
+///   `text_block`（见 `DolaPoolVideoAdapter`），没有任何图片输入通道——所以
+///   `supportsFirstFrame` 为 false、`maxReferenceImages` 为 0。
 ///
 /// 声明成常量而不是从适配器反推：适配器的 clamp 是**兜底**，能力矩阵是**意图**。
 /// 两者刻意分开，才能让"适配器偷偷 clamp"这件事在测试里被发现。
@@ -458,8 +461,32 @@ abstract final class MediaCapabilityPresets {
     isDeclared: true,
   );
 
-  /// 按模型 id 查内置声明。没有内置声明的模型返回 null（调用方走协议默认）。
+  /// Dola 免费号池视频（seedance 2.0 / 2.5）。
+  ///
+  /// 三档时长是免费版硬限制，不是推测值。`maxReferenceImages: 0` 与
+  /// `supportsFirstFrame: false` 来自请求体形态：`DolaPoolVideoAdapter` 的
+  /// payload 只有 `text_block`，没有任何图片输入通道。
+  ///
+  /// 声明 0 而不是 1 是刻意的：声明 1 会让调用方以为"传一张也行"，然后把
+  /// 首帧塞进一个没有图片字段的请求。0 让「不被支持的能力必须显式拒绝」
+  /// 能真正生效——依赖参考图的片段级生成在 Dola 路径下被明确拒绝，用户看到
+  /// 原因并去切引擎，而不是静默丢图后拿到一个不一致的片段。
+  static const MediaModelCapability dolaVideo = MediaModelCapability(
+    modes: {MediaGenMode.text},
+    durations: [5, 10, 15],
+    resolutions: const ['480p', '720p'],
+    ratios: const ['9:16', '16:9', '1:1', '4:3', '3:4'],
+    maxReferenceImages: 0,
+    supportsFirstFrame: false,
+    supportsLastFrame: false,
+    supportsNativeAudio: false,
+    isDeclared: true,
+  );
   static MediaModelCapability? forModel(String modelId) {
+    // 前缀归一必须放在 switch 之前：switch 的 default 会吞掉未枚举的值。
+    // Dola 的模型 id 由适配器拼出（'dola-pool-$_model'），归一后将来
+    // `_model` 换成 seedance-3.0 也不用改这里。
+    if (modelId.startsWith('dola-pool-')) return dolaVideo;
     switch (modelId) {
       case 'doubao-seedance-2-0-260128':
       case 'doubao-seedance-1-5-pro':

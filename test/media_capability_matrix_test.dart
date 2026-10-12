@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/media_capability.dart';
+import 'package:V8WorkToolbox/tools/dola_pool/services/dola_pool_video_adapter.dart';
 
 /// 能力矩阵的纯函数契约（spec: 模型能力声明 / 请求参数规整）。
 ///
@@ -238,6 +239,75 @@ void main() {
       final cap = MediaCapabilityPresets.forModel('agnes-video-2.5-flash')!;
       expect(cap.maxReferenceImages, 1);
       expect(cap.durations.last, 12);
+    });
+
+    test('Dola 免费号池命中三档时长声明', () {
+      // 前缀归一：模型 id 由适配器拼成 'dola-pool-$_model'。
+      for (final id in const [
+        'dola-pool-seedance-2.0',
+        'dola-pool-seedance-2.5',
+      ]) {
+        final cap = MediaCapabilityPresets.forModel(id);
+        expect(cap, isNotNull, reason: '$id 应命中内置声明');
+        expect(cap!.durations, [5, 10, 15],
+            reason: '免费版只接受这三档，多一个都会让上游拒绝');
+        expect(cap.isDeclared, isTrue);
+      }
+    });
+
+    test('Dola 不具备任何图片输入能力', () {
+      final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
+      // 请求体只有 text_block。声明 0 而不是 1：声明 1 会让调用方以为
+      // 「传一张也行」，然后把首帧塞进没有图片字段的请求里。
+      expect(cap.maxReferenceImages, 0);
+      expect(cap.supportsFirstFrame, isFalse);
+      expect(cap.supportsLastFrame, isFalse);
+      expect(cap.modes, {MediaGenMode.text});
+    });
+
+    test('Dola 时长吸附两个方向', () {
+      final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
+      // 低于下限 → 取最小档（分镜默认 3 秒会走到这条）。
+      expect(cap.snapDuration(3), 5);
+      // 介于两档之间 → 取不超过请求值的最大档。
+      expect(cap.snapDuration(8), 5);
+      expect(cap.snapDuration(12), 10);
+      expect(cap.snapDuration(14), 10);
+      // 超过上限 → 取最大档。
+      expect(cap.snapDuration(20), 15);
+      expect(cap.snapDuration(30), 15);
+    });
+
+    test('Dola 路径下携带参考图被显式拒绝，错误文本说得出原因', () {
+      final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
+      // 0 张是合法值（文生视频），1 张就该被拒——拒绝文本必须让用户知道
+      // 是引擎不支持，而不是泛泛的「生成失败」。
+      expect(
+        () => MediaRequestNormalizer(cap).normalize(
+          const MediaRequestSpec(
+            durationSec: 5,
+            referenceImageCount: 1,
+          ),
+        ),
+        throwsA(isA<MediaCapabilityException>().having(
+          (e) => e.message,
+          'message',
+          contains('参考图'),
+        )),
+      );
+    });
+
+    test('Dola 的适配器兜底与能力矩阵意图一致', () {
+      // 两层吸附：适配器内的 _snapDuration 是单独使用时的保险，_wrap 的规整
+      // 是主路径。两者必须给出同一个值，否则用户会看到相互矛盾的行为。
+      final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
+      for (final requested in const [3, 5, 8, 10, 12, 15, 20]) {
+        expect(
+          DolaPoolVideoAdapter.debugSnapDuration(requested.toDouble()),
+          cap.snapDuration(requested),
+          reason: '请求 ${requested}s 时两层吸附不一致',
+        );
+      }
     });
 
     test('SenseAudio 图像的尺寸白名单与适配器一致', () {
