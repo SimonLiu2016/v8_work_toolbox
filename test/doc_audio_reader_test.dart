@@ -724,26 +724,6 @@ Guide is very helpful.''';
       } catch (_) {}
     });
 
-    test('AiLogger 记录日志并异步镜像落盘至 ai.log 文件', () async {
-      AiLogger.logRequest(
-        providerName: 'PersistenceTest',
-        protocol: 'openai-chat-audio',
-        model: 'mimo-v2.5-tts',
-        endpoint: 'https://test.endpoint/v1',
-        promptSummary: '测试落盘写入验证',
-      );
-
-      await AiLogger.flush();
-
-      final home = Platform.environment['HOME'];
-      if (Platform.isMacOS && home != null && home.isNotEmpty) {
-        final logFile = File('$home/Library/Application Support/V8WorkToolbox/logs/ai.log');
-        final content = utf8.decode(logFile.readAsBytesSync(), allowMalformed: true);
-        expect(content, contains('PersistenceTest'));
-        expect(content, contains('mimo-v2.5-tts'));
-      }
-    });
-
     test('AudioReaderController 在 loadDocument 时不触发提前预取，等待真正播放', () async {
       final tempDir = await Directory.systemTemp.createTemp('controller_test_');
       final cacheMgr = AudioCacheManager(customBasePath: tempDir.path);

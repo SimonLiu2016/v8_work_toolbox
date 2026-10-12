@@ -22,8 +22,14 @@ void main() {
     });
 
     test('live integration: startDaemon, login, searchModules, stopDaemon', () async {
-      // 仅在本地安装了 msfrpcd 时运行全流程
-      if (!File('/opt/metasploit-framework/bin/msfrpcd').existsSync()) {
+      // 默认跳过：这条测试起真的 msfrpcd 并绑死 55553，与其他测试并发跑时
+      // 必然互相竞争（表现为时好时坏）。只在显式要求跑 live integration 时
+      // 才执行：
+      //   V8_RUN_LIVE_INTEGRATION=1 flutter test ...
+      final liveEnabled = Platform.environment['V8_RUN_LIVE_INTEGRATION'] == '1';
+      final msfrpcdInstalled =
+          File('/opt/metasploit-framework/bin/msfrpcd').existsSync();
+      if (!liveEnabled || !msfrpcdInstalled) {
         return;
       }
 
