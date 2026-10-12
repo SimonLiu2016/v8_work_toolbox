@@ -1389,20 +1389,31 @@ class VideoGenAdapterFactory {
           final isAgnes = modelName.toLowerCase().contains('agnes') ||
               provider.baseUrl.toLowerCase().contains('agnes');
           if (isAgnes) {
-            return AgnesVideoAdapter(
+            // 必须过 _wrap：这条路径是日常最常走的，漏规整意味着用户请求的
+            // 时长/画幅会原样发给模型。provider 一并传入，让能力矩阵优先用
+            // 供应商自己声明的模型参数，而不是协议级保守默认（design 决策 4）。
+            return _wrap(
+              AgnesVideoAdapter(
+                baseUrl: provider.baseUrl,
+                model: modelName,
+                apiKey: key.trim(),
+                providerId: provider.id,
+                keychainKeyId: provider.keychainKeyId,
+              ),
+              modelName,
+              provider: provider,
+            );
+          }
+          return _wrap(
+            SenseAudioVideoAdapter(
               baseUrl: provider.baseUrl,
               model: modelName,
               apiKey: key.trim(),
               providerId: provider.id,
               keychainKeyId: provider.keychainKeyId,
-            );
-          }
-          return SenseAudioVideoAdapter(
-            baseUrl: provider.baseUrl,
-            model: modelName,
-            apiKey: key.trim(),
-            providerId: provider.id,
-            keychainKeyId: provider.keychainKeyId,
+            ),
+            modelName,
+            provider: provider,
           );
         }
       }
@@ -1411,14 +1422,21 @@ class VideoGenAdapterFactory {
     // 3. drama 制作类型回退检测 Kling
     if (productionType == 'drama') {
       final kling = KlingVideoAdapter();
-      if (await kling.isAvailable()) return kling;
+      if (await kling.isAvailable()) return _wrap(kling, 'kling-i2v');
     }
 
     // 4. 检查内置 Dola 免费号池
     final dolaAdapter = DolaPoolVideoAdapter();
-    if (await dolaAdapter.isAvailable()) return dolaAdapter;
+    if (await dolaAdapter.isAvailable()) {
+      return _wrap(dolaAdapter, dolaAdapter.id);
+    }
 
     // 5. 回退到本地 Ken Burns
+    //
+    // 不包：它的上界来自 totalFrames.clamp(30, 900)（即 1–30 秒），本来就不
+    // 该被媒体模型的能力矩阵裁剪。包了反而会让「narration 类型想要 40 秒
+    // 片段」这种合理请求被拒。测试把这条排除写成显式断言，防止后来者误当
+    // 漏包「修好」它（design 决策 3）。
     return KenBurnsVideoAdapter();
   }
 
