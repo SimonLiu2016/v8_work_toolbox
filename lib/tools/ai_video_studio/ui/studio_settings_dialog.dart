@@ -299,6 +299,14 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
             needsKey: false,
           ),
           (id: 'kling-i2v', label: '可灵 Kling 图生视频（独立配置）', needsKey: true),
+          // Dola 号池：不需要 API Key（凭据是号池里的 sessionid，在 AI 配置页
+          // 的「Dola 号池」tab 管理）。仅提供 2.5——30 秒档位依赖片段拼接，
+          // 尚未实现，故不暴露。
+          (
+            id: 'dola-pool-2.5',
+            label: 'Dola 免费号池 seedance-2.5（5/10 秒）',
+            needsKey: false,
+          ),
         ];
     }
   }
@@ -344,7 +352,13 @@ class _CapabilitySummary {
     }
     lines.add(_CapabilityLine(
       '参考图',
-      cap.maxReferenceImages == 0 ? '不支持' : '最多 ${cap.maxReferenceImages} 张',
+      // 没测过上限就不编数字——显示「最多 100 张」是比「不支持」更坏的假话。
+      // null 必须排在 final n 之前：否则它被泛型模式吞掉，永远不可达。
+      switch (cap.maxReferenceImages) {
+        0 => '不支持',
+        null => '未设上限',
+        final n => '最多 $n 张',
+      },
     ));
     if (!cap.supportsFirstFrame && !cap.supportsLastFrame) {
       lines.add(const _CapabilityLine('首尾帧', '不支持'));

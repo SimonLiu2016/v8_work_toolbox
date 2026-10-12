@@ -72,6 +72,15 @@ void main() {
       }
     });
 
+    test('Dola 号池目录已登记', () {
+      // dola_accounts.json 此前直接躺在 root 根下，与其他工具的目录约定不一致。
+      expect(
+        AppPaths.allDirs.any((d) => d.path == AppPaths.dolaDir.path),
+        isTrue,
+        reason: '${AppPaths.dolaDir.path} 未登记进 allDirs',
+      );
+    });
+
     test('未初始化时抛出带说明的 StateError，而不是返回 null 路径', () {
       AppPaths.resetForTesting();
       expect(AppPaths.isInitialized, isFalse);

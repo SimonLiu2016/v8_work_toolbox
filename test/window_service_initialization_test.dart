@@ -129,6 +129,18 @@ void main() {
       );
     });
 
+    test('号池服务在会用到它的窗口里都已声明', () {
+      // 号池漏初始化的症状不是崩溃而是「显示为空」——用户以为没配账号，
+      // 实际是没加载。所以这里逐个窗口锁死（spec: 号池数据初始化由应用启动保证）。
+      for (final kind in [WindowKind.main, WindowKind.aiVideoStudio]) {
+        expect(
+          WindowServices.requiredNames(kind),
+          containsAll(['DolaAccountStore', 'DolaConfigStore']),
+          reason: '$kind 必须初始化号池',
+        );
+      }
+    });
+
     test('密码工具子窗口不声明 AI 服务（本地密码库不消费 AI），但声明基础设施 AppPaths 与 SettingsStore', () {
       final names = WindowServices.requiredNames(WindowKind.passwordVault);
       // SettingsStore：该窗口渲染 themed MaterialApp，必须读到持久化 themeMode。

@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
+import 'package:V8WorkToolbox/services/app_paths.dart';
 import 'package:V8WorkToolbox/services/media_capability.dart';
+import 'package:V8WorkToolbox/tools/dola_pool/services/dola_config_store.dart';
 import 'package:V8WorkToolbox/tools/dola_pool/services/dola_pool_video_adapter.dart';
 
 /// 能力矩阵的纯函数契约（spec: 模型能力声明 / 请求参数规整）。
@@ -241,72 +245,124 @@ void main() {
       expect(cap.durations.last, 12);
     });
 
-    test('Dola 免费号池命中三档时长声明', () {
-      // 前缀归一：模型 id 由适配器拼成 'dola-pool-$_model'。
-      for (final id in const [
-        'dola-pool-seedance-2.0',
-        'dola-pool-seedance-2.5',
-      ]) {
-        final cap = MediaCapabilityPresets.forModel(id);
-        expect(cap, isNotNull, reason: '$id 应命中内置声明');
-        expect(cap!.durations, [5, 10, 15],
-            reason: '免费版只接受这三档，多一个都会让上游拒绝');
-        expect(cap.isDeclared, isTrue);
-      }
+    test('Dola 免费号池按型号命中不同的时长集合', () {
+      // 前缀归一到具体型号：2.5 是 5/10（30 秒需拼接，未实现故不声明），
+      // 2.0 是 5/10/15。合并成一个集合会让其中一个拿到错误的值。
+      final cap25 = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5');
+      expect(cap25, isNotNull, reason: '2.5 应命中内置声明');
+      expect(cap25!.durations, [5, 10]);
+      expect(cap25.isDeclared, isTrue);
+
+      final cap20 = MediaCapabilityPresets.forModel('dola-pool-seedance-2.0');
+      expect(cap20, isNotNull, reason: '2.0 应命中内置声明');
+      expect(cap20!.durations, [5, 10, 15]);
     });
 
-    test('Dola 不具备任何图片输入能力', () {
+    test('Dola 30 秒档位暂不声明（拼接未实现）', () {
+      // 上游 seedance-2.5 支持 5/10/30，但 30 秒走两段 15 秒 + FFmpeg 拼接，
+      // 适配器尚未实现。声明一个必然抛错的值比不声明更让用户困惑——他会按
+      // 30 秒规划分镜，提交时才知道不行。
+      //
+      // 这条测试现在是"通过"状态，但它标记的是一个已知缺口：等拼接实现后，
+      // 应把 30 加进 dolaVideo25.durations 并同步改这里。
       final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
-      // 请求体只有 text_block。声明 0 而不是 1：声明 1 会让调用方以为
-      // 「传一张也行」，然后把首帧塞进没有图片字段的请求里。
-      expect(cap.maxReferenceImages, 0);
-      expect(cap.supportsFirstFrame, isFalse);
-      expect(cap.supportsLastFrame, isFalse);
-      expect(cap.modes, {MediaGenMode.text});
+      expect(cap.durations, isNot(contains(30)),
+          reason: '30 秒档位依赖片段拼接，实现后再开放');
     });
 
-    test('Dola 时长吸附两个方向', () {
+    test('Dola 参考图上限为 null（没测过，不编数字）', () {
       final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
-      // 低于下限 → 取最小档（分镜默认 3 秒会走到这条）。
-      expect(cap.snapDuration(3), 5);
-      // 介于两档之间 → 取不超过请求值的最大档。
-      expect(cap.snapDuration(8), 5);
-      expect(cap.snapDuration(12), 10);
-      expect(cap.snapDuration(14), 10);
-      // 超过上限 → 取最大档。
-      expect(cap.snapDuration(20), 15);
-      expect(cap.snapDuration(30), 15);
+      // 上游文档说 10 张，但我们没实测、也不做上线控制。用 null 表达
+      // 「没测过」而不是 0——0 会让 UI 显示"不支持参考图"这句假话，
+      // 用户于是根本不用 Dola 做片段级生成。
+      expect(cap.maxReferenceImages, isNull);
+      expect(cap.supportsFirstFrame, isTrue,
+          reason: '上游确实支持首帧，能力矩阵不该替它说不支持');
+      expect(cap.modes, contains(MediaGenMode.multiReference));
     });
 
-    test('Dola 路径下携带参考图被显式拒绝，错误文本说得出原因', () {
+    test('null 上限放行任意数量的参考图', () {
       final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
-      // 0 张是合法值（文生视频），1 张就该被拒——拒绝文本必须让用户知道
-      // 是引擎不支持，而不是泛泛的「生成失败」。
+      // 12 张远超上游文档的 10 张——null 的语义是"没测过"而非"无限"，
+      // 所以这里放行；真要在意就在 UI 上配一个上限。
       expect(
         () => MediaRequestNormalizer(cap).normalize(
-          const MediaRequestSpec(
-            durationSec: 5,
-            referenceImageCount: 1,
-          ),
+          const MediaRequestSpec(durationSec: 5, referenceImageCount: 12),
         ),
-        throwsA(isA<MediaCapabilityException>().having(
-          (e) => e.message,
-          'message',
-          contains('参考图'),
-        )),
+        returnsNormally,
       );
     });
 
-    test('Dola 的适配器兜底与能力矩阵意图一致', () {
+    test('号池覆盖优先于内置预设（三层优先级第二层）', () async {
+      // 优先级：用户覆盖 > 内置预设 > 协议保守默认。这里验前两层。
+      final tempDir = await Directory.systemTemp.createTemp('dola_cfg_');
+      AppPaths.overrideRootForTesting(tempDir);
+      try {
+        final store = DolaConfigStore.instance;
+        store.resetForTesting();
+        await store.init();
+
+        // 未覆盖时拿内置预设。
+        expect(
+          store.mediaCapabilities.containsKey('dola-pool-seedance-2.5'),
+          isFalse,
+          reason: '初始状态不该有覆盖',
+        );
+
+        // 用户把 2.5 的时长收窄成 5/10（内置是 5/10，改成只留 5）。
+        await store.save(
+          'dola-pool-seedance-2.5',
+          const MediaModelCapability(durations: [5], isDeclared: true),
+        );
+
+        // 经 resolver 走一遍，确认覆盖生效。
+        final resolved = MediaCapabilityResolver.resolve(
+          store,
+          'dola-pool-seedance-2.5',
+        );
+        expect(resolved.durations, [5], reason: '用户覆盖必须优先于内置预设');
+
+        // 删掉覆盖后回落到内置预设。
+        await store.save('dola-pool-seedance-2.5', null);
+        final restored = MediaCapabilityResolver.resolve(
+          store,
+          'dola-pool-seedance-2.5',
+        );
+        expect(restored.durations, [5, 10], reason: '删除覆盖应回落内置预设');
+      } finally {
+        DolaConfigStore.instance.resetForTesting();
+        AppPaths.resetForTesting();
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      }
+    });
+
+    test('未知 dola 型号回落而非误命中', () {
+      // 将来 _model 换成 seedance-3.0 时，不该拿到 2.5 的声明——
+      // 那会让用户以为限制被确认过。应回落协议默认并显示「未经确认」。
+      expect(MediaCapabilityPresets.forModel('dola-pool-seedance-3.0'), isNull);
+    });
+
+    test('Dola 的适配器兜底与能力矩阵意图一致（两型号）', () {
       // 两层吸附：适配器内的 _snapDuration 是单独使用时的保险，_wrap 的规整
       // 是主路径。两者必须给出同一个值，否则用户会看到相互矛盾的行为。
-      final cap = MediaCapabilityPresets.forModel('dola-pool-seedance-2.5')!;
-      for (final requested in const [3, 5, 8, 10, 12, 15, 20]) {
-        expect(
-          DolaPoolVideoAdapter.debugSnapDuration(requested.toDouble()),
-          cap.snapDuration(requested),
-          reason: '请求 ${requested}s 时两层吸附不一致',
-        );
+      // 按型号分别比对——2.5 不含 15 秒，2.0 含，合并比会让其中一个假红。
+      for (final (id, model) in const [
+        ('dola-pool-seedance-2.5', 'seedance-2.5'),
+        ('dola-pool-seedance-2.0', 'seedance-2.0'),
+      ]) {
+        final cap = MediaCapabilityPresets.forModel(id)!;
+        for (final requested in const [3, 5, 8, 10, 12, 15, 20]) {
+          expect(
+            DolaPoolVideoAdapter.debugSnapDuration(
+              requested.toDouble(),
+              model: model,
+            ),
+            cap.snapDuration(requested),
+            reason: '$model 请求 ${requested}s 时两层吸附不一致',
+          );
+        }
       }
     });
 

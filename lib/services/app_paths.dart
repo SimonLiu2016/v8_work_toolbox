@@ -211,6 +211,12 @@ abstract final class AppPaths {
   static Directory get toonflowDataDir =>
       Directory(p.join(root.path, 'toonflow_data'));
 
+  /// Dola 号池根目录（账号元数据 + 能力覆盖配置）。
+  ///
+  /// `dola_accounts.json` 此前直接躺在 [root] 根下，与其他工具的目录约定不
+  /// 一致。sessionid 不在这里——它在 Keychain（`dola_account_session_<id>`）。
+  static Directory get dolaDir => Directory(p.join(root.path, 'dola'));
+
   /// 全部导出路径，供回归测试断言单一性。
   static List<File> get allFiles => [
     aiConfigFile,
@@ -247,5 +253,6 @@ abstract final class AppPaths {
     videoStudioSeriesDir,
     toonflowDir,
     toonflowDataDir,
+    dolaDir,
   ];
 }

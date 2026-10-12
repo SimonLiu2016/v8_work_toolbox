@@ -23,7 +23,9 @@ class DolaAccountStore extends ChangeNotifier {
   bool get isInitialized => _initialized;
 
   File get _storageFile {
-    final dir = AppPaths.root;
+    // 归到 AppPaths.dolaDir 下：此前直接躺在 root 根下，与其他工具的目录
+    // 约定不一致。
+    final dir = AppPaths.dolaDir;
     return File(p.join(dir.path, _accountsFileName));
   }
 

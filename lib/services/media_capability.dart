@@ -76,8 +76,17 @@ class MediaModelCapability {
   /// 支持的画幅比例，如 `9:16`。空集合表示不限制。
   final List<String> ratios;
 
-  /// 可接受的参考图数量上限。0 表示不支持参考图。
-  final int maxReferenceImages;
+  /// 可接受的参考图数量上限，三态：
+  ///
+  /// - `0`：明确不支持参考图，携带即拒；
+  /// - `null`：没测过上限，放行任意数量；
+  /// - 正数：有上限，超过即拒。
+  ///
+  /// 之所以不用 `0` 表达「没测过」：那会让 UI 显示"不支持参考图"这句假话，
+  /// 用户于是根本不用这个引擎做片段级生成——比测试红着严重得多。也不用
+  /// 虚构大数：UI 会显示"最多支持 100 张"，那是比"不支持"更坏的假话，
+  /// 它给了用户错误的预期。
+  final int? maxReferenceImages;
 
   /// 是否支持指定首帧。
   final bool supportsFirstFrame;
@@ -212,7 +221,9 @@ class MediaModelCapability {
     ),
     'resolutions': resolutions,
     'ratios': ratios,
-    'max_reference_images': maxReferenceImages,
+    // null 不写进 json：缺省即 null，避免配置文件里出现大段 "max_reference_images": null
+    if (maxReferenceImages != null)
+      'max_reference_images': maxReferenceImages,
     'supports_first_frame': supportsFirstFrame,
     'supports_last_frame': supportsLastFrame,
     'supports_native_audio': supportsNativeAudio,
@@ -259,7 +270,8 @@ class MediaModelCapability {
       durationResolutions: parseDurationResolutions(),
       resolutions: parseStrings('resolutions'),
       ratios: parseStrings('ratios'),
-      maxReferenceImages: (json['max_reference_images'] as num?)?.toInt() ?? 0,
+      // 缺省是 null（没测过）而不是 0（明确不支持）——两者语义相反。
+      maxReferenceImages: (json['max_reference_images'] as num?)?.toInt(),
       supportsFirstFrame: json['supports_first_frame'] as bool? ?? false,
       supportsLastFrame: json['supports_last_frame'] as bool? ?? false,
       supportsNativeAudio: json['supports_native_audio'] as bool? ?? false,
@@ -471,22 +483,47 @@ abstract final class MediaCapabilityPresets {
   /// 首帧塞进一个没有图片字段的请求。0 让「不被支持的能力必须显式拒绝」
   /// 能真正生效——依赖参考图的片段级生成在 Dola 路径下被明确拒绝，用户看到
   /// 原因并去切引擎，而不是静默丢图后拿到一个不一致的片段。
-  static const MediaModelCapability dolaVideo = MediaModelCapability(
-    modes: {MediaGenMode.text},
-    durations: [5, 10, 15],
-    resolutions: const ['480p', '720p'],
-    ratios: const ['9:16', '16:9', '1:1', '4:3', '3:4'],
-    maxReferenceImages: 0,
-    supportsFirstFrame: false,
+  ///
+  /// **30 秒档位暂不声明**：上游 `seedance-2.5` 支持 5/10/30，但 30 秒走两段
+  /// 15 秒 + FFmpeg 拼接，适配器尚未实现。声明一个必然抛错的值比不声明更让
+  /// 用户困惑——他会按 30 秒规划分镜，提交时才知道不行。30 秒与拼接实现属于
+  /// 同一批工作，留给后续 change。
+  static const MediaModelCapability dolaVideo25 = MediaModelCapability(
+    modes: {MediaGenMode.text, MediaGenMode.singleImage, MediaGenMode.multiReference},
+    durations: [5, 10],
+    resolutions: ['480p', '720p'],
+    ratios: ['9:16', '16:9', '1:1', '4:3', '3:4'],
+    // null = 没测过上限。上游文档说 10 张，但我们没实测，也不做上线控制。
+    maxReferenceImages: null,
+    supportsFirstFrame: true,
     supportsLastFrame: false,
     supportsNativeAudio: false,
     isDeclared: true,
   );
+
+  /// `seedance-2.0`：时长 5/10/15（上游明确的三档，15 秒我们就能出）。
+  static const MediaModelCapability dolaVideo20 = MediaModelCapability(
+    modes: {MediaGenMode.text, MediaGenMode.singleImage, MediaGenMode.multiReference},
+    durations: [5, 10, 15],
+    resolutions: ['480p', '720p'],
+    ratios: ['9:16', '16:9', '1:1', '4:3', '3:4'],
+    maxReferenceImages: null,
+    supportsFirstFrame: true,
+    supportsLastFrame: false,
+    supportsNativeAudio: false,
+    isDeclared: true,
+  );
+
   static MediaModelCapability? forModel(String modelId) {
-    // 前缀归一必须放在 switch 之前：switch 的 default 会吞掉未枚举的值。
-    // Dola 的模型 id 由适配器拼出（'dola-pool-$_model'），归一后将来
-    // `_model` 换成 seedance-3.0 也不用改这里。
-    if (modelId.startsWith('dola-pool-')) return dolaVideo;
+    // 前缀归一到具体型号。必须放在 switch 之前——它的 default 会吞掉未枚举
+    // 的值。Dola 的模型 id 由适配器拼出（'dola-pool-$_model'）。
+    //
+    // 按型号而不是「dola-pool- 前缀一把命中」：两个型号的合法时长不同
+    // （2.5 → 5/10，2.0 → 5/10/15），合并会让其中一个拿到错误的集合。
+    // 未知的 dola-pool-* 型号返回 null，让调用方落到协议默认并显示
+    // 「未经确认」——比误命中一个错误的声明诚实。
+    if (modelId.contains('seedance-2.5')) return dolaVideo25;
+    if (modelId.contains('seedance-2.0')) return dolaVideo20;
     switch (modelId) {
       case 'doubao-seedance-2-0-260128':
       case 'doubao-seedance-1-5-pro':
@@ -574,9 +611,13 @@ class MediaRequestNormalizer {
     final changes = <String>[];
 
     // --- 拒绝类检查（不做任何降级）---
-    if (spec.referenceImageCount > capability.maxReferenceImages) {
+    //
+    // null 表示没测过上限，跳过数量校验——用 `0` 表达「没测过」会让 UI 说
+    // "不支持参考图"，用户于是根本不用这个引擎做片段级生成。
+    final maxRefs = capability.maxReferenceImages;
+    if (maxRefs != null && spec.referenceImageCount > maxRefs) {
       throw MediaCapabilityException(
-        '当前模型最多支持 ${capability.maxReferenceImages} 张参考图，'
+        '当前模型最多支持 $maxRefs 张参考图，'
         '本次请求携带 ${spec.referenceImageCount} 张。'
         '请减少参考图，或改用支持多参考的模型。',
       );

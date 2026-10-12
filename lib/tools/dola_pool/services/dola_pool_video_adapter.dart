@@ -57,18 +57,30 @@ class DolaPoolVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapte
   @override
   void cancelCurrent() => _cancelled = true;
 
-  /// 免费版 Dola 只接受的三档时长。
-  static const List<int> _legalDurations = <int>[5, 10, 15];
+  /// 各型号的合法时长集合（与 `MediaCapabilityPresets` 的分型号声明一致）。
+  ///
+  /// `seedance-2.5` 不含 30 秒：那一档需要两段 15 秒拼接，适配器尚未实现。
+  /// 在这里同步不声明，能力矩阵与兜底才不会一个说 30 一个说不。
+  static const Map<String, List<int>> _legalDurationsByModel = {
+    'seedance-2.5': [5, 10],
+    'seedance-2.0': [5, 10, 15],
+  };
 
-  /// 把请求时长吸附到 [5, 10, 15] 中的合法档位。
+  List<int> get _legalDurations =>
+      _legalDurationsByModel[_model] ??
+      // 未知型号：给 2.0 的集合（我们能确定能出的最长档）。
+      const [5, 10, 15];
+
+  /// 把请求时长吸附到本型号的合法档位。
   ///
   /// 规则与能力矩阵的 `snapDuration` 一致：取不超过请求值的最大档位；不存在
   /// 时取最小档位（初值即最小档，天然覆盖「请求值低于下限」）。
-  /// 所以 3 秒 → 5 秒、8 秒 → 5 秒、12 秒 → 10 秒、20 秒 → 15 秒。
-  static int _snapDuration(double requested) {
+  /// 所以 2.5 上 3 秒 → 5 秒、8 秒 → 5 秒、12 秒 → 10 秒。
+  int _snapDuration(double requested) {
+    final legal = _legalDurations;
     final rounded = requested.round();
-    var best = _legalDurations.first;
-    for (final candidate in _legalDurations) {
+    var best = legal.first;
+    for (final candidate in legal) {
       if (candidate <= rounded) best = candidate;
     }
     return best;
@@ -76,7 +88,17 @@ class DolaPoolVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapte
 
   /// 测试用：暴露 [_snapDuration] 以验证「适配器兜底与能力矩阵一致」。
   @visibleForTesting
-  static int debugSnapDuration(double requested) => _snapDuration(requested);
+  static int debugSnapDuration(double requested, {required String model}) {
+    assert(model.isNotEmpty);
+    // 与 _snapDuration 同规则，只是显式接收型号——静态方法拿不到 _model。
+    final legal = _legalDurationsByModel[model] ?? const [5, 10, 15];
+    final rounded = requested.round();
+    var best = legal.first;
+    for (final candidate in legal) {
+      if (candidate <= rounded) best = candidate;
+    }
+    return best;
+  }
 
   @override
   Future<File> generateVideo(
@@ -93,6 +115,18 @@ class DolaPoolVideoAdapter implements VideoGenAdapter, CancellableVideoGenAdapte
     }
 
     final usedPoints = _model.contains('2.0') ? 3 : 2;
+
+    // 能力矩阵已声明 Dola 支持参考图与首帧（上游确实支持），但本适配器尚未
+    // 实现 ImageX 上传。此时必须显式拒绝——静默忽略会让用户拿到一个丢了一
+    // 致性约束的片段，且没有任何提示，比直接报错难查得多。
+    final wantsImage =
+        request.inputImage != null || request.referenceImages.isNotEmpty;
+    if (wantsImage) {
+      throw StateError(
+        'Dola 号池暂不支持参考图与首帧输入（ImageX 上传尚未实现）。'
+        '请改用其他视频引擎，或改用文生视频模式。',
+      );
+    }
 
     try {
       onProgress?.call(0.1);

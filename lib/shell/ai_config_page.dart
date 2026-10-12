@@ -9,6 +9,7 @@ import '../services/mcp_service.dart';
 import '../theme/app_theme.dart';
 import 'ai_log_dialog.dart';
 import 'mcp_tool_inventory_view.dart';
+import '../tools/dola_pool/ui/dola_account_pool_panel.dart';
 
 class AiConfigPage extends StatefulWidget {
   const AiConfigPage({super.key});
@@ -28,7 +29,7 @@ class _AiConfigPageState extends State<AiConfigPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     // 每 10 秒刷新健康状态指示器
     _healthRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (mounted) setState(() {});
@@ -126,6 +127,10 @@ class _AiConfigPageState extends State<AiConfigPage>
                       icon: Icon(Icons.cable_outlined, size: 16),
                       text: '外部 MCP 客户端',
                     ),
+                    Tab(
+                      icon: Icon(Icons.groups_outlined, size: 16),
+                      text: 'Dola 号池',
+                    ),
                   ],
                 ),
               ],
@@ -141,6 +146,7 @@ class _AiConfigPageState extends State<AiConfigPage>
                 _buildProvidersTab(),
                 _buildSlotsTab(),
                 _buildMcpWithInventory(),
+                _buildDolaPoolTab(),
               ],
             ),
           ),
@@ -764,6 +770,17 @@ class _AiConfigPageState extends State<AiConfigPage>
   // ---------------------------------------------------------------------------
   // Tab 3: 外部 MCP 客户端（客户端配置 + 已加载工具清单）
   // ---------------------------------------------------------------------------
+  /// 「Dola 号池」tab。
+  ///
+  /// 面板自带 store 监听与初始化兜底，这里只负责嵌进来。用 const 构造而不是
+  /// 包一层 ListView：面板自己管滚动与留白。
+  Widget _buildDolaPoolTab() {
+    return const Padding(
+      padding: EdgeInsets.all(AppTheme.space24),
+      child: DolaAccountPoolPanel(),
+    );
+  }
+
   Widget _buildMcpWithInventory() {
     final clients = store.mcpClients;
     return ListView(
@@ -1563,7 +1580,8 @@ class _AiConfigPageState extends State<AiConfigPage>
                         capabilities.removeWhere(
                           (_, v) => v.durations.isEmpty &&
                               v.resolutions.isEmpty &&
-                              v.maxReferenceImages == 0 &&
+                              (v.maxReferenceImages == 0 ||
+                               v.maxReferenceImages == null) &&
                               v.modes.isEmpty,
                         );
 

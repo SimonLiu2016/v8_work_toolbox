@@ -5,6 +5,7 @@ import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/app_paths.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
 import 'package:V8WorkToolbox/services/media_capability.dart';
+import 'package:V8WorkToolbox/tools/dola_pool/services/dola_config_store.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/video_gen_adapter.dart';
 import 'package:V8WorkToolbox/tools/password/crypto/kek_manager.dart';
 
@@ -30,6 +31,12 @@ class _TestKeychainBridge implements KeychainBridge {
   Future<void> delete({required String service, required String account}) async {
     store.remove('$service/$account');
   }
+}
+
+/// 取出包装器内部的能力声明，供断言「配置层是否接上」。
+List<int> wrapperCapabilityDurations(VideoGenAdapter adapter) {
+  final wrapper = adapter as NormalizingVideoAdapter;
+  return wrapper.debugCapabilityForTesting.durations;
 }
 
 /// `create()` 的返回路径必须全部经过能力规整（spec: 请求参数规整）。
@@ -126,6 +133,38 @@ void main() {
       // 否则能力查找会落到协议保守默认。
       final wrapper = adapter as NormalizingVideoAdapter;
       expect(wrapper.modelId, startsWith('dola-pool-'));
+    });
+
+    test('显式选中号池时同样接上能力配置层', () async {
+      // 用户改的覆盖必须在「显式选中」这条路上也生效。曾只有回退那条路传了
+      // DolaConfigStore，显式选中时配置被静默忽略。
+      //
+      // 只断言解析到的 capability，不跑 generateVideo——那会真去打 Dola 网络。
+      final tempDir = await Directory.systemTemp.createTemp('dola_wrap_');
+      AppPaths.overrideRootForTesting(tempDir);
+      try {
+        await DolaConfigStore.instance.init();
+        await DolaConfigStore.instance.save(
+          'dola-pool-seedance-2.5',
+          const MediaModelCapability(durations: [5], isDeclared: true),
+        );
+
+        final adapter = await VideoGenAdapterFactory.create(
+          preferredEngineId: 'dola-pool-2.5',
+        );
+        // 覆盖把合法集合收窄成 [5]；若配置层没接上，这里会是内置预设的 [5, 10]。
+        expect(
+          wrapperCapabilityDurations(adapter),
+          [5],
+          reason: '显式选中号池时必须读到用户的覆盖',
+        );
+      } finally {
+        DolaConfigStore.instance.resetForTesting();
+        AppPaths.resetForTesting();
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      }
     });
 
     test('本地 Ken Burns 不包装，且这是有意排除', () async {

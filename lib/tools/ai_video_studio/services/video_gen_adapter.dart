@@ -9,6 +9,7 @@
 /// 与工厂的一行分支。
 library;
 
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -21,6 +22,7 @@ import '../../../services/ai_logger.dart';
 import '../../../services/app_http_client.dart';
 import '../../../services/keychain_service.dart';
 import '../../../services/media_capability.dart';
+import '../../dola_pool/services/dola_config_store.dart';
 import '../../dola_pool/services/dola_pool_video_adapter.dart';
 import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart' show ImageHttpFn;
@@ -1278,6 +1280,12 @@ class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAda
   /// 取回内层适配器。规整发生在 [_inner] 之前，所以拿到的还是原始实现。
   VideoGenAdapter unwrap() => _inner;
 
+  /// 测试用：读内部的能力声明，验证「配置层是否接上」。
+  ///
+  /// 不跑 generateVideo——那会真去打云端。只断言解析结果。
+  @visibleForTesting
+  MediaModelCapability get debugCapabilityForTesting => _capability;
+
   /// 最近一次 [generateVideo] 的参数变更记录。
   ///
   /// 暴露出来是为了让 `SegmentVideoGenTask` 能把「实际提交时长」写回数据层
@@ -1340,17 +1348,23 @@ class VideoGenAdapterFactory {
   static VideoGenAdapter _wrap(
     VideoGenAdapter adapter,
     String modelId, {
-    AiProviderConfig? provider,
+    AiProviderConfigLike? capabilitySource,
   }) {
     if (adapter is KenBurnsVideoAdapter) return adapter;
     // 已在 [_byId] 内包过的就不再包第二层：双层规整会让
     // `NormalizingVideoAdapter.unwrap()` 拿到又一个包装器，调用方对内层具体
     // 类型的判断（如工坊设置同步测试的 `isA<SenseAudioVideoAdapter>()`）失效。
     if (adapter is NormalizingVideoAdapter) return adapter;
-    final capability = provider != null
-        ? MediaCapabilityResolver.resolve(provider, modelId)
-        : MediaCapabilityPresets.forModel(modelId) ??
-            MediaCapabilityDefaults.openai;
+    // 三级查找与 `MediaCapabilityResolver.resolve` 一致：显式声明 > 内置预设
+    // > 协议保守默认。这里不直接调 resolver 是因为 `capabilitySource` 可能为
+    // null（Kling / Dola 之外的路径没有可传的来源）。
+    final capability = switch (capabilitySource) {
+      final source? when source.mediaCapabilities.containsKey(modelId) =>
+        source.mediaCapabilities[modelId]!,
+      _ =>
+        MediaCapabilityPresets.forModel(modelId) ??
+            MediaCapabilityDefaults.openai,
+    };
     return NormalizingVideoAdapter(adapter, capability, modelId: modelId);
   }
 
@@ -1361,7 +1375,21 @@ class VideoGenAdapterFactory {
     // 1. 显式偏好匹配
     if (preferredEngineId != null && preferredEngineId.isNotEmpty) {
       final adapter = await _byId(preferredEngineId);
-      if (adapter != null) return _wrap(adapter, preferredEngineId);
+      if (adapter != null) {
+        // 能力查找统一用 adapter.id，不用 preferredEngineId。
+        //
+        // 两者对号池是不同的：用户在设置里选的是 'dola-pool-2.5'（短 id），
+        // 而适配器的 id 是 'dola-pool-seedance-2.5'（含型号全名）。用短 id
+        // 去查能力，内置预设和用户覆盖都命中不了——能力查找会静默落到
+        // openai 默认值，而那个默认值的时长集合与 Dola 真实能力不同。
+        //
+        // 号池引擎同样要接上能力配置层，否则用户在界面上改的覆盖只在小退
+        // 那条路上生效。
+        final source = adapter is DolaPoolVideoAdapter
+            ? DolaConfigStore.instance
+            : null;
+        return _wrap(adapter, adapter.id, capabilitySource: source);
+      }
     }
 
     // 2. 优先检查系统全局配置的 video 槽位候选供应商
@@ -1401,7 +1429,7 @@ class VideoGenAdapterFactory {
                 keychainKeyId: provider.keychainKeyId,
               ),
               modelName,
-              provider: provider,
+              capabilitySource: provider,
             );
           }
           return _wrap(
@@ -1413,7 +1441,7 @@ class VideoGenAdapterFactory {
               keychainKeyId: provider.keychainKeyId,
             ),
             modelName,
-            provider: provider,
+            capabilitySource: provider,
           );
         }
       }
@@ -1428,7 +1456,13 @@ class VideoGenAdapterFactory {
     // 4. 检查内置 Dola 免费号池
     final dolaAdapter = DolaPoolVideoAdapter();
     if (await dolaAdapter.isAvailable()) {
-      return _wrap(dolaAdapter, dolaAdapter.id);
+      // 传入号池自己的能力配置，让用户在界面上改的覆盖优先于内置预设。
+      // 不传的话能力查找只有预设一档，用户改什么都不生效。
+      return _wrap(
+        dolaAdapter,
+        dolaAdapter.id,
+        capabilitySource: DolaConfigStore.instance,
+      );
     }
 
     // 5. 回退到本地 Ken Burns
@@ -1475,7 +1509,7 @@ class VideoGenAdapterFactory {
               keychainKeyId: provider.keychainKeyId,
             ),
             candidate.model.isNotEmpty ? candidate.model : 'agnes-video-2.5-flash',
-            provider: provider,
+            capabilitySource: provider,
           );
         }
       }
@@ -1521,7 +1555,7 @@ class VideoGenAdapterFactory {
               keychainKeyId: provider.keychainKeyId,
             ),
             modelName,
-            provider: provider,
+            capabilitySource: provider,
           );
         }
       }

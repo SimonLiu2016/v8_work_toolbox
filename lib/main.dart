@@ -17,6 +17,8 @@ import 'services/local_dictionary_bridge.dart';
 import 'services/note_capture_service.dart';
 import 'services/privacy_security_service.dart';
 import 'tools/artex_engine/services/artex_compose_service.dart';
+import 'tools/dola_pool/services/dola_account_store.dart';
+import 'tools/dola_pool/services/dola_config_store.dart';
 import 'tools/toonflow_studio/services/toonflow_compose_service.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
 import 'tools/vocab_book/services/vocab_store.dart';
@@ -106,6 +108,16 @@ class WindowServices {
     ServiceInit('NoteStore', _initNoteStore),
   ];
 
+  /// Dola 号池：账号元数据 + 能力覆盖配置。
+  ///
+  /// 必须在任何可能展示号池状态或触发号池出片的窗口里初始化。漏一项的后果
+  /// 不是崩溃而是「号池显示为空」——用户以为没配账号，实际是没加载
+  /// （spec: 号池数据初始化由应用启动保证）。
+  static const List<ServiceInit> _dolaStore = [
+    ServiceInit('DolaAccountStore', _initDolaAccountStore),
+    ServiceInit('DolaConfigStore', _initDolaConfigStore),
+  ];
+
   /// 每个窗口类型的必需服务，按依赖拓扑序排列。
   ///
   /// 主窗口包含 [WindowKind.notebook] 与 [WindowKind.singleNote] 的全部条目
@@ -117,6 +129,8 @@ class WindowServices {
       ..._proxy,
       ..._aiConfig,
       ..._noteStore,
+      // 主窗口的 AI 配置页有「Dola 号池」tab，必须能读到账号。
+      ..._dolaStore,
     ],
     WindowKind.notebook: [
       ..._appPaths,
@@ -162,6 +176,9 @@ class WindowServices {
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
+      // 该窗口的分镜看板可以直接提交视频生成，Dola 是可选引擎之一——
+      // 漏了它号池在此窗口显示为空，用户以为没配账号。
+      ..._dolaStore,
     ],
   };
 
@@ -191,6 +208,10 @@ class WindowServices {
   static Future<void> _initProxySettings() => ProxySettings.instance.load();
   static Future<void> _initAiConfigStore() => AiConfigStore.instance.init();
   static Future<void> _initNoteStore() => NoteStore.instance.init();
+  static Future<void> _initDolaAccountStore() =>
+      DolaAccountStore.instance.init();
+  static Future<void> _initDolaConfigStore() =>
+      DolaConfigStore.instance.init();
 }
 
 /// 单个服务的惰性初始化入口。`name` 仅用于诊断与测试断言。
