@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/artex_engine_config.dart';
 import '../models/artex_engine_state.dart';
+import 'artex_callback_service.dart';
 import 'artex_config_store.dart';
 import 'artex_override_store.dart';
 import 'process_runner.dart';
@@ -26,6 +27,11 @@ enum HealthVerdict { ready, pending, gateBlocked }
 /// `/api/health` 在 `server/auth.go:147` 的 `requireAuth` 中显式豁免，
 /// 无 token 可探测；返回形如 `{"ok":true,"service":"artex","version":"dev"}`。
 const String kHealthServiceField = 'service';
+
+/// compose 在 host 网络模式下的警告。出现它说明端口发布已被丢弃——
+/// 启动会「成功」但工作台不可达，所以必须单独识别（design D6）。
+const String kHostNetworkDiscardWarning =
+    'Published ports are discarded when using host network mode';
 
 /// ARTEX 引擎容器生命周期服务。
 ///
@@ -71,6 +77,13 @@ class ArtexComposeService extends ChangeNotifier {
   /// 测试用：压缩健康探测预算，避免每个超时用例跑满 60 秒真实时间。
   @visibleForTesting
   Duration debugHealthBudgetOverride = kHealthTotalBudget;
+
+  /// 测试用：替换真实的网卡探测。
+  ///
+  /// 否则启动流程会跑真的 `ifconfig`，让测试结果依赖运行机器的网络状态
+  /// （有没有网卡、是不是多网卡）。返回空列表 = 模拟「探测不到地址」。
+  @visibleForTesting
+  Future<List<String>> Function()? debugCallbackCandidatesOverride;
 
 
   // -------------------------------------------------------------------------
@@ -153,6 +166,46 @@ class ArtexComposeService extends ChangeNotifier {
   // 5.3 端口预检
   // -------------------------------------------------------------------------
 
+  /// 解析回连地址。失败时已通过 [_fail] 上报并返回 null。
+  ///
+  /// 优先级：用户手动填定 > 自动探测。探测到多候选时不上来就取第一个——
+  /// 选错网卡（VPN / Docker 网桥）会让目标机回连失败，且现象是「隧道建
+  /// 不起来」这种离现场很远的症状。让用户选并记住。
+  Future<String?> _resolveCallbackAddr(ArtexEngineConfig config) async {
+    final pinned = config.callbackAddr?.trim();
+    if (pinned != null && pinned.isNotEmpty) return pinned;
+
+    final override = debugCallbackCandidatesOverride;
+    final candidates = override != null
+        ? await override()
+        : await ArtexCallbackService.detectCandidates();
+    if (candidates.isEmpty) {
+      _fail(
+        ArtexEngineFailureKind.callbackAddrMissing,
+        '找不到回连地址',
+        '没有探测到可用于内网回连的宿主机 IPv4 地址。'
+            '内网目标机（隧道 / 反弹 shell）需要一个能连到本机的地址。'
+            '请检查网络连接，或在设置中手动指定回连地址。',
+      );
+      return null;
+    }
+    if (candidates.length == 1) return candidates.single;
+
+    _emit(
+      _state.copyWith(
+        status: ArtexEngineStatus.failed,
+        failureKind: ArtexEngineFailureKind.callbackAddrAmbiguous,
+        failure: '需要选择回连地址',
+        failureDetail:
+            '探测到 ${candidates.length} 个候选地址。'
+            '内网目标机将回连到选中的地址，请选目标机真正可达的那个。',
+        containerLogTail: const <String>[],
+        callbackCandidates: candidates,
+      ),
+    );
+    return null;
+  }
+
   /// 返回第一个被占用的端口；都空闲返回 null。
   ///
   /// 用 `ServerSocket.bind` 试探后立即关闭。**为什么在启动前做**而不是让
@@ -184,8 +237,9 @@ class ArtexComposeService extends ChangeNotifier {
 
   /// 启动引擎。
   ///
-  /// 顺序：工程目录校验 → 守护进程探活 → 端口预检 → 生成 override →
-  /// `up -d` → 健康探测。任一步失败都留下可读原因（spec「容器启停与状态呈现」）。
+  /// 顺序：工程目录校验 → 守护进程探活 → 回连地址解析 → 端口预检 →
+  /// 生成 override → `up -d` → 健康探测。任一步失败都留下可读原因
+  /// （spec「容器启停与状态呈现」）。
   Future<void> start() async {
     if (_starting || _state.status == ArtexEngineStatus.running) return;
     _starting = true;
@@ -223,20 +277,43 @@ class ArtexComposeService extends ChangeNotifier {
       return;
     }
 
-    // 端口预检
-    final conflict = await findConflictingPort([config.httpPort, config.proxyPort]);
+    // 回连地址解析：内网目标机回连平台用。用户填定则用之，否则探测宿主机
+    // 物理网卡。解析不出就不继续——没有它隧道功能等于没修。
+    final callback = await _resolveCallbackAddr(config);
+    if (callback == null) return; // 失败原因已在 _resolveCallbackAddr 里上报
+
+    // 端口预检：引擎端口 + 隧道池两端。
+    //
+    // 检池两端就够：池是连续范围，两端被占说明范围选得不对（真实错误是
+    // 「用户把池选成了与服务重叠的范围」）；中间被占由 ARTEX 的 CanListen
+    // 在分配时逐个试绑自然跳过。
+    final portsToCheck = <int>[
+      config.httpPort,
+      config.proxyPort,
+      config.tunnelPortMin,
+      config.tunnelPortMax,
+    ];
+    final conflict = await findConflictingPort(portsToCheck);
     if (conflict != null) {
+      final isTunnelPort =
+          conflict == config.tunnelPortMin || conflict == config.tunnelPortMax;
       _fail(
         ArtexEngineFailureKind.portConflict,
         '端口 $conflict 被占用',
-        '宿主机端口 $conflict 已被其他进程监听。请在设置中修改端口后重试。',
+        isTunnelPort
+            ? '隧道端口池边界 $conflict 已被其他进程监听。请在设置中修改隧道池范围后重试。'
+            : '宿主机端口 $conflict 已被其他进程监听。请在设置中修改端口后重试。',
       );
       return;
     }
 
-    // 生成 override（门控 + 端口）
+    // 生成 override（门控 + 端口 + 隧道池发布 + 回连地址）
     try {
-      ArtexOverrideStore.instance.write(projectDir, config);
+      ArtexOverrideStore.instance.write(
+        projectDir,
+        config,
+        callbackAddr: callback,
+      );
     } catch (e) {
       _fail(
         ArtexEngineFailureKind.composeFailed,
@@ -258,6 +335,19 @@ class ArtexComposeService extends ChangeNotifier {
         ArtexEngineFailureKind.composeFailed,
         '容器启动失败',
         up.combined.trim(),
+        logTail: _tailLines(up.combined),
+      );
+      return;
+    }
+    // compose 对 host 网络模式只是警告不报错，但端口发布已被它丢弃——
+    // 不主动识别的话，用户会看到「启动成功但工作台打不开」。
+    if (up.combined.contains(kHostNetworkDiscardWarning)) {
+      _fail(
+        ArtexEngineFailureKind.hostNetworkRejected,
+        '检测到主机网络模式',
+        'compose 提示：$kHostNetworkDiscardWarning。'
+        '主机网络模式下所有端口发布都会被丢弃，本机将无法访问引擎工作台。'
+        '请检查工程目录的 docker-compose.yml 与 override，移除 network_mode: host。',
         logTail: _tailLines(up.combined),
       );
       return;

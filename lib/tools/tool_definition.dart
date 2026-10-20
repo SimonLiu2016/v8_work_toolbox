@@ -11,7 +11,9 @@ import 'package:flutter/material.dart';
 const String kToolIdAiAssistant = 'ai-assistant';
 const String kToolIdDocAudioReader = 'doc-audio-reader';
 const String kToolIdAiVideoStudio = 'ai-video-studio';
-const String kToolIdToonflowStudio = 'toonflow-studio';
+const String kToolIdAgnesPlayground = 'agnes-playground';
+const String kToolIdInfiniteCanvas = 'infinite-canvas';
+const String kToolIdNovelManager = 'novel-manager';
 
 /// 工具分类枚举。
 ///
@@ -20,6 +22,16 @@ const String kToolIdToonflowStudio = 'toonflow-studio';
 /// 拆出 `ai` / `note` / `ops` / `security`，`system` 只保留真正的系统与配置类。
 /// 新增分类无需改 `ActivityBar`——它按枚举遍历。同理，分类下的最后一个工具
 /// 被移除时该分类也一并删除，否则活动栏会多出一个点进去什么都没有的入口。
+///
+/// 归属按**工具目的**有序判定（first match wins），不按实现技术：
+/// 隐私内容 → 安全对抗 → 运维 → 本机配置维护 → 获取或再加工外部/机器生产的内容
+/// （[ai]）→ 组织用户自己产出的文字（[note]）→ 文件形态变换（[file]）兜底；
+/// 皆不匹配则新增分类，MUST NOT 硬塞。完整规则见
+/// `openspec/specs/tool-category-assignment/spec.md`。
+///
+/// [ai] 与 [note] 的分界是**内容来源与所有权**，不是是否调用 AI 模型：
+/// 前者收外部获取或机器再加工的内容，后者收用户自己写下的文字。因此
+/// **带 AI 能力不改变归属**——给笔记类工具加 AI 问答不会让它搬来 [ai]。
 enum ToolCategory {
   file('文件处理', Icons.folder_outlined),
   ai('AI 与资讯', Icons.assistant_outlined),

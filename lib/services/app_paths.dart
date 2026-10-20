@@ -188,34 +188,98 @@ abstract final class AppPaths {
   static Directory get videoStudioGlobalLibDir =>
       Directory(p.join(videoStudioDir.path, 'global_library'));
 
+  /// 全局公共预设目录（美学风格库与时代题材库）。
+  static Directory get videoStudioPresetsDir =>
+      Directory(p.join(videoStudioGlobalLibDir.path, 'presets'));
+
+  /// 全局美学风格预设文件（`aesthetic_styles.json`）。
+  static File get aestheticStylesFile =>
+      File(p.join(videoStudioPresetsDir.path, 'aesthetic_styles.json'));
+
+  /// 全局时代题材预设文件（`visual_eras.json`）。
+  static File get visualErasFile =>
+      File(p.join(videoStudioPresetsDir.path, 'visual_eras.json'));
+
+  /// 全局系统提示词与规则模板文件（`prompt_templates.json`）。
+  static File get promptTemplatesFile =>
+      File(p.join(videoStudioPresetsDir.path, 'prompt_templates.json'));
+
+  /// 资产库：跨剧复用的图片资产。
+  ///
+  /// 与 `global_library/bgm`、`global_library/sfx` 平级但分开目录——那两类是
+  /// 用户从外部丢进来的素材，这里是软件生成、经用户精选的产物。语义不同：
+  /// 一个可能是版权素材，一个是自己付过费生成的。
+  static Directory get videoStudioAssetImagesDir =>
+      Directory(p.join(videoStudioDir.path, 'assets', 'images'));
+
+  /// 资产库：跨剧复用的视频片段资产。
+  static Directory get videoStudioAssetClipsDir =>
+      Directory(p.join(videoStudioDir.path, 'assets', 'clips'));
+
+  /// 资产索引文件（ID → 元数据）。
+  ///
+  /// 单 JSON + 原子写。资产是用户精选，预期几百条量级，不值得上 SQLite；
+  /// 若将来要做检索再迁，数据是一整条记录、导出迁移不难。
+  static File get videoStudioAssetIndexFile =>
+      File(p.join(videoStudioDir.path, 'assets', 'asset_index.json'));
+
   /// 连续剧 IP 主库：每部剧一个子目录（`series_library/<series-id>/`）。
   static Directory get videoStudioSeriesDir =>
       Directory(p.join(videoStudioDir.path, 'series_library'));
 
-  /// Toonflow 漫剧工坊根目录（`tools/toonflow_studio/`）。
+  /// Agnes 试炼场根目录（`tools/agnes_playground/`）。
   ///
-  /// **只存本工具自己的产物**（override 备份、构建日志副本）。
-  /// Toonflow 的数据（`data/workspaces`、`data/assets`、`data/settings.json`）
-  /// 归容器管，登记在 [toonflowDataDir]——那是要挂进容器的，不是本软件
-  /// 私有的。
-  static Directory get toonflowDir => Directory(p.join(root.path, 'toonflow'));
+  /// 挂在 `video_studio/` 下而不是自己一个顶层目录：它的产物要进同一个
+  /// 资产库（`AssetLibrary`），模型与供应商配置也全部来自 AI 基础设施。把它
+  /// 放在工坊数据目录内，备份与清理时这一整块会一起被考虑。
+  static Directory get agnesPlaygroundDir =>
+      Directory(p.join(videoStudioDir.path, 'agnes_playground'));
 
-  /// 挂载到 Toonflow 容器 `/app/data` 的宿主机目录。
+  /// 试炼场轮次索引（会话与轮次的轻量元数据）。
   ///
-  /// **刻意不用 Docker 命名卷**：资产桥要直接文件系统读写工作区与素材，
-  /// 走命名卷就得每次经 HTTP 传输几十兆媒体，导回体验不可接受。
+  /// 单 JSON + 原子写，与 `asset_index.json`、`video_task_ledger` 同一套做法。
+  /// 媒体本体不在这里——它放在各轮次自己的目录下。
+  static File get agnesPlaygroundIndexFile =>
+      File(p.join(agnesPlaygroundDir.path, 'index.json'));
+
+  /// 试炼场外部调用草稿文件（供工坊一键转试炼场调试使用）。
+  static File get agnesPlaygroundDraftFile =>
+      File(p.join(agnesPlaygroundDir.path, 'draft.json'));
+
+  /// 单个轮次的目录：参考图副本、产物与 `request.json` 都在里面。
+  static Directory agnesPlaygroundTurnDir(String turnId) =>
+      Directory(p.join(agnesPlaygroundDir.path, 'turns', turnId));
+
+  /// 无限画布工具自己的目录（`infinite_canvas/`）。
   ///
-  /// `settings.json` 在这个目录里，它保存 Toonflow 自己的供应商密钥（明文）。
-  /// 本工具**绝不读写**该文件，因此它也**不**登记进 [allFiles]——那个清单
-  /// 的语义是「本软件生成并管理的文件」，登记它会诱导后续代码去碰它。
-  static Directory get toonflowDataDir =>
-      Directory(p.join(root.path, 'toonflow_data'));
+  /// **只存本工具自己的产物**（override 备份、日志副本）。
+  ///
+  /// 刻意**没有**对应的数据目录：无限画布的 docker 容器是 nginx 静态服务器，
+  /// 密钥、画布、素材与生成记录全在浏览器本地存储里，宿主机文件系统上一个
+  /// 字节都没有——没有东西可以 bind mount（design D1）。
+  static Directory get infiniteCanvasDir =>
+      Directory(p.join(root.path, 'infinite_canvas'));
 
   /// Dola 号池根目录（账号元数据 + 能力覆盖配置）。
   ///
   /// `dola_accounts.json` 此前直接躺在 [root] 根下，与其他工具的目录约定不
   /// 一致。sessionid 不在这里——它在 Keychain（`dola_account_session_<id>`）。
   static Directory get dolaDir => Directory(p.join(root.path, 'dola'));
+
+  /// 云端视频异步任务台账目录。
+  ///
+  /// 单独一个目录而不是塞进 `video_studio/`：台账记的是**跨工具**的云端任务
+  /// 生命周期（AI 视频工坊是当前唯一使用者，但 Kling / SenseAudio 同样是
+  /// 异步任务模型），它不属于某个工具的产物目录。
+  static Directory get videoTaskLedgerDir =>
+      Directory(p.join(root.path, 'video_task_ledger'));
+
+  /// 视频任务台账文件。
+  ///
+  /// 单文件 + 原子替换写。任务创建即计费，所以这个文件丢失等于用户失去
+  /// 「积分扣了但视频在哪」的唯一线索——它必须比任务本身先落盘。
+  static File get videoTaskLedgerFile =>
+      File(p.join(videoTaskLedgerDir.path, 'tasks.json'));
 
   /// 全部导出路径，供回归测试断言单一性。
   static List<File> get allFiles => [
@@ -234,6 +298,12 @@ abstract final class AppPaths {
     privateBrowserDbFile,
     securityDbFile,
     scriptTemplatesFile,
+    videoTaskLedgerFile,
+    videoStudioAssetIndexFile,
+    agnesPlaygroundIndexFile,
+    agnesPlaygroundDraftFile,
+    aestheticStylesFile,
+    visualErasFile,
   ];
 
   /// 全部导出目录，供回归测试断言单一性。
@@ -250,9 +320,30 @@ abstract final class AppPaths {
     artexDir,
     videoStudioDir,
     videoStudioGlobalLibDir,
+    videoStudioPresetsDir,
     videoStudioSeriesDir,
-    toonflowDir,
-    toonflowDataDir,
+    infiniteCanvasDir,
     dolaDir,
+    novelLibraryDir,
+    videoTaskLedgerDir,
+    videoStudioAssetImagesDir,
+    videoStudioAssetClipsDir,
+    agnesPlaygroundDir,
   ];
+
+  /// 小说管理器根目录（`tools/novel_manager/`）。
+  static Directory get novelLibraryDir =>
+      Directory(p.join(root.path, 'novel_library'));
+
+  /// 小说管理器 SQLite 数据库文件。
+  static File get novelDatabaseFile =>
+      File(p.join(novelLibraryDir.path, 'novel_manager.sqlite'));
+
+  /// 单部小说目录。
+  static Directory novelDir(String novelId) =>
+      Directory(p.join(novelLibraryDir.path, novelId));
+
+  /// 单部小说的章节正文存放目录。
+  static Directory novelChaptersDir(String novelId) =>
+      Directory(p.join(novelDir(novelId).path, 'chapters'));
 }

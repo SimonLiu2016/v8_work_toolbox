@@ -8,6 +8,7 @@ import '../../../theme/app_theme.dart';
 import '../models/artex_engine_config.dart';
 import '../models/artex_engine_state.dart';
 import '../services/artex_ca_service.dart';
+import '../services/artex_callback_service.dart';
 import '../services/artex_compose_service.dart';
 import '../services/artex_config_store.dart';
 import '../services/artex_image_build_service.dart';
@@ -34,9 +35,57 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
   late final TextEditingController _dirController;
   late final TextEditingController _httpPortController;
   late final TextEditingController _proxyPortController;
+  late final TextEditingController _callbackAddrController;
+  late final TextEditingController _tunnelPortMinController;
+  late final TextEditingController _tunnelPortMaxController;
 
   ArtexCaState _caState = ArtexCaState.notGenerated;
   bool _caChecking = true;
+
+  /// 探测到的候选回连地址（多网卡时供选择）。
+  List<String> _callbackCandidates = const [];
+
+  /// 上次启动时实际使用的回连地址。用于检测 DHCP 换 IP。
+  ///
+  /// 存在 config 里而不是内存：用户可能关掉工具再打开，那时「地址变了」
+  /// 这个事实依然要能被发现。
+  String? _lastUsedCallbackAddr;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _refreshCallbackCandidates();
+  }
+
+  /// 后台探测候选回连地址，用于「当前地址」提示与多网卡选择。
+  Future<void> _refreshCallbackCandidates() async {
+    final candidates = await ArtexCallbackService.detectCandidates();
+    if (!mounted) return;
+    setState(() => _callbackCandidates = candidates);
+    _warnIfCallbackAddrChanged();
+  }
+
+  /// DHCP 换 IP 后提示用户：旧地址写进了目标机上的 chisel client，不重启
+  /// 引擎的话它们仍然回连到那个已经不存在的地址。
+  void _warnIfCallbackAddrChanged() {
+    final pinned = _config.config.callbackAddr?.trim();
+    // 手动填定的人自己知道地址是什么，不用提醒。
+    if (pinned != null && pinned.isNotEmpty) return;
+    final last = _lastUsedCallbackAddr;
+    if (last == null || last.isEmpty) return;
+    final current = _callbackCandidates.contains(last)
+        ? last
+        : (_callbackCandidates.isEmpty ? null : _callbackCandidates.first);
+    if (current == null || current == last) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('回连地址已从 $last 变为 $current，重启引擎后生效'),
+        duration: const Duration(seconds: 8),
+      ),
+    );
+    _lastUsedCallbackAddr = current;
+  }
 
   @override
   void initState() {
@@ -47,6 +96,15 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
     );
     _proxyPortController = TextEditingController(
       text: '${_config.config.proxyPort}',
+    );
+    _callbackAddrController = TextEditingController(
+      text: _config.config.callbackAddr ?? '',
+    );
+    _tunnelPortMinController = TextEditingController(
+      text: '${_config.config.tunnelPortMin}',
+    );
+    _tunnelPortMaxController = TextEditingController(
+      text: '${_config.config.tunnelPortMax}',
     );
     _config.addListener(_onConfigChanged);
     _build.addListener(_onBuildChanged);
@@ -60,6 +118,9 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
     _dirController.dispose();
     _httpPortController.dispose();
     _proxyPortController.dispose();
+    _callbackAddrController.dispose();
+    _tunnelPortMinController.dispose();
+    _tunnelPortMaxController.dispose();
     super.dispose();
   }
 
@@ -73,6 +134,16 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
     }
     if (_proxyPortController.text != '${_config.config.proxyPort}') {
       _proxyPortController.text = '${_config.config.proxyPort}';
+    }
+    final callback = _config.config.callbackAddr ?? '';
+    if (_callbackAddrController.text != callback) {
+      _callbackAddrController.text = callback;
+    }
+    if (_tunnelPortMinController.text != '${_config.config.tunnelPortMin}') {
+      _tunnelPortMinController.text = '${_config.config.tunnelPortMin}';
+    }
+    if (_tunnelPortMaxController.text != '${_config.config.tunnelPortMax}') {
+      _tunnelPortMaxController.text = '${_config.config.tunnelPortMax}';
     }
   }
 
@@ -98,6 +169,7 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
     if (start) {
       await _engine.start();
       await _refreshCaState();
+      _recordUsedCallbackAddr();
     } else {
       await _engine.stop();
     }
@@ -146,6 +218,85 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
       context,
     ).showSnackBar(const SnackBar(content: Text('端口已保存，下次启动生效')));
   }
+
+  /// 记下这次启动实际用的回连地址，供下次打开时检测变化。
+  void _recordUsedCallbackAddr() {
+    final pinned = _config.config.callbackAddr?.trim();
+    _lastUsedCallbackAddr =
+        (pinned != null && pinned.isNotEmpty)
+            ? pinned
+            : (_callbackCandidates.isEmpty
+                  ? null
+                  : _callbackCandidates.first);
+  }
+
+  /// 回连地址下方的说明文字：告诉用户当前会用哪个地址。
+  String _callbackHintText() {
+    final pinned = _config.config.callbackAddr?.trim();
+    if (pinned != null && pinned.isNotEmpty) {
+      return '当前使用手动指定的 $pinned（清空则恢复自动探测）';
+    }
+    if (_callbackCandidates.isEmpty) {
+      return '未探测到可用的物理网卡地址，启动时会再次尝试';
+    }
+    final auto = _callbackCandidates.first;
+    final extra = _callbackCandidates.length > 1
+        ? '（检测到 ${_callbackCandidates.length} 个候选，启动时需选择）'
+        : '';
+    return '当前将自动使用 $auto$extra';
+  }
+
+  /// 点候选芯片：填入手动值并保存，避开「多候选要选」那一步。
+  Future<void> _pickCallbackAddr(String addr) async {
+    _callbackAddrController.text = addr;
+    await _config.save(_config.config.copyWith(callbackAddr: addr));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('回连地址已设为 $addr，下次启动生效')),
+    );
+  }
+
+  Future<void> _saveInternalNetwork() async {
+    final rawCallback = _callbackAddrController.text.trim();
+    // 留空 = 恢复自动探测（与 config 的 null 语义对应）。
+    final callback = rawCallback.isEmpty ? null : rawCallback;
+    if (callback != null && !_isIPv4(callback)) {
+      _showError('回连地址必须是 IPv4 格式（例如 192.168.1.3）');
+      return;
+    }
+
+    final min = int.tryParse(_tunnelPortMinController.text.trim());
+    final max = int.tryParse(_tunnelPortMaxController.text.trim());
+    if (min == null || max == null || min < 1 || max > 65535) {
+      _showError('隧道池端口必须是 1-65535 之间的数字');
+      return;
+    }
+    if (min > max) {
+      _showError('隧道池起始端口不能大于结束端口');
+      return;
+    }
+    // 与引擎端口重叠会让预检永远报冲突，且 NAT 目标会撞车。
+    final enginePorts = {_config.config.httpPort, _config.config.proxyPort};
+    if (enginePorts.contains(min) || enginePorts.contains(max)) {
+      _showError('隧道池端口不能与 HTTP / 代理端口相同');
+      return;
+    }
+
+    await _config.save(
+      _config.config.copyWith(
+        callbackAddr: callback,
+        tunnelPortMin: min,
+        tunnelPortMax: max,
+      ),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('内网设置已保存，下次启动生效')),
+    );
+  }
+
+  static bool _isIPv4(String value) =>
+      RegExp(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$').hasMatch(value);
 
   Future<void> _saveProjectDir() async {
     final dir = _dirController.text.trim();
@@ -368,6 +519,68 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
             ),
           ),
           const Divider(height: AppTheme.space24),
+          AppTextField(
+            controller: _callbackAddrController,
+            label: '回连地址',
+            hintText: '留空 = 自动探测',
+          ),
+          const SizedBox(height: AppTheme.space4),
+          Text(
+            _callbackHintText(),
+            style: context.fontCaption,
+          ),
+          if (_callbackCandidates.length > 1) ...[
+            const SizedBox(height: AppTheme.space8),
+            Wrap(
+              spacing: AppTheme.space8,
+              runSpacing: AppTheme.space4,
+              children: [
+                for (final candidate in _callbackCandidates)
+                  ActionChip(
+                    label: Text(candidate),
+                    onPressed: () => _pickCallbackAddr(candidate),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: AppTheme.space12),
+          Row(
+            children: [
+              Expanded(
+                child: AppTextField(
+                  controller: _tunnelPortMinController,
+                  label: '隧道池起始端口',
+                  hintText: '20000',
+                ),
+              ),
+              const SizedBox(width: AppTheme.space12),
+              Expanded(
+                child: AppTextField(
+                  controller: _tunnelPortMaxController,
+                  label: '隧道池结束端口',
+                  hintText: '20099',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppTheme.space4),
+          Text(
+            '内网目标机回连平台用的端口池，会被发布到上面的回连地址。'
+            '每条隧道占用 2 个端口；范围越大启动越慢'
+            '（100 个约 +3 秒，1000 个约 +41 秒）。',
+            style: context.fontCaption,
+          ),
+          const SizedBox(height: AppTheme.space8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: AppButton(
+              label: '保存内网设置',
+              variant: AppButtonVariant.secondary,
+              size: AppButtonSize.small,
+              onPressed: _saveInternalNetwork,
+            ),
+          ),
+          const Divider(height: AppTheme.space24),
           _SwitchRow(
             title: '退出应用时停止引擎',
             subtitle: '关闭后引擎容器会在后台继续运行',
@@ -443,6 +656,25 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
             const SizedBox(height: AppTheme.space8),
             Text(state.failureDetail!, style: context.fontCaption),
           ],
+          // 多候选回连地址：把选择直接摆在失败卡片里。塞进设置区的话，
+          // 用户看到的是「启动失败」+ 一个不知道去哪选的地址列表。
+          if (state.callbackCandidates.length > 1) ...[
+            const SizedBox(height: AppTheme.space12),
+            Text('选择目标机可达的地址：', style: context.fontCaption),
+            const SizedBox(height: AppTheme.space4),
+            Wrap(
+              spacing: AppTheme.space8,
+              runSpacing: AppTheme.space4,
+              children: [
+                for (final candidate in state.callbackCandidates)
+                  ActionChip(
+                    avatar: const Icon(Icons.lan_outlined, size: 16),
+                    label: Text(candidate),
+                    onPressed: () => _pickCallbackAddr(candidate),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -466,7 +698,15 @@ class _ArtexEnginePageState extends State<ArtexEnginePage> {
             '镜像未预置内网隧道工具（chisel / suo5），因此「立足点与内网纵深」'
             '能力开箱不可用。开箱范围是外网自动化探索：资产图、探索图、'
             'planner/worker 编排、蜜罐识别、流量证据链、漏洞验证闭环。\n'
+            '启用方式：把对应平台的二进制放进工程目录的 data/tools/ 后重启引擎。\n'
             '启动日志中出现隧道工具缺失的提示是已知情况，不影响上述能力。',
+            style: context.fontBodySecondary,
+          ),
+          const SizedBox(height: AppTheme.space8),
+          Text(
+            '内网目标机回连平台需要一个宿主机上可被内网路由的 IPv4 地址'
+            '（下方「回连地址」）。默认自动探测物理网卡，多网卡时需要手动选；'
+            '地址变化后要重启引擎，目标机才会拿到新地址。',
             style: context.fontBodySecondary,
           ),
         ],

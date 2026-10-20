@@ -11,6 +11,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import '../../../services/settings_store.dart';
 
 /// 任务状态。
 enum StudioTaskStatus {
@@ -73,6 +74,9 @@ class StudioTask {
   /// 完成后的产物路径。
   String? outputPath;
 
+  /// 片段专属标识（片段级任务时填充，确保任务匹配不依赖哈希或分镜号碰撞）。
+  final String? segmentId;
+
   final DateTime enqueuedAt;
   DateTime? startedAt;
   DateTime? finishedAt;
@@ -82,6 +86,7 @@ class StudioTask {
     required this.kind,
     required this.shotNumber,
     required this.label,
+    this.segmentId,
     this.status = StudioTaskStatus.queued,
     this.progress = 0,
     this.error,
@@ -119,7 +124,9 @@ abstract interface class StudioTaskRunner {
 ///
 /// 单例：整个工坊窗口共用一个队列，页面切换不丢任务进度。
 class StudioTaskQueue {
-  StudioTaskQueue._();
+  StudioTaskQueue._() {
+    _maxConcurrency = SettingsStore.instance.studioTaskMaxConcurrency;
+  }
   static final StudioTaskQueue instance = StudioTaskQueue._();
 
   final List<StudioTask> _tasks = <StudioTask>[];
@@ -144,12 +151,18 @@ class StudioTaskQueue {
   int get activeCount =>
       _tasks.where((t) => !t.isTerminal).length;
 
-  List<StudioTask> tasksForShot(int shotNumber) =>
-      _tasks.where((t) => t.shotNumber == shotNumber).toList();
+  List<StudioTask> tasksForShot(int shotNumber) => _tasks
+      .where((t) =>
+          (t.kind == StudioTaskKind.image || t.kind == StudioTaskKind.video) &&
+          t.shotNumber == shotNumber)
+      .toList();
 
   /// 某片段的任务（队列面板与片段卡片都用它判断"这个片段在生成中"）。
   List<StudioTask> tasksForSegment(String segmentId) => _tasks
-      .where((t) => t.kind == StudioTaskKind.segment && t.shotNumber == _segmentKey(segmentId))
+      .where((t) =>
+          t.kind == StudioTaskKind.segment &&
+          (t.segmentId == segmentId ||
+              (t.segmentId == null && t.shotNumber == _segmentKey(segmentId))))
       .toList();
 
   /// 片段 id → 用于 [StudioTask.shotNumber] 的稳定整数键。
@@ -168,7 +181,10 @@ class StudioTaskQueue {
   /// 某分镜是否已有成功的产物路径（有则 UI 直接显示缩略图）。
   String? completedOutputFor(int shotNumber) {
     final done = _tasks.where(
-      (t) => t.shotNumber == shotNumber && t.status == StudioTaskStatus.completed,
+      (t) =>
+          (t.kind == StudioTaskKind.image || t.kind == StudioTaskKind.video) &&
+          t.shotNumber == shotNumber &&
+          t.status == StudioTaskStatus.completed,
     );
     if (done.isEmpty) return null;
     // 取最近完成的一次：用户可能对同一分镜重新生成过。
@@ -177,6 +193,7 @@ class StudioTaskQueue {
 
   void setMaxConcurrency(int value) {
     _maxConcurrency = value.clamp(1, 5);
+    SettingsStore.instance.studioTaskMaxConcurrency = _maxConcurrency;
     if (!_draining) _drain();
   }
 
@@ -186,6 +203,7 @@ class StudioTaskQueue {
     required int shotNumber,
     required String label,
     required StudioTaskRunner runner,
+    String? segmentId,
   }) {
     // 片段任务的 shotNumber 由调用方经 [segmentKey] 转换后传入，这里不区分
     // —— 队列只关心「一个整数关联键」，它是什么语义由 kind 决定。
@@ -194,6 +212,7 @@ class StudioTaskQueue {
       kind: kind,
       shotNumber: shotNumber,
       label: label,
+      segmentId: segmentId,
       enqueuedAt: DateTime.now(),
     );
     _tasks.add(task);

@@ -29,7 +29,22 @@ void main() {
   ///
   /// 默认端口取 18787/18788 这类高位口：本机跑着真实的 artex 容器，
   /// 占着 8787/8788，用默认值会让端口预检误判冲突。
-  void useTempProject({int httpPort = 18787, int proxyPort = 18788, bool stopOnAppExit = true}) {
+  /// 预置一个可用的回连地址，让启动流程不必真去探测网卡。
+  ///
+  /// 不这么做的话，测试会依赖运行机器的网络状态（有没有网卡、是不是多
+  /// 网卡），在本机多网卡环境下必然不稳定。
+  void stubCallback(String addr) {
+    service.debugCallbackCandidatesOverride = () async => [addr];
+  }
+
+  void useTempProject({
+    int httpPort = 18787,
+    int proxyPort = 18788,
+    bool stopOnAppExit = true,
+    int tunnelPortMin = 29000,
+    int tunnelPortMax = 29099,
+    String? callbackAddr,
+  }) {
     File('${tempDir.path}/docker-compose.yml').writeAsStringSync(
       'services: {}',
     );
@@ -39,6 +54,9 @@ void main() {
         httpPort: httpPort,
         proxyPort: proxyPort,
         stopOnAppExit: stopOnAppExit,
+        tunnelPortMin: tunnelPortMin,
+        tunnelPortMax: tunnelPortMax,
+        callbackAddr: callbackAddr,
       ),
     );
   }
@@ -51,11 +69,14 @@ void main() {
     service = ArtexComposeService.forTesting(runner);
     // 压缩健康预算：否则每个超时用例都要跑满 60 秒真实时间。
     service.debugHealthBudgetOverride = const Duration(milliseconds: 300);
+    // 固定回连地址，让启动流程不依赖运行机器的真实网卡。
+    service.debugCallbackCandidatesOverride = () async => ['192.168.1.3'];
   });
 
   tearDown(() {
     ArtexConfigStore.instance.resetForTesting();
     AppPaths.resetForTesting();
+    service.debugCallbackCandidatesOverride = null;
     service.dispose();
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
     if (appRoot.existsSync()) appRoot.deleteSync(recursive: true);
@@ -296,6 +317,159 @@ void main() {
       expect(args, contains('/proj/docker-compose.override.yml'));
       expect(args.first, 'compose');
       expect(args.last, '-d');
+    });
+  });
+
+  group('回连地址解析（fix-artex-internal-network-reachability）', () {
+    test('用户填定的地址优先于探测', () async {
+      useTempProject(callbackAddr: '10.0.0.9');
+      // 探测会被调用的话应返回别的值；这里断言最终用的是填定值。
+      var detectCalled = false;
+      service.debugCallbackCandidatesOverride = () async {
+        detectCalled = true;
+        return ['192.168.1.3'];
+      };
+      runner
+        ..script('docker', ok())
+        ..script('docker', ok('started'));
+      service.debugHealthResponseOverride = () async =>
+          '{"ok":true,"service":"artex"}';
+      await service.start();
+      expect(service.state.status, ArtexEngineStatus.running);
+      expect(detectCalled, isFalse, reason: '填定了就不该再探测');
+      final override = File(
+        '${tempDir.path}/docker-compose.override.yml',
+      ).readAsStringSync();
+      expect(override, contains('ARTEX_CALLBACK_ADDR: "10.0.0.9"'));
+    });
+
+    test('单候选时自动使用，无需用户选择', () async {
+      useTempProject();
+      stubCallback('192.168.1.3');
+      runner
+        ..script('docker', ok())
+        ..script('docker', ok('started'));
+      service.debugHealthResponseOverride = () async =>
+          '{"ok":true,"service":"artex"}';
+      await service.start();
+      expect(service.state.status, ArtexEngineStatus.running);
+      expect(service.state.callbackCandidates, isEmpty);
+    });
+
+    test('多候选时启动失败并附候选列表', () async {
+      useTempProject();
+      service.debugCallbackCandidatesOverride = () async => [
+        '192.168.1.3',
+        '10.0.0.5',
+      ];
+      runner.script('docker', ok());
+      await service.start();
+      expect(
+        service.state.failureKind,
+        ArtexEngineFailureKind.callbackAddrAmbiguous,
+      );
+      expect(service.state.callbackCandidates, ['192.168.1.3', '10.0.0.5']);
+      // 不能静默继续到 up
+      expect(
+        runner.callsTo('docker').any((a) => a.contains('up')),
+        isFalse,
+      );
+    });
+
+    test('探测不到地址时启动失败且不执行 up', () async {
+      useTempProject();
+      service.debugCallbackCandidatesOverride = () async => [];
+      runner.script('docker', ok());
+      await service.start();
+      expect(
+        service.state.failureKind,
+        ArtexEngineFailureKind.callbackAddrMissing,
+      );
+      expect(service.state.failure, contains('找不到回连地址'));
+      expect(
+        runner.callsTo('docker').any((a) => a.contains('up')),
+        isFalse,
+      );
+    });
+
+    test('override 里写入选中的回连地址与池范围', () async {
+      useTempProject(callbackAddr: '192.168.1.3', tunnelPortMin: 29000, tunnelPortMax: 29099);
+      runner
+        ..script('docker', ok())
+        ..script('docker', ok('started'));
+      service.debugHealthResponseOverride = () async =>
+          '{"ok":true,"service":"artex"}';
+      await service.start();
+      final override = File(
+        '${tempDir.path}/docker-compose.override.yml',
+      ).readAsStringSync();
+      expect(override, contains('ARTEX_TUNNEL_PORT_RANGE: "29000-29099"'));
+      expect(override, contains('"192.168.1.3:29000-29099:29000-29099"'));
+    });
+  });
+
+  group('端口预检覆盖隧道池（fix-artex-internal-network-reachability）', () {
+    test('隧道池起始端口被占用时报隧道池专属提示', () async {
+      useTempProject(tunnelPortMin: 29000, tunnelPortMax: 29099);
+      final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(s.close);
+      ArtexConfigStore.instance.setConfigForTesting(
+        ArtexEngineConfig(
+          projectDir: tempDir.path,
+          httpPort: 18787,
+          proxyPort: 18788,
+          tunnelPortMin: s.port,
+          tunnelPortMax: s.port + 99,
+        ),
+      );
+      runner.script('docker', ok());
+      await service.start();
+      expect(service.state.failureKind, ArtexEngineFailureKind.portConflict);
+      expect(service.state.failureDetail, contains('隧道端口池边界'));
+      expect(
+        runner.callsTo('docker').any((a) => a.contains('up')),
+        isFalse,
+      );
+    });
+
+    test('隧道池结束端口被占用同样拦住', () async {
+      useTempProject(tunnelPortMin: 29000, tunnelPortMax: 29099);
+      final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(s.close);
+      ArtexConfigStore.instance.setConfigForTesting(
+        ArtexEngineConfig(
+          projectDir: tempDir.path,
+          httpPort: 18787,
+          proxyPort: 18788,
+          tunnelPortMin: s.port - 99,
+          tunnelPortMax: s.port,
+        ),
+      );
+      runner.script('docker', ok());
+      await service.start();
+      expect(service.state.failureKind, ArtexEngineFailureKind.portConflict);
+      expect(service.state.failureDetail, contains('隧道端口池边界'));
+    });
+  });
+
+  group('host 网络模式识别（design D6）', () {
+    test('up 输出含端口丢弃警告时报定向提示', () async {
+      useTempProject();
+      runner
+        ..script('docker', ok())
+        ..script(
+          'docker',
+          ok(
+            'Container started\n$kHostNetworkDiscardWarning',
+          ),
+        );
+      await service.start();
+      expect(
+        service.state.failureKind,
+        ArtexEngineFailureKind.hostNetworkRejected,
+      );
+      expect(service.state.failure, contains('检测到主机网络模式'));
+      expect(service.state.failureDetail, contains('network_mode'));
     });
   });
 }

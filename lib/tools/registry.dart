@@ -7,11 +7,13 @@ import '../bc_config_shell.dart';
 import '../bc_config_tool.dart';
 import '../folder_compare_tool.dart';
 import '../image_resize_tool.dart';
+import 'agnes_playground/ui/playground_page.dart';
 import 'ai_assistant/ui/ai_assistant_page.dart';
 import 'artex_engine/ui/artex_engine_page.dart';
 import 'ai_video_studio/ui/studio_shell.dart';
 import 'auto_registrar/ui/auto_registrar_main_page.dart';
 import 'notebook/ui/notebook_page.dart';
+import 'novel_manager/ui/novel_manager_page.dart';
 import 'ops_tool/ui/ops_tool_main_page.dart';
 import 'password/ui/password_page.dart';
 import 'private_browser/ui/private_browser_page.dart';
@@ -20,7 +22,7 @@ import 'private_player/ui/private_media_player_page.dart';
 import 'reader/ui/doc_audio_reader_page.dart';
 import 'security_toolbox/ui/security_toolbox_main_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
-import 'toonflow_studio/ui/toonflow_studio_page.dart';
+import 'infinite_canvas/ui/infinite_canvas_studio_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
 import 'vocab_book/ui/vocab_book_page.dart';
@@ -226,6 +228,76 @@ class AiAssistantToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const AiAssistantPage();
 }
 
+class NovelManagerToolDefinition extends ToolDefinition {
+  @override
+  String get id => kToolIdNovelManager;
+  @override
+  String get title => '小说管理器';
+  @override
+  String get subtitle => '小说资产库、网络幂等采集、智能断章导入与短视频联动';
+  @override
+  IconData get icon => Icons.menu_book_rounded;
+  // 归属是 ai 而非 note：分类按内容来源与所有权判定，不按是否调用 AI 模型、
+  // 也不按名称里的「库」「书」字样。小说管理器从外部书站获取内容，经 AI 断章、
+  // 元数据补全与改写续写再加工，产物供短视频工坊消费（ai-video-studio 的
+  // novel-import 即该消费入口）——与 ai 分类下三个内容生产工具是同一条产线的
+  // 工位。note 收的是用户自己产出的文字（笔记本、生词本），这里的内容来源是外部。
+  // 完整判定规则见 specs/tool-category-assignment/spec.md。
+  @override
+  ToolCategory get category => ToolCategory.ai;
+  @override
+  Widget buildPage(BuildContext context) => const NovelManagerPage();
+}
+
+/// Agnes 试炼场。
+///
+/// 独立工具而不是工坊的第八个工序页：工坊侧导航是「工序」（创意孵化→IP 主库
+/// →分镜看板→声音设计→合成交付），按制作顺序前进；试炼场不是一道工序，且
+/// 不该有「未选剧集不可用」那道门——用户常常正是没项目时才要试模型。
+class AgnesPlaygroundToolDefinition extends ToolDefinition {
+  AgnesPlaygroundToolDefinition();
+
+  @override
+  String get id => kToolIdAgnesPlayground;
+  @override
+  String get title => 'Agnes 试炼场';
+  @override
+  String get subtitle => '直连 Agnes 文本/图像/视频，留痕每次调用的提示词、参考图与参数';
+  @override
+  IconData get icon => Icons.science_outlined;
+  @override
+  ToolCategory get category => ToolCategory.ai;
+
+  // 独立窗口：视频任务动辄几分钟，主窗口被其他工具挤占时不该中断等待。
+  @override
+  bool get openInNewWindow => true;
+
+  @override
+  Future<void> openNewWindow() async {
+    try {
+      final windows = await WindowController.getAll();
+      for (final window in windows) {
+        if (window.arguments == kToolIdAgnesPlayground) {
+          await window.show();
+          return;
+        }
+      }
+      final controller = await WindowController.create(
+        WindowConfiguration(
+          arguments: kToolIdAgnesPlayground,
+          hiddenAtLaunch: false,
+        ),
+      );
+      await controller.show();
+    } catch (e) {
+      debugPrint('Failed to open Agnes playground window: $e');
+    }
+  }
+
+  @override
+  Widget buildPage(BuildContext context) => const PlaygroundPage();
+}
+
 class AiVideoStudioToolDefinition extends ToolDefinition {
   AiVideoStudioToolDefinition();
 
@@ -271,26 +343,26 @@ class AiVideoStudioToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const StudioShellPage();
 }
 
-/// Toonflow 漫剧工坊。
+/// 无限画布。
 ///
-/// 嵌入式页面：页面主体是 Docker 生命周期控制台，真正的创作在 Toonflow 自己
-/// 的工作台里完成（用户点「打开工作台」跳浏览器）。给它独立窗口没有意义——
+/// 嵌入式页面：页面主体是 Docker 生命周期控制台，真正的创作在无限画布自己的
+/// 工作台里完成（用户点「打开工作台」跳浏览器）。给它独立窗口没有意义——
 /// 容器日志需要盯着，而工作台本身在浏览器里。
-class ToonflowStudioToolDefinition extends ToolDefinition {
-  ToonflowStudioToolDefinition();
+class InfiniteCanvasStudioToolDefinition extends ToolDefinition {
+  InfiniteCanvasStudioToolDefinition();
 
   @override
-  String get id => kToolIdToonflowStudio;
+  String get id => kToolIdInfiniteCanvas;
   @override
-  String get title => 'Toonflow 漫剧工坊';
+  String get title => '无限画布';
   @override
-  String get subtitle => 'Docker 托管的 Toonflow 工作台，与短视频工坊互传资产';
+  String get subtitle => 'Docker 托管的无限画布工作台，与短视频工坊互传资产';
   @override
   IconData get icon => Icons.auto_awesome_mosaic_outlined;
   @override
   ToolCategory get category => ToolCategory.ai;
   @override
-  Widget buildPage(BuildContext context) => const ToonflowStudioPage();
+  Widget buildPage(BuildContext context) => const InfiniteCanvasStudioPage();
 }
 
 class NotebookToolDefinition extends ToolDefinition {
@@ -314,16 +386,25 @@ class NotebookToolDefinition extends ToolDefinition {
       final windows = await WindowController.getAll();
       for (final window in windows) {
         if (window.arguments == 'notebook') {
+          // 窗口已存在：直接前置。此时它的引擎早已就绪，show() 的
+          // makeKeyAndOrderFront + NSApp.activate 正是用户点了「打开笔记本」
+          // 后预期的结果。
           await window.show();
           return;
         }
       }
       final configuration = WindowConfiguration(
         arguments: 'notebook',
-        hiddenAtLaunch: false,
+        // 创建时不可见：原生 CreateWindow 会在 setIsVisible 的那一刻把窗口
+        // 以 (0,0)/800×600 显示出来，而此刻新引擎一行 Dart 都没跑——用户看到
+        // 的就是「左下角一个黑窗，几十秒后才跳到居中」。改由子窗口自己在启动
+        // 链跑完、首帧可交付后才 show()。兜底与诊断见 lib/main.dart 的
+        // _showNotebookWindowWhenReady()。
+        hiddenAtLaunch: true,
       );
-      final controller = await WindowController.create(configuration);
-      await controller.show();
+      await WindowController.create(configuration);
+      // 这里**不能**再调 controller.show()：那会在引擎启动之前把窗口显示出来，
+      // 正是要消除的那段黑屏。show 由子窗口自己发起。
     } catch (e) {
       debugPrint('Failed to open notebook window: $e');
     }
@@ -518,7 +599,6 @@ class ToolRegistry {
   ToolRegistry._();
 
   static final List<ToolDefinition> tools = <ToolDefinition>[
-    // 隐私空间
     PrivateMediaPlayerToolDefinition(),
     PrivateBrowserToolDefinition(),
     VideoLibraryToolDefinition(),
@@ -537,9 +617,11 @@ class ToolRegistry {
     OpsToolDefinition(),
     AiAssistantToolDefinition(),
     AiVideoStudioToolDefinition(),
-    ToonflowStudioToolDefinition(),
+    AgnesPlaygroundToolDefinition(),
+    InfiniteCanvasStudioToolDefinition(),
     SmartDiskSlimmerToolDefinition(),
     NotebookToolDefinition(),
+    NovelManagerToolDefinition(),
     VocabBookToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),

@@ -16,6 +16,9 @@ void main() {
       expect(c.npmRegistry, 'https://registry.npmmirror.com');
       expect(c.goProxy, 'https://goproxy.cn,direct');
       expect(c.aptMirror, 'mirrors.aliyun.com');
+      expect(c.callbackAddr, isNull);
+      expect(c.tunnelPortMin, 20000);
+      expect(c.tunnelPortMax, 20099);
     });
 
     test('空 JSON 得到默认配置', () {
@@ -30,6 +33,53 @@ void main() {
     test('端口非法时回退默认值而不是抛异常', () {
       expect(ArtexEngineConfig.fromJson({'httpPort': 'abc'}).httpPort, 8787);
       expect(ArtexEngineConfig.fromJson({'httpPort': null}).httpPort, 8787);
+    });
+
+    test('隧道池端口接受字符串形式，非法值回退默认', () {
+      expect(
+        ArtexEngineConfig.fromJson({
+          'tunnelPortMin': '21000',
+          'tunnelPortMax': '21099',
+        }).tunnelPortMin,
+        21000,
+      );
+      expect(
+        ArtexEngineConfig.fromJson({'tunnelPortMin': 'xx'}).tunnelPortMin,
+        20000,
+      );
+      expect(
+        ArtexEngineConfig.fromJson({'tunnelPortMax': null}).tunnelPortMax,
+        20099,
+      );
+    });
+
+    test('旧配置文件（无回连与隧道池字段）读到默认值', () {
+      // 模拟 change 之前的配置文件：只有前 9 个 key。
+      final c = ArtexEngineConfig.fromJson({
+        'projectDir': '/Users/simon/Workspace/github/artex-ymh',
+        'httpPort': 8787,
+        'proxyPort': 8788,
+        'stopOnAppExit': true,
+        'gateOff': true,
+        'npmRegistry': 'r',
+        'goProxy': 'g',
+        'aptMirror': 'a',
+      });
+      expect(c.callbackAddr, isNull);
+      expect(c.tunnelPortMin, 20000);
+      expect(c.tunnelPortMax, 20099);
+    });
+
+    test('callbackAddr 空字符串等同未指定（走自动探测）', () {
+      expect(ArtexEngineConfig.fromJson({'callbackAddr': '  '}).callbackAddr, isNull);
+      expect(ArtexEngineConfig.fromJson({'callbackAddr': ''}).callbackAddr, isNull);
+    });
+
+    test('callbackAddr 有值时原样保留', () {
+      expect(
+        ArtexEngineConfig.fromJson({'callbackAddr': '192.168.1.3'}).callbackAddr,
+        '192.168.1.3',
+      );
     });
 
     test('空字符串字段回退默认值', () {
@@ -57,6 +107,9 @@ void main() {
         npmRegistry: 'r',
         goProxy: 'g',
         aptMirror: 'a',
+        callbackAddr: '10.0.0.5',
+        tunnelPortMin: 21000,
+        tunnelPortMax: 21099,
       );
       final round = ArtexEngineConfig.fromJson(original.toJson());
       expect(round.projectDir, original.projectDir);
@@ -67,6 +120,15 @@ void main() {
       expect(round.npmRegistry, original.npmRegistry);
       expect(round.goProxy, original.goProxy);
       expect(round.aptMirror, original.aptMirror);
+      expect(round.callbackAddr, original.callbackAddr);
+      expect(round.tunnelPortMin, original.tunnelPortMin);
+      expect(round.tunnelPortMax, original.tunnelPortMax);
+    });
+
+    test('callbackAddr 为 null 时往返后仍是 null', () {
+      const original = ArtexEngineConfig();
+      expect(original.callbackAddr, isNull);
+      expect(ArtexEngineConfig.fromJson(original.toJson()).callbackAddr, isNull);
     });
   });
 

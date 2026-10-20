@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_linux
+  charset_converter
   desktop_multi_window
   flutter_secure_storage_linux
   media_kit_video

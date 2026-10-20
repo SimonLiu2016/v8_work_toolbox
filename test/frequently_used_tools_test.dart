@@ -117,13 +117,25 @@ void main() {
       });
     });
 
-    test('AI, note and ops categories hold their migrated tools', () {
-      // ai 分类含 ai-video-studio（2026-10 接入时漏改这条断言，导致它从
-      // 接入起就是红的——全量跑还会因并发把失败推成稳定失败）。
-      // 改为 toSet 与另两类一致：分类成员顺序不是本断言要保证的东西。
+    test('AI, note and ops categories hold exactly their member tools', () {
+      // 成员集合精确匹配：新工具接入或分类迁移后未同步这里，测试立刻红。
+      // 这是 tool-category-assignment 里「归属一致性可被验证」的可执行部分——
+      // 规则本身不可机器判定，但其后果（谁在哪个分类）必须精确可知。
+      //
+      // 历史教训：ai-video-studio 2026-10 接入时漏改这条断言，使它从接入起就是
+      // 红的；novel-manager 接入时漏改 note 一侧，同样红到 2026-10-13 才随它
+      // 迁往 ai 一并修正。两次都是「加了工具没同步断言」。
+      //
+      // 用 toSet：分类成员顺序不是本断言要保证的东西。
       expect(
         ToolRegistry.getByCategory(ToolCategory.ai).map((t) => t.id).toSet(),
-        {'ai-assistant', 'ai-video-studio', 'toonflow-studio'},
+        {
+          'ai-assistant',
+          'ai-video-studio',
+          'agnes-playground',
+          'infinite-canvas',
+          'novel-manager',
+        },
       );
       expect(
         ToolRegistry.getByCategory(ToolCategory.note).map((t) => t.id).toSet(),

@@ -119,28 +119,24 @@ void main() {
       );
     });
 
-    test('Toonflow 工坊目录已登记', () {
-      for (final dir in [AppPaths.toonflowDir, AppPaths.toonflowDataDir]) {
-        expect(
-          AppPaths.allDirs.any((d) => d.path == dir.path),
-          isTrue,
-          reason: '${dir.path} 未登记进 allDirs',
-        );
-      }
-      // toonflowDataDir 必须挂在 root 下：它是 bind mount 的宿主机侧，
-      // 跑到别处去容器就挂了个空目录。
-      expect(AppPaths.toonflowDataDir.parent.path, AppPaths.root.path);
+    test('无限画布工具目录已登记', () {
+      expect(
+        AppPaths.allDirs.any((d) => d.path == AppPaths.infiniteCanvasDir.path),
+        isTrue,
+        reason: '${AppPaths.infiniteCanvasDir.path} 未登记进 allDirs',
+      );
+      // 必须挂在 root 下：override 备份与归集 inbox 都落在里面。
+      expect(AppPaths.infiniteCanvasDir.parent.path, AppPaths.root.path);
     });
 
-    test('Toonflow 的 settings.json 绝不登记进 allFiles', () {
-      // 那个文件保存 Toonflow 自己的供应商密钥（明文）。allFiles 的语义是
-      // 「本软件生成并管理的文件」——登记它会诱导后续代码去碰它。
-      final settingsPath =
-          p.join(AppPaths.toonflowDataDir.path, 'settings.json');
+    test('无限画布没有数据目录（数据全在浏览器本地）', () {
+      // 无限画布的 docker 容器是 nginx 静态服务器，密钥、画布、素材与生成
+      // 记录全在浏览器 IndexedDB 里——没有东西可以 bind mount。
+      // 这条断言钉住「不再有第二个 toonflowDataDir」。
       expect(
-        AppPaths.allFiles.any((f) => f.path == settingsPath),
+        AppPaths.allDirs.any((d) => d.path.endsWith('_data')),
         isFalse,
-        reason: 'settings.json 不该被本软件管理',
+        reason: '数据目录已随 Toonflow 移除',
       );
     });
 

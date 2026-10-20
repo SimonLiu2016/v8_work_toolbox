@@ -4,9 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:V8WorkToolbox/services/app_paths.dart';
-import 'package:V8WorkToolbox/services/keychain_service.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/models/studio_models.dart';
-import 'package:V8WorkToolbox/tools/ai_video_studio/services/ai_constraint_engine.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/image_gen_adapter.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/prompt_assembler.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/studio_project_manager.dart';
@@ -78,11 +76,90 @@ void main() {
       final body = jsonDecode(capturedPostReq!.body) as Map<String, dynamic>;
       expect(body['model'], 'agnes-image-2.5-flash');
       expect(body['prompt'], '向日葵');
-      // 验证未传递多余的容易引起中转站报错的顶层字段
-      expect(body.containsKey('extra_body'), isFalse);
-      expect(body.containsKey('size'), isFalse);
+      // Agnes 图像走档位式 size + ratio，不走 OpenAI 的 WIDTHxHEIGHT——
+      // 「不得包含 size」是中转站时代的旧断言，与 Agnes 官方契约相反
+      // （archived: agnes-provider-preset-and-async-video-lifecycle 任务 6.3）。
+      expect(body['size'], isNotEmpty);
+      expect(body['ratio'], isNotEmpty);
+      expect(body['extra_body'], isA<Map>());
       expect(tempOut.existsSync(), isTrue);
       tempOut.deleteSync();
+    });
+
+    test('SystemAiImageAdapter 即使传入 negativePrompt 也必须剔除 negative_prompt（Agnes 图像白名单）', () async {
+      http.Request? capturedAgnesReq;
+      final agnesAdapter = SystemAiImageAdapter(
+        baseUrl: 'http://119.29.249.154:3356',
+        model: 'agnes-image-2.5-flash',
+        apiKey: 'sk-mock-key',
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            capturedAgnesReq = req;
+            return http.Response(
+              '{"data":[{"url":"https://mock.cdn/agnes_turnaround.png"}]}',
+              200,
+            );
+          }
+          if (req.method == 'GET') {
+            return http.Response.bytes(List.filled(200, 1), 200);
+          }
+          return http.Response('{}', 404);
+        },
+      );
+
+      final tempOutAgnes = File('${Directory.systemTemp.path}/test_agnes_turnaround_${DateTime.now().millisecondsSinceEpoch}.png');
+      await agnesAdapter.generate(ImageGenRequest(
+        prompt: 'character turnaround sheet, front view, side view, back view',
+        negativePrompt: 'blurry, bad anatomy, deformed, noisy background',
+        shotNumber: 1,
+        outputFile: tempOutAgnes,
+      ));
+
+      expect(capturedAgnesReq, isNotNull);
+      final agnesBody = jsonDecode(capturedAgnesReq!.body) as Map<String, dynamic>;
+      expect(agnesBody.containsKey('negative_prompt'), isFalse,
+          reason: 'Agnes 顶层不得包含 negative_prompt');
+      final extraBody = agnesBody['extra_body'] as Map<String, dynamic>;
+      expect(extraBody.containsKey('negative_prompt'), isFalse,
+          reason: 'Agnes extra_body 不得包含 negative_prompt');
+      expect(tempOutAgnes.existsSync(), isTrue);
+      tempOutAgnes.deleteSync();
+
+      // 对比验证：非 Agnes 模型仍然包含 negative_prompt
+      http.Request? capturedGenericReq;
+      final genericAdapter = SystemAiImageAdapter(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'dall-e-3',
+        apiKey: 'sk-mock-key',
+        httpFn: (req) async {
+          if (req.method == 'POST') {
+            capturedGenericReq = req;
+            return http.Response(
+              '{"data":[{"url":"https://mock.cdn/generic_img.png"}]}',
+              200,
+            );
+          }
+          if (req.method == 'GET') {
+            return http.Response.bytes(List.filled(200, 1), 200);
+          }
+          return http.Response('{}', 404);
+        },
+      );
+
+      final tempOutGeneric = File('${Directory.systemTemp.path}/test_generic_${DateTime.now().millisecondsSinceEpoch}.png');
+      await genericAdapter.generate(ImageGenRequest(
+        prompt: 'character concept',
+        negativePrompt: 'blurry, low quality',
+        shotNumber: 1,
+        outputFile: tempOutGeneric,
+      ));
+
+      expect(capturedGenericReq, isNotNull);
+      final genericBody = jsonDecode(capturedGenericReq!.body) as Map<String, dynamic>;
+      expect(genericBody['negative_prompt'], 'blurry, low quality',
+          reason: '非 Agnes 模型需保留 negative_prompt');
+      expect(tempOutGeneric.existsSync(), isTrue);
+      tempOutGeneric.deleteSync();
     });
 
     test('downloadImageFileWithRetry 支持在网络连接重置时自动重试', () async {
@@ -111,24 +188,35 @@ void main() {
       var callCount = 0;
       final adapter = AgnesVideoAdapter(
         apiKey: 'test-key',
-        baseUrl: 'http://119.29.249.154:3356',
+        baseUrl: 'https://api.agnes-ai.cn/v1',
         model: 'agnes-video-2.5-flash',
         httpFn: (req) async {
           callCount++;
           if (req.method == 'POST') {
-            final body = jsonDecode((req as http.Request).body) as Map<String, dynamic>;
-            expect(body.containsKey('size'), isFalse, reason: 'Agnes 视频请求不得包含非法 size 参数');
+            final body = jsonDecode(req.body) as Map<String, dynamic>;
+            // Flash 的 size 必须固定 "720P"——文档明文的硬校验。
+            // 旧实现不传 size，靠协议默认；那是没读文档时的写法。
+            expect(body['size'], '720P');
             expect(body['mode'], 'keyframe');
             expect(body['aspect_ratio'], '9:16');
             expect(body['seconds'], '5');
             expect(body['first_frame'], startsWith('data:image/png;base64,'));
-            return http.Response('{"id": "task_agnes_999"}', 200);
+            return http.Response('{"video_id": "video_agnes_999"}', 200);
           }
-          if (req.method == 'GET' && req.url.path.contains('/v1/videos/task_agnes_999')) {
-            return http.Response('{"status": "completed", "url": "https://mock.cdn/agnes.mp4"}', 200);
+          // 主查询路径是 /agnesapi（文档推荐），且必须带 model_name——
+          // keyframe 模式不带会查不到。
+          if (req.method == 'GET' && req.url.path == '/agnesapi') {
+            expect(req.url.queryParameters['model_name'], 'agnes-video-2.5-flash');
+            return http.Response(
+              '{"status": "completed", "url": "https://mock.cdn/agnes.mp4"}',
+              200,
+            );
           }
-          if (req.url.path.endsWith('.mp4')) {
-            return http.Response.bytes([0, 0, 0, 24, 102, 116, 121, 112], 200);
+          if (req.url.host == 'mock.cdn') {
+            return http.Response.bytes(
+              List<int>.filled(2048, 0),
+              200,
+            );
           }
           return http.Response('{}', 404);
         },
@@ -204,7 +292,10 @@ void main() {
       );
 
       expect(updated.worldview, '架空民国异能都市，风起云涌。');
-      expect(updated.styleTokens, 'cinematic 90s hong kong movie tone, 8k');
+      // createSeries 在 styleTokens 为空时会填 productionType 的默认风格
+      // （drama → 一长串电影感 token），importNovelProject 是**追加**而不是
+      // 覆盖。所以这里断言"导入的 token 是后缀"而不是"整体相等"。
+      expect(updated.styleTokens, endsWith('cinematic 90s hong kong movie tone, 8k'));
       expect(updated.memories.length, 2);
       expect(updated.memories.first.hook, '一声枪响划破黑夜，子弹直逼眉心！');
 

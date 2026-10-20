@@ -59,6 +59,15 @@ enum ArtexEngineFailureKind {
   /// 容器启动或停止过程本身失败。
   composeFailed('容器操作失败'),
 
+  /// 找不到可用于内网回连的宿主机地址（所有网卡断开或探测失败）。
+  callbackAddrMissing('找不到回连地址'),
+
+  /// 探测到多个候选回连地址，需要用户选一个。
+  callbackAddrAmbiguous('需要选择回连地址'),
+
+  /// 上游或用户的 compose 配置用了 host 网络模式，端口发布被丢弃。
+  hostNetworkRejected('检测到主机网络模式'),
+
   /// 其他未分类错误。
   unknown('未知错误');
 
@@ -76,6 +85,7 @@ class ArtexEngineState {
     this.failureKind,
     this.failureDetail,
     this.containerLogTail = const <String>[],
+    this.callbackCandidates = const <String>[],
   });
 
   /// 初始状态。
@@ -95,6 +105,10 @@ class ArtexEngineState {
   /// 失败时附带的容器日志尾部，供定位。
   final List<String> containerLogTail;
 
+  /// 探测到的候选回连地址（[ArtexEngineFailureKind.callbackAddrAmbiguous]
+  /// 时非空）。UI 呈现给用户选择，选中的值写回配置。
+  final List<String> callbackCandidates;
+
   bool get isRunning => status == ArtexEngineStatus.running;
   bool get isBusy =>
       status == ArtexEngineStatus.starting ||
@@ -110,6 +124,7 @@ class ArtexEngineState {
     String? failure,
     String? failureDetail,
     List<String>? containerLogTail,
+    List<String>? callbackCandidates,
     bool clearFailure = false,
   }) {
     return ArtexEngineState(
@@ -121,6 +136,7 @@ class ArtexEngineState {
       failure: clearFailure ? null : (failure ?? this.failure),
       failureDetail: clearFailure ? null : (failureDetail ?? this.failureDetail),
       containerLogTail: containerLogTail ?? this.containerLogTail,
+      callbackCandidates: callbackCandidates ?? this.callbackCandidates,
     );
   }
 
@@ -129,5 +145,6 @@ class ArtexEngineState {
     status: ArtexEngineStatus.idle,
     clearFailure: true,
     containerLogTail: const <String>[],
+    callbackCandidates: const <String>[],
   );
 }

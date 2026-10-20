@@ -706,6 +706,46 @@ abstract final class FfmpegComposer {
         .replaceAll("'", "\\'");
   }
 
+  /// 从视频中抽取最后一帧作为静态图像。
+  ///
+  /// 用于首尾帧接力：将前一个镜头的末尾帧抽取出来，作为下一个同场景镜头的首帧
+  /// [first_frame]，确保镜头切接时的画面空间与角色状态无缝连续。
+  static Future<File?> extractLastFrame({
+    required File videoFile,
+    required File outputFile,
+  }) async {
+    if (!await videoFile.exists()) return null;
+    await outputFile.parent.create(recursive: true);
+    final result = await runRaw(
+      args: [
+        '-y',
+        '-sseof', '-0.1',
+        '-i', videoFile.path,
+        '-frames:v', '1',
+        '-q:v', '2',
+        outputFile.path,
+      ],
+    );
+    if (result.success && await outputFile.exists()) {
+      return outputFile;
+    }
+    // 若 -sseof -0.1 失败，尝试倒数一秒抽帧
+    final fallback = await runRaw(
+      args: [
+        '-y',
+        '-sseof', '-1',
+        '-i', videoFile.path,
+        '-update', '1',
+        '-q:v', '2',
+        outputFile.path,
+      ],
+    );
+    if (fallback.success && await outputFile.exists()) {
+      return outputFile;
+    }
+    return null;
+  }
+
   static Future<void> _deleteQuietly(File file) async {
     try {
       if (await file.exists()) await file.delete();

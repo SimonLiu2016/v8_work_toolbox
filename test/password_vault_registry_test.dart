@@ -48,6 +48,44 @@ void main() {
       expect(widget, isA<Widget>());
     });
   });
+
+  group('Agnes 试炼场注册', () {
+    test('注册为 agnes-playground 且分类为 ai', () {
+      final tool = ToolRegistry.findById(kToolIdAgnesPlayground);
+      expect(tool, isNotNull);
+      expect(tool!.title, 'Agnes 试炼场');
+      expect(tool.category, ToolCategory.ai);
+      expect(tool.openInNewWindow, isTrue);
+    });
+
+    test('出现在公开工具列表（全部工具视图可见）', () {
+      final public = ToolRegistry.publicTools;
+      expect(public.any((t) => t.id == kToolIdAgnesPlayground), isTrue);
+    });
+
+    test('全局搜索默认可搜到', () {
+      final results = ToolRegistry.search('Agnes');
+      expect(results.any((t) => t.id == kToolIdAgnesPlayground), isTrue);
+    });
+
+    test('全局搜索按标题匹配', () {
+      final results = ToolRegistry.search('试炼场');
+      expect(results.any((t) => t.id == kToolIdAgnesPlayground), isTrue);
+    });
+
+    test('ai 分类下包含试炼场工具', () {
+      final aiTools = ToolRegistry.getByCategory(ToolCategory.ai);
+      expect(aiTools.any((t) => t.id == kToolIdAgnesPlayground), isTrue);
+    });
+
+    test('buildPage 返回非空 Widget', () {
+      final tool = ToolRegistry.findById(kToolIdAgnesPlayground)!;
+      final widget = tool.buildPage(
+        _FakeBuildContext(),
+      );
+      expect(widget, isA<Widget>());
+    });
+  });
 }
 
 class _FakeBuildContext extends BuildContext {

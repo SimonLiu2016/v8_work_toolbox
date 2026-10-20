@@ -92,5 +92,36 @@ void main() {
       expect(c.failureDetail, isNull);
       expect(c.containerLogTail, isEmpty);
     });
+
+    test('cleared() 一并清掉回连候选列表', () {
+      const s = ArtexEngineState(
+        status: ArtexEngineStatus.failed,
+        failureKind: ArtexEngineFailureKind.callbackAddrAmbiguous,
+        failure: 'x',
+        callbackCandidates: ['192.168.1.3', '10.0.0.5'],
+      );
+      expect(s.cleared().callbackCandidates, isEmpty);
+    });
+
+    test('回连候选列表可经 copyWith 带过去', () {
+      const s = ArtexEngineState.initial();
+      final withCandidates = s.copyWith(
+        callbackCandidates: const ['192.168.1.3'],
+      );
+      expect(withCandidates.callbackCandidates, ['192.168.1.3']);
+    });
+  });
+
+  group('新增失败类别有面向用户的标签', () {
+    test('回连地址相关的三个类别都有非空 label', () {
+      // UI 直接把 label 显示给用户，空标签等于显示空白。
+      for (final kind in const [
+        ArtexEngineFailureKind.callbackAddrMissing,
+        ArtexEngineFailureKind.callbackAddrAmbiguous,
+        ArtexEngineFailureKind.hostNetworkRejected,
+      ]) {
+        expect(kind.label.trim(), isNotEmpty, reason: '$kind 缺少 label');
+      }
+    });
   });
 }

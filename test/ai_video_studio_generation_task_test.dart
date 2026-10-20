@@ -134,6 +134,211 @@ void main() {
       )),
     );
   });
+
+  test('VideoGenTask 提交时携带分镜提示词 promptZh 上下文', () async {
+    final series = await manager.createSeries(name: '雨夜');
+    final created = await manager.createEpisode(seriesId: series.id);
+    final framesDir = manager.episodeFramesDir(series.id, created.episode.id);
+    final frameFile = File(p.join(framesDir.path, 'shot_1.png'))..createSync(recursive: true);
+    frameFile.writeAsBytesSync([1, 2, 3]);
+
+    final episode = created.episode.copyWith(
+      shots: [
+        shotOf(1).copyWith(
+          framePath: 'shot_1.png',
+          actionZh: '暴雨夜主角拔剑警惕四方',
+          assembledPrompt: 'ancient warrior drawing sword in heavy rain',
+        ),
+      ],
+    );
+    await manager.saveEpisode(episode);
+
+    VideoGenRequest? capturedRequest;
+    final spyAdapter = _CapturingVideoAdapter((req) => capturedRequest = req);
+
+    final task = VideoGenTask(
+      taskId: 't-vid-prompt',
+      seriesId: series.id,
+      episodeId: episode.id,
+      shotNumber: 1,
+      adapter: spyAdapter,
+    );
+    await task.run((_) {});
+
+    expect(capturedRequest, isNotNull);
+    expect(capturedRequest!.promptZh, contains('暴雨夜主角拔剑警惕四方'));
+  });
+
+  test('VideoGenTask 提交时携带对白台词发声与口型声画一体提示词', () async {
+    final series = await manager.createSeries(name: '对话测试');
+    final created = await manager.createEpisode(seriesId: series.id);
+    final framesDir = manager.episodeFramesDir(series.id, created.episode.id);
+    final frameFile = File(p.join(framesDir.path, 'shot_1.png'))..createSync(recursive: true);
+    frameFile.writeAsBytesSync([1, 2, 3]);
+
+    final episode = created.episode.copyWith(
+      shots: [
+        shotOf(1).copyWith(
+          framePath: 'shot_1.png',
+          actionZh: '姜七夜撕下鸡腿大嚼，抬刀轻挑指向三楼余小白',
+          dialogue: '余小白，我迟早得叫你姐夫。',
+        ),
+      ],
+    );
+    await manager.saveEpisode(episode);
+
+    VideoGenRequest? capturedRequest;
+    final spyAdapter = _CapturingVideoAdapter((req) => capturedRequest = req);
+
+    final task = VideoGenTask(
+      taskId: 't-vid-dialogue-prompt',
+      seriesId: series.id,
+      episodeId: episode.id,
+      shotNumber: 1,
+      adapter: spyAdapter,
+    );
+    await task.run((_) {});
+
+    expect(capturedRequest, isNotNull);
+    expect(capturedRequest!.promptZh, contains('余小白，我迟早得叫你姐夫。'));
+    expect(capturedRequest!.promptZh, contains('姜七夜撕下鸡腿大嚼'));
+    expect(capturedRequest!.promptZh, contains('口型与发音自然对齐'));
+  });
+
+  test('StudioProjectManager.updateShot 原子更新单个分镜，在并发修改时互不丢失', () async {
+    final series = await manager.createSeries(name: '并发更新测试');
+    final created = await manager.createEpisode(seriesId: series.id);
+    final episode = created.episode.copyWith(
+      shots: [
+        shotOf(1),
+        shotOf(2),
+      ],
+    );
+    await manager.saveEpisode(episode);
+
+    await Future.wait([
+      manager.updateShot(series.id, episode.id, 1, (s) => s.copyWith(framePath: 'shot_1.png', status: ShotGenerationStatus.done)),
+      manager.updateShot(series.id, episode.id, 2, (s) => s.copyWith(framePath: 'shot_2.png', status: ShotGenerationStatus.done)),
+    ]);
+
+    final reloaded = manager.readEpisode(series.id, episode.id)!;
+    expect(reloaded.shots[0].framePath, 'shot_1.png');
+    expect(reloaded.shots[0].status, ShotGenerationStatus.done);
+    expect(reloaded.shots[1].framePath, 'shot_2.png');
+    expect(reloaded.shots[1].status, ShotGenerationStatus.done);
+  });
+
+  test(r'_healEpisodeMediaIfNeeded 同时自动识别 shot_${number}.png 与 ${number}.png 恢复 framePath', () async {
+    final series = await manager.createSeries(name: '自愈测试');
+    final created = await manager.createEpisode(seriesId: series.id);
+    final episode = created.episode.copyWith(
+      shots: [
+        shotOf(1),
+        shotOf(2),
+      ],
+    );
+    await manager.saveEpisode(episode);
+
+    final framesDir = manager.episodeFramesDir(series.id, episode.id);
+    final file1 = File(p.join(framesDir.path, 'shot_1.png'))..createSync(recursive: true);
+    file1.writeAsBytesSync(List.filled(2048, 1));
+
+    final file2 = File(p.join(framesDir.path, '2.png'))..createSync(recursive: true);
+    file2.writeAsBytesSync(List.filled(2048, 2));
+
+    final healed = manager.readEpisode(series.id, episode.id)!;
+    expect(healed.shots[0].framePath, 'shot_1.png');
+    expect(healed.shots[0].status, ShotGenerationStatus.done);
+    expect(healed.shots[1].framePath, '2.png');
+    expect(healed.shots[1].status, ShotGenerationStatus.done);
+  });
+
+  test('两个 ImageGenTask 并发执行落盘，后完成的任务不会冲掉先完成任务的 framePath', () async {
+    final series = await manager.createSeries(name: '并发生图测试');
+    final created = await manager.createEpisode(seriesId: series.id);
+    final episode = created.episode.copyWith(
+      shots: [
+        shotOf(1),
+        shotOf(2),
+      ],
+    );
+    await manager.saveEpisode(episode);
+
+    final fastAdapter = const LocalStubImageAdapter();
+    final slowAdapter = _DelayingImageAdapter(const Duration(milliseconds: 100));
+
+    final task1 = ImageGenTask(
+      taskId: 'img-1',
+      seriesId: series.id,
+      episodeId: episode.id,
+      shotNumber: 1,
+      adapter: slowAdapter,
+    );
+
+    final task2 = ImageGenTask(
+      taskId: 'img-2',
+      seriesId: series.id,
+      episodeId: episode.id,
+      shotNumber: 2,
+      adapter: fastAdapter,
+    );
+
+    await Future.wait([
+      task1.run((_) {}),
+      task2.run((_) {}),
+    ]);
+
+    final reloaded = manager.readEpisode(series.id, episode.id)!;
+    expect(reloaded.shots[0].framePath, 'shot_1.png');
+    expect(reloaded.shots[0].status, ShotGenerationStatus.done);
+    expect(reloaded.shots[1].framePath, 'shot_2.png');
+    expect(reloaded.shots[1].status, ShotGenerationStatus.done);
+  });
+}
+
+class _DelayingImageAdapter implements ImageGenAdapter {
+  final Duration delay;
+  const _DelayingImageAdapter(this.delay);
+
+  @override
+  String get id => 'delaying';
+  @override
+  String get label => 'delaying';
+  @override
+  Future<bool> isAvailable() async => true;
+  @override
+  Future<File> generate(ImageGenRequest request) async {
+    await Future.delayed(delay);
+    await const LocalStubImageAdapter().generate(request);
+    return request.outputFile;
+  }
+}
+
+/// 抓取请求体的测试适配器。
+class _CapturingVideoAdapter implements VideoGenAdapter {
+  final void Function(VideoGenRequest request) onCaptured;
+
+  _CapturingVideoAdapter(this.onCaptured);
+
+  @override
+  String get id => 'capturing-video';
+  @override
+  String get label => 'capturing-video';
+  @override
+  bool get requiresApiKey => false;
+  @override
+  Future<bool> isAvailable() async => true;
+  @override
+  Future<File> generateVideo(
+    VideoGenRequest request, {
+    void Function(double progress)? onProgress,
+  }) async {
+    onCaptured(request);
+    await request.outputFile.create(recursive: true);
+    await request.outputFile.writeAsBytes([0, 0, 0]);
+    onProgress?.call(1);
+    return request.outputFile;
+  }
 }
 
 /// 测试用的分镜工厂：只需要能落盘的最小合法分镜。

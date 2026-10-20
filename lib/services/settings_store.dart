@@ -46,6 +46,30 @@ class SettingsStore {
   }
 
   // -------------------------------------------------------------------------
+  // AI 视频工坊（AI Video Studio）任务队列配置
+  // -------------------------------------------------------------------------
+
+  /// 视频工坊任务队列最大并发数（默认 2，可配 1-5）
+  int get studioTaskMaxConcurrency {
+    final raw = _appConfig['studioTaskMaxConcurrency'];
+    if (raw is int && raw >= 1 && raw <= 5) return raw;
+    if (raw is String) {
+      final parsed = int.tryParse(raw);
+      if (parsed != null && parsed >= 1 && parsed <= 5) return parsed;
+    }
+    return 2;
+  }
+
+  Future<void> setStudioTaskMaxConcurrency(int value) async {
+    _appConfig['studioTaskMaxConcurrency'] = value.clamp(1, 5);
+    await _saveAppConfig();
+  }
+
+  set studioTaskMaxConcurrency(int value) {
+    setStudioTaskMaxConcurrency(value);
+  }
+
+  // -------------------------------------------------------------------------
   // 本地词典桥（local-dictionary-bridge）配置
   // -------------------------------------------------------------------------
 
@@ -425,6 +449,40 @@ class SettingsStore {
         return byCount != 0 ? byCount : a.key.compareTo(b.key);
       });
     return entries.take(limit).map((e) => e.key).toList(growable: false);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 云端视频任务轮询预算
+  //
+  // 视频生成是异步的：创建 → 排队 → 生成 → 查询。排队与生成是两个不同的瓶颈，
+  // 合成一个固定超时会让用户无法针对实际卡住的那段调整等待时间。默认排队
+  // 10 分钟、生成 15 分钟——Agnes 不公开生成耗时区间，这两个值是经验默认值
+  // 而非文档承诺，所以必须可调。
+  // ---------------------------------------------------------------------------
+
+  static const Duration defaultVideoQueueBudget = Duration(minutes: 10);
+  static const Duration defaultVideoGenerateBudget = Duration(minutes: 15);
+
+  Duration get videoQueueBudget {
+    final ms = _appConfig['videoQueueBudgetMs'] as int?;
+    if (ms == null || ms <= 0) return defaultVideoQueueBudget;
+    return Duration(milliseconds: ms);
+  }
+
+  Duration get videoGenerateBudget {
+    final ms = _appConfig['videoGenerateBudgetMs'] as int?;
+    if (ms == null || ms <= 0) return defaultVideoGenerateBudget;
+    return Duration(milliseconds: ms);
+  }
+
+  Future<void> setVideoQueueBudget(Duration value) async {
+    _appConfig['videoQueueBudgetMs'] = value.inMilliseconds;
+    await _saveAppConfig();
+  }
+
+  Future<void> setVideoGenerateBudget(Duration value) async {
+    _appConfig['videoGenerateBudgetMs'] = value.inMilliseconds;
+    await _saveAppConfig();
   }
 
   HotKeyConfig getHotKeyConfig() {

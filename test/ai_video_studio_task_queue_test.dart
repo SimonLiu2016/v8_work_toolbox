@@ -457,6 +457,37 @@ void main() {
       final task = queue.tasks.firstWhere((t) => t.id == id);
       expect(task.status, StudioTaskStatus.cancelled);
     });
+
+    test('tasksForShot 严格排除 segment 任务，防止单镜误判转圈', () {
+      // 入队一个 shotNumber 为 1 的片段视频任务
+      queue.enqueue(
+        kind: StudioTaskKind.segment,
+        shotNumber: 1,
+        label: '片段 1 视频',
+        runner: _FakeRunner(
+          taskId: 'seg-1',
+          body: () async => 'seg-1.mp4',
+        ),
+      );
+      // 入队一个分镜 1 关键帧任务
+      queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: '分镜 1 关键帧',
+        runner: _FakeRunner(
+          taskId: 'frame-1',
+          body: () async => 'frame-1.png',
+        ),
+      );
+
+      final shotTasks = queue.tasksForShot(1);
+      expect(shotTasks.length, 1, reason: 'tasksForShot 只能匹配分镜级任务，不应返回片段任务');
+      expect(shotTasks.first.kind, StudioTaskKind.image);
+
+      final segTasks = queue.tasksForSegment('seg-1');
+      expect(segTasks.length, 1);
+      expect(segTasks.first.kind, StudioTaskKind.segment);
+    });
   });
 }
 

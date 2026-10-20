@@ -15,7 +15,7 @@ dependencies:
   yaml: ^3.1.0
   csv: ^6.0.0
   path: ^1.9.0
-  archive: ^4.0.7
+  archive: ^4.0.9
   aes256gcm: ^1.0.1
   crypto: ^3.0.3
   encrypt: ^5.0.3
@@ -44,12 +44,18 @@ dependencies:
   highlight: ^0.7.0
   desktop_multi_window: ^0.3.1
   window_manager: ^0.5.2
+  # 笔记本独立窗口按屏幕可见工作区计算尺寸（window_manager 的 center() 用光标
+  # 所在屏、setBounds 用 screens[0]，两条路径基准不一致，故自行取显示器）。
+  # 版本须与 window_manager 0.5.2 自身的要求（^0.2.2）对齐，否则解析失败。
+  screen_retriever: ^0.2.2
   flutter_svg: ^2.3.0
   appflowy_editor: ^6.2.0
   provider: ^6.1.2
   mailer: ^6.1.2
   cron: ^0.5.1
   sqflite: ^2.4.1
+  html: ^0.15.7
+  charset_converter: ^2.3.0
 #  app_shortcuts:
 #    path: packages/app_shortcuts
 

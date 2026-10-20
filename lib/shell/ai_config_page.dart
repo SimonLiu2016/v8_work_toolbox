@@ -11,6 +11,32 @@ import 'ai_log_dialog.dart';
 import 'mcp_tool_inventory_view.dart';
 import '../tools/dola_pool/ui/dola_account_pool_panel.dart';
 
+/// Agnes 供应商预设值。
+///
+/// 型号集中在这一处而不是散在 chip 回调里：Agnes 的上下架比本项目发版更频繁，
+/// 散落时每次更新都要在 UI 代码里找字符串。模型清单来自官方文档
+/// （https://www.agnes-ai.cn/zh-Hans/docs），不是猜的。
+///
+/// 预填只覆盖「该供应商确实在售」的型号。曾经的预设填过中转站地址与
+/// 无关的文本模型，用户点一下还要手工纠正——那比不提供预设更糟。
+abstract final class AgnesPreset {
+  /// 中国站 Base URL。官方文档指定的唯一地址。
+  static const String baseUrl = 'https://api.agnes-ai.cn/v1';
+
+  /// 文本模型（对话槽位）。
+  static const String textModels = 'agnes-2.5-flash, agnes-2.5-pro, agnes-3.0-flash, agnes-3.0-pro';
+
+  /// 图像模型（图像槽位）。三档同族，参数一致，见 media_capability.dart。
+  static const String imageModels =
+      'agnes-image-2.0-flash, agnes-image-2.1-flash, agnes-image-2.5-flash';
+
+  /// 视频模型（视频槽位）。标准与 Flash 两档，限制不同，按需选。
+  static const String videoModels = 'agnes-video-2.5, agnes-video-2.5-flash';
+
+  /// 供应商显示名。
+  static const String displayName = 'Agnes';
+}
+
 class AiConfigPage extends StatefulWidget {
   const AiConfigPage({super.key});
 
@@ -1291,22 +1317,22 @@ class _AiConfigPageState extends State<AiConfigPage>
                           color: context.accentText,
                         ),
                         label: const Text(
-                          'Agnes / 中转站 (视/图多模态)',
+                          'Agnes',
                           style: TextStyle(fontSize: 11),
                         ),
                         onPressed: () {
                           setDialogState(() {
-                            nameCtrl.text = 'Agnes (中转站)';
+                            nameCtrl.text = AgnesPreset.displayName;
                             protocol = AiProtocolType.agnes;
-                            if (urlCtrl.text.isEmpty || urlCtrl.text.contains('openai.com')) {
-                              urlCtrl.text = 'http://119.29.249.154:3356';
+                            // 只在空着或还指向别家默认地址时才覆盖——用户可能
+                            // 正在填自建网关，那个地址比预设值更该保留。
+                            if (urlCtrl.text.isEmpty ||
+                                urlCtrl.text.contains('openai.com')) {
+                              urlCtrl.text = AgnesPreset.baseUrl;
                             }
-                            modelsCtrl.text =
-                                'deepseek-chat, gpt-4o-mini';
-                            imageModelsCtrl.text =
-                                'agnes-image-2.5-flash';
-                            videoModelsCtrl.text =
-                                'agnes-video-2.5-flash';
+                            modelsCtrl.text = AgnesPreset.textModels;
+                            imageModelsCtrl.text = AgnesPreset.imageModels;
+                            videoModelsCtrl.text = AgnesPreset.videoModels;
                           });
                         },
                       ),

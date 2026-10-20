@@ -6,16 +6,20 @@
 /// 首次使用不得出现"功能不可用"提示。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 import '../../../services/ai_config_store.dart';
 import '../../../services/ai_logger.dart';
 import '../../../services/app_http_client.dart';
 import '../../../services/keychain_service.dart';
+import 'video_task_ledger.dart';
 import '../../../services/media_capability.dart';
 
 /// 一次关键帧生成请求。
@@ -94,6 +98,54 @@ abstract interface class ImageGenAdapter {
 /// HTTP 后端签名，便于测试注入（不引入真实网络）。
 typedef ImageHttpFn = Future<http.Response> Function(http.Request request);
 
+/// 记一次远端图像调用。
+///
+/// **为什么图像也要留痕**（spec: 无任务标识的远端调用也留记录）：图像接口
+/// 是同步的、不返回任务 ID，所以没有"轮询到完成"那一刻可挂。但用户依然
+/// 付了费、依然想知道"我昨天让哪个模型画了什么"——提示词与产出路径是
+/// 唯一的线索。
+///
+/// `remoteTaskId` 传空串：同步接口没有任务标识，MUST NOT 伪造。台账的
+/// 去重键是 localId，所以多条空 ID 的记录互不覆盖。
+///
+/// 失败不抛：记录是附加价值，不该让一次成功生成因为记不上账而失败。
+Future<void> recordImageCall({
+  required String? providerId,
+  required String? model,
+  required String prompt,
+  required String outputPath,
+  int? shotNumber,
+  String? seriesId,
+  String? episodeId,
+  List<String> referenceImages = const [],
+}) async {
+  try {
+    await VideoTaskLedger.instance.record(
+      providerId: providerId ?? '',
+      adapterId: 'image-adapter',
+      model: model ?? '',
+      remoteTaskId: '',
+      seriesId: seriesId ?? '',
+      episodeId: episodeId ?? '',
+      segmentId: '',
+      shotNumber: shotNumber,
+      label: shotNumber != null ? '分镜 $shotNumber 关键帧' : '关键帧生成',
+      targetPath: outputPath,
+      localId: 'img_${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
+      prompt: prompt.trim().isEmpty ? null : prompt.trim(),
+      requestSnapshot: <String, dynamic>{
+        'channel': 'image',
+        'providerId': providerId ?? '',
+        'model': model ?? '',
+        'prompt': prompt.trim(),
+        'referencePaths': referenceImages,
+      },
+    );
+  } catch (e) {
+    debugPrint('[ImageGen] 记录调用失败: $e');
+  }
+}
+
 /// 稳健图像文件下载器：使用独立短连接、标准浏览器标头与自动指数退避重试，
 /// 规避云存储 CDN（如腾讯云 COS、阿里云 OSS 等）偶发的 TCP RST、Connection reset 与握手超时。
 Future<File> downloadImageFileWithRetry({
@@ -155,6 +207,87 @@ Future<File> downloadImageFileWithRetry({
   }
 
   throw StateError('下载生成图失败 (重试 $maxRetries 次后均异常): $lastError');
+}
+
+/// 执行带自动指数退避重试的图像 API 请求。
+///
+/// 针对以下暂态错误自动重试（最多 [maxRetries] 次）：
+/// 1. HTTP 429 (Rate Limit / Too Many Requests)
+/// 2. HTTP 5xx (500, 502, 503, 504 服务端暂时不可用)
+/// 3. [TimeoutException]、[SocketException]、[http.ClientException]
+Future<http.Response> sendImageRequestWithRetry({
+  required Future<http.Response> Function() sendFn,
+  String providerName = 'ImageGenAdapter',
+  int maxRetries = 3,
+  Duration baseDelay = const Duration(milliseconds: 1500),
+  math.Random? random,
+}) async {
+  final rng = random ?? math.Random();
+  dynamic lastError;
+  http.Response? lastResponse;
+
+  for (var attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      final response = await sendFn();
+      lastResponse = response;
+
+      final isRateLimit = response.statusCode == 429;
+      final isServerTransient = response.statusCode >= 500 && response.statusCode < 600;
+
+      if (!isRateLimit && !isServerTransient) {
+        return response;
+      }
+
+      if (attempt > maxRetries) {
+        return response;
+      }
+
+      final retryAfterHeader = response.headers['retry-after'];
+      int delayMs = baseDelay.inMilliseconds * (1 << (attempt - 1)) + rng.nextInt(500);
+      if (retryAfterHeader != null) {
+        final parsedSec = int.tryParse(retryAfterHeader.trim());
+        if (parsedSec != null && parsedSec > 0) {
+          delayMs = math.max(delayMs, parsedSec * 1000);
+        }
+      }
+
+      AiLogger.logWarning(
+        '图像生成请求第 $attempt 次遇到暂态响应 (HTTP ${response.statusCode})，将在 ${delayMs}ms 后退避重试...',
+        providerName: providerName,
+      );
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+    } catch (e) {
+      lastError = e;
+      if (attempt > maxRetries) {
+        rethrow;
+      }
+
+      final isRetryable = e is TimeoutException ||
+          e is SocketException ||
+          e is http.ClientException ||
+          (e is StateError &&
+              (e.message.contains('429') ||
+                  e.message.contains('500') ||
+                  e.message.contains('502') ||
+                  e.message.contains('503')));
+
+      if (!isRetryable) {
+        rethrow;
+      }
+
+      final delayMs = baseDelay.inMilliseconds * (1 << (attempt - 1)) + rng.nextInt(500);
+      AiLogger.logWarning(
+        '图像生成请求第 $attempt 次网络异常 ($e)，将在 ${delayMs}ms 后退避重试...',
+        providerName: providerName,
+      );
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+    }
+  }
+
+  if (lastResponse != null) {
+    return lastResponse;
+  }
+  throw lastError ?? StateError('图像请求未知异常');
 }
 
 /// 硅基流动 Flux-schnell 图像生成适配器。
@@ -508,6 +641,8 @@ class SenseAudioImageAdapter implements ImageGenAdapter {
       'model': targetModel,
       'prompt': request.prompt,
       'size': snappedSize,
+      if (request.negativePrompt.trim().isNotEmpty)
+        'negative_prompt': request.negativePrompt.trim(),
       if (referenceDataUri != null) 'reference': referenceDataUri,
     };
 
@@ -708,6 +843,7 @@ class SystemAiImageAdapter implements ImageGenAdapter {
     this.apiKey,
     this.providerId,
     this.keychainKeyId,
+    this.retryBaseDelay,
     http.Client? client,
     ImageHttpFn? httpFn,
   })  : _client = client,
@@ -718,6 +854,7 @@ class SystemAiImageAdapter implements ImageGenAdapter {
   final String? apiKey;
   final String? providerId;
   final String? keychainKeyId;
+  final Duration? retryBaseDelay;
   final http.Client? _client;
   final ImageHttpFn? _httpFn;
 
@@ -901,10 +1038,42 @@ class SystemAiImageAdapter implements ImageGenAdapter {
     final isAgnes = modelName.toLowerCase().contains('agnes-image') ||
         activeProvider.protocol == AiProtocolType.agnes;
 
+    final List<String> agnesImageUris = [];
+    if (isAgnes && request.referenceImages.isNotEmpty) {
+      for (final refPath in request.referenceImages) {
+        try {
+          final refFile = File(refPath);
+          if (await refFile.exists()) {
+            final bytes = await refFile.readAsBytes();
+            if (bytes.isNotEmpty) {
+              agnesImageUris.add('data:image/png;base64,${base64Encode(bytes)}');
+            }
+          }
+        } catch (e) {
+          debugPrint('[SystemAiImageAdapter] 读取参考图 $refPath 失败: $e');
+        }
+      }
+    }
+
+    if (isAgnes && request.negativePrompt.trim().isNotEmpty) {
+      AiLogger.logWarning(
+        'Agnes 图像模型不支持 negative_prompt，本次请求已自动剔除负向词',
+        providerName: activeProvider.name.isNotEmpty ? activeProvider.name : 'Agnes',
+      );
+    }
+
+    final (agnesSize, agnesRatio) = resolveAgnesSizeAndRatio(request.width, request.height);
     final payload = <String, dynamic>{
       'model': modelName,
       'prompt': request.prompt,
-      if (!isAgnes) ...{
+      if (isAgnes) ...{
+        'size': agnesSize,
+        'ratio': agnesRatio,
+        'extra_body': <String, dynamic>{
+          'response_format': 'url',
+          if (agnesImageUris.isNotEmpty) 'image': agnesImageUris,
+        },
+      } else ...{
         'size': '${request.width}x${request.height}',
         'image_size': '${request.width}x${request.height}', // 兼容 SiliconFlow / Flux 扩展
         'n': 1,
@@ -912,6 +1081,7 @@ class SystemAiImageAdapter implements ImageGenAdapter {
           'negative_prompt': request.negativePrompt.trim(),
       },
     };
+
 
     final stopwatch = Stopwatch()..start();
     AiLogger.logRequest(
@@ -922,19 +1092,24 @@ class SystemAiImageAdapter implements ImageGenAdapter {
       promptSummary: request.prompt,
     );
 
-    final req = http.Request('POST', Uri.parse(endpoint))
-      ..headers['Authorization'] = 'Bearer $key'
-      ..headers['Content-Type'] = 'application/json'
-      ..body = jsonEncode(payload);
+    final http.Response response = await sendImageRequestWithRetry(
+      providerName: activeProvider.name.isNotEmpty ? activeProvider.name : 'OpenAI-Compatible',
+      baseDelay: retryBaseDelay ?? const Duration(milliseconds: 1500),
+      sendFn: () async {
+        final req = http.Request('POST', Uri.parse(endpoint))
+          ..headers['Authorization'] = 'Bearer $key'
+          ..headers['Content-Type'] = 'application/json'
+          ..body = jsonEncode(payload);
 
-    final http.Response response;
-    if (_httpFn != null) {
-      response = await _httpFn(req);
-    } else {
-      response = await (_client ?? AppHttpClient.create())
-          .send(req)
-          .then(http.Response.fromStream);
-    }
+        if (_httpFn != null) {
+          return await _httpFn(req);
+        } else {
+          return await (_client ?? AppHttpClient.create())
+              .send(req)
+              .then(http.Response.fromStream);
+        }
+      },
+    );
     stopwatch.stop();
 
     if (response.statusCode != 200) {
@@ -983,19 +1158,77 @@ class SystemAiImageAdapter implements ImageGenAdapter {
     if (b64 != null && b64.isNotEmpty) {
       final bytes = base64Decode(b64);
       await request.outputFile.writeAsBytes(bytes, flush: true);
+      await _recordCall(request);
       return request.outputFile;
     }
 
     if (url != null && url.isNotEmpty) {
-      return downloadImageFileWithRetry(
+      final file = await downloadImageFileWithRetry(
         url: url,
         outputFile: request.outputFile,
         client: _client,
         httpFn: _httpFn,
       );
+      await _recordCall(request);
+      return file;
     }
 
     throw const FormatException('返回体中既无 image url 也无 b64_json');
+  }
+
+  /// 记一次本适配器的图像调用。
+  ///
+  /// 模型 id 走 `_resolveModel()`——那是 generate 里实际提交的那个值，
+  /// 与请求体一致。用字段 `model` 会漏掉"没配型号时回落默认型号"的情况。
+  Future<void> _recordCall(ImageGenRequest request) async {
+    final provider = _resolveActiveProvider();
+    await recordImageCall(
+      providerId: providerId ?? provider.name,
+      model: _resolveModel(),
+      prompt: request.prompt,
+      outputPath: request.outputFile.path,
+      shotNumber: request.shotNumber,
+      referenceImages: request.referenceImages,
+    );
+  }
+
+  /// 为 Agnes 图像模型计算标准档位尺寸与宽高比。
+  static (String size, String ratio) resolveAgnesSizeAndRatio(int width, int height) {
+    if (height <= 0 || width <= 0) return ('2K', '9:16');
+    final r = width / height;
+    final maxDim = width > height ? width : height;
+    String resolveTier(int threshold1K, int threshold2K, int threshold3K) {
+      if (maxDim >= threshold3K) return '4K';
+      if (maxDim >= threshold2K) return '3K';
+      if (maxDim >= threshold1K) return '2K';
+      return '1K';
+    }
+
+    final tier = resolveTier(2000, 3500, 5000);
+
+    // 优先匹配超宽画幅 21:9 (涵盖 2:1 等矩全景与 2.333:1 电影宽银幕)
+    if (r >= 1.95 || (r - 21 / 9).abs() < 0.2) {
+      return (tier, '21:9');
+    } else if ((r - 1.0).abs() < 0.1) {
+      return (tier, '1:1');
+    } else if ((r - 9 / 16).abs() < 0.08) {
+      return (tier, '9:16');
+    } else if ((r - 16 / 9).abs() < 0.12) {
+      return (tier, '16:9');
+    } else if ((r - 3 / 4).abs() < 0.08) {
+      return (tier, '3:4');
+    } else if ((r - 4 / 3).abs() < 0.08) {
+      return (tier, '4:3');
+    } else if ((r - 2 / 3).abs() < 0.08) {
+      return (tier, '2:3');
+    } else if ((r - 3 / 2).abs() < 0.08) {
+      return (tier, '3:2');
+    } else if (r < 0.8) {
+      return (tier, '9:16');
+    } else if (r > 1.3) {
+      return (tier, '16:9');
+    }
+    return (tier, '9:16');
   }
 
   void disposeForTesting() {

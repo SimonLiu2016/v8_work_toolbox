@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:drift_sqflite/drift_sqflite.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'cjk_tokenizer.dart';
 import '../../services/app_paths.dart';
@@ -246,12 +247,28 @@ class NoteDatabase extends _$NoteDatabase {
   );
 
 
+  /// 测试入口：[_normalizeTextTimestamps] 的可见包装。
+  ///
+  /// 存在的理由：归一化跑在 `beforeOpen` 里，测试要单独验证「有 TEXT 行时
+  /// 修、没有时不瞎扫」这两半行为，必须能绕过整个打开流程直接调它。
+  /// 生产代码一律走 `beforeOpen`，不要直接调这个。
+  @visibleForTesting
+  Future<void> normalizeTextTimestampsForTesting() =>
+      _normalizeTextTimestamps();
+
   /// 自愈：把 TEXT 形式的日期时间戳归一化为 drift 期望的 unix 秒整数。
   ///
   /// drift 的 DateTimeColumn 读取时会对原始值做 int 解析，一旦某行被外部工具
   /// （如手工 sqlite3 脚本）写入 `datetime('now')` 这类 TEXT 时间戳，读取即抛
   /// FormatException，导致笔记本列表、自动补全、导入预创建全部失败。此处
   /// 在数据库打开时统一修复，避免整库不可用。
+  ///
+  /// **存在性门禁**：正常库（时间戳全是 integer）这 4 条 UPDATE 都是全表空扫，
+  /// 而笔记本子窗口每次打开都会跑一遍 beforeOpen。先用 EXISTS 探测，没有文本
+  /// 行就整条跳过，把成本降到一次索引探测。
+  ///
+  /// 刻意不用「只做一次」的版本标记：归一化是自愈，外部工具可能再次把数据
+  /// 破坏成 TEXT，标记会让第二次破坏永久失修。
   Future<void> _normalizeTextTimestamps() async {
     const tables = {
       'notebooks': ['created_at', 'updated_at'],
@@ -260,6 +277,14 @@ class NoteDatabase extends _$NoteDatabase {
     for (final entry in tables.entries) {
       for (final column in entry.value) {
         try {
+          // 探测这一列是否真有文本行；没有就跳过 UPDATE。
+          final hasText = await customSelect(
+            'SELECT EXISTS('
+            'SELECT 1 FROM ${entry.key} WHERE typeof($column) = \'text\' LIMIT 1'
+            ') AS has_text;',
+          ).getSingle();
+          if (hasText.data['has_text'] != 1) continue;
+
           await customStatement(
             'UPDATE ${entry.key} SET $column = strftime(\'%s\', $column) '
             'WHERE typeof($column) = \'text\';',

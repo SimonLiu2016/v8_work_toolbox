@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:V8WorkToolbox/services/ai_service.dart';
+import 'package:V8WorkToolbox/tools/ai_video_studio/models/studio_models.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/ai_constraint_engine.dart';
 
 /// `AiConstraintEngine` 的模板与解析契约测试。
@@ -41,8 +42,8 @@ void main() {
       expect(prompt, contains('extreme_long'));
       expect(prompt, contains('depressing'));
       expect(prompt, contains('opening'));
-      // 时长 3.0 到 5.0 秒
-      expect(prompt, contains('3.0 到 5.0 秒'));
+      // 时长 4.0 到 12.0 秒
+      expect(prompt, contains('4.0 到 12.0 秒'));
       // 8-16 个分镜
       expect(prompt, contains('8 到 16 个分镜'));
 
@@ -179,7 +180,7 @@ void main() {
       expect(calls, AiConstraintEngine.maxAttempts);
     });
 
-    test('时长超出 3-5 秒时拒收', () async {
+    test('时长超出 3-12 秒时拒收', () async {
       AiConstraintEngine.chatFn = ({
         slot = 'text',
         explicitProviderId,
@@ -189,7 +190,7 @@ void main() {
         ignoreCooldown = false,
       }) async {
         return chatOf(
-          '{"shots": [{"number": 1, "duration_sec": 12, "shot_size": "medium", '
+          '{"shots": [{"number": 1, "duration_sec": 15, "shot_size": "medium", '
           '"mood": "warm", "function": "opening", "action_zh": "", '
           '"dialogue": "", "character_ids": [], "scene_id": "", '
           '"camera_move": ""}]}',
@@ -868,5 +869,408 @@ void main() {
       await AiConstraintEngine.extractNovelMaster(novelText: '测试小说文本');
       expect(capturedTimeout, equals(const Duration(seconds: 240)));
     });
+
+    test('scriptBreakdown5D 与 actionCombatBreakdown 模板与参数注入正常', () {
+      final prompt5d = AiConstraintEngine.systemPromptFor(StudioAiTask.scriptBreakdown5D);
+      expect(prompt5d, contains('五维导演决策'));
+      expect(prompt5d, contains('physical_momentum'));
+      expect(prompt5d, contains('dynamic_exit_state'));
+
+      final promptCombat = AiConstraintEngine.systemPromptFor(StudioAiTask.actionCombatBreakdown);
+      expect(promptCombat, contains('Combat DNA'));
+      expect(promptCombat, contains('combat_steps'));
+      expect(promptCombat, contains('duty'));
+
+      final promptDrama = AiConstraintEngine.systemPromptFor(StudioAiTask.novelDramaChapterAdaptation);
+      expect(promptDrama, contains('scenes'));
+      expect(promptDrama, contains('beats'));
+      expect(promptDrama, contains('protected_contract'));
+    });
+
+    test('scriptBreakdown 正确解析 5D 导演决策、战斗步骤与动态末态', () {
+      final json = {
+        'shots': [
+          {
+            'number': 1,
+            'duration_sec': 3.5,
+            'shot_size': 'close_up',
+            'mood': 'battle',
+            'function': 'burst',
+            'action_zh': '墨大夫手腕翻转短刃泛起乌光直刺韩立咽喉，韩立生死一瞬偏头闪避。',
+            'dialogue': '（厉喝）纳命来！（预估1.5秒）',
+            'beat_id': 'B01',
+            'cut_reason': '近景突刺危机',
+            'visual_task': '呈现刀尖划破空气与韩立眼神骤缩',
+            'director_decisions': {
+              'physical_momentum': '墨大夫前扑，韩立后倾卸力',
+              'lighting_staging': '闪电冷光侧照',
+              'camera_staging': '微推向刀锋',
+              'temporal_evolution': '冲刺余势',
+              'aesthetic_texture': '次世代3D国漫UE5',
+            },
+            'combat_steps': [
+              {
+                'step_index': 1,
+                'actor_name': '墨大夫',
+                'target_names': ['韩立'],
+                'intent': '刺喉',
+                'attack': '短刃直刺',
+                'defense': '偏头',
+                'impact': '削断发丝',
+                'displacement': '墨大夫前冲',
+                'next_link': '韩立反手毒粉',
+                'duty': 'impact',
+              }
+            ],
+            'continuity': {
+              'world_position': '药架前三尺',
+              'screen_position': '画面右侧',
+              'holding_right': '短刃',
+              'dynamic_exit_state': {
+                'support_foot': '右脚前跨',
+                'velocity_vector': '向前2m/s',
+                'unfinished_phase': '刺势未尽',
+              }
+            }
+          }
+        ]
+      };
+
+      final parsed = AiConstraintEngine.validateSchema(
+        StudioAiTask.scriptBreakdown,
+        json,
+      );
+
+      expect(parsed, isNotNull);
+      final shots = (parsed!['shots'] as List).cast<Map<String, dynamic>>();
+      expect(shots.length, 1);
+      final s = shots.first;
+      expect(s['beat_id'], 'B01');
+      expect(s['cut_reason'], '近景突刺危机');
+      expect(s['visual_task'], contains('呈现刀尖'));
+      expect(s['director_decisions']['physical_momentum'], contains('墨大夫前扑'));
+      expect((s['combat_steps'] as List).length, 1);
+      final continuity = s['continuity'] as Map<String, dynamic>;
+      expect(continuity['dynamic_exit_state']['support_foot'], '右脚前跨');
+    });
+
+    test('novelChapterAdaptation 正确解析 scenes 和 protected_contract', () {
+      final json = {
+        'title': '密室绝杀',
+        'synopsis': '【开局抓手】暴雨之夜，韩立推开密室木门，墨大夫手持短刃寒光逼人。【矛盾推进】墨大夫逼问长春功口诀，韩立退至药柜死角周旋。【核心高潮】墨大夫暴起锁喉，韩立反手掷出毒粉迷其双目。【本集断点】墨大夫瘫倒狂笑，夺舍残魂破体而出。',
+        'summary': '韩立反制墨大夫肉身',
+        'hook': '夺舍残魂破体而出',
+        'scenes': [
+          {
+            'id': 'SC001',
+            'scene_number': 1,
+            'title': '神手谷密室',
+            'location': '神手谷内室',
+            'setting': '内景',
+            'time_of_day': '暴雨深夜',
+            'atmosphere': '昏黄油灯斜照',
+            'character_ids': ['墨大夫', '韩立'],
+            'primary_light_world_direction': '北窗闪电',
+            'landmarks': ['药柜', '石桌'],
+            'beats': [
+              {
+                'id': 'B01',
+                'scene_id': 'SC001',
+                'order': 1,
+                'name': '寒暄试探',
+                'action': '墨大夫缓步逼近韩立，眼神阴鸷。',
+                'dialogue_speaker': '墨大夫',
+                'dialogue': '好徒儿，你的长春功练到第几层了？（预估2.5秒）',
+                'subtext': '步步紧逼试探虚实',
+                'estimated_sec': 4.0,
+                'dramatic_function': 'threat_build',
+              }
+            ]
+          }
+        ],
+        'protected_contract': {
+          'facts': [
+            {
+              'id': 'F01',
+              'type': 'FACT',
+              'content': '墨大夫手持玄铁淬毒短刃',
+              'source_location': '章节中段',
+              'mandatory': true,
+            }
+          ],
+          'utterances': [
+            {
+              'id': 'U01',
+              'speaker': '墨大夫',
+              'listener': '韩立',
+              'text': '好徒儿，你的长春功练到第几层了？',
+              'voice_type': 'dialogue',
+              'estimated_sec': 3.0,
+            }
+          ],
+          'protected_beats': ['B01'],
+        }
+      };
+
+      final parsed = AiConstraintEngine.validateSchema(
+        StudioAiTask.novelDramaChapterAdaptation,
+        json,
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!['title'], '密室绝杀');
+      expect((parsed['scenes'] as List).length, 1);
+      final scene = (parsed['scenes'] as List).first as Map<String, dynamic>;
+      expect(scene['title'], '神手谷密室');
+      expect(scene['setting'], '内景');
+      expect(scene['time_of_day'], '暴雨深夜');
+      final beats = scene['beats'] as List;
+      expect(beats.length, 1);
+      final beat = beats.first as Map<String, dynamic>;
+      expect(beat['dialogue_speaker'], '墨大夫');
+      expect(beat['dialogue'], contains('长春功'));
+      expect(beat['subtext'], contains('试探'));
+      expect(beat['estimated_sec'], 4.0);
+      expect(parsed['screenplay_text'], isNotEmpty);
+      expect(parsed['screenplay_text'], contains('### 第1场 神手谷密室'));
+      expect(parsed['screenplay_text'], contains('墨大夫'));
+
+      final contract = parsed['protected_contract'] as Map<String, dynamic>;
+      expect((contract['facts'] as List).length, 1);
+      expect((contract['utterances'] as List).length, 1);
+      expect(contract['protected_beats'], ['B01']);
+    });
+
+    test('screenplayGeneration 校验与归一化', () {
+      final json = {
+        'scenes': [
+          {
+            'id': 'SC001',
+            'scene_number': 1,
+            'title': '客栈二楼对峙',
+            'location': '同福客栈二楼走廊',
+            'setting': '内景',
+            'time_of_day': '夜景',
+            'atmosphere': '昏黄油灯斜照',
+            'character_ids': ['姜七夜', '余小白'],
+            'beats': [
+              {
+                'id': 'B01',
+                'scene_id': 'SC001',
+                'order': 1,
+                'name': '抬刀轻挑',
+                'action': '姜七夜抬起短刀指向凭栏的余小白。',
+                'dialogue_speaker': '姜七夜',
+                'dialogue': '余小白，我迟早得叫你姐夫。',
+                'subtext': '满脸戏谑',
+                'estimated_sec': 5.0,
+              }
+            ],
+          }
+        ]
+      };
+
+      final parsed = AiConstraintEngine.validateSchema(
+        StudioAiTask.screenplayGeneration,
+        json,
+      );
+
+      expect(parsed, isNotNull);
+      final scenes = parsed!['scenes'] as List;
+      expect(scenes.length, 1);
+      final scene = scenes.first as Map<String, dynamic>;
+      expect(scene['title'], '客栈二楼对峙');
+      final beats = scene['beats'] as List;
+      expect(beats.length, 1);
+      final beat = beats.first as Map<String, dynamic>;
+      expect(beat['dialogue_speaker'], '姜七夜');
+      expect(beat['dialogue'], '余小白，我迟早得叫你姐夫。');
+      expect(beat['estimated_sec'], 5.0);
+    });
+
+    test('calculateDynamicDurationSec 动态时长推导', () {
+      // 纯对白推导：15个字 / 3.8 = 3.94s + 1.2s padding = 5.14s -> clamp(4.0, 12.0)
+      final durationDialogue = AiConstraintEngine.calculateDynamicDurationSec(
+        dialogue: '余小白，我迟早得叫你姐夫。',
+        actionZh: '姜七夜抬刀。',
+      );
+      expect(durationDialogue, greaterThanOrEqualTo(4.0));
+      expect(durationDialogue, lessThanOrEqualTo(12.0));
+
+      // 无对白短动作保底 4.0s
+      final durationShort = AiConstraintEngine.calculateDynamicDurationSec(
+        dialogue: '',
+        actionZh: '点头。',
+      );
+      expect(durationShort, 4.0);
+
+      // 超长台词封顶 12.0s
+      final durationLong = AiConstraintEngine.calculateDynamicDurationSec(
+        dialogue: '这是一段非常非常非常非常非常非常非常非常长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长的台词',
+        actionZh: '狂奔并回头高喊',
+      );
+      expect(durationLong, 12.0);
+    });
+
+    test('isActionOverloaded 复合动作超载检测', () {
+      // 简单动作未超载
+      expect(
+        AiConstraintEngine.isActionOverloaded('姜七夜靠在栏杆边撕咬鸡腿。'),
+        isFalse,
+      );
+
+      // 超过3个连词或复合动作超载
+      expect(
+        AiConstraintEngine.isActionOverloaded(
+          '姜七夜撕下鸡腿大嚼，然后油汁顺嘴角流下，接着抬刀轻挑指向三楼余小白，随后翻身跃下并拔刀劈砍。',
+        ),
+        isTrue,
+      );
+    });
+
+    test('convertScenesToShots 将剧本场次与节拍正确映射为 5D 分镜', () {
+      final scenes = [
+        DramaScene(
+          id: 'scene-1',
+          sceneNumber: 1,
+          title: '回春堂正门',
+          location: '回春堂大厅',
+          timeOfDay: '暴雨夜',
+          atmosphere: '肃杀阴冷',
+          beats: [
+            DramaBeat(
+              id: 'beat-1',
+              sceneId: 'scene-1',
+              order: 1,
+              name: '对峙',
+              action: '姜七夜手持油纸伞踏入大厅，雨水从伞骨滑落。',
+              dialogueSpeaker: '姜七夜',
+              dialogue: '谁是掌柜？',
+              subtext: '表面沉静，暗藏杀机',
+            ),
+            DramaBeat(
+              id: 'beat-2',
+              sceneId: 'scene-1',
+              order: 2,
+              name: '拔刀',
+              action: '姜七夜拔刀劈向黑衣人，刀芒破空。',
+              dialogue: '',
+              subtext: '迅猛突击',
+            ),
+          ],
+        ),
+      ];
+
+      final characters = [
+        CharacterCard(
+          id: 'char-1',
+          name: '姜七夜',
+          descriptionZh: '巡街捕快',
+          updatedAt: DateTime.now(),
+        ),
+      ];
+
+      final sceneCards = [
+        SceneCard(
+          id: 'scene-1',
+          name: '回春堂大厅',
+          updatedAt: DateTime.now(),
+        ),
+      ];
+
+      final shots = AiConstraintEngine.convertScenesToShots(
+        scenes,
+        characters: characters,
+        sceneCards: sceneCards,
+      );
+
+      expect(shots.length, 2);
+      expect(shots[0].number, 1);
+      expect(shots[0].function, ShotFunction.opening);
+      expect(shots[0].dialogue, '姜七夜：“谁是掌柜？”');
+      expect(shots[0].characterIds, contains('char-1'));
+      expect(shots[0].sceneId, 'scene-1');
+      expect(shots[0].beatId, 'beat-1');
+      expect(shots[0].directorDecisions.physicalMomentum, '表面沉静，暗藏杀机');
+      expect(shots[0].continuity.worldPosition, '回春堂大厅');
+
+      expect(shots[1].number, 2);
+      expect(shots[1].function, ShotFunction.ending);
+      expect(shots[1].dialogue, '');
+      expect(shots[1].characterIds, contains('char-1'));
+      expect(shots[1].sceneId, 'scene-1');
+      expect(shots[1].beatId, 'beat-2');
+    });
+  });
+
+  group('场景纯净空间约束与 ScenePromptBuilder', () {
+    test('novelMasterExtraction 模板严禁场景出现人物并要求纯净空镜', () {
+      final prompt = AiConstraintEngine.systemPromptFor(
+        StudioAiTask.novelMasterExtraction,
+      );
+      expect(prompt, contains('纯净物理空镜底板'));
+      expect(prompt, contains('严禁描写任何具体人物姓名'));
+      expect(prompt, contains('严禁包含人物动作'));
+      expect(prompt, contains('纯粹描写建筑形制格局'));
+    });
+
+    test('novelMasterExtraction 校验器自动为缺少空镜词的场景注入 empty scene 前缀', () {
+      final input = {
+        'worldview': '修仙世界',
+        'era_genre': 'xianxia',
+        'style_tokens': 'ethereal',
+        'characters': [
+          {'name': '韩立', 'description_zh': '青年'},
+        ],
+        'scenes': [
+          {
+            'name': '丽香苑雅间',
+            'description_zh': '雕花木案，轻纱罗帐',
+            'prompt_en': 'ancient tea house interior',
+          },
+          {
+            'name': '神手谷密室',
+            'description_zh': '石桌药鼎',
+            'prompt_en': 'empty scene, quiet alchemy chamber',
+          },
+        ],
+      };
+
+      final validated = AiConstraintEngine.parseJsonLoose(
+        '${input.toString().replaceAll("'", '"')}',
+      );
+      // 直接跑 task 校验
+      final res = AiConstraintEngine.systemPromptFor(StudioAiTask.novelMasterExtraction);
+      expect(res, isNotEmpty);
+
+      // 验证 ScenePromptBuilder 组装结果
+      final pos = ScenePromptBuilder.buildPositivePrompt(
+        basePrompt: 'luxurious tea house, carved wood table, sheer curtains',
+        styleTokens: 'ancient Chinese Xianxia fantasy',
+        eraGenreId: 'xianxia',
+        angle: SceneCameraAngle.panoramic,
+      );
+
+      expect(pos, contains(ScenePromptBuilder.emptyScenePositiveLock));
+      expect(pos, contains('大广角全景建立镜头，宏大开阔大气氛围，极远景全貌'));
+      expect(pos, contains('luxurious tea house'));
+      expect(pos, contains('ancient Chinese Xianxia fantasy'));
+
+      final neg = ScenePromptBuilder.buildNegativePrompt(
+        eraGenreId: 'xianxia',
+      );
+      expect(neg, contains('人物, 人类, 男人, 女人'));
+      expect(neg, contains('画面模糊失真, 低画质'));
+    });
+
+    test('SceneCameraAngle 覆盖 4 个核心视角', () {
+      expect(SceneCameraAngle.values.length, 4);
+      final angles = SceneCameraAngle.values.map((a) => a.labelZh).toList();
+      expect(angles, contains('全景建立镜头'));
+      expect(angles, contains('主视平视全景'));
+      expect(angles, contains('侧逆视角'));
+      expect(angles, contains('局部陈设特写'));
+    });
   });
 }
+

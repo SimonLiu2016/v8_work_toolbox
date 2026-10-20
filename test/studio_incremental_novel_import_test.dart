@@ -159,5 +159,48 @@ void main() {
       final chars = await manager.listCharacters(series.id);
       expect(chars.any((c) => c.name == '墨大夫'), isTrue);
     });
+
+    test('importChapterToEpisode: 写入 screenplayText 并在覆盖已有集时重置陈旧 shots', () async {
+      final series = await manager.createSeries(
+        name: '诛仙测试',
+        productionType: StudioProductionType.anime3d,
+      );
+
+      // 创建第 1 集并注入一些旧 shots
+      final ep1 = await manager.createEpisode(seriesId: series.id, title: '旧第1集');
+      final episodeWithOldShots = ep1.episode.copyWith(
+        shots: [
+          const StudioShot(
+            number: 1,
+            durationSec: 4.0,
+            shotSize: StudioShotSize.medium,
+            mood: 'warm',
+            function: ShotFunction.opening,
+            actionZh: '旧动作描述',
+            dialogue: '旧台词',
+          ),
+        ],
+      );
+      await manager.saveEpisode(episodeWithOldShots);
+
+      // 导入新小说章节到第 1 集
+      const newScreenplay = '### 第1场 草庙村（外景 / 黄昏）\n**动作**：张小凡走在乡间小路。';
+      await manager.importChapterToEpisode(
+        seriesId: series.id,
+        masterExtraction: const {},
+        targetEpisodeIndex: 1,
+        episodeTitle: '草庙村惊变',
+        episodeSynopsis: '草庙村突遭横祸，张小凡拜入青云门。' * 5,
+        episodeSummary: '前情摘要',
+        episodeHook: '结尾悬念',
+        screenplayText: newScreenplay,
+      );
+
+      final reloaded = manager.readEpisode(series.id, ep1.episode.id)!;
+      expect(reloaded.title, '草庙村惊变');
+      expect(reloaded.screenplayText, newScreenplay);
+      // 验证陈旧 shots 被重置清空，杜绝混淆
+      expect(reloaded.shots, isEmpty);
+    });
   });
 }

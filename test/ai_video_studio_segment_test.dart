@@ -82,6 +82,28 @@ void main() {
       expect(seg.durationWasAdjusted, isFalse);
     });
 
+    test('StudioSegment.fromJson 兼容 segment_id 数字字段', () {
+      final json = {
+        'segment_id': 2,
+        'boundary_reason': '切景别',
+        'target_duration_sec': 8,
+        'shot_numbers': [3, 4],
+      };
+      final seg = StudioSegment.fromJson(json);
+      expect(seg.id, 'seg-2');
+      expect(seg.targetDurationSec, 8);
+      expect(seg.shotNumbers, [3, 4]);
+    });
+
+    test('StudioSegment.fromJson 缺 id 与 segment_id 时回退到镜头号', () {
+      final json = {
+        'boundary_reason': '自然分段',
+        'shot_numbers': [5, 6],
+      };
+      final seg = StudioSegment.fromJson(json);
+      expect(seg.id, 'seg-5');
+    });
+
     test('提交时长与请求一致时不算调整', () {
       const seg = StudioSegment(
         id: 'seg-1',

@@ -25,33 +25,81 @@ class ArtexOverrideStore {
 
   /// 生成 override 内容。
   ///
-  /// 两件事：关门控（否则容器内绑 `:8787` 触发门控，`/api/health` 返回假
-  /// nginx 页面，spike 实测）、按配置覆盖端口。
+  /// 四件事（design D2 / fix-artex-internal-network-reachability）：
+  /// 1. 关门控——否则容器内绑 `:8787` 触发门控，`/api/health` 返回假
+  ///    nginx 页面（spike 实测）。
+  /// 2. 覆盖引擎端口 8787/8788。
+  /// 3. **发布隧道端口池**——内网目标机回连 chisel server 的唯一通路。
+  ///    不发布则容器在 bridge 网络的 `172.17.0.x` 上，内网路由不到。
+  /// 4. **注入回连地址与池范围**——`ARTEX_CALLBACK_ADDR` 让目标机知道往
+  ///    哪连；`ARTEX_TUNNEL_PORT_RANGE` 与端口发布必须同源，否则 ARTEX
+  ///    会分配到没有 NAT 的端口，隧道静默不可用。
+  ///
+  /// [callbackAddr] 是宿主机上可被内网路由的 IPv4。传 null 表示调用方还没
+  /// 解析出地址——此时跳过池发布与回连注入，只生成前两项。
   ///
   /// `!override` 标签必须带：compose 对 `ports` 的默认合并行为是**追加**，
   /// 不带标签会导致 8787 同时绑两个端口（上游的 `"8787:8787"` 还在）。
-  String render(ArtexEngineConfig config) {
+  String render(ArtexEngineConfig config, {String? callbackAddr}) {
     final buffer = StringBuffer()
       ..writeln(kArtexOverrideMarker)
       ..writeln('# 本文件由 V8WorkToolbox 的 ARTEX 引擎工具自动生成与维护。')
       ..writeln('# 手工修改会在下次启动时被覆盖；如需长期定制请改用上游')
       ..writeln('# docker-compose.yml，并把这个工具的门控/端口配置对齐。')
-      ..writeln('# 详见 openspec/changes/add-artex-engine-toolbox/design.md D1。')
+      ..writeln(
+        '# 详见 openspec/changes/fix-artex-internal-network-reachability/design.md。',
+      )
       ..writeln('services:')
       ..writeln('  artex:');
 
+    final env = <String>[];
+
     if (config.gateOff) {
-      buffer
-        ..writeln('    environment:')
-        ..writeln('      # 单机部署关门控：容器内绑 :8787 会被判定为非 loopback 而')
-        ..writeln('      # 自动开启，导致健康探测拿到假 nginx 欢迎页（HTTP 200）。')
-        ..writeln('      ARTEX_GATE: "off"');
+      env.add('      # 单机部署关门控：容器内绑 :8787 会被判定为非 loopback 而');
+      env.add('      # 自动开启，导致健康探测拿到假 nginx 欢迎页（HTTP 200）。');
+      env.add('      ARTEX_GATE: "off"');
+    }
+
+    final hasCallback = callbackAddr != null && callbackAddr.isNotEmpty;
+    if (hasCallback) {
+      env.add(
+        '      # 内网目标机（隧道 / 反弹 shell）回连平台的地址。必须是宿主机上',
+      );
+      env.add(
+        '      # 可被内网路由的 IPv4；写 127.0.0.1 或 Docker VM 地址会回不来。',
+      );
+      env.add('      ARTEX_CALLBACK_ADDR: "$callbackAddr"');
+      env.add(
+        '      # 与下方 ports 发布的池范围严格同源：ARTEX 只从该池分配端口，',
+      );
+      env.add('      # 而只有发布出去的端口才有 NAT。两者不一致则隧道静默失效。');
+      env.add(
+        '      ARTEX_TUNNEL_PORT_RANGE: "${config.tunnelPortMin}-${config.tunnelPortMax}"',
+      );
+    }
+
+    if (env.isNotEmpty) {
+      buffer.writeln('    environment:');
+      for (final line in env) {
+        buffer.writeln(line);
+      }
     }
 
     buffer
       ..writeln('    ports: !override')
       ..writeln('      - "127.0.0.1:${config.httpPort}:8787"')
       ..writeln('      - "127.0.0.1:${config.proxyPort}:8788"');
+
+    if (hasCallback) {
+      // 绑定到回连 IP 而不是 0.0.0.0：只让内网能连，不把整池端口暴露给
+      // vmnet / bridge 接口。实测（design D5 / task 1.1）范围 + IP 的组合
+      // 可用：`docker port` 逐条显示绑定的 IP，容器内 0.0.0.0 监听仍能收到。
+      buffer.writeln('      # 隧道池发布：目标机回连 chisel server 的唯一通路。');
+      buffer.writeln(
+        '      - "$callbackAddr:${config.tunnelPortMin}-${config.tunnelPortMax}'
+        ':${config.tunnelPortMin}-${config.tunnelPortMax}"',
+      );
+    }
 
     return buffer.toString();
   }
@@ -81,9 +129,16 @@ class ArtexOverrideStore {
 
   /// 写入 override。
   ///
+  /// [callbackAddr] 见 [render]：宿主机上可被内网路由的 IPv4，null 表示
+  /// 暂不注入回连配置（此时 override 只有门控与端口）。
+  ///
   /// 返回是否发生了备份（调用方需告知用户——非本工具生成的文件被替换是
   /// 意外情况，静默覆盖违反 design D1 的风险缓解承诺）。
-  bool write(String projectDir, ArtexEngineConfig config) {
+  bool write(
+    String projectDir,
+    ArtexEngineConfig config, {
+    String? callbackAddr,
+  }) {
     final file = File(pathFor(projectDir));
     var backedUp = false;
 
@@ -104,7 +159,7 @@ class ArtexOverrideStore {
       }
     }
 
-    file.writeAsStringSync(render(config));
+    file.writeAsStringSync(render(config, callbackAddr: callbackAddr));
     return backedUp;
   }
 

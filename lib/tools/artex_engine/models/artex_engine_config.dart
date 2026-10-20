@@ -38,6 +38,9 @@ class ArtexEngineConfig {
     this.npmRegistry = defaultNpmRegistry,
     this.goProxy = defaultGoProxy,
     this.aptMirror = defaultAptMirror,
+    this.callbackAddr,
+    this.tunnelPortMin = defaultTunnelPortMin,
+    this.tunnelPortMax = defaultTunnelPortMax,
   });
 
   /// 默认工程目录。用户机上的 artex 仓库位置（spike 使用的路径）。
@@ -46,6 +49,14 @@ class ArtexEngineConfig {
 
   static const int defaultHttpPort = 8787;
   static const int defaultProxyPort = 8788;
+
+  /// 隧道端口池默认范围（design D2）。
+  ///
+  /// 上游 ARTEX 默认 20000-21000（1001 个），单人场景用不上 500 条并发隧道，
+  /// 而全量发布会让 `docker compose up -d` 从 3 秒变成 41 秒（实测）。
+  /// 100 个端口 = 50 条隧道（每条消耗 2 个端口），单人远够。
+  static const int defaultTunnelPortMin = 20000;
+  static const int defaultTunnelPortMax = 20099;
 
   /// 三个上游构建参数默认值（spike 用这三个 9 分钟构建成功，design D4）。
   static const String defaultNpmRegistry = 'https://registry.npmmirror.com';
@@ -76,6 +87,22 @@ class ArtexEngineConfig {
   final String goProxy;
   final String aptMirror;
 
+  // --- 内网回连（add-novel-manager 之后的 fix-artex-internal-network-reachability）---
+
+  /// 平台回连地址。null = 启动时自动探测宿主机物理网卡 IPv4。
+  ///
+  /// 内网目标机（隧道 / 反弹 shell）回连平台时用它。必须是宿主机上可被
+  /// 内网路由到的 IPv4——写 `127.0.0.1` 或 Docker VM 的地址都会让目标机
+  /// 连不回来。
+  final String? callbackAddr;
+
+  /// 隧道端口池起止端口。
+  ///
+  /// 与 override 里发布的端口范围必须同源（design D2）：池决定 ARTEX 分配
+  /// 哪些端口，发布决定哪些端口有 NAT。两者不一致时，隧道会静默不可用。
+  final int tunnelPortMin;
+  final int tunnelPortMax;
+
   static const String _keyProjectDir = 'projectDir';
   static const String _keyHttpPort = 'httpPort';
   static const String _keyProxyPort = 'proxyPort';
@@ -84,6 +111,9 @@ class ArtexEngineConfig {
   static const String _keyNpmRegistry = 'npmRegistry';
   static const String _keyGoProxy = 'goProxy';
   static const String _keyAptMirror = 'aptMirror';
+  static const String _keyCallbackAddr = 'callbackAddr';
+  static const String _keyTunnelPortMin = 'tunnelPortMin';
+  static const String _keyTunnelPortMax = 'tunnelPortMax';
 
   factory ArtexEngineConfig.fromJson(Map<String, dynamic> json) {
     int readPort(String key, int fallback) {
@@ -111,7 +141,21 @@ class ArtexEngineConfig {
       aptMirror: (json[_keyAptMirror] as String?)?.trim().isNotEmpty == true
           ? (json[_keyAptMirror] as String).trim()
           : defaultAptMirror,
+      // null = 未手动指定，走自动探测。空字符串等同未指定（容错）。
+      callbackAddr: (json[_keyCallbackAddr] as String?)?.trim().isNotEmpty == true
+          ? (json[_keyCallbackAddr] as String).trim()
+          : null,
+      tunnelPortMin: _readPort(json, _keyTunnelPortMin, defaultTunnelPortMin),
+      tunnelPortMax: _readPort(json, _keyTunnelPortMax, defaultTunnelPortMax),
     );
+  }
+
+  /// 读端口字段，容忍 int 与字符串两种形态（设置界面存的可能是字符串）。
+  static int _readPort(Map<String, dynamic> json, String key, int fallback) {
+    final raw = json[key];
+    if (raw is int) return raw;
+    if (raw is String) return int.tryParse(raw.trim()) ?? fallback;
+    return fallback;
   }
 
   Map<String, dynamic> toJson() => {
@@ -123,6 +167,11 @@ class ArtexEngineConfig {
     _keyNpmRegistry: npmRegistry,
     _keyGoProxy: goProxy,
     _keyAptMirror: aptMirror,
+    // null 时写空串而不是省掉 key：让 JSON 里能看到这个字段存在，
+    // 用户手动编辑配置文件时知道有这一项。
+    _keyCallbackAddr: callbackAddr ?? '',
+    _keyTunnelPortMin: tunnelPortMin,
+    _keyTunnelPortMax: tunnelPortMax,
   };
 
   ArtexEngineConfig copyWith({
@@ -134,6 +183,9 @@ class ArtexEngineConfig {
     String? npmRegistry,
     String? goProxy,
     String? aptMirror,
+    String? callbackAddr,
+    int? tunnelPortMin,
+    int? tunnelPortMax,
   }) {
     return ArtexEngineConfig(
       projectDir: projectDir ?? this.projectDir,
@@ -144,6 +196,9 @@ class ArtexEngineConfig {
       npmRegistry: npmRegistry ?? this.npmRegistry,
       goProxy: goProxy ?? this.goProxy,
       aptMirror: aptMirror ?? this.aptMirror,
+      callbackAddr: callbackAddr ?? this.callbackAddr,
+      tunnelPortMin: tunnelPortMin ?? this.tunnelPortMin,
+      tunnelPortMax: tunnelPortMax ?? this.tunnelPortMax,
     );
   }
 }

@@ -9,11 +9,14 @@ import 'package:flutter/material.dart';
 import '../../../components/app_components.dart';
 import '../../../services/ai_config_store.dart';
 import '../../../services/media_capability.dart';
+import '../../../shell/ai_log_dialog.dart';
 import '../../../services/keychain_service.dart';
 import '../../../shell/ai_config_page.dart';
 import '../../../theme/app_theme.dart';
+import '../../registry.dart';
 import '../services/image_gen_adapter.dart';
 import '../services/video_gen_adapter.dart';
+import 'studio_preset_management_dialog.dart';
 
 /// 能力类型：图像 / 视频 / TTS。
 enum StudioCapability {
@@ -167,7 +170,10 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
       backgroundColor: context.bgCard,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Container(
-        width: 560,
+        width: 580,
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.88,
+        ),
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -192,32 +198,81 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
               '可跟随系统全局 AI 基础设施中配置的模型（推荐），亦可针对工坊选用本地动效或独立 API Key。',
               style: TextStyle(color: context.textTertiary, fontSize: 12),
             ),
-            const SizedBox(height: 20),
-            if (!_loaded)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 40),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else
-              for (final capability in StudioCapability.values)
-                _CapabilitySection(
-                  title: capability.label,
-                  engineId: _engines[capability.id]!,
-                  engines: _enginesFor(capability),
-                  keyController: _keys[capability.id]!,
-                  testResult: _testResult[capability.id],
-                  capabilitySummary: _capabilitySummaryFor(capability),
-                  onEngineChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _engines[capability.id] = value;
-                      _testResult.remove(capability.id);
-                    });
-                  },
-                  onSave: () => _save(capability),
-                  onTest: () => _test(capability),
-                  onOpenAiConfig: _openAiConfig,
+            const SizedBox(height: 8),
+            // 工坊是调用密度最高的地方，却一直没有日志入口——AI 配置页、文档
+            // 朗读、磁盘瘦身三处都有。导入失败时用户第一个来的就是这里。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  visualDensity: VisualDensity.compact,
                 ),
+                icon: const Icon(Icons.receipt_long_outlined, size: 14),
+                label: const Text('查看调用日志', style: TextStyle(fontSize: 12)),
+                onPressed: () => AiLogDialog.show(context),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 试炼场入口：调模型的效果与提示词/参考图的关系在流程里看不出来，
+            // 得有一个能单独发一次、并留下完整请求快照的地方。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: const Icon(Icons.science_outlined, size: 14),
+                label: const Text('打开 Agnes 试炼场', style: TextStyle(fontSize: 12)),
+                // 从注册表取而不是新构造一个：findById 返回的就是那份声明，
+                // 将来若它的 openNewWindow 逻辑变了（比如改成单例复投），
+                // 这里自动跟随。
+                onPressed: () {
+                  final tool = ToolRegistry.findById(kToolIdAgnesPlayground);
+                  if (tool case final AgnesPlaygroundToolDefinition pg) {
+                    pg.openNewWindow();
+                  }
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!_loaded)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else
+                      for (final capability in StudioCapability.values)
+                        _CapabilitySection(
+                          title: capability.label,
+                          engineId: _engines[capability.id]!,
+                          engines: _enginesFor(capability),
+                          keyController: _keys[capability.id]!,
+                          testResult: _testResult[capability.id],
+                          capabilitySummary: _capabilitySummaryFor(capability),
+                          onEngineChanged: (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _engines[capability.id] = value;
+                              _testResult.remove(capability.id);
+                            });
+                          },
+                          onSave: () => _save(capability),
+                          onTest: () => _test(capability),
+                          onOpenAiConfig: _openAiConfig,
+                        ),
+                    _buildPresetLibraryEntry(context),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
@@ -228,6 +283,56 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPresetLibraryEntry(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(Icons.palette_outlined, color: Colors.amber, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '美学风格与题材预设库 (工业级 35 套正负向词库)',
+                  style: TextStyle(
+                    color: context.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '管理 8 大体系美学画风、时代排他题材、正负向防崩词与出厂重置',
+                  style: TextStyle(color: context.textTertiary, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.tune, size: 14),
+            label: const Text('管理预设库', style: TextStyle(fontSize: 12)),
+            onPressed: () => StudioPresetManagementDialog.show(context),
+          ),
+        ],
       ),
     );
   }

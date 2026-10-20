@@ -97,6 +97,9 @@ class MediaModelCapability {
   /// 是否支持原生音频（视频模型）。
   final bool supportsNativeAudio;
 
+  /// 是否支持负向提示词（图像模型）。默认支持，不支持的模型（如 Agnes 图像）将在提交前剔除负向词。
+  final bool supportsNegativePrompt;
+
   /// 是否为显式声明（false = 协议级保守默认）。
   final bool isDeclared;
 
@@ -110,6 +113,7 @@ class MediaModelCapability {
     this.supportsFirstFrame = false,
     this.supportsLastFrame = false,
     this.supportsNativeAudio = false,
+    this.supportsNegativePrompt = true,
     this.isDeclared = false,
   });
 
@@ -197,6 +201,7 @@ class MediaModelCapability {
     bool? supportsFirstFrame,
     bool? supportsLastFrame,
     bool? supportsNativeAudio,
+    bool? supportsNegativePrompt,
     bool? isDeclared,
   }) {
     return MediaModelCapability(
@@ -209,6 +214,7 @@ class MediaModelCapability {
       supportsFirstFrame: supportsFirstFrame ?? this.supportsFirstFrame,
       supportsLastFrame: supportsLastFrame ?? this.supportsLastFrame,
       supportsNativeAudio: supportsNativeAudio ?? this.supportsNativeAudio,
+      supportsNegativePrompt: supportsNegativePrompt ?? this.supportsNegativePrompt,
       isDeclared: isDeclared ?? this.isDeclared,
     );
   }
@@ -227,6 +233,7 @@ class MediaModelCapability {
     'supports_first_frame': supportsFirstFrame,
     'supports_last_frame': supportsLastFrame,
     'supports_native_audio': supportsNativeAudio,
+    'supports_negative_prompt': supportsNegativePrompt,
     'is_declared': isDeclared,
   };
 
@@ -275,6 +282,7 @@ class MediaModelCapability {
       supportsFirstFrame: json['supports_first_frame'] as bool? ?? false,
       supportsLastFrame: json['supports_last_frame'] as bool? ?? false,
       supportsNativeAudio: json['supports_native_audio'] as bool? ?? false,
+      supportsNegativePrompt: json['supports_negative_prompt'] as bool? ?? true,
       // 能从磁盘上读出来就说明它是被声明过的——手写的配置文件不会带这个字段，
       // 但那是用户在明确配置自己的能力，理应算声明。
       isDeclared: json['is_declared'] as bool? ?? true,
@@ -319,11 +327,12 @@ abstract final class MediaCapabilityDefaults {
       MediaGenMode.text,
       MediaGenMode.singleImage,
       MediaGenMode.startFrameOptional,
+      MediaGenMode.multiReference,
     },
     durations: [4, 5, 6, 8, 10, 12],
     resolutions: ['480p', '720p'],
     ratios: ['9:16', '16:9', '1:1', '4:3', '3:4'],
-    maxReferenceImages: 1,
+    maxReferenceImages: 8,
     supportsFirstFrame: true,
     supportsLastFrame: false,
     supportsNativeAudio: false,
@@ -360,6 +369,7 @@ class MediaCapabilityResolver {
   ///
   /// 三级查找（spec: 模型能力声明）：
   /// 1. 用户在供应商上写的显式声明——最高优先级，他知道自己接的是什么；
+  ///    若用户声明的 maxReferenceImages 小于官方预设，自动自愈升格为预设上限（8 张）；
   /// 2. [MediaCapabilityPresets] 的内置声明——模型 id 是官方 id，跨供应商通用；
   /// 3. 协议级保守默认——`isDeclared: false`，UI 必须标注"未经确认"。
   static MediaModelCapability resolve(
@@ -367,8 +377,20 @@ class MediaCapabilityResolver {
     String modelId,
   ) {
     final declared = provider.mediaCapabilities[modelId];
-    if (declared != null) return declared;
     final preset = MediaCapabilityPresets.forModel(modelId);
+    if (declared != null) {
+      if (preset != null) {
+        final declaredMax = declared.maxReferenceImages;
+        final presetMax = preset.maxReferenceImages;
+        if (presetMax != null && (declaredMax == null || declaredMax < presetMax)) {
+          return declared.copyWith(
+            maxReferenceImages: presetMax,
+            modes: {...declared.modes, ...preset.modes},
+          );
+        }
+      }
+      return declared;
+    }
     if (preset != null) return preset;
     return MediaCapabilityDefaults.forProtocolId(provider.protocolId);
   }
@@ -456,20 +478,98 @@ abstract final class MediaCapabilityPresets {
     isDeclared: true,
   );
 
-  /// Agnes Video 2.5 Flash。
-  static const MediaModelCapability agnesVideo = MediaModelCapability(
+  /// Agnes Video 2.5（标准型号）。
+  ///
+  /// 四档分辨率来自官方文档的 size 枚举：`"720P"` / `"1080P"` / `"1K"` / `"2K"`。
+  /// 时长是字符串 `"4"`–`"12"`，离散档位见 [durations]。
+  ///
+  /// `maxReferenceImages: 8` 是 reference 模式的上限（文档：图片最多 8 张、
+  /// 单次请求媒体总数不超过 12）。适配器已能提交 `images[]`（data URI），
+  /// 所以这个上限现在既描述模型也描述我们的实现。
+  ///
+  /// 计费按输出秒数 × 分辨率单价，**任务创建即计费**；输入图片前 5 张免费。
+  ///
+  /// **输出像素映射**（文档实测表，规格字段里没有"输出尺寸"这一维，故记在此）：
+  /// 同比例下标准型号与 Flash 的输出不同——16:9 这里输出 1280×720，
+  /// Flash 输出 1280×704。2K = 对应 720P 宽高的 2 倍；1K 固定 1024×1024。
+  /// 9:16 → 720×1280 / 1080×1920 / 1440×2560。
+  static const MediaModelCapability agnesVideo25 = MediaModelCapability(
     modes: {
       MediaGenMode.text,
       MediaGenMode.singleImage,
       MediaGenMode.startFrameOptional,
+      MediaGenMode.multiReference,
     },
     durations: [4, 5, 6, 8, 10, 12],
-    resolutions: ['480p', '720p'],
-    ratios: ['9:16', '16:9', '1:1', '4:3', '3:4'],
-    maxReferenceImages: 1,
+    resolutions: ['720p', '1080p', '1k', '2k'],
+    // 六种比例，与文档的 aspect_ratio 白名单一致。以前这里只列五种，
+    // 缺 21:9——适配器又把 aspect_ratio 写死成 9:16，两边一起把超宽屏挡在
+    // 可用范围之外。
+    ratios: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'],
+    maxReferenceImages: 8,
     supportsFirstFrame: true,
+    supportsLastFrame: true,
+    // 描述**输出**是否带原生音轨，不是输入侧是否接受音频参考。Agnes 的
+    // audios[] 是 reference 模式的输入参考，与这个字段无关。
+    supportsNativeAudio: false,
+    isDeclared: true,
+  );
+
+  /// Agnes Video 2.5 Flash。
+  ///
+  /// 与标准型号的差异全是文档明文的硬校验（返回 HTTP 400，且**在校验失败时
+  /// 不创建任务、不计费**）：
+  /// - `size` 必须为 `"720P"`，传其他值直接 400 → [resolutions] 收窄为一档；
+  /// - 不支持参考视频 → 不声明视频参考模式；
+  /// - reference 图片最多 5 张（标准型号是 8 张）→ [maxReferenceImages] 分档。
+  ///
+  /// 首尾帧能力与标准型号一致（文档：除上述限制外其余参数能力一致）。
+  ///
+  /// **输出像素映射**（2026 年 9 月实测，文档明言 16:9 的尺寸以实际文件为准）：
+  /// 21:9 → 1680×720、16:9 → 1280×704、4:3 → 960×720、1:1 → 720×720、
+  /// 3:4 → 720×960、9:16 → 720×1280。注意 16:9 与标准型号不同。
+  static const MediaModelCapability agnesVideo25Flash = MediaModelCapability(
+    modes: {
+      MediaGenMode.text,
+      MediaGenMode.singleImage,
+      MediaGenMode.startFrameOptional,
+      // 不声明 multiReference：适配器虽已能发 images[]，但 Flash 的 5 张上限
+      // 与标准型号的 8 张不同，声明同一模式会让「支持几种模式」这件事在两个
+      // 型号间失真。5 张的上限由 maxReferenceImages 表达。
+      MediaGenMode.multiReference,
+    },
+    durations: [4, 5, 6, 8, 10, 12],
+    resolutions: ['720p'],
+    ratios: ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'],
+    maxReferenceImages: 5,
+    supportsFirstFrame: true,
+    supportsLastFrame: true,
+    supportsNativeAudio: false,
+    isDeclared: true,
+  );
+
+  /// Agnes 图像模型（2.0 / 2.1 / 2.5 Flash）。
+  ///
+  /// 三档的参数能力一致——文档明言 2.5 Flash「请求与响应参数、支持尺寸、价格
+  /// 和计费方法均与 2.1 Flash 保持一致」，2.0 同族。仍按型号给三条声明：
+  /// 用户配置里出现的是具体型号 id，`forModel` 要能逐个别名命中。
+  ///
+  /// 尺寸是档位式（`"1K"`/`"2K"`/`"3K"`/`"4K"`）配 ratio，不是精确像素。
+  /// 文档同时兼容 `1024x768` 这类历史精确写法，但「不支持的尺寸可能被标准化」，
+  /// 所以这里只声明档位——让规整层按档位吸附，而不是猜一个可能被改写的像素值。
+  /// 9:16 下 2K = 1472x2624（文档输出尺寸表）。
+  static const MediaModelCapability agnesImage = MediaModelCapability(
+    modes: {MediaGenMode.text, MediaGenMode.multiReference},
+    // 图像模型没有时长维度：空集合让 supportsDuration() 恒真（不限制），
+    // 规整层因此不会对图像请求做时长吸附。
+    durations: <int>[],
+    resolutions: ['1k', '2k', '3k', '4k'],
+    ratios: ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'],
+    maxReferenceImages: 8,
+    supportsFirstFrame: false,
     supportsLastFrame: false,
     supportsNativeAudio: false,
+    supportsNegativePrompt: false,
     isDeclared: true,
   );
 
@@ -532,9 +632,19 @@ abstract final class MediaCapabilityPresets {
       case 'doubao-seedream-5-0-260128':
       case 'sensenova-u1-fast':
         return senseAudioImage;
+      // Agnes 视频：两个型号的限制不同（Flash 固定 720P、参考图 5 张），
+      // 必须分开命中，不能「agnes- 前缀一把梭」。
       case 'agnes-video-2.5-flash':
+        return agnesVideo25Flash;
+      case 'agnes-video-2.5':
+        return agnesVideo25;
+      // Agnes 图像：三档同族参数，但用户配置里写的是具体型号 id，逐个别名命中。
+      // 曾经 agnes-image-2.5-flash 被映到视频声明上——图像模型因此拿到了
+      // 视频的时长与模式约束。现在按型号分流。
+      case 'agnes-image-2.0-flash':
+      case 'agnes-image-2.1-flash':
       case 'agnes-image-2.5-flash':
-        return agnesVideo;
+        return agnesImage;
       default:
         return null;
     }

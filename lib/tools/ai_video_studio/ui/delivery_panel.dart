@@ -4,6 +4,7 @@
 /// 标题、封面、标签与下集钩子。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -15,7 +16,10 @@ import '../../ai_video_studio/models/studio_models.dart';
 import '../../ai_video_studio/services/ai_constraint_engine.dart';
 import '../../ai_video_studio/services/ffmpeg_composer.dart';
 import '../../ai_video_studio/services/jianying_exporter.dart';
+import '../../ai_video_studio/services/prompt_assembler.dart';
 import '../../ai_video_studio/services/studio_project_manager.dart';
+import '../services/asset_library.dart';
+import 'timeline_inserts_section.dart';
 import 'studio_shell.dart';
 
 class DeliveryPanel extends StatefulWidget {
@@ -44,11 +48,28 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
   List<String> _hashtags = const [];
   String _nextHook = '';
 
+  /// 插入/移除后重读本集。
+  ///
+  /// 走 `manager.readEpisode` 而不是本地改 list：manager 是单一数据源，
+  /// 本地再改一份会让分镜看板与交付页看到不同的时间轴。
+  void _reloadEpisode() {
+    final episode = _episode;
+    if (episode == null) return;
+    final fresh = _manager.readEpisode(episode.seriesId, episode.id);
+    if (fresh == null) return;
+    setState(() => _episode = fresh);
+    widget.session.selectEpisode(fresh);
+  }
+
   @override
   void initState() {
     super.initState();
     _episode = widget.session.episode;
     _checkFfmpeg();
+    // 预载资产索引：_timelineClips / _timelineDuration 是同步 getter，
+    // 用 assetSync 读内存。不预载的话，用户没打开过资产库页时插入会全部
+    // 解析不到——那会让"配了插入但合成不生效"看起来像个灵异 bug。
+    unawaited(AssetLibrary.instance.ensureLoaded());
   }
 
   @override
@@ -58,9 +79,90 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
   }
 
   Future<void> _checkFfmpeg() async {
-    final status = await FfmpegComposer.checkAvailability(forceRefresh: true);
+    final status = await FfmpegComposer.checkAvailability();
     if (!mounted) return;
     setState(() => _ffmpeg = status);
+  }
+
+  /// 展开成有序的视频文件序列：既有产物 + 时间轴上的资产插入。
+  ///
+  /// **插入位置语义**（spec: 视频资产可作为合成时间线素材）：`afterShotNumber`
+  /// 表示"插在这个镜号之后"，0 表示最前面。同一镜号后按插入列表的次序排。
+  ///
+  /// 这里**不改 `shots` 的顺序**——分镜是剧本结构，时间轴是剪辑决策。
+  /// 合成与导出都消费这一个序列，所以两者自动保持一致（不需要分别改）。
+  ///
+  /// 资产文件已丢失时跳过该插入并跳过其时长——用户可能删过资产库，
+  /// 那不该让整集合成失败。
+  List<File> get _timelineClips {
+    final episode = _episode;
+    if (episode == null) return const [];
+
+    final insertsByShot = <int, List<StudioTimelineInsert>>{};
+    for (final ins in episode.timelineInserts) {
+      insertsByShot.putIfAbsent(ins.afterShotNumber, () => []).add(ins);
+    }
+
+    final result = <File>[];
+
+    void appendInsertsAfter(int shotNumber) {
+      final list = insertsByShot.remove(shotNumber);
+      if (list == null) return;
+      for (final ins in list) {
+        final asset = AssetLibrary.instance.assetSync(ins.assetId);
+        if (asset == null) continue;
+        final f = asset.file;
+        if (f.existsSync()) result.add(f);
+      }
+    }
+
+    // afterShotNumber = 0 的排在最前面
+    appendInsertsAfter(0);
+
+    for (final shot in _readyClips) {
+      final file = _clipFileOf(shot);
+      if (file != null) result.add(file);
+      appendInsertsAfter(shot.number);
+    }
+
+    // 兜底：afterShotNumber 指向一个没有视频的镜（或已删的镜号），
+    // 上面的循环不会经过它。按镜号顺序补在末尾之前也说得过去，但更简单
+    // 的做法是忽略——那些插入指向的位置本身就不在成片里。
+    return result;
+  }
+
+  /// 时间轴总时长。与 [_timelineClips] 同一套展开规则，否则进度条走不完
+  /// （FFmpeg 的 progress 按实际输入算，跟预估对不上）。
+  double get _timelineDuration {
+    final episode = _episode;
+    if (episode == null) return 0;
+
+    final insertsByShot = <int, List<StudioTimelineInsert>>{};
+    for (final ins in episode.timelineInserts) {
+      insertsByShot.putIfAbsent(ins.afterShotNumber, () => []).add(ins);
+    }
+
+    double insertDurationAfter(int shotNumber) {
+      final list = insertsByShot[shotNumber];
+      if (list == null) return 0;
+      var sum = 0.0;
+      for (final ins in list) {
+        final asset = AssetLibrary.instance.assetSync(ins.assetId);
+        if (asset == null) continue;
+        if (!asset.file.existsSync()) continue;
+        // 本地导入的资产可能没有时长信息，按 5 秒兜底——比算成 0 好，
+        // 算成 0 会让进度条提前走完然后卡住。
+        sum += asset.durationSec ?? 5;
+      }
+      return sum;
+    }
+
+    var total = insertDurationAfter(0);
+    for (final shot in _readyClips) {
+      total += _clipDurationOf(shot, episode.segments);
+      total += insertDurationAfter(shot.number);
+    }
+    return total;
   }
 
   /// 有待合成视频的分镜，按分镜顺序。
@@ -104,20 +206,19 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
 
   /// 某分镜在时间轴上占用的秒数。
   ///
-  /// 分镜级产物用该镜的建议时长；片段级产物按「片段目标时长 ÷ 覆盖镜头数」
-  /// 摊分——片段是一次生成的整体，剪回时间轴时必须按镜头摊，否则 N 镜的
-  /// 片段会按整段时长累加，成片时长虚高 N 倍。
+  /// 分镜为原子物理单元，时长与台词音频 1:1 严格对齐，优先使用该分镜的建议时长。
+  /// 杜绝以往粗暴等分片段时长导致的音画严重错位。
   double _clipDurationOf(StudioShot shot, List<StudioSegment> segments) {
-    if (shot.clipPath != null && shot.clipPath!.isNotEmpty) {
+    if (shot.durationSec > 0) {
       return shot.durationSec;
     }
-    if (shot.segmentId.isEmpty) return shot.durationSec;
+    if (shot.segmentId.isEmpty) return 4.0;
     final matches = segments.where((s) => s.id == shot.segmentId);
-    if (matches.isEmpty) return shot.durationSec;
+    if (matches.isEmpty) return 4.0;
     final segment = matches.first;
     final effective = segment.effectiveShotNumbers.length;
-    if (effective == 0) return shot.durationSec;
-    return segment.targetDurationSec / effective;
+    if (effective == 0) return 4.0;
+    return (segment.targetDurationSec / effective).clamp(2.0, 12.0);
   }
 
   /// 按 id 找片段；找不到返回 null。
@@ -184,7 +285,7 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
 
     final exportsDir = _manager.episodeExportsDir(series.id, episode.id);
     final audioDir = _manager.episodeAudioDir(series.id, episode.id);
-    final clips = _readyClips.map(_clipFileOf).whereType<File>().toList();
+    final clips = _timelineClips;
     final audios = episode.shots
         .where((s) => s.audioPath != null && s.audioPath!.isNotEmpty)
         .map((s) => File(p.join(audioDir.path, s.audioPath!)))
@@ -200,10 +301,7 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
 
     // 总时长只算**有视频**的分镜：没有片段的镜会在拼接时被跳过，把它算进去
     // 会让进度条走不完（FFmpeg 报的 progress 是按实际输入算的）。
-    final totalDuration = _readyClips.fold<double>(
-      0,
-      (sum, s) => sum + _clipDurationOf(s, episode.segments),
-    );
+    final totalDuration = _timelineDuration;
 
     final result = await FfmpegComposer.compose(
       ComposeRequest(
@@ -295,6 +393,8 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
         shots: episode.shots,
         srtPath: srt.existsSync() ? srt.path : null,
         bgmPath: bgm?.path,
+        // 与合成走同一套时间轴展开规则（spec: 视频资产可作为合成时间线素材）。
+        timelineInserts: episode.timelineInserts,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -318,6 +418,133 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
         setState(() => _error = e.toString());
       }
     }
+  }
+
+  Future<void> _exportH3Csv() async {
+    final episode = _episode;
+    final series = widget.session.series;
+    if (episode == null || series == null || episode.shots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无分镜可导出 H3 表格')),
+      );
+      return;
+    }
+    try {
+      final characters = await _manager.listCharacters(series.id);
+      final scenes = await _manager.listScenes(series.id);
+      final bytes = H3CsvCompiler.compileCsvBytes(
+        episode: episode,
+        shots: episode.shots,
+        characters: characters,
+        scenes: scenes,
+        productionType: series.productionType,
+        styleTokens: series.styleTokens,
+      );
+      final exportsDir = _manager.episodeExportsDir(series.id, episode.id);
+      await exportsDir.create(recursive: true);
+      final file = File(p.join(exportsDir.path, 'h3_storyboard_ep${episode.index}.csv'));
+      await file.writeAsBytes(bytes);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('H3 六列分镜表已导出至: ${file.path}')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('H3 导出失败: $e')),
+      );
+    }
+  }
+
+  Future<void> _copySeedancePrompts() async {
+    final episode = _episode;
+    final series = widget.session.series;
+    if (episode == null || episode.shots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无分镜可复制')),
+      );
+      return;
+    }
+    final characters = series != null ? await _manager.listCharacters(series.id) : const <CharacterCard>[];
+    final scenes = series != null ? await _manager.listScenes(series.id) : const <SceneCard>[];
+    final styleTokens = series?.styleTokens ?? '';
+    final buffer = StringBuffer();
+    if (episode.segments.isNotEmpty) {
+      for (var i = 0; i < episode.segments.length; i++) {
+        final seg = episode.segments[i];
+        final segShots = episode.shots.where((s) => seg.shotNumbers.contains(s.number)).toList();
+        buffer.writeln('=== 片段 #${i + 1} [${seg.id}] (${seg.targetDurationSec}s) ===');
+        buffer.writeln(SeedanceTaskCompiler.compileSegment(
+          segment: seg,
+          shots: segShots,
+          characters: characters,
+          scenes: scenes,
+          productionType: series?.productionType,
+          styleTokens: styleTokens,
+        ));
+        buffer.writeln();
+      }
+    } else {
+      for (final shot in episode.shots) {
+        buffer.writeln('=== 镜号 #${shot.number} | 时长 ${shot.durationSec}s | 景别 ${shot.shotSize.label} ===');
+        final char = shot.characterIds.isNotEmpty
+            ? characters.where((c) => c.id == shot.characterIds.first).firstOrNull
+            : null;
+        final scene = shot.sceneId.isNotEmpty
+            ? scenes.where((s) => s.id == shot.sceneId).firstOrNull
+            : null;
+        buffer.writeln(PhotorealisticPromptCompiler.compileShot(
+          shot: shot,
+          character: char,
+          scene: scene,
+          productionType: series?.productionType,
+          styleTokens: styleTokens,
+        ));
+        buffer.writeln();
+      }
+    }
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('全集即梦 Seedance / 动作执行稿已复制到剪贴板')),
+    );
+  }
+
+  Future<void> _copyPhotorealisticPrompts() async {
+    final episode = _episode;
+    final series = widget.session.series;
+    if (episode == null || episode.shots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无分镜可复制')),
+      );
+      return;
+    }
+    final characters = series != null ? await _manager.listCharacters(series.id) : const <CharacterCard>[];
+    final scenes = series != null ? await _manager.listScenes(series.id) : const <SceneCard>[];
+    final styleTokens = series?.styleTokens ?? '';
+    final buffer = StringBuffer();
+    for (final shot in episode.shots) {
+      buffer.writeln('=== 镜号 #${shot.number} | ${shot.shotSize.label} ===');
+      final char = shot.characterIds.isNotEmpty
+          ? characters.where((c) => c.id == shot.characterIds.first).firstOrNull
+          : null;
+      final scene = shot.sceneId.isNotEmpty
+          ? scenes.where((s) => s.id == shot.sceneId).firstOrNull
+          : null;
+      buffer.writeln(PhotorealisticPromptCompiler.compileShot(
+        shot: shot,
+        character: char,
+        scene: scene,
+        productionType: series?.productionType,
+        styleTokens: styleTokens,
+      ));
+      buffer.writeln();
+    }
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('全集商用视频自然语言 Prompt 已复制到剪贴板')),
+    );
   }
 
   /// 生成发布三件套：标题候选、话题标签、下集钩子文案。
@@ -430,6 +657,21 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
               icon: const Icon(Icons.auto_fix_high, size: 16),
               label: const Text('导出剪映工程'),
             ),
+            OutlinedButton.icon(
+              onPressed: _exportH3Csv,
+              icon: const Icon(Icons.table_chart_outlined, size: 16),
+              label: const Text('导出 H3 六列表 (CSV)'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _copySeedancePrompts,
+              icon: const Icon(Icons.copy_outlined, size: 16),
+              label: const Text('复制 Seedance 执行稿'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _copyPhotorealisticPrompts,
+              icon: const Icon(Icons.text_fields_outlined, size: 16),
+              label: const Text('复制商用通用 Prompt'),
+            ),
             if (_outputPath != null) ...[
               if (_coverPath != null)
                 OutlinedButton.icon(
@@ -451,6 +693,11 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
               ),
             ],
           ],
+        ),
+        const SizedBox(height: 16),
+        TimelineInsertsSection(
+          episode: _episode,
+          onChanged: _reloadEpisode,
         ),
         if (_composing) ...[
           const SizedBox(height: 12),

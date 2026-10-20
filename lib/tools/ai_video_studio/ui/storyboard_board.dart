@@ -15,16 +15,27 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../components/app_components.dart';
+import '../../../services/ai_config_store.dart';
+import '../../../services/keychain_service.dart';
 import '../../../shell/ai_config_page.dart';
 import '../../../theme/app_theme.dart';
 import '../../ai_video_studio/models/studio_models.dart';
 import '../../ai_video_studio/services/ai_constraint_engine.dart';
+import '../../ai_video_studio/services/director_validation_engine.dart';
 import '../../ai_video_studio/services/image_gen_adapter.dart';
+import '../../ai_video_studio/services/novel_import_task_service.dart';
 import '../../ai_video_studio/services/prompt_assembler.dart';
 import '../../ai_video_studio/services/studio_generation_tasks.dart';
 import '../../ai_video_studio/services/studio_project_manager.dart';
 import '../../ai_video_studio/services/studio_task_queue.dart';
 import '../../ai_video_studio/services/video_gen_adapter.dart';
+import '../services/asset_library.dart';
+import '../../ai_video_studio/services/video_task_ledger.dart';
+import '../../ai_video_studio/services/video_task_recovery.dart';
+import '../../agnes_playground/models/playground_models.dart';
+import '../../agnes_playground/services/playground_store.dart';
+import '../../agnes_playground/ui/playground_page.dart';
+import '../../registry.dart';
 import 'studio_shell.dart';
 
 /// 分镜看板的视图模式（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
@@ -37,9 +48,14 @@ enum _BoardView {
 }
 
 class StoryboardBoard extends StatefulWidget {
-  const StoryboardBoard({super.key, required this.session});
+  const StoryboardBoard({
+    super.key,
+    required this.session,
+    this.onNavigateStage,
+  });
 
   final StudioSession session;
+  final ValueChanged<StudioStage>? onNavigateStage;
 
   @override
   State<StoryboardBoard> createState() => _StoryboardBoardState();
@@ -54,8 +70,13 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   final Map<int, TextEditingController> _dialogueControllers = {};
   final Map<int, TextEditingController> _actionControllers = {};
 
+  StreamSubscription? _queueSub;
+
   bool _breaking = false;
   String? _error;
+
+  /// 正在进行单镜 AI 改写的分镜编号集合（解耦单镜改写与大段生成状态）。
+  final Set<int> _regeneratingShotNumbers = {};
 
   /// 新建本集时数据层注入的前情上下文（spec 11.7）。
   String _memoryContext = '';
@@ -63,6 +84,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   StudioEpisode? _episode;
   List<StudioEpisode> _allEpisodes = const [];
   List<SceneCard> _scenes = const [];
+  List<CharacterCard> _characters = const [];
 
   /// 看板视图模式（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
   ///
@@ -77,10 +99,28 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (_episode != null) {
       _synopsisController.text = _episode!.synopsis;
     }
+    widget.session.addListener(_onSessionChanged);
     _loadContextData();
-    _queue.stream.listen((_) {
+    _queueSub = _queue.stream.listen((_) {
       if (mounted) setState(() {});
     });
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    final sessEp = widget.session.episode;
+    if (_episode?.id != sessEp?.id ||
+        _episode?.updatedAt != sessEp?.updatedAt ||
+        _episode?.shots.length != sessEp?.shots.length ||
+        _episode?.scenes.length != sessEp?.scenes.length) {
+      setState(() {
+        _episode = sessEp;
+        if (sessEp != null) {
+          _synopsisController.text = sessEp.synopsis;
+        }
+      });
+      _loadContextData();
+    }
   }
 
   Future<void> _loadContextData() async {
@@ -88,6 +128,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (series == null) return;
     final episodes = await _manager.listEpisodes(series.id);
     final scenes = await _manager.listScenes(series.id);
+    final characters = await _manager.listCharacters(series.id);
     if (!mounted) return;
 
     StudioEpisode? target = _episode;
@@ -102,6 +143,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     setState(() {
       _allEpisodes = episodes;
       _scenes = scenes;
+      _characters = characters;
       _episode = target;
       if (target != null && _synopsisController.text != target.synopsis) {
         _synopsisController.text = target.synopsis;
@@ -141,6 +183,8 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
 
   @override
   void dispose() {
+    widget.session.removeListener(_onSessionChanged);
+    _queueSub?.cancel();
     for (final t in _editDebounce.values) {
       t.cancel();
     }
@@ -159,6 +203,213 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     await _createNewEpisode();
   }
 
+  /// 一键根据剧本分场与节拍生成 5D 分镜（保真剧本内容并绑定真实场景与角色别名）。
+  Future<void> _generateFromScreenplay() async {
+    final episode = _episode;
+    final series = widget.session.series;
+    if (episode == null || series == null) return;
+    if (episode.scenes.isEmpty || episode.scenes.every((s) => s.beats.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前剧本没有场次或节拍，请先在剧本工作台添加节拍')),
+      );
+      return;
+    }
+
+    setState(() {
+      _breaking = true;
+      _error = null;
+    });
+
+    try {
+      final updatedCards = await _manager.ensureScenesForEpisode(
+        seriesId: series.id,
+        episode: episode,
+      );
+      final refreshedEp = _manager.readEpisode(series.id, episode.id) ?? episode;
+      final newShots = AiConstraintEngine.convertScenesToShots(
+        refreshedEp.scenes,
+        characters: _characters,
+        sceneCards: updatedCards,
+      );
+      final segments = StudioEpisode.buildSegmentsFromScenes(refreshedEp.scenes, newShots);
+      final updated = refreshedEp.copyWith(
+        shots: newShots,
+        segments: segments,
+        updatedAt: DateTime.now(),
+      );
+      await _manager.saveEpisode(updated);
+      _scenes = updatedCards;
+      _reload();
+      _summarizeEpisode(updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已从剧本成功生成 ${newShots.length} 个5D分镜！'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _breaking = false);
+      }
+    }
+  }
+
+  /// 带确认弹窗的从剧本重新拆解分镜。
+  Future<void> _confirmAndReBreakdownFromScreenplay() async {
+    final episode = _episode;
+    if (episode == null) return;
+    if (episode.scenes.isEmpty || episode.scenes.every((s) => s.beats.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前剧本没有场次或节拍，请先在剧本工作台添加节拍或使用 AI 生成剧本')),
+      );
+      return;
+    }
+
+    if (episode.shots.isNotEmpty) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: context.bgCard,
+          title: const Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 20),
+              SizedBox(width: 8),
+              Text('从剧本重新拆解生成分镜'),
+            ],
+          ),
+          content: Text(
+            '重新拆镜将读取剧本工作台最新的 ${episode.scenes.length} 个戏剧场次与各场节拍，'
+            '全量重新生成结构化分镜，并将覆盖当前已有的 ${episode.shots.length} 个分镜。\n\n'
+            '系统将自动关联 IP 场景库卡片与角色别名。是否确认覆盖？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认重新拆镜'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) return;
+    }
+
+    await _generateFromScreenplay();
+  }
+
+  /// 带高危防误触弹窗的一键清空本集分镜。
+  Future<void> _confirmAndClearAllShots() async {
+    final ep = _episode;
+    if (ep == null || ep.shots.isEmpty) return;
+    final count = ep.shots.length;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.bgCard,
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 20, color: context.errorText),
+            const SizedBox(width: 8),
+            const Text('清空本集分镜'),
+          ],
+        ),
+        content: Text(
+          '警告：此操作将彻底清空当前集的全部 $count 个分镜卡片以及大段划分，重置为空白看板状态。\n\n'
+          '已拆解的台词、动作描写与提示词将被删除（已生成的视频/关键帧媒体文件仍安全保留在本地磁盘）。是否确认继续清空？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: context.errorSolid),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认清空'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    final cleared = ep.clearShots();
+    await _manager.saveEpisode(cleared);
+    _reload();
+    _summarizeEpisode(cleared);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已清空当前集的所有分镜')),
+      );
+    }
+  }
+
+  /// 删除指定镜号的分镜。
+  Future<void> _confirmAndDeleteShot(int shotNumber) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.bgCard,
+        title: Row(
+          children: [
+            Icon(Icons.delete_outline, size: 20, color: context.errorText),
+            const SizedBox(width: 8),
+            Text('删除分镜 #$shotNumber'),
+          ],
+        ),
+        content: Text('确认删除分镜 #$shotNumber 吗？删除后后续所有分镜镜号将自动向前递减平移，并重新统计所属场次的总时长。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: context.errorSolid),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    final ep = _episode;
+    if (ep == null) return;
+    final updated = ep.deleteShot(shotNumber);
+    await _manager.saveEpisode(updated);
+    _reload();
+    _summarizeEpisode(updated);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已删除分镜 #$shotNumber')),
+      );
+    }
+  }
+
+  /// 在指定分镜后插入新镜头。
+  Future<void> _insertShotAfter(int shotNumber) async {
+    final ep = _episode;
+    if (ep == null) return;
+    final updated = ep.insertShotAfter(shotNumber);
+    await _manager.saveEpisode(updated);
+    _reload();
+    _summarizeEpisode(updated);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已在分镜 #$shotNumber 后插入新分镜')),
+      );
+    }
+  }
+
   Future<void> _breakdown() async {
     final episode = _episode;
     final series = widget.session.series;
@@ -173,8 +424,8 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     try {
       final characters = await _manager.listCharacters(series.id);
       final scenes = await _manager.listScenes(series.id);
-      // 跨集上下文：新建本集时拿到的前情摘要 + 上集钩子（spec 11.7）。
-      final result = await AiConstraintEngine.scriptBreakdown(
+      // 跨集上下文：新建本集时拿到的前情摘要 + 上集钩子（spec 11.7），并注入受保护契约与场次规划
+      final result = await AiConstraintEngine.scriptBreakdown5D(
         synopsis: synopsis,
         context: ScriptContext(
           seriesName: series.name,
@@ -184,13 +435,23 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           episodeIndex: episode.index,
           characterNames: characters.map((c) => c.name).toList(),
           sceneNames: scenes.map((s) => s.name).toList(),
+          scenes: episode.scenes,
+          protectedContract: episode.protectedContract,
         ),
       );
       final shots = ((result.data['shots'] as List)
               .cast<Map<String, dynamic>>())
-          .map(_shotFromJson)
+          .map(StudioShot.fromJson)
           .toList();
-      final saved = episode.copyWith(synopsis: synopsis, shots: shots);
+      final segments = ((result.data['segments'] as List?) ?? const [])
+              .whereType<Map<String, dynamic>>()
+              .map(StudioSegment.fromJson)
+              .toList();
+      final saved = episode.copyWith(
+        synopsis: synopsis,
+        shots: shots,
+        segments: segments.isNotEmpty ? segments : null,
+      );
       await _manager.saveEpisode(saved);
       _reload();
 
@@ -238,19 +499,27 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   }
 
   StudioShot _shotFromJson(Map<String, dynamic> json) {
-    return StudioShot(
-      number: (json['number'] as num).toInt(),
-      durationSec: (json['duration_sec'] as num).toDouble(),
-      shotSize: StudioShotSize.fromId(json['shot_size'] as String?),
-      mood: json['mood'] as String? ?? 'warm',
-      function: ShotFunction.fromId(json['function'] as String?),
-      actionZh: json['action_zh'] as String? ?? '',
-      dialogue: json['dialogue'] as String? ?? '',
-      characterIds:
-          (json['character_ids'] as List?)?.cast<String>() ?? const [],
-      sceneId: json['scene_id'] as String? ?? '',
-      cameraMove: json['camera_move'] as String? ?? '',
-    );
+    return StudioShot.fromJson(json);
+  }
+
+  /// 计算分镜绑定的具体角色形态（层级回退：分镜级覆盖 -> 集级覆盖 -> 角色默认形态）。
+  CharacterVariation? _resolveVariation({
+    required StudioEpisode episode,
+    required StudioShot shot,
+    required CharacterCard? character,
+  }) {
+    if (character == null) return null;
+    final shotVarId = shot.characterVariations[character.id];
+    if (shotVarId != null && shotVarId.isNotEmpty) {
+      final found = character.variations.where((v) => v.id == shotVarId).firstOrNull;
+      if (found != null) return found;
+    }
+    if (episode.variationOverrides.containsKey(character.id)) {
+      final epVarId = episode.variationOverrides[character.id];
+      final found = character.variations.where((v) => v.id == epVarId).firstOrNull;
+      if (found != null) return found;
+    }
+    return character.activeVariation;
   }
 
   void _reload() {
@@ -261,6 +530,113 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (fresh == null) return;
     setState(() => _episode = fresh);
     widget.session.selectEpisode(fresh);
+  }
+
+  ValidationReport? get _validationReport {
+    final ep = _episode;
+    if (ep == null || ep.shots.isEmpty) return null;
+    return DirectorValidationEngine.validate(
+      episode: ep,
+      shots: ep.shots,
+      characters: _characters,
+      scenes: _scenes,
+    );
+  }
+
+  void _showAuditReportDialog(BuildContext context, ValidationReport report) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              report.isValid ? Icons.verified_outlined : Icons.report_problem_outlined,
+              color: report.isValid ? const Color(0xFF22C55E) : ctx.errorText,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(report.isValid ? '导演质检报告（通过）' : '导演质检报告（存在阻断项）'),
+          ],
+        ),
+        content: SizedBox(
+          width: 580,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text('阻断项: ${report.blockingCount}', style: TextStyle(color: ctx.errorText, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 16),
+                    Text('建议项: ${report.warningCount}', style: TextStyle(color: ctx.warningText, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                const Divider(height: 20),
+                if (report.issues.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: Text('恭喜！全案所有分镜完全符合 C01~C09 视听与物理可执行性规范。')),
+                  )
+                else
+                  ...report.issues.map((issue) {
+                    final isBlocking = issue.severity == ValidationSeverity.blocking;
+                    final color = isBlocking ? ctx.errorText : ctx.warningText;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: color.withAlpha(20),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: color.withAlpha(80)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: color.withAlpha(40),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '${issue.ruleId} · ${issue.ruleName}',
+                                  style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              if (issue.shotNumber != null) ...[
+                                const SizedBox(width: 8),
+                                Text('镜 #${issue.shotNumber}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                              ],
+                              const Spacer(),
+                              Text(
+                                issue.severity.label,
+                                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(issue.message, style: const TextStyle(fontSize: 12)),
+                          const SizedBox(height: 4),
+                          Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 11, color: ctx.textSecondary)),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 内联编辑后 2 秒内重算 Prompt（spec 11.4）。
@@ -290,20 +666,46 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
 
     final characters = await _manager.listCharacters(series.id);
     final scenes = await _manager.listScenes(series.id);
-    final character = shot.characterIds.isEmpty
-        ? null
-        : characters.where((c) => c.id == shot.characterIds.first).firstOrNull;
-    final scene = scenes.where((s) => s.id == shot.sceneId).firstOrNull;
+    final matchedScene = scenes.where((s) => s.id == shot.sceneId).firstOrNull;
+    final shotCharacters = characters
+        .where((c) => shot.characterIds.contains(c.id))
+        .toList();
+    shotCharacters.sort((a, b) {
+      final aIdx = shot.characterIds.indexOf(a.id);
+      final bIdx = shot.characterIds.indexOf(b.id);
+      return aIdx.compareTo(bIdx);
+    });
+
+    final charVariations = <String, CharacterVariation?>{};
+    for (final char in shotCharacters) {
+      charVariations[char.id] = _resolveVariation(
+        episode: episode,
+        shot: shot,
+        character: char,
+      );
+    }
+    final primaryChar = shotCharacters.firstOrNull;
+    final primaryVariation =
+        primaryChar != null ? charVariations[primaryChar.id] : null;
 
     final assembled = PromptAssembler.buildShotPrompt(PromptParts(
+      productionType: series.productionType,
       styleTokens: series.styleTokens,
+      eraGenre: VisualEraGenre.fromId(series.eraGenre),
+      negativeStyleTokens: series.negativeStyleTokens,
       shotSize: ShotSizeTokens.of(shot.shotSize),
       mood: MoodTokens.of(shot.mood),
       shotFunction: ShotFunctionTokens.of(shot.function),
-      character: character,
-      variation: character?.activeVariation,
-      scene: scene,
+      character: primaryChar,
+      variation: primaryVariation,
+      characters: shotCharacters,
+      characterVariations: charVariations,
+      scene: matchedScene,
       cameraMove: shot.cameraMove,
+      actionZh: shot.actionZh,
+      dialogue: shot.dialogue,
+      voiceType: shot.voiceType,
+      continuity: shot.continuity,
     ));
 
     final shots = episode.shots.toList();
@@ -333,7 +735,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   Future<void> _regenerateShot(StudioShot shot) async {
     final series = widget.session.series;
     if (series == null) return;
-    setState(() => _error = null);
+    setState(() {
+      _regeneratingShotNumbers.add(shot.number);
+      _error = null;
+    });
     try {
       final result = await AiConstraintEngine.shotRegenerate(
         currentShotJson: jsonEncode(_shotToJson(shot)),
@@ -372,6 +777,12 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _regeneratingShotNumbers.remove(shot.number);
+        });
+      }
     }
   }
 
@@ -387,16 +798,37 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     'character_ids': shot.characterIds,
     'scene_id': shot.sceneId,
     'camera_move': shot.cameraMove,
+    'character_variations': shot.characterVariations,
   };
 
   Future<void> _enqueueFrame(StudioShot shot) async {
     final episode = _episode;
     final series = widget.session.series;
     if (episode == null || series == null) return;
-    final characters = await _manager.listCharacters(series.id);
-    final character = shot.characterIds.isEmpty
-        ? null
-        : characters.where((c) => c.id == shot.characterIds.first).firstOrNull;
+    final allCharacters = await _manager.listCharacters(series.id);
+    final shotCharacters = allCharacters
+        .where((c) => shot.characterIds.contains(c.id))
+        .toList();
+    shotCharacters.sort((a, b) {
+      final aIdx = shot.characterIds.indexOf(a.id);
+      final bIdx = shot.characterIds.indexOf(b.id);
+      return aIdx.compareTo(bIdx);
+    });
+
+    final charVariations = <String, CharacterVariation?>{};
+    for (final char in shotCharacters) {
+      charVariations[char.id] = _resolveVariation(
+        episode: episode,
+        shot: shot,
+        character: char,
+      );
+    }
+    final primaryChar = shotCharacters.firstOrNull;
+    final primaryVariation =
+        primaryChar != null ? charVariations[primaryChar.id] : null;
+
+    final matchedScene = _scenes.where((s) => s.id == shot.sceneId).firstOrNull ??
+        _manager.readScene(series.id, shot.sceneId);
 
     final adapter = await ImageGenAdapterFactory.create();
     _queue.enqueue(
@@ -409,8 +841,11 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
         episodeId: episode.id,
         shotNumber: shot.number,
         adapter: adapter,
-        character: character,
-        variation: character?.activeVariation,
+        character: primaryChar,
+        variation: primaryVariation,
+        characters: shotCharacters,
+        characterVariations: charVariations,
+        scene: matchedScene,
         styleTokens: series.styleTokens,
         onPersisted: (_) => _reload(),
       ),
@@ -459,6 +894,8 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   /// 与 [_enqueueClip] 的差别只在任务类型与执行体：这里入队
   /// [StudioTaskKind.segment] + [SegmentVideoGenTask]，一次调用覆盖整个片段。
   /// 前置检查（适配器可用性）与分镜级完全一致——用户看到的提示也一样。
+  /// 提交场次/大段级视频生成任务：依序将场内的各个分镜（StudioShot）加入队列，
+  /// 原子化生成 2~12s 独立视频，并依托首尾帧接力维持强延续性。
   Future<void> _enqueueSegment(
     StudioSegment segment,
     StudioEpisode episode,
@@ -466,8 +903,16 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     final series = widget.session.series;
     if (series == null) return;
 
-    // 已在队列中的片段不重复入队，否则用户连点会提交多次云端调用。
-    if (_queue.tasksForSegment(segment.id).isNotEmpty) return;
+    final targetShots = episode.shots
+        .where((s) => segment.effectiveShotNumbers.contains(s.number))
+        .toList();
+
+    if (targetShots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前场次没有可生成的分镜')),
+      );
+      return;
+    }
 
     final adapter = await VideoGenAdapterFactory.create(
       productionType: series.productionType.id,
@@ -478,19 +923,167 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       }
       return;
     }
-    _queue.enqueue(
-      kind: StudioTaskKind.segment,
-      shotNumber: StudioTaskQueue.segmentKey(segment.id),
-      label: '片段 ${segment.id} 视频',
-      runner: SegmentVideoGenTask(
-        taskId: 'seg-${segment.id}',
-        seriesId: series.id,
-        episodeId: episode.id,
-        segmentId: segment.id,
-        adapter: adapter,
-        onPersisted: (_) => _reload(),
-      ),
+
+    int enqueued = 0;
+    for (final shot in targetShots) {
+      if (_queue.tasksForShot(shot.number).any((t) => !t.isTerminal)) {
+        continue;
+      }
+      if (shot.framePath == null || shot.framePath!.isEmpty) {
+        await _enqueueFrame(shot);
+      }
+      await _enqueueClip(shot);
+      enqueued++;
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已将场次 ${segment.id} 内的 $enqueued 个分镜视频任务加入队列（顺序接力生成）'),
+          action: SnackBarAction(
+            label: '查看队列',
+            onPressed: _showQueueDrawer,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _updateSegmentDuration(
+    StudioEpisode episode,
+    StudioSegment segment,
+    int newDurationSec,
+  ) async {
+    final updatedSegments = episode.segments.map((s) {
+      if (s.id == segment.id) {
+        return s.copyWith(targetDurationSec: newDurationSec);
+      }
+      return s;
+    }).toList();
+    final updated = episode.copyWith(
+      segments: updatedSegments,
+      updatedAt: DateTime.now(),
     );
+    await _manager.saveEpisode(updated);
+    _reload();
+  }
+
+  Future<void> _enqueueAllSegments(StudioEpisode episode) async {
+    final series = widget.session.series;
+    if (series == null) return;
+    if (episode.shots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前剧集暂无分镜')),
+      );
+      return;
+    }
+
+    final total = episode.shots.length;
+    final generated = episode.shots.where((s) => s.clipPath != null && s.clipPath!.isNotEmpty).length;
+    final pending = total - generated;
+
+    bool skipExisting = true;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: context.bgCard,
+              title: const Row(
+                children: [
+                  Icon(Icons.video_collection_outlined, size: 20),
+                  SizedBox(width: 8),
+                  Text('一键生成所有分镜视频'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('当前剧集共有 ${episode.scenes.isNotEmpty ? episode.scenes.length : episode.segments.length} 个场次，包含 $total 个原子分镜（已生成 $generated 个，未生成 $pending 个）。'),
+                  const SizedBox(height: 16),
+                  RadioListTile<bool>(
+                    title: const Text('仅生成尚未出片的分镜 (推荐)'),
+                    subtitle: Text('跳过已有视频的 $generated 个分镜，仅对剩余 $pending 个入队'),
+                    value: true,
+                    groupValue: skipExisting,
+                    onChanged: (val) => setDialogState(() => skipExisting = val ?? true),
+                  ),
+                  RadioListTile<bool>(
+                    title: const Text('重新生成全部分镜'),
+                    subtitle: const Text('覆盖已有成片，将所有分镜按顺序重新加入生成队列'),
+                    value: false,
+                    groupValue: skipExisting,
+                    onChanged: (val) => setDialogState(() => skipExisting = val ?? false),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('开始批量生成'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    final targetShots = episode.shots.where((s) {
+      if (skipExisting && s.clipPath != null && s.clipPath!.isNotEmpty) return false;
+      return true;
+    }).toList();
+
+    if (targetShots.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('所有分镜均已完成视频生成，无须重复入队')),
+        );
+      }
+      return;
+    }
+
+    final adapter = await VideoGenAdapterFactory.create(
+      productionType: series.productionType.id,
+    );
+    if (!await adapter.isAvailable()) {
+      if (mounted) {
+        _showVideoEngineUnavailableDialog(context);
+      }
+      return;
+    }
+
+    int enqueuedCount = 0;
+    for (final shot in targetShots) {
+      if (_queue.tasksForShot(shot.number).any((t) => !t.isTerminal)) {
+        continue;
+      }
+      if (shot.framePath == null || shot.framePath!.isEmpty) {
+        await _enqueueFrame(shot);
+      }
+      await _enqueueClip(shot);
+      enqueuedCount++;
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已成功将 $enqueuedCount 个分镜视频任务加入队列（顺序接力生成）'),
+          action: SnackBarAction(
+            label: '查看队列',
+            onPressed: _showQueueDrawer,
+          ),
+        ),
+      );
+    }
   }
 
   void _showVideoEngineUnavailableDialog(BuildContext context) {
@@ -714,10 +1307,88 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               ),
               const SizedBox(width: 8),
               OutlinedButton.icon(
-                onPressed: _queue.activeCount == 0 ? null : _showQueueDrawer,
+                onPressed: _showQueueDrawer,
                 icon: const Icon(Icons.list_alt, size: 16),
                 label: const Text('任务队列'),
               ),
+              if (episode != null && episode.scenes.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _breaking ? null : _confirmAndReBreakdownFromScreenplay,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('从剧本重拆'),
+                ),
+              ],
+              if (episode != null && episode.shots.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: context.errorText),
+                  onPressed: _breaking ? null : _confirmAndClearAllShots,
+                  icon: Icon(Icons.delete_sweep_outlined, size: 16, color: context.errorText),
+                  label: const Text('清空分镜'),
+                ),
+              ],
+              if (episode != null && episode.shots.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
+                  onPressed: () => _enqueueAllSegments(episode),
+                  icon: const Icon(Icons.video_collection_outlined, size: 16),
+                  label: const Text('一键生成所有分镜'),
+                ),
+              ],
+              if (_validationReport != null) ...[
+                const SizedBox(width: 8),
+                Builder(
+                  builder: (context) {
+                    final audit = _validationReport!;
+                    return InkWell(
+                      onTap: () => _showAuditReportDialog(context, audit),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: audit.isValid
+                              ? (audit.warningCount > 0 ? context.warningText.withAlpha(20) : const Color(0xFF22C55E).withAlpha(20))
+                              : context.errorText.withAlpha(20),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: audit.isValid
+                                ? (audit.warningCount > 0 ? context.warningText.withAlpha(90) : const Color(0xFF22C55E).withAlpha(90))
+                                : context.errorText.withAlpha(90),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              audit.isValid
+                                  ? (audit.warningCount > 0 ? Icons.warning_amber_rounded : Icons.check_circle_outline)
+                                  : Icons.error_outline,
+                              size: 14,
+                              color: audit.isValid
+                                  ? (audit.warningCount > 0 ? context.warningText : const Color(0xFF22C55E))
+                                  : context.errorText,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              audit.isValid
+                                  ? (audit.warningCount > 0 ? 'C01~C09: ${audit.warningCount}建议' : 'C01~C09通过')
+                                  : 'C01~C09: ${audit.blockingCount}阻断',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: audit.isValid
+                                    ? (audit.warningCount > 0 ? context.warningText : const Color(0xFF22C55E))
+                                    : context.errorText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
               const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: episode == null || _breaking ? null : _breakdown,
@@ -775,42 +1446,17 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   /// 按镜头视图：改造前的平铺形态，一行一张分镜卡。
   Widget _buildShotList(BuildContext context, StudioEpisode episode) {
     final seriesId = widget.session.series?.id ?? '';
+    final framesDir = _manager.episodeFramesDir(seriesId, episode.id).path;
+    final clipsDir = _manager.episodeClipsDir(seriesId, episode.id).path;
     return ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
-                      itemCount: episode.shots.length + 1,
-                      itemBuilder: (context, i) {
-                        if (i == 0) return _SynopsisCard(episode: episode);
-                        final shot = episode.shots[i - 1];
-                        return _ShotCard(
-                          shot: shot,
-                          scenes: _scenes,
-                          queue: _queue,
-                          framesDir: _manager
-                              .episodeFramesDir(seriesId, episode.id)
-                              .path,
-                          clipsDir: _manager
-                              .episodeClipsDir(seriesId, episode.id)
-                              .path,
-                          seriesName: widget.session.series?.name ?? '',
-                          episodeTitle: episode.title,
-                          dialogueController: _dialogueControllers
-                              .putIfAbsent(
-                            shot.number,
-                            () => TextEditingController(text: shot.dialogue),
-                          ),
-                          actionController: _actionControllers.putIfAbsent(
-                            shot.number,
-                            () => TextEditingController(text: shot.actionZh),
-                          ),
-                          onEdited: (updated) =>
-                              _onShotEdited(shot.number, updated),
-                          onGenerateFrame: () => _enqueueFrame(shot),
-                          onGenerateClip: () => _enqueueClip(shot),
-                          onOpenCameraPanel: () => _openCameraPanel(shot),
-                          onRegenerateShot: () => _regenerateShot(shot),
-                        );
-                      },
-      );
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+      itemCount: episode.shots.length + 1,
+      itemBuilder: (context, i) {
+        if (i == 0) return _SynopsisCard(episode: episode);
+        final shot = episode.shots[i - 1];
+        return _buildShotCard(shot, episode, framesDir, clipsDir);
+      },
+    );
   }
 
   /// 按片段视图（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
@@ -842,6 +1488,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           clipsDir: clipsDir,
           seriesName: widget.session.series?.name ?? '',
           onGenerateSegment: () => _enqueueSegment(segment, episode),
+          onUpdateDuration: (sec) => _updateSegmentDuration(episode, segment, sec),
           shotBuilder: (shot) => _buildShotCard(shot, episode, framesDir, clipsDir),
         );
       },
@@ -859,11 +1506,13 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     return _ShotCard(
       shot: shot,
       scenes: _scenes,
+      characters: _characters,
       queue: _queue,
       framesDir: framesDir,
       clipsDir: clipsDir,
       seriesName: widget.session.series?.name ?? '',
       episodeTitle: episode.title,
+      validationIssues: _validationReport?.issuesForShot(shot.number) ?? const [],
       dialogueController: _dialogueControllers.putIfAbsent(
         shot.number,
         () => TextEditingController(text: shot.dialogue),
@@ -877,6 +1526,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       onGenerateClip: () => _enqueueClip(shot),
       onOpenCameraPanel: () => _openCameraPanel(shot),
       onRegenerateShot: () => _regenerateShot(shot),
+      onDeleteShot: () => _confirmAndDeleteShot(shot.number),
+      onInsertShotAfter: () => _insertShotAfter(shot.number),
+      isRegenerating: _regeneratingShotNumbers.contains(shot.number),
     );
   }
 
@@ -902,31 +1554,111 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   }
 
   Widget _buildNoShots(BuildContext context) {
+    final ep = _episode;
+    final hasScreenplay = ep != null &&
+        ep.scenes.isNotEmpty &&
+        ep.scenes.any((s) => s.beats.isNotEmpty);
+    final totalBeats = ep?.scenes.fold<int>(0, (sum, s) => sum + s.beats.length) ?? 0;
+
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _synopsisController,
-              maxLines: 6,
-              style: TextStyle(color: context.textPrimary, fontSize: 13),
-              decoration: InputDecoration(
-                labelText: '本集粗剧情大纲',
-                labelStyle: TextStyle(color: context.textSecondary),
-                hintText: '用几句中文描述这一集发生了什么， AI 会拆成分镜',
-                hintStyle: TextStyle(color: context.textDisabled, fontSize: 12),
-                alignLabelWithHint: true,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (hasScreenplay) ...[
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: context.accentSubtle.withAlpha(50),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: context.accentText.withAlpha(60)),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(Icons.movie_creation_outlined, size: 48, color: context.accentText),
+                      const SizedBox(height: 12),
+                      Text(
+                        '剧本已就绪（共 ${ep.scenes.length} 场 / $totalBeats 个节拍）',
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '当前集已完成剧本文学与分场提取，尚未生成 5D 视听分镜。\n您可以前往剧本工作台精细打磨，或直接根据剧本节拍一键生成分镜。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: context.textSecondary,
+                          fontSize: 13,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 12,
+                        runSpacing: 10,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _breaking ? null : _generateFromScreenplay,
+                            icon: const Icon(Icons.auto_awesome, size: 16),
+                            label: const Text('根据剧本生成 5D 分镜'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => widget.onNavigateStage?.call(StudioStage.screenplay),
+                            icon: const Icon(Icons.edit_note, size: 16),
+                            label: const Text('前往剧本工作台打磨'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Text(
+                        '或从粗剧情大纲全新 AI 拆分',
+                        style: TextStyle(color: context.textDisabled, fontSize: 12),
+                      ),
+                    ),
+                    const Expanded(child: Divider()),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              TextField(
+                controller: _synopsisController,
+                maxLines: 4,
+                style: TextStyle(color: context.textPrimary, fontSize: 13),
+                decoration: InputDecoration(
+                  labelText: '本集粗剧情大纲',
+                  labelStyle: TextStyle(color: context.textSecondary),
+                  hintText: '用几句中文描述这一集发生了什么， AI 会拆成分镜',
+                  hintStyle: TextStyle(color: context.textDisabled, fontSize: 12),
+                  alignLabelWithHint: true,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _breaking ? null : _breakdown,
-              icon: const Icon(Icons.auto_awesome, size: 16),
-              label: const Text('AI 拆分分镜'),
-            ),
-          ],
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: _breaking ? null : _breakdown,
+                  icon: const Icon(Icons.auto_awesome, size: 16),
+                  label: const Text('AI 拆分分镜'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -937,7 +1669,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       context: context,
       backgroundColor: context.bgCard,
       isScrollControlled: true,
-      builder: (_) => _QueueDrawer(queue: _queue),
+      builder: (_) => _QueueDrawer(
+        queue: _queue,
+        onReloadBoard: _reload,
+      ),
     );
   }
 }
@@ -970,6 +1705,9 @@ class _SynopsisCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final contract = episode.protectedContract;
+    final scenes = episode.scenes;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -981,19 +1719,73 @@ class _SynopsisCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '本集大纲',
-            style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
+          Row(
+            children: [
+              Text(
+                '本集大纲与导演契约',
+                style: TextStyle(
+                  color: context.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              if (scenes.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: context.accentSubtle,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${scenes.length} 个戏剧场次',
+                    style: TextStyle(color: context.accentText, fontSize: 10, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              if (contract.utterances.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: context.accentSubtle,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${contract.utterances.length} 条锁定金句',
+                    style: TextStyle(color: context.accentText, fontSize: 10, fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           Text(
             episode.synopsis.isEmpty ? '（未填写）' : episode.synopsis,
             style: TextStyle(color: context.textPrimary, fontSize: 12),
           ),
+          if (scenes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: scenes.asMap().entries.map((entry) {
+                final idx = entry.key + 1;
+                final s = entry.value;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: context.bgInput,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: context.borderSubtle),
+                  ),
+                  child: Text(
+                    '第$idx幕: ${s.title}',
+                    style: TextStyle(color: context.textSecondary, fontSize: 11),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
         ],
       ),
     );
@@ -1050,6 +1842,48 @@ Future<void> _showSegmentError(
 /// 组头承载片段级信息与操作：目标时长、边界判定理由、片段视频预览、生成按钮。
 /// 组内分镜卡由调用方通过 [shotBuilder] 注入——这样片段视图与平铺视图共享
 /// 同一个 `_ShotCard`，不会出现"两种视图里同一分镜长得不一样"的问题。
+/// 把片段视频收进资产库。
+///
+/// 复制而非移动（spec: 资产入库是复制而非移动）——片段产物还要供合成消费，
+/// 移动它会让这一集的交付直接坏掉。
+Future<void> _collectSegmentToAssets(
+  BuildContext context,
+  StudioSegment segment,
+  File clip, {
+  File? coverFile,
+}) async {
+  if (!await clip.exists()) return;
+  try {
+    await AssetLibrary.instance.addAsset(
+      clip,
+      kind: AssetKind.clip,
+      name: '大段 ${segment.id}',
+      coverFile: coverFile,
+      prompt: segment.promptNote.trim().isNotEmpty
+          ? segment.promptNote.trim()
+          : '片段 ${segment.id}',
+      originPath: clip.path,
+      // 时长取「实际提交时长」而非目标时长：能力矩阵可能把请求吸附到较小值
+      // （spec: 规整与降级可见），用目标时长会让时间轴算多。
+      durationSec:
+          (segment.submittedDurationSec ?? segment.targetDurationSec)
+              .toDouble(),
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('片段已收进资产库'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('收进资产库失败: $e')),
+    );
+  }
+}
+
 class _SegmentGroupCard extends StatelessWidget {
   const _SegmentGroupCard({
     required this.segment,
@@ -1059,6 +1893,7 @@ class _SegmentGroupCard extends StatelessWidget {
     required this.clipsDir,
     required this.seriesName,
     required this.onGenerateSegment,
+    this.onUpdateDuration,
     required this.shotBuilder,
   });
 
@@ -1069,6 +1904,7 @@ class _SegmentGroupCard extends StatelessWidget {
   final String clipsDir;
   final String seriesName;
   final VoidCallback onGenerateSegment;
+  final void Function(int newSec)? onUpdateDuration;
 
   /// 构造组内一张分镜卡。由看板注入，保证两种视图的卡片实现一致。
   final Widget Function(StudioShot shot) shotBuilder;
@@ -1080,13 +1916,130 @@ class _SegmentGroupCard extends StatelessWidget {
     return file.existsSync() ? file : null;
   }
 
+  File? get _coverFrameFile {
+    for (final sNum in segment.shotNumbers) {
+      final s = episode.shots.where((shot) => shot.number == sNum).firstOrNull;
+      if (s != null && s.framePath != null && s.framePath!.isNotEmpty) {
+        final f = File(p.join(framesDir, s.framePath!));
+        if (f.existsSync()) return f;
+      }
+    }
+    return null;
+  }
+
+  void _openPreview(BuildContext context) {
+    final clip = _segmentClip;
+    if (clip == null) return;
+    final frameFile = _coverFrameFile;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => _MediaPreviewDialog(
+        segment: segment,
+        customClipFile: clip,
+        customFrameFile: frameFile,
+        framesDir: framesDir,
+        clipsDir: clipsDir,
+        seriesName: seriesName,
+        episodeTitle: episode.title,
+      ),
+    );
+  }
+
+  void _showDurationPicker(BuildContext context) {
+    int selected = segment.targetDurationSec;
+    final customCtrl = TextEditingController(text: selected.toString());
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setPickerState) {
+            final presets = [5, 8, 10, 12, 15];
+            return AlertDialog(
+              backgroundColor: context.bgCard,
+              title: Row(
+                children: [
+                  Icon(Icons.timer_outlined, size: 20, color: context.accentText),
+                  const SizedBox(width: 8),
+                  Text('修改大段目标时长 (${segment.id})'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('选择大段生成的推荐总时长，或手动输入自定义秒数 (3~30s)：'),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final sec in presets)
+                        ChoiceChip(
+                          label: Text('${sec}s'),
+                          selected: selected == sec,
+                          onSelected: (bool sel) {
+                            if (sel) {
+                              setPickerState(() {
+                                selected = sec;
+                                customCtrl.text = sec.toString();
+                              });
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: customCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '自定义时长 (秒)',
+                      suffixText: '秒',
+                      isDense: true,
+                    ),
+                    onChanged: (val) {
+                      final parsed = int.tryParse(val.trim());
+                      if (parsed != null && parsed >= 3 && parsed <= 30) {
+                        setPickerState(() => selected = parsed);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final parsed = int.tryParse(customCtrl.text.trim()) ?? selected;
+                    final finalSec = parsed.clamp(3, 30);
+                    Navigator.pop(ctx);
+                    onUpdateDuration?.call(finalSec);
+                  },
+                  child: const Text('确认保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final shots = episode.shots
         .where((s) => segment.shotNumbers.contains(s.number))
         .toList();
-    final tasks = queue.tasksForSegment(segment.id);
-    final running = tasks.any((t) => t.status == StudioTaskStatus.running);
+    final safeId = segment.id.isNotEmpty
+        ? segment.id
+        : (segment.shotNumbers.isNotEmpty ? 'seg-${segment.shotNumbers.first}' : 'seg-1');
+    final tasks = queue.tasksForSegment(safeId);
+    final running = tasks.any((t) => !t.isTerminal);
     final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
     final clip = _segmentClip;
 
@@ -1109,7 +2062,7 @@ class _SegmentGroupCard extends StatelessWidget {
                     size: 16, color: context.accentText),
                 const SizedBox(width: 8),
                 Text(
-                  segment.id,
+                  safeId,
                   style: TextStyle(
                     color: context.textPrimary,
                     fontSize: 13,
@@ -1117,19 +2070,53 @@ class _SegmentGroupCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  // 吸附发生时把两个值并列：用户请求 15s、模型只支持 12s 时
-                  // 必须看到"15s → 12s"，否则会以为 15s 生效了
-                  // （spec: 分镜看板展示本次提交的实际参数）。
-                  segment.durationWasAdjusted
-                      ? '${segment.targetDurationSec}s → '
-                          '${segment.submittedDurationSec}s'
-                      : '${segment.targetDurationSec}s',
-                  style: TextStyle(
-                    color: segment.durationWasAdjusted
-                        ? context.warningText
-                        : context.textSecondary,
-                    fontSize: 12,
+                InkWell(
+                  onTap: onUpdateDuration != null ? () => _showDurationPicker(context) : null,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: segment.durationWasAdjusted
+                          ? context.warningText.withAlpha(20)
+                          : context.borderSubtle.withAlpha(40),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: segment.durationWasAdjusted
+                            ? context.warningText.withAlpha(120)
+                            : context.borderSubtle,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.timer_outlined,
+                          size: 13,
+                          color: segment.durationWasAdjusted
+                              ? context.warningText
+                              : context.textSecondary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          segment.durationWasAdjusted
+                              ? '${segment.targetDurationSec}s → ${segment.submittedDurationSec}s'
+                              : '${segment.targetDurationSec}s',
+                          style: TextStyle(
+                            color: segment.durationWasAdjusted
+                                ? context.warningText
+                                : context.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 14,
+                          color: context.textTertiary,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1153,15 +2140,18 @@ class _SegmentGroupCard extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 else
-                  FilledButton.icon(
-                    onPressed: tasks.any((t) => !t.isTerminal)
-                        ? null
-                        : onGenerateSegment,
-                    icon: const Icon(Icons.movie_creation_outlined, size: 14),
-                    label: Text(segment.hasClip ? '重新生成' : '生成片段'),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                  Tooltip(
+                    message: '依序为该场次包含的 ${shots.length} 个分镜生成独立视频（合计 ${segment.targetDurationSec} 秒），自动依托首尾帧接力保持连贯',
+                    child: FilledButton.icon(
+                      onPressed: tasks.any((t) => !t.isTerminal)
+                          ? null
+                          : onGenerateSegment,
+                      icon: const Icon(Icons.movie_creation_outlined, size: 14),
+                      label: Text('生成整场视频 (${segment.targetDurationSec}s)'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
                     ),
                   ),
               ],
@@ -1208,6 +2198,36 @@ class _SegmentGroupCard extends StatelessWidget {
                       fontSize: 11,
                     ),
                   ),
+                  const Spacer(),
+                  FilledButton.tonalIcon(
+                    onPressed: () => _openPreview(context),
+                    icon: const Icon(Icons.play_circle_outline, size: 14),
+                    label: const Text('播放预览',
+                        style: TextStyle(fontSize: 11)),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  // 收进资产库放这里而不是溢出菜单：片段卡没有菜单，而这个
+                  // 动作对片段级产物比对分镜级更有意义——片段是"一段成片"，
+                  // 正是用户会想跨剧复用的那种东西。
+                  TextButton.icon(
+                    onPressed: () => _collectSegmentToAssets(
+                      context,
+                      segment,
+                      clip,
+                      coverFile: _coverFrameFile,
+                    ),
+                    icon: const Icon(Icons.video_library_outlined, size: 14),
+                    label: const Text('收进资产库',
+                        style: TextStyle(fontSize: 11)),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1229,6 +2249,7 @@ class _ShotCard extends StatelessWidget {
   const _ShotCard({
     required this.shot,
     required this.scenes,
+    required this.characters,
     required this.queue,
     required this.dialogueController,
     required this.actionController,
@@ -1237,17 +2258,24 @@ class _ShotCard extends StatelessWidget {
     required this.onGenerateClip,
     required this.onOpenCameraPanel,
     required this.onRegenerateShot,
+    this.onDeleteShot,
+    this.onInsertShotAfter,
     required this.framesDir,
     required this.clipsDir,
     required this.seriesName,
     required this.episodeTitle,
+    this.validationIssues = const [],
+    this.isRegenerating = false,
   });
 
   final StudioShot shot;
   final List<SceneCard> scenes;
+  final List<CharacterCard> characters;
   final StudioTaskQueue queue;
   final TextEditingController dialogueController;
   final TextEditingController actionController;
+  final List<ValidationIssue> validationIssues;
+  final bool isRegenerating;
 
   /// `frames/` 的绝对目录（`storyboard.json` 里只存文件名）。
   final String framesDir;
@@ -1266,6 +2294,12 @@ class _ShotCard extends StatelessWidget {
 
   /// 单镜 AI 重新生成（spec 11.6）。
   final VoidCallback onRegenerateShot;
+
+  /// 删除当前镜头。
+  final VoidCallback? onDeleteShot;
+
+  /// 在当前镜头后插入新镜头。
+  final VoidCallback? onInsertShotAfter;
 
   File? get _clipFile {
     final name = shot.clipPath;
@@ -1301,6 +2335,53 @@ class _ShotCard extends StatelessWidget {
     );
   }
 
+  /// 把本分镜的产物收进资产库。
+  ///
+  /// **复制，不移动**（spec: 资产入库是复制而非移动）——原分镜产物留着，
+  /// 否则"收进资产库"会变成"从剧集里拿走"，用户不敢点。
+  ///
+  /// 提示词取 [StudioShot.assembledPrompt]：那是实际驱动生成的那段文字，
+  /// 比运镜短语信息量大得多，回望时也更有用。供应商与型号尽力而为——
+  /// 查不到就不填，不该因为缺元数据就拒绝入库。
+  Future<void> _collectToAssetLibrary(
+    BuildContext context,
+    AssetKind kind,
+  ) async {
+    final target = kind == AssetKind.clip ? _clipFile : _frameFile;
+    if (target == null || !target.existsSync()) return;
+    try {
+      await AssetLibrary.instance.addAsset(
+        target,
+        kind: kind,
+        name: kind == AssetKind.clip
+            ? '分镜 #${shot.number} 视频'
+            : '分镜 #${shot.number} 关键帧',
+        coverFile: kind == AssetKind.clip ? _frameFile : null,
+        category: kind == AssetKind.clip ? AssetCategory.clip : AssetCategory.frame,
+        prompt: shot.assembledPrompt.trim().isNotEmpty
+            ? shot.assembledPrompt.trim()
+            : shot.cameraMove,
+        originPath: target.path,
+        // 分镜级视频的时长就是该镜的建议时长——它提交时用的也是这个值。
+        durationSec: kind == AssetKind.clip ? shot.durationSec : null,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kind == AssetKind.clip ? '视频已收进资产库' : '关键帧已收进资产库',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('收进资产库失败: $e')),
+      );
+    }
+  }
+
   Future<void> _revealInFinder() async {
     final target = (_clipFile != null && _clipFile!.existsSync())
         ? _clipFile
@@ -1323,15 +2404,44 @@ class _ShotCard extends StatelessWidget {
     final defaultName =
         '${seriesName}_${episodeTitle}_shot_${shot.number}${isVideo ? ext : (ext.isEmpty ? ".png" : ext)}';
 
-    final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: '导出素材到本地',
-      fileName: defaultName,
-    );
-    if (savePath != null) {
+    String? savePath;
+    try {
+      savePath = await FilePicker.platform.saveFile(
+        dialogTitle: '导出素材到本地',
+        fileName: defaultName,
+      );
+    } catch (_) {
+      savePath = null;
+    }
+
+    if (savePath == null) {
+      final home = Platform.environment['HOME'] ?? '';
+      savePath = p.join(home, 'Downloads', defaultName);
+    }
+
+    try {
+      final destFile = File(savePath);
+      await destFile.parent.create(recursive: true);
       await target.copy(savePath);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('素材已导出到: $savePath')),
+          SnackBar(
+            content: Text('素材已导出到: $savePath'),
+            action: SnackBarAction(
+              label: '打开访达',
+              onPressed: () {
+                if (Platform.isMacOS) {
+                  Process.run('open', ['-R', savePath!]);
+                }
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导出素材失败: $e')),
         );
       }
     }
@@ -1344,6 +2454,12 @@ class _ShotCard extends StatelessWidget {
         tasks.where((t) => t.status == StudioTaskStatus.running).toList();
     final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
     final tooLong = shot.isDialogueTooLong;
+    final selectedCharacter = shot.characterIds.isEmpty
+        ? null
+        : characters.where((c) => c.id == shot.characterIds.first).firstOrNull;
+    final selectedVariationId = selectedCharacter != null
+        ? shot.characterVariations[selectedCharacter.id]
+        : null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1359,7 +2475,7 @@ class _ShotCard extends StatelessWidget {
         children: [
           _Thumbnail(
             shot: shot,
-            running: running.isNotEmpty,
+            running: running.isNotEmpty || isRegenerating,
             framesDir: framesDir,
             clipsDir: clipsDir,
             onTap: () => _openPreview(context),
@@ -1386,36 +2502,219 @@ class _ShotCard extends StatelessWidget {
                       _Tag(text: ShotMood.fromId(shot.mood).label),
                       const SizedBox(width: 4),
                       _Tag(text: shot.function.label),
+                      if (shot.directorDecisions.cutReason.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        _Tag(
+                          text: '切: ${shot.directorDecisions.cutReason}',
+                          color: context.accentSubtle,
+                          textColor: context.accentText,
+                        ),
+                      ],
+                      if (shot.directorDecisions.visualTask.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        _Tag(text: shot.directorDecisions.visualTask),
+                      ],
+                      if (validationIssues.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        _buildValidationBadge(context),
+                      ],
                       const Spacer(),
                       _StatusBadge(tasks: tasks),
+                      if (onDeleteShot != null || onInsertShotAfter != null) ...[
+                        const SizedBox(width: 4),
+                        PopupMenuButton<String>(
+                          icon: Icon(Icons.more_vert, size: 16, color: context.textSecondary),
+                          tooltip: '镜头操作',
+                          color: context.bgCard,
+                          onSelected: (val) {
+                            if (val == 'insert') onInsertShotAfter?.call();
+                            if (val == 'delete') onDeleteShot?.call();
+                          },
+                          itemBuilder: (context) => [
+                            if (onInsertShotAfter != null)
+                              const PopupMenuItem(
+                                value: 'insert',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.add_circle_outline, size: 16),
+                                    SizedBox(width: 8),
+                                    Text('在此后插入分镜', style: TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                            if (onDeleteShot != null)
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete_outline, size: 16, color: context.errorText),
+                                    const SizedBox(width: 8),
+                                    Text('删除此分镜', style: TextStyle(fontSize: 12, color: context.errorText)),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 6),
-                  Row(
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 6,
                     children: [
-                      Icon(Icons.landscape_outlined, size: 14, color: context.textTertiary),
-                      const SizedBox(width: 4),
-                      Text('场景:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                      const SizedBox(width: 6),
-                      DropdownButton<String>(
-                        value: scenes.any((s) => s.id == shot.sceneId) ? shot.sceneId : '',
-                        isDense: true,
-                        underline: const SizedBox.shrink(),
-                        dropdownColor: context.bgCard,
-                        style: TextStyle(color: context.textPrimary, fontSize: 11),
-                        items: [
-                          DropdownMenuItem(
-                            value: '',
-                            child: Text('无关联场景', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.landscape_outlined, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('场景:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: scenes.any((s) => s.id == shot.sceneId) ? shot.sceneId : '',
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: [
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text('无关联场景', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                              ),
+                              ...scenes.map((s) => DropdownMenuItem(
+                                    value: s.id,
+                                    child: Text(s.name, style: const TextStyle(fontSize: 11)),
+                                  )),
+                            ],
+                            onChanged: (val) {
+                              onEdited(shot.copyWith(sceneId: val ?? ''));
+                            },
                           ),
-                          ...scenes.map((s) => DropdownMenuItem(
-                                value: s.id,
-                                child: Text(s.name, style: TextStyle(fontSize: 11)),
-                              )),
                         ],
-                        onChanged: (val) {
-                          onEdited(shot.copyWith(sceneId: val ?? ''));
-                        },
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.person_outline, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('角色:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: (selectedCharacter != null) ? selectedCharacter.id : '',
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: [
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text('无角色(空镜)', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                              ),
+                              ...characters.map((c) => DropdownMenuItem(
+                                    value: c.id,
+                                    child: Text(c.name, style: const TextStyle(fontSize: 11)),
+                                  )),
+                            ],
+                            onChanged: (val) {
+                              if (val == null || val.isEmpty) {
+                                onEdited(shot.copyWith(
+                                  characterIds: const [],
+                                  characterVariations: const {},
+                                ));
+                              } else {
+                                onEdited(shot.copyWith(
+                                  characterIds: [val],
+                                ));
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      if (selectedCharacter != null && selectedCharacter.variations.isNotEmpty)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.style_outlined, size: 14, color: context.textTertiary),
+                            const SizedBox(width: 4),
+                            Text('形态:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                            const SizedBox(width: 4),
+                            DropdownButton<String>(
+                              value: (selectedVariationId != null &&
+                                      selectedCharacter.variations.any((v) => v.id == selectedVariationId))
+                                  ? selectedVariationId
+                                  : '',
+                              isDense: true,
+                              underline: const SizedBox.shrink(),
+                              dropdownColor: context.bgCard,
+                              style: TextStyle(color: context.textPrimary, fontSize: 11),
+                              items: [
+                                DropdownMenuItem(
+                                  value: '',
+                                  child: Text('默认形态', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                                ),
+                                ...selectedCharacter.variations.map((v) {
+                                  final hasTurnaround = (v.turnaroundPath != null && v.turnaroundPath!.isNotEmpty) ||
+                                      v.referenceImages.isNotEmpty;
+                                  return DropdownMenuItem(
+                                    value: v.id,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(v.name, style: const TextStyle(fontSize: 11)),
+                                        if (hasTurnaround) ...[
+                                          const SizedBox(width: 4),
+                                          const Icon(Icons.check_circle_rounded, size: 12, color: Color(0xFF22C55E)),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                              onChanged: (val) {
+                                final nextMap = Map<String, String>.from(shot.characterVariations);
+                                if (val == null || val.isEmpty) {
+                                  nextMap.remove(selectedCharacter.id);
+                                } else {
+                                  nextMap[selectedCharacter.id] = val;
+                                }
+                                onEdited(shot.copyWith(characterVariations: nextMap));
+                              },
+                            ),
+                          ],
+                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.timer_outlined, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('时长:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<double>(
+                            value: shot.durationSec,
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: [
+                              for (final d in {
+                                3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, shot.durationSec
+                              }.toList()..sort())
+                                DropdownMenuItem(
+                                  value: d,
+                                  child: Text(
+                                    '${d.toStringAsFixed(d.truncateToDouble() == d ? 0 : 1)}s',
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                ),
+                            ],
+                            onChanged: (val) {
+                              if (val != null && val != shot.durationSec) {
+                                onEdited(shot.copyWith(durationSec: val));
+                              }
+                            },
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1474,10 +2773,28 @@ class _ShotCard extends StatelessWidget {
                         label: const Text('关键帧'),
                       ),
                       const SizedBox(width: 4),
-                      TextButton.icon(
-                        onPressed: onGenerateClip,
-                        icon: const Icon(Icons.movie_outlined, size: 15),
-                        label: const Text('视频'),
+                      Tooltip(
+                        message: '为当前单个分镜生成独立视频（${shot.durationSec.toInt()}s）',
+                        child: TextButton.icon(
+                          onPressed: onGenerateClip,
+                          icon: const Icon(Icons.movie_outlined, size: 15),
+                          label: const Text('单镜视频'),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message: '针对当前分镜让 AI 优化动作与台词描述',
+                        child: TextButton.icon(
+                          onPressed: isRegenerating ? null : onRegenerateShot,
+                          icon: isRegenerating
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.auto_fix_high, size: 15),
+                          label: Text(isRegenerating ? '改写中…' : 'AI改写'),
+                        ),
                       ),
                       const SizedBox(width: 4),
                       TextButton.icon(
@@ -1501,8 +2818,47 @@ class _ShotCard extends StatelessWidget {
                           onSelected: (act) {
                             if (act == 'finder') _revealInFinder();
                             if (act == 'export') _exportFile(context);
+                            if (act == 'collect-frame') {
+                              _collectToAssetLibrary(
+                                context,
+                                AssetKind.image,
+                              );
+                            }
+                            if (act == 'collect-clip') {
+                              _collectToAssetLibrary(
+                                context,
+                                AssetKind.clip,
+                              );
+                            }
                           },
                           itemBuilder: (context) => [
+                            if (_frameFile != null &&
+                                _frameFile!.existsSync())
+                              const PopupMenuItem(
+                                value: 'collect-frame',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.photo_library_outlined,
+                                        size: 16),
+                                    SizedBox(width: 8),
+                                    Text('关键帧收进资产库',
+                                        style: TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                            if (_clipFile != null && _clipFile!.existsSync())
+                              const PopupMenuItem(
+                                value: 'collect-clip',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.video_library_outlined,
+                                        size: 16),
+                                    SizedBox(width: 8),
+                                    Text('视频收进资产库',
+                                        style: TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                              ),
                             const PopupMenuItem(
                               value: 'finder',
                               child: Row(
@@ -1553,11 +2909,84 @@ class _ShotCard extends StatelessWidget {
                       ),
                     ),
                   ],
+                  _DirectorDecisionsPanel(shot: shot),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildValidationBadge(BuildContext context) {
+    final hasBlocking = validationIssues.any((i) => i.severity == ValidationSeverity.blocking);
+    final color = hasBlocking ? context.errorText : context.warningText;
+    return InkWell(
+      onTap: () {
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text('镜 #${shot.number} 导演质检说明'),
+            content: SizedBox(
+              width: 450,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: validationIssues.map((issue) => Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: (issue.severity == ValidationSeverity.blocking ? ctx.errorText : ctx.warningText).withAlpha(20),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '【${issue.ruleId} ${issue.ruleName} · ${issue.severity.label}】',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                            color: issue.severity == ValidationSeverity.blocking ? ctx.errorText : ctx.warningText,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(issue.message, style: const TextStyle(fontSize: 11)),
+                        const SizedBox(height: 4),
+                        Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 10, color: ctx.textSecondary)),
+                      ],
+                    ),
+                  )).toList(),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('了解')),
+            ],
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: color.withAlpha(25),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withAlpha(90)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(hasBlocking ? Icons.error_outline : Icons.warning_amber_rounded, size: 11, color: color),
+            const SizedBox(width: 3),
+            Text(
+              hasBlocking ? '${validationIssues.length}阻断' : '${validationIssues.length}提示',
+              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1742,20 +3171,28 @@ class _Thumbnail extends StatelessWidget {
   }
 }
 
+enum _PreviewTab { video, frame }
+
 class _MediaPreviewDialog extends StatefulWidget {
   const _MediaPreviewDialog({
-    required this.shot,
-    required this.framesDir,
-    required this.clipsDir,
+    this.shot,
+    this.segment,
+    this.framesDir = '',
+    this.clipsDir = '',
     required this.seriesName,
     required this.episodeTitle,
+    this.customClipFile,
+    this.customFrameFile,
   });
 
-  final StudioShot shot;
+  final StudioShot? shot;
+  final StudioSegment? segment;
   final String framesDir;
   final String clipsDir;
   final String seriesName;
   final String episodeTitle;
+  final File? customClipFile;
+  final File? customFrameFile;
 
   @override
   State<_MediaPreviewDialog> createState() => _MediaPreviewDialogState();
@@ -1767,6 +3204,8 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   bool _hasClip = false;
   File? _clipFile;
   File? _frameFile;
+  _PreviewTab _activeTab = _PreviewTab.video;
+  final TransformationController _transformationController = TransformationController();
 
   StreamSubscription? _errorSub;
   StreamSubscription? _videoParamsSub;
@@ -1774,41 +3213,79 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   String? _errorMessage;
   double _aspectRatio = 9 / 16;
 
+  double get _durationSec {
+    if (widget.shot != null) return widget.shot!.durationSec;
+    if (widget.segment != null) {
+      return (widget.segment!.submittedDurationSec ?? widget.segment!.targetDurationSec).toDouble();
+    }
+    return 0.0;
+  }
+
+  String get _dialogTitle {
+    if (widget.shot != null) {
+      return '分镜 #${widget.shot!.number} 媒体预览';
+    }
+    if (widget.segment != null) {
+      return '大段 ${widget.segment!.id} 视频预览';
+    }
+    return '媒体预览';
+  }
+
   @override
   void initState() {
     super.initState();
-    final clipName = widget.shot.clipPath;
-    if (clipName != null && clipName.isNotEmpty) {
-      final f = File(p.join(widget.clipsDir, clipName));
-      if (f.existsSync()) {
-        _hasClip = true;
-        _clipFile = f;
-        _player = Player();
-        _videoController = VideoController(_player!);
-        _errorSub = _player!.stream.error.listen((err) {
-          if (mounted) {
-            setState(() {
-              _hasError = true;
-              _errorMessage = err.toString();
-            });
-          }
-        });
-        _videoParamsSub = _player!.stream.videoParams.listen((params) {
-          if (mounted && params.aspect != null && params.aspect! > 0) {
-            setState(() {
-              _aspectRatio = params.aspect!;
-            });
-          }
-        });
-        _player!.open(Media(f.path));
-        _player!.setPlaylistMode(PlaylistMode.loop);
+    File? resolvedClip = widget.customClipFile;
+    if (resolvedClip == null && widget.shot != null) {
+      final clipName = widget.shot!.clipPath;
+      if (clipName != null && clipName.isNotEmpty) {
+        final f = File(p.join(widget.clipsDir, clipName));
+        if (f.existsSync()) resolvedClip = f;
+      }
+    } else if (resolvedClip == null && widget.segment != null) {
+      final clipName = widget.segment!.clipPath;
+      if (clipName != null && clipName.isNotEmpty) {
+        final f = File(p.join(widget.clipsDir, '..', 'segments', clipName));
+        if (f.existsSync()) resolvedClip = f;
       }
     }
-    final frameName = widget.shot.framePath;
-    if (frameName != null && frameName.isNotEmpty) {
-      final f = File(p.join(widget.framesDir, frameName));
-      if (f.existsSync()) {
-        _frameFile = f;
+
+    if (resolvedClip != null && resolvedClip.existsSync()) {
+      _hasClip = true;
+      _clipFile = resolvedClip;
+      _activeTab = _PreviewTab.video;
+      _player = Player();
+      _videoController = VideoController(_player!);
+      _errorSub = _player!.stream.error.listen((err) {
+        if (mounted) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = err.toString();
+          });
+        }
+      });
+      _videoParamsSub = _player!.stream.videoParams.listen((params) {
+        if (mounted && params.aspect != null && params.aspect! > 0) {
+          setState(() {
+            _aspectRatio = params.aspect!;
+          });
+        }
+      });
+      _player!.open(Media(resolvedClip.path));
+      _player!.setPlaylistMode(PlaylistMode.loop);
+    }
+
+    File? resolvedFrame = widget.customFrameFile;
+    if (resolvedFrame == null && widget.shot != null) {
+      final frameName = widget.shot!.framePath;
+      if (frameName != null && frameName.isNotEmpty) {
+        final f = File(p.join(widget.framesDir, frameName));
+        if (f.existsSync()) resolvedFrame = f;
+      }
+    }
+    if (resolvedFrame != null && resolvedFrame.existsSync()) {
+      _frameFile = resolvedFrame;
+      if (!_hasClip) {
+        _activeTab = _PreviewTab.frame;
       }
     }
   }
@@ -1818,11 +3295,12 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
     _errorSub?.cancel();
     _videoParamsSub?.cancel();
     _player?.dispose();
+    _transformationController.dispose();
     super.dispose();
   }
 
   Future<void> _revealInFinder() async {
-    final target = _clipFile ?? _frameFile;
+    final target = (_activeTab == _PreviewTab.frame ? _frameFile : null) ?? _clipFile ?? _frameFile;
     if (target != null && target.existsSync()) {
       if (Platform.isMacOS) {
         await Process.run('open', ['-R', target.path]);
@@ -1831,22 +3309,60 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   }
 
   Future<void> _exportFile() async {
-    final target = _clipFile ?? _frameFile;
+    final target = (_activeTab == _PreviewTab.frame ? _frameFile : null) ?? _clipFile ?? _frameFile;
     if (target == null || !target.existsSync()) return;
     final ext = p.extension(target.path);
-    final isVideo = _clipFile != null;
-    final fileName =
-        '${widget.seriesName}_${widget.episodeTitle}_shot_${widget.shot.number}${isVideo ? ext : (ext.isEmpty ? ".png" : ext)}';
+    final isVideo = target.path.endsWith('.mp4');
+    final String fileName;
+    if (widget.segment != null) {
+      fileName =
+          '${widget.seriesName}_${widget.episodeTitle}_segment_${widget.segment!.id}${isVideo ? ".mp4" : (ext.isEmpty ? ".png" : ext)}';
+    } else if (widget.shot != null) {
+      fileName =
+          '${widget.seriesName}_${widget.episodeTitle}_shot_${widget.shot!.number}${isVideo ? ".mp4" : (ext.isEmpty ? ".png" : ext)}';
+    } else {
+      fileName =
+          '${widget.seriesName}_${widget.episodeTitle}_media${isVideo ? ".mp4" : (ext.isEmpty ? ".png" : ext)}';
+    }
 
-    final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: '导出分镜素材',
-      fileName: fileName,
-    );
-    if (savePath != null) {
+    String? savePath;
+    try {
+      savePath = await FilePicker.platform.saveFile(
+        dialogTitle: '导出分镜素材到本地',
+        fileName: fileName,
+      );
+    } catch (_) {
+      savePath = null;
+    }
+
+    if (savePath == null) {
+      final home = Platform.environment['HOME'] ?? '';
+      savePath = p.join(home, 'Downloads', fileName);
+    }
+
+    try {
+      final destFile = File(savePath);
+      await destFile.parent.create(recursive: true);
       await target.copy(savePath);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已导出到: $savePath')),
+          SnackBar(
+            content: Text('已成功导出到: $savePath'),
+            action: SnackBarAction(
+              label: '打开访达',
+              onPressed: () {
+                if (Platform.isMacOS) {
+                  Process.run('open', ['-R', savePath!]);
+                }
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导出失败: $e')),
         );
       }
     }
@@ -1859,7 +3375,7 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   }
 
   Widget _buildMediaContent() {
-    if (_hasClip && _videoController != null) {
+    if (_activeTab == _PreviewTab.video && _hasClip && _videoController != null) {
       if (_hasError) {
         return Center(
           child: Padding(
@@ -1909,9 +3425,56 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
     }
 
     if (_frameFile != null && _frameFile!.existsSync()) {
-      return InteractiveViewer(
-        maxScale: 4.0,
-        child: Center(child: Image.file(_frameFile!, fit: BoxFit.contain)),
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          InteractiveViewer(
+            transformationController: _transformationController,
+            minScale: 0.2,
+            maxScale: 8.0,
+            child: Center(child: Image.file(_frameFile!, fit: BoxFit.contain)),
+          ),
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.zoom_in, color: Colors.white70, size: 16),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '滚轮/捏合缩放',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: () {
+                      _transformationController.value = Matrix4.identity();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white12,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        '复位',
+                        style: TextStyle(color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -1960,35 +3523,64 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      '分镜 #${widget.shot.number} 媒体预览',
+                      _dialogTitle,
                       style: TextStyle(
                         color: context.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: _hasClip
-                            ? context.accentSubtle
-                            : context.borderSubtle,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        _hasClip
-                            ? '视频片段 (${widget.shot.durationSec.toStringAsFixed(1)}s)'
-                            : '关键帧大图',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _hasClip
-                              ? context.accentText
-                              : context.textSecondary,
+                    if (_hasClip && _frameFile != null && _frameFile!.existsSync()) ...[
+                      const SizedBox(width: 12),
+                      SegmentedButton<_PreviewTab>(
+                        segments: [
+                          ButtonSegment(
+                            value: _PreviewTab.video,
+                            label: Text(widget.segment != null
+                                ? '大段视频 (${_durationSec.toStringAsFixed(1)}s)'
+                                : '单镜视频 (${_durationSec.toStringAsFixed(1)}s)'),
+                            icon: const Icon(Icons.movie_outlined, size: 14),
+                          ),
+                          const ButtonSegment(
+                            value: _PreviewTab.frame,
+                            label: Text('关键帧大图 (可缩放)'),
+                            icon: Icon(Icons.image_outlined, size: 14),
+                          ),
+                        ],
+                        selected: {_activeTab},
+                        onSelectionChanged: (set) {
+                          setState(() => _activeTab = set.first);
+                        },
+                        style: const ButtonStyle(
+                          visualDensity: VisualDensity.compact,
                         ),
                       ),
-                    ),
+                    ] else ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _hasClip
+                              ? context.accentSubtle
+                              : context.borderSubtle,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _hasClip
+                              ? (widget.segment != null
+                                  ? '大段成片 (${_durationSec.toStringAsFixed(1)}s)'
+                                  : '视频片段 (${_durationSec.toStringAsFixed(1)}s)')
+                              : '关键帧大图',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _hasClip
+                                ? context.accentText
+                                : context.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     if (_hasClip)
                       IconButton(
@@ -2021,71 +3613,274 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                   child: _buildMediaContent(),
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: context.bgCard,
-                  border: Border(top: BorderSide(color: context.borderSubtle)),
-                ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
+              if (widget.shot != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: context.bgCard,
+                    border: Border(top: BorderSide(color: context.borderSubtle)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _Tag(text: '景别: ${widget.shot.shotSize.label}'),
-                      const SizedBox(width: 6),
-                      _Tag(text: '情绪: ${ShotMood.fromId(widget.shot.mood).label}'),
-                      const SizedBox(width: 6),
-                      _Tag(text: '功能: ${widget.shot.function.label}'),
-                      if (widget.shot.cameraMove.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        _Tag(text: '运镜: ${widget.shot.cameraMove}'),
+                      Row(
+                        children: [
+                          _Tag(text: '景别: ${widget.shot!.shotSize.label}'),
+                          const SizedBox(width: 6),
+                          _Tag(text: '情绪: ${ShotMood.fromId(widget.shot!.mood).label}'),
+                          const SizedBox(width: 6),
+                          _Tag(text: '功能: ${widget.shot!.function.label}'),
+                          if (widget.shot!.cameraMove.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            _Tag(text: '运镜: ${widget.shot!.cameraMove}'),
+                          ],
+                        ],
+                      ),
+                      if (widget.shot!.actionZh.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '画面动作: ${widget.shot!.actionZh}',
+                          style: TextStyle(color: context.textPrimary, fontSize: 12),
+                        ),
+                      ],
+                      if (widget.shot!.dialogue.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '台词: ${widget.shot!.dialogue}',
+                          style: TextStyle(color: context.textSecondary, fontSize: 11),
+                        ),
                       ],
                     ],
                   ),
-                  if (widget.shot.actionZh.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      '画面动作: ${widget.shot.actionZh}',
-                      style: TextStyle(color: context.textPrimary, fontSize: 12),
-                    ),
-                  ],
-                  if (widget.shot.dialogue.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      '台词: ${widget.shot.dialogue}',
-                      style: TextStyle(color: context.textSecondary, fontSize: 11),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+                )
+              else if (widget.segment != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: context.bgCard,
+                    border: Border(top: BorderSide(color: context.borderSubtle)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          _Tag(text: '大段 ID: ${widget.segment!.id}'),
+                          const SizedBox(width: 6),
+                          _Tag(text: '时长: ${_durationSec.toStringAsFixed(0)}s'),
+                          const SizedBox(width: 6),
+                          _Tag(text: '包含 ${widget.segment!.shotNumbers.length} 个分镜 (${widget.segment!.shotNumbers.join(", ")})'),
+                          if (widget.segment!.durationWasAdjusted) ...[
+                            const SizedBox(width: 6),
+                            _Tag(text: '模型吸附: ${widget.segment!.targetDurationSec}s → ${widget.segment!.submittedDurationSec}s'),
+                          ],
+                        ],
+                      ),
+                      if (widget.segment!.boundaryReason.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '分段依据: ${widget.segment!.boundaryReason}',
+                          style: TextStyle(color: context.textPrimary, fontSize: 12),
+                        ),
+                      ],
+                      if (widget.segment!.promptNote.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '补充润色: ${widget.segment!.promptNote}',
+                          style: TextStyle(color: context.textSecondary, fontSize: 11),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 class _Tag extends StatelessWidget {
-  const _Tag({required this.text});
+  const _Tag({required this.text, this.color, this.textColor});
 
   final String text;
+  final Color? color;
+  final Color? textColor;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: context.bgInput,
+        color: color ?? context.bgInput,
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(
         text,
-        style: TextStyle(color: context.textSecondary, fontSize: 10),
+        style: TextStyle(color: textColor ?? context.textSecondary, fontSize: 10),
+      ),
+    );
+  }
+}
+
+class _DirectorDecisionsPanel extends StatefulWidget {
+  const _DirectorDecisionsPanel({required this.shot});
+
+  final StudioShot shot;
+
+  @override
+  State<_DirectorDecisionsPanel> createState() => _DirectorDecisionsPanelState();
+}
+
+class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = widget.shot.directorDecisions;
+    final combat = widget.shot.combatSteps;
+    final exit = widget.shot.continuity.dynamicExitState;
+    final hasContent = d.isNotEmpty || combat.isNotEmpty || exit.isNotEmpty;
+    if (!hasContent) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 6),
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(
+                  _expanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                  size: 16,
+                  color: context.accentText,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '五维导演决策 & 攻防因果${combat.isNotEmpty ? ' (${combat.length}步交互)' : ''}',
+                  style: TextStyle(
+                    color: context.accentText,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (d.cutReason.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: context.accentSubtle,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(
+                      '切: ${d.cutReason}',
+                      style: TextStyle(fontSize: 10, color: context.accentText),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_expanded) ...[
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: context.bgInput.withAlpha(120),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: context.borderSubtle),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (d.physicalMomentum.isNotEmpty)
+                  _buildDecisionRow(context, '物理动势', d.physicalMomentum),
+                if (d.lightingStaging.isNotEmpty)
+                  _buildDecisionRow(context, '空间光影', d.lightingStaging),
+                if (d.cameraStaging.isNotEmpty)
+                  _buildDecisionRow(context, '光学机位', d.cameraStaging),
+                if (d.temporalEvolution.isNotEmpty)
+                  _buildDecisionRow(context, '时间演变', d.temporalEvolution),
+                if (d.aestheticTexture.isNotEmpty)
+                  _buildDecisionRow(context, '美学质感', d.aestheticTexture),
+                if (exit.isNotEmpty)
+                  _buildDecisionRow(
+                    context,
+                    '出幅动态',
+                    '${exit.unfinishedPhase} · 动势: ${exit.velocityVector}',
+                  ),
+                if (combat.isNotEmpty) ...[
+                  const Divider(height: 12),
+                  Text(
+                    '动作攻防六步因果链',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: context.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ...combat.map((step) {
+                    final targets = step.targetNames.isNotEmpty ? step.targetNames.join('、') : '目标';
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '#${step.stepIndex} 【${step.actorName} ⚔️ $targets】${step.intent} → ${step.attack} | 反应: ${step.defense} (受力: ${step.impact}, 位移: ${step.displacement})',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: context.textSecondary,
+                          height: 1.3,
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildDecisionRow(BuildContext context, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 55,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: context.textTertiary,
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 10,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2120,15 +3915,47 @@ class _StatusBadge extends StatelessWidget {
 }
 
 class _QueueDrawer extends StatefulWidget {
-  const _QueueDrawer({required this.queue});
+  const _QueueDrawer({required this.queue, this.onReloadBoard});
 
   final StudioTaskQueue queue;
+  final VoidCallback? onReloadBoard;
 
   @override
   State<_QueueDrawer> createState() => _QueueDrawerState();
 }
 
 class _QueueDrawerState extends State<_QueueDrawer> {
+  List<VideoTaskLedgerEntry> _cloudTasks = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCloudTasks();
+  }
+
+  Future<void> _loadCloudTasks() async {
+    final all = await VideoTaskLedger.instance.allEntries();
+    if (!mounted) return;
+    // **active + completed** 都展示。
+    //
+    // 曾经只显示 active，理由是「已终结的进历史，别让'当前有什么在跑'变糊」。
+    // 但 completed 条目不是历史——它的云端 URL 仍有效、产物仍可取回，
+    // 而用户付过费。把它们藏起来等于让「积分扣了但本地没片子」无法自助。
+    //
+    // failed / abandoned 仍然不显示：它们没有可取回产物，堆在这里只会噪。
+    //
+    // 小说导入条目也排除：它有专属的任务抽屉（顶栏指示 → novel_task_drawer），
+    // 混进来会让「云端任务」区出现一个既没有 video_id 也没有云端 URL 的条目，
+    // 而这里的每个按钮（刷新/取回）对它都不适用。
+    setState(() {
+      _cloudTasks = all
+          .where((e) =>
+              e.adapterId != NovelImportTaskService.adapterId &&
+              (e.status.isActive || e.status == VideoTaskLedgerStatus.completed))
+          .toList();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final tasks = widget.queue.tasks;
@@ -2149,6 +3976,33 @@ class _QueueDrawerState extends State<_QueueDrawer> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(width: 14),
+                Text(
+                  '并发数:',
+                  style: TextStyle(
+                    color: context.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1, label: Text('1')),
+                    ButtonSegment(value: 2, label: Text('2')),
+                    ButtonSegment(value: 3, label: Text('3')),
+                    ButtonSegment(value: 4, label: Text('4')),
+                    ButtonSegment(value: 5, label: Text('5')),
+                  ],
+                  selected: {widget.queue.maxConcurrency},
+                  onSelectionChanged: (set) {
+                    widget.queue.setMaxConcurrency(set.first);
+                    setState(() {});
+                  },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () {
@@ -2160,7 +4014,7 @@ class _QueueDrawerState extends State<_QueueDrawer> {
               ],
             ),
             const SizedBox(height: 8),
-            if (tasks.isEmpty)
+            if (tasks.isEmpty && _cloudTasks.isEmpty)
               Text(
                 '队列是空的。',
                 style: TextStyle(color: context.textTertiary, fontSize: 12),
@@ -2217,6 +4071,13 @@ class _QueueDrawerState extends State<_QueueDrawer> {
                         ),
                 ),
             ],
+            if (_cloudTasks.isNotEmpty) ...[
+              _CloudTaskSection(
+                tasks: _cloudTasks,
+                onChanged: _loadCloudTasks,
+                onReloadBoard: widget.onReloadBoard,
+              ),
+            ],
           ],
         ),
       ),
@@ -2240,7 +4101,584 @@ class _QueueDrawerState extends State<_QueueDrawer> {
   }
 }
 
-/// 运镜方案候选表。
+/// 云端视频任务区。
+///
+/// 与上面的内存队列分开展示，因为它们是两种不同的东西：
+/// - 内存队列 = 本进程正在跑的调度单元，取消它就真的不跑了；
+/// - 这里 = **云端还在计费**的任务，取消只代表本地不再等。
+///
+/// 混在一起展示会让用户以为点「放弃」就停止扣费——那是比不展示更糟的误导，
+/// 所以这个区的标题与每条卡片都把「本地操作不影响云端」写明。
+class _CloudTaskSection extends StatelessWidget {
+  const _CloudTaskSection({
+    required this.tasks,
+    required this.onChanged,
+    this.onReloadBoard,
+  });
+
+  final List<VideoTaskLedgerEntry> tasks;
+  final Future<void> Function() onChanged;
+  final VoidCallback? onReloadBoard;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 14, bottom: 2),
+          child: Text(
+            '云端视频任务',
+            style: TextStyle(
+              color: context.textTertiary,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        // 计费明示。放在区级而不是每条卡片里：这句话对区内所有条目都成立，
+        // 重复 N 遍只会变噪音被忽略。
+        Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: context.accentSubtle,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 13, color: context.accentText),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  '这些任务在云端继续生成并计费。放弃只表示本机不再等待，'
+                  '不会停止云端——视频仍可用右侧 id 去 Agnes 控制台取回。',
+                  style: TextStyle(fontSize: 10, height: 1.4),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final entry in tasks)
+          _CloudTaskTile(
+            entry: entry,
+            onChanged: onChanged,
+            onReloadBoard: onReloadBoard,
+          ),
+      ],
+    );
+  }
+}
+
+class _CloudTaskTile extends StatelessWidget {
+  const _CloudTaskTile({
+    required this.entry,
+    required this.onChanged,
+    this.onReloadBoard,
+  });
+
+  final VideoTaskLedgerEntry entry;
+  final Future<void> Function() onChanged;
+  final VoidCallback? onReloadBoard;
+
+  String get _elapsed {
+    final d = DateTime.now().toUtc().difference(entry.createdAt);
+    if (d.inMinutes < 1) return '${d.inSeconds} 秒';
+    if (d.inHours < 1) return '${d.inMinutes} 分钟';
+    return '${d.inHours} 小时 ${d.inMinutes % 60} 分';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isCloudProcessing =
+        entry.status == VideoTaskLedgerStatus.cloudProcessing;
+    final stage = switch (entry.lastRemoteStatus) {
+      'queued' => '排队中',
+      'in_progress' || 'processing' => '生成中',
+      'completed' => '已完成',
+      'failed' => '云端失败',
+      _ => isCloudProcessing ? '云端仍在处理' : '本地等待中',
+    };
+
+    return Card(
+      color: context.bgCard,
+      margin: const EdgeInsets.only(bottom: 6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.cloud_outlined,
+                  size: 16,
+                  color: isCloudProcessing
+                      ? context.accentText
+                      : context.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    entry.label.isEmpty ? entry.model : entry.label,
+                    style: TextStyle(
+                      color: context.textPrimary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                // video_id 可复制：这是用户去控制台自查的唯一钥匙。
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: '复制 video_id',
+                  icon: const Icon(Icons.copy, size: 14),
+                  onPressed: () {
+                    Clipboard.setData(
+                      ClipboardData(text: entry.remoteTaskId),
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('已复制 video_id：${entry.remoteTaskId}'),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 22),
+              child: Text(
+                '$stage · 已等待 $_elapsed'
+                '${entry.lastProgress != null ? ' · 云端进度 ${entry.lastProgress}%' : ''}',
+                style: TextStyle(color: context.textTertiary, fontSize: 11),
+              ),
+            ),
+            // 来源元数据：用户要能判断"这条值不值得取回"，光有状态不够
+            // ——型号与提示词才是判断依据。
+            if (entry.model.isNotEmpty || (entry.prompt?.isNotEmpty ?? false))
+              Padding(
+                padding: const EdgeInsets.only(left: 22, top: 2),
+                child: Text(
+                  [
+                    if (entry.model.isNotEmpty) entry.model,
+                    if (entry.prompt?.isNotEmpty ?? false) entry.prompt!,
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: context.textTertiary,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            if (entry.error != null && entry.error!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 22, top: 2),
+                child: Text(
+                  entry.error!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: context.errorText, fontSize: 10),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Wrap(
+                spacing: 4,
+                runSpacing: 2,
+                children: [
+                  // 刷新状态：只查一次，不重新挂轮询、不动等待预算。
+                  // 对停在「云端仍在处理」的任务，这是最常用的查看方式。
+                  TextButton(
+                    onPressed: () => _refreshStatus(context),
+                    child: const Text('刷新状态',
+                        style: TextStyle(fontSize: 11)),
+                  ),
+                  if (isCompleted) ...[
+                    // 重新取回：云端 URL 实测长期有效，本地丢了能捞回来。
+                    TextButton(
+                      onPressed: () => _refetch(context),
+                      child: const Text('重新取回',
+                          style: TextStyle(fontSize: 11)),
+                    ),
+                    TextButton(
+                      onPressed: () => _collectToAssets(context),
+                      child: const Text('收进资产库',
+                          style: TextStyle(fontSize: 11)),
+                    ),
+                  ] else
+                    TextButton(
+                      onPressed: () async {
+                        // 继续等待：重新挂起轮询。预算可无限次追加——云端
+                        // 任务没有取消端点，等下去是唯一取回的办法。
+                        final ok = await VideoTaskRecovery.instance
+                            .resumeManually(entry.localId);
+                        if (!ok && context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('该任务已在等待中')),
+                          );
+                        }
+                        await onChanged();
+                      },
+                      child: const Text('继续等待',
+                          style: TextStyle(fontSize: 11)),
+                    ),
+                  TextButton(
+                    onPressed: () => _showRawRequestDialog(context),
+                    child: const Text('查看请求体',
+                        style: TextStyle(fontSize: 11)),
+                  ),
+                  TextButton(
+                    onPressed: () => _debugInPlayground(context),
+                    child: const Text('在试炼场调试',
+                        style: TextStyle(fontSize: 11)),
+                  ),
+                  TextButton(
+                    onPressed: () async {
+                      // 放弃前说清后果：本地不再等，云端继续计费。用户必须
+                      // 在点下去之前知道这一点，而不是之后发现账单。
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          backgroundColor: context.bgCard,
+                          title: const Text('放弃本地等待？'),
+                          content: const Text(
+                            '放弃只让本机不再等待这个任务。云端仍会继续生成并计费，'
+                            '视频也不会自动消失——你仍可用 video_id 去 Agnes '
+                            '控制台取回。确定放弃吗？',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('取消'),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text('仍要放弃'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm != true) return;
+                      await VideoTaskRecovery.instance.abandon(entry.localId);
+                      await onChanged();
+                    },
+                    child: const Text('放弃', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool get isCompleted => entry.status == VideoTaskLedgerStatus.completed;
+
+  /// 重建一个 Agnes 适配器来查询。
+  ///
+  /// 台账条目记的是创建时的型号与供应商标识，恢复/刷新都该用那组值——
+  /// 用户可能已经改了全局默认模型，但云端那个任务还是老型号。
+  Future<AgnesVideoAdapter?> _adapterFor() async {
+    final provider = AiConfigStore.instance.providers
+        .where((p) => p.id == entry.providerId)
+        .firstOrNull;
+    // 供应商配置可能已被删除。退回 Agnes 公开地址——地址不需要配置也能查，
+    // 但 Key 不行：没有供应商配置就拿不到 key id。
+    final baseUrl = provider?.baseUrl ?? 'https://api.agnes-ai.cn/v1';
+    final key = provider == null
+        ? null
+        : await KeychainService.instance.readSecret(provider.keychainKeyId);
+    if (key == null || key.isEmpty) return null;
+    return AgnesVideoAdapter(
+      baseUrl: baseUrl,
+      model: entry.model,
+      apiKey: key,
+      providerId: entry.providerId,
+    );
+  }
+
+  Future<void> _refreshStatus(BuildContext context) async {
+    final adapter = await _adapterFor();
+    if (adapter == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('该任务的 API Key 已不可用，无法查询')),
+        );
+      }
+      return;
+    }
+    try {
+      final status = await adapter.refreshStatusOnce(entry);
+      await onChanged();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(status == null ? '查询失败，请稍后再试' : '当前状态: $status'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$e')),
+      );
+    }
+  }
+
+  Future<void> _refetch(BuildContext context) async {
+    final adapter = await _adapterFor();
+    if (adapter == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('该任务的 API Key 已不可用，无法取回')),
+        );
+      }
+      return;
+    }
+    try {
+      final file = await adapter.refetchCompleted(entry);
+      await VideoTaskRecovery.instance.writeBack(entry, file);
+      await onChanged();
+      onReloadBoard?.call();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已取回并同步至剧集：${p.basename(file.path)}')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('取回失败: $e')),
+      );
+    }
+  }
+
+  void _showRawRequestDialog(BuildContext context) {
+    final draft = PlaygroundDraft.fromLedgerEntry(entry);
+    final jsonText = draft.formattedRawPayloadJson;
+    final reqText = draft.renderRedactedRequest();
+    var showJson = true;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            final activeText = showJson ? jsonText : reqText;
+            return AlertDialog(
+              backgroundColor: dialogCtx.bgCard,
+              title: Row(
+                children: [
+                  Text(
+                    '任务 [${entry.label}] 请求体',
+                    style: TextStyle(
+                      color: dialogCtx.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(
+                        value: true,
+                        label: Text('HTTP JSON', style: TextStyle(fontSize: 11)),
+                      ),
+                      ButtonSegment(
+                        value: false,
+                        label: Text('参数概览', style: TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                    selected: {showJson},
+                    onSelectionChanged: (set) {
+                      setDialogState(() => showJson = set.first);
+                    },
+                    style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 620,
+                height: 420,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: dialogCtx.bgContent,
+                    borderRadius: AppTheme.borderRadiusSmall,
+                    border: Border.all(color: dialogCtx.borderSubtle),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      activeText,
+                      style: TextStyle(
+                        color: dialogCtx.textPrimary,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy, size: 14),
+                  label: const Text('复制请求 JSON'),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: jsonText));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('已复制完整脱敏请求 JSON 到剪贴板'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.text_snippet_outlined, size: 14),
+                  label: const Text('复制提示词'),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: entry.prompt ?? ''));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('已复制提示词全文到剪贴板'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.tune, size: 14),
+                  label: const Text('转入试炼场调试'),
+                  onPressed: () {
+                    Navigator.pop(dialogCtx);
+                    _debugInPlayground(context);
+                  },
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx),
+                  child: const Text('关闭'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _debugInPlayground(BuildContext context) async {
+    final draft = PlaygroundDraft.fromLedgerEntry(entry);
+    await PlaygroundStore.instance.saveDraft(draft);
+
+    var windowOpened = false;
+    try {
+      final tool = ToolRegistry.findById(kToolIdAgnesPlayground);
+      if (tool case final AgnesPlaygroundToolDefinition pg) {
+        await pg.openNewWindow();
+        windowOpened = true;
+      }
+    } catch (e) {
+      debugPrint('[CloudTaskTile] 打开试炼场窗口失败: $e');
+    }
+
+    if (!windowOpened && context.mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const Scaffold(body: PlaygroundPage()),
+        ),
+      );
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('已将该任务的完整调用参数与参考图载入 Agnes 试炼场'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _collectToAssets(BuildContext context) async {
+    final file = File(entry.targetPath);
+    if (!file.existsSync()) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本地产物不存在，请先「重新取回」')),
+      );
+      return;
+    }
+
+    String semanticName = '生成产物 ${entry.localId}';
+    File? coverCandidate;
+
+    if (entry.seriesId.isNotEmpty) {
+      final manager = StudioProjectManager.instance;
+      final series = manager.readSeries(entry.seriesId);
+      final episode = entry.episodeId.isNotEmpty
+          ? manager.readEpisode(entry.seriesId, entry.episodeId)
+          : null;
+      final seriesTitle = series?.name ?? '剧集';
+      final epTitle = episode != null ? '第${episode.index}集' : '';
+
+      if (entry.segmentId.isNotEmpty) {
+        final seg = episode?.segments
+            .where((s) => s.id == entry.segmentId)
+            .firstOrNull;
+        final segIndex = seg != null
+            ? (episode!.segments.indexOf(seg) + 1)
+            : entry.segmentId;
+        semanticName = '[$seriesTitle $epTitle] 大段 $segIndex 视频';
+      } else if (entry.shotNumber != null) {
+        semanticName = '[$seriesTitle $epTitle] 分镜 #${entry.shotNumber} 视频';
+      }
+    }
+
+    final refPaths = entry.requestSnapshot?['referencePaths'];
+    if (refPaths is List) {
+      for (final p in refPaths) {
+        if (p is String && p.isNotEmpty) {
+          final f = File(p);
+          if (f.existsSync()) {
+            coverCandidate = f;
+            break;
+          }
+        }
+      }
+    }
+
+    try {
+      await AssetLibrary.instance.addAsset(
+        file,
+        kind: AssetKind.clip,
+        name: semanticName,
+        coverFile: coverCandidate,
+        category: AssetCategory.clip,
+        prompt: entry.prompt,
+        model: entry.model,
+        sourceCallId: entry.localId,
+        originPath: entry.targetPath,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已收进资产库「视频片段」分类')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('收进资产库失败: $e')),
+      );
+    }
+  }
+}
 ///
 /// 每档方案带「适用情绪」与「预估视觉评分」。AI 推荐高亮 = 分数最高的那个，
 /// 用户仍可自由改选。

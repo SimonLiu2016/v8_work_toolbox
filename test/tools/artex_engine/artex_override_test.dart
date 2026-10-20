@@ -58,6 +58,88 @@ void main() {
     });
   });
 
+  group('隧道池发布与回连注入（fix-artex-internal-network-reachability）', () {
+    test('给了回连地址才注入 ARTEX_CALLBACK_ADDR 与池范围', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+        callbackAddr: '192.168.1.3',
+      );
+      expect(content, contains('ARTEX_CALLBACK_ADDR: "192.168.1.3"'));
+      expect(content, contains('ARTEX_TUNNEL_PORT_RANGE: "20000-20099"'));
+    });
+
+    test('池发布条目绑定回连 IP 而不是 0.0.0.0', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+        callbackAddr: '10.0.0.5',
+      );
+      expect(
+        content,
+        contains('"10.0.0.5:20000-20099:20000-20099"'),
+      );
+      // 不能出现不绑 IP 的池发布（会把端口暴露给 vmnet/bridge）
+      expect(content, isNot(contains('"20000-20099:20000-20099"')));
+    });
+
+    test('池范围随配置变化', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(tunnelPortMin: 21000, tunnelPortMax: 21049),
+        callbackAddr: '192.168.1.3',
+      );
+      expect(content, contains('ARTEX_TUNNEL_PORT_RANGE: "21000-21049"'));
+      expect(content, contains('"192.168.1.3:21000-21049:21000-21049"'));
+    });
+
+    test('ports 只有一个 !override 标签（拆分多个 key 会退化成追加）', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+        callbackAddr: '192.168.1.3',
+      );
+      expect('ports: !override'.allMatches(content), hasLength(1));
+    });
+
+    test('8787/8788 与池条目在同一个 ports 列表内', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+        callbackAddr: '192.168.1.3',
+      );
+      final portsSection = content.substring(content.indexOf('ports: !override'));
+      expect(portsSection, contains('"127.0.0.1:8787:8787"'));
+      expect(portsSection, contains('"127.0.0.1:8788:8788"'));
+      expect(portsSection, contains('"192.168.1.3:20000-20099:20000-20099"'));
+    });
+
+    test('callbackAddr 为 null 时只生成门控与端口（不回退注入）', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+      );
+      expect(content, isNot(contains('ARTEX_CALLBACK_ADDR')));
+      expect(content, isNot(contains('ARTEX_TUNNEL_PORT_RANGE')));
+      expect(content, isNot(contains('20000-20099')));
+      // 前两项仍在
+      expect(content, contains('ARTEX_GATE: "off"'));
+      expect(content, contains('"127.0.0.1:8787:8787"'));
+    });
+
+    test('空字符串回调地址等同未指定', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(),
+        callbackAddr: '',
+      );
+      expect(content, isNot(contains('ARTEX_CALLBACK_ADDR')));
+    });
+
+    test('gateOff=false 且有回调地址时 environment 段只含回调两项', () {
+      final content = ArtexOverrideStore.instance.render(
+        const ArtexEngineConfig(gateOff: false),
+        callbackAddr: '192.168.1.3',
+      );
+      expect(content, isNot(contains('ARTEX_GATE')));
+      expect(content, contains('ARTEX_CALLBACK_ADDR: "192.168.1.3"'));
+      expect(content, contains('ARTEX_TUNNEL_PORT_RANGE: "20000-20099"'));
+    });
+  });
+
   group('标记识别与安全重写（task 4.2）', () {
     test('本工具生成的文件被识别为可管理', () {
       ArtexOverrideStore.instance.write(

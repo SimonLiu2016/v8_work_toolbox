@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/studio_models.dart';
+import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart';
 import 'prompt_assembler.dart';
 import 'studio_project_manager.dart';
@@ -29,6 +30,8 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
     required this.adapter,
     this.character,
     this.variation,
+    this.characters = const [],
+    this.characterVariations = const {},
     this.scene,
     this.styleTokens = '',
     this.onPersisted,
@@ -45,6 +48,8 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
   /// 出場角色卡与场景卡（可为 null：纯动作镜头）。
   final CharacterCard? character;
   final CharacterVariation? variation;
+  final List<CharacterCard> characters;
+  final Map<String, CharacterVariation?> characterVariations;
   final SceneCard? scene;
   final String styleTokens;
 
@@ -60,28 +65,131 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
   @override
   bool isCancelled() => _cancelled;
 
-  /// 收集本次生图的参考图：角色基准图 + 场景主视图。
-  ///
-  /// 只取每个卡片的**第一张**——那是用户在卡上主动指定的"这张脸/这个空间"。
-  /// 多张全带会让模型在多张相似图之间摇摆，反而破坏一致性。
+  /// 收集本次生图的参考图：所有同框角色形态三视图/基准三视图 + 场景主视图/机位匹配空间图。
   List<String> _referenceImages(
     StudioProjectManager manager,
-    CharacterCard? character,
-    SceneCard? scene,
-  ) {
+    List<CharacterCard> characters,
+    Map<String, CharacterVariation?> characterVariations,
+    CharacterCard? fallbackCharacter,
+    CharacterVariation? fallbackVariation,
+    SceneCard? scene, {
+    String? cameraMove,
+    String? shotSize,
+    String? actionZh,
+  }) {
     final result = <String>[];
-    void add(String dir, List<String> names) {
-      if (names.isEmpty) return;
-      final file = File(p.join(dir, names.first));
-      if (file.existsSync()) result.add(file.path);
+    final effectiveCharacters = characters.isNotEmpty
+        ? characters
+        : (fallbackCharacter != null ? [fallbackCharacter] : <CharacterCard>[]);
+
+    for (final c in effectiveCharacters) {
+      final v = characterVariations[c.id] ??
+          (c.id == fallbackCharacter?.id ? fallbackVariation : null) ??
+          c.activeVariation;
+      final charDir = manager.characterDir(seriesId, c.id);
+      String? chosenRefPath;
+
+      // 1. 若指定了形态，优先读取形态专属三视图
+      if (v != null) {
+        if (v.turnaroundPath != null && v.turnaroundPath!.isNotEmpty) {
+          final f = File(p.join(charDir.path, v.turnaroundPath!));
+          if (f.existsSync()) chosenRefPath = f.path;
+        }
+        if (chosenRefPath == null) {
+          final autoStd =
+              File(p.join(charDir.path, 'turnaround_${v.id}.png'));
+          if (autoStd.existsSync()) chosenRefPath = autoStd.path;
+        }
+        if (chosenRefPath == null) {
+          final autoChibi =
+              File(p.join(charDir.path, 'turnaround_${v.id}_chibi.png'));
+          if (autoChibi.existsSync()) chosenRefPath = autoChibi.path;
+        }
+        if (chosenRefPath == null && v.referenceImages.isNotEmpty) {
+          final f = File(p.join(charDir.path, v.referenceImages.first));
+          if (f.existsSync()) chosenRefPath = f.path;
+        }
+      }
+
+      // 2. 回退到角色默认三视图
+      if (chosenRefPath == null) {
+        final stdTurnaround = File(p.join(charDir.path, 'turnaround.png'));
+        if (stdTurnaround.existsSync()) {
+          chosenRefPath = stdTurnaround.path;
+        } else {
+          final chibiTurnaround =
+              File(p.join(charDir.path, 'turnaround_chibi.png'));
+          if (chibiTurnaround.existsSync()) {
+            chosenRefPath = chibiTurnaround.path;
+          }
+        }
+      }
+
+      // 3. 回退到角色第一张参考图
+      if (chosenRefPath == null && c.referenceImages.isNotEmpty) {
+        final f = File(p.join(charDir.path, c.referenceImages.first));
+        if (f.existsSync()) chosenRefPath = f.path;
+      }
+
+      if (chosenRefPath != null) {
+        result.add(chosenRefPath);
+      }
     }
 
-    if (character != null) {
-      add(manager.characterDir(seriesId, character.id).path,
-          character.referenceImages);
-    }
     if (scene != null) {
-      add(manager.sceneDir(seriesId, scene.id).path, scene.referenceImages);
+      final matchedView = PromptAssembler.resolveSpatialViewForShot(
+        scene: scene,
+        cameraMove: cameraMove,
+        shotSize: shotSize,
+        actionZh: actionZh,
+      );
+      String? chosenSceneRef;
+      if (matchedView != null &&
+          matchedView.imagePath != null &&
+          matchedView.imagePath!.trim().isNotEmpty) {
+        final rel = matchedView.imagePath!.trim();
+        final path = p.isAbsolute(rel)
+            ? rel
+            : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
+        final f = File(path);
+        if (f.existsSync()) chosenSceneRef = f.path;
+      }
+      if (chosenSceneRef == null) {
+        final frontView = scene.viewFor(SceneDirection.front);
+        if (frontView.imagePath != null &&
+            frontView.imagePath!.trim().isNotEmpty) {
+          final rel = frontView.imagePath!.trim();
+          final path = p.isAbsolute(rel)
+              ? rel
+              : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
+          final f = File(path);
+          if (f.existsSync()) chosenSceneRef = f.path;
+        }
+      }
+      if (chosenSceneRef == null && scene.referenceImages.isNotEmpty) {
+        final f = File(
+          p.join(manager.sceneDir(seriesId, scene.id).path, scene.referenceImages.first),
+        );
+        if (f.existsSync()) chosenSceneRef = f.path;
+      }
+      if (chosenSceneRef == null) {
+        for (final v in scene.spatialViews.values) {
+          if (v.imagePath != null && v.imagePath!.trim().isNotEmpty) {
+            final rel = v.imagePath!.trim();
+            final path = p.isAbsolute(rel)
+                ? rel
+                : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
+            final f = File(path);
+            if (f.existsSync()) {
+              chosenSceneRef = f.path;
+              break;
+            }
+          }
+        }
+      }
+      if (chosenSceneRef != null) {
+        result.add(chosenSceneRef);
+      }
     }
     return result;
   }
@@ -100,16 +208,49 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
     }
     final shot = episode.shots[shotIndex];
 
+    // 场景卡防漏兜底：若未注入 scene 但分镜指定了 sceneId，自动反查补齐
+    final effectiveScene = scene ??
+        (shot.sceneId.isNotEmpty
+            ? manager.readScene(seriesId, shot.sceneId)
+            : null);
+
+    final series = manager.readSeries(seriesId);
+    final eraGenre = VisualEraGenre.fromId(series?.eraGenre);
+
+    // 多参考图：角色形态专属/基准三视图 + 场景主视图（spec: 图像多参考图契约）。
+    final referenceImages = _referenceImages(
+      manager,
+      characters,
+      characterVariations,
+      character,
+      variation,
+      effectiveScene,
+      cameraMove: shot.cameraMove,
+      shotSize: ShotSizeTokens.of(shot.shotSize),
+      actionZh: shot.actionZh,
+    );
+
     final assembled = PromptAssembler.buildShotPrompt(PromptParts(
-      styleTokens: styleTokens,
+      productionType: series?.productionType,
+      styleTokens: styleTokens.isNotEmpty ? styleTokens : (series?.styleTokens ?? ''),
+      eraGenre: eraGenre,
+      negativeStyleTokens: series?.negativeStyleTokens,
       shotSize: ShotSizeTokens.of(shot.shotSize),
       mood: MoodTokens.of(shot.mood),
       shotFunction: ShotFunctionTokens.of(shot.function),
       character: character,
       variation: variation,
-      scene: scene,
+      characters: characters,
+      characterVariations: characterVariations,
+      scene: effectiveScene,
       cameraMove: shot.cameraMove,
       actionZh: shot.actionZh,
+      dialogue: shot.dialogue,
+      voiceType: shot.voiceType,
+      continuity: shot.continuity,
+      isMultiImage: referenceImages.length >= 2,
+      hasCharacterReferences: referenceImages.isNotEmpty &&
+          (characters.isNotEmpty || character != null),
     ));
 
     // 每次生成都重新组装 Prompt：字段（台词/动作/运镜）可能刚被用户改过，
@@ -117,12 +258,6 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
     // 图没变"这件事看起来像引擎失灵。
     final outputDir = manager.episodeFramesDir(seriesId, episodeId);
     final outputFile = File(p.join(outputDir.path, 'shot_$shotNumber.png'));
-
-    // 多参考图：角色基准图 + 场景主视图（spec: 图像多参考图契约）。
-    //
-    // 顺序即提示词里的 `{{ref N}}`——角色在前，因为身份漂移比空间感不对更
-    // 致命，模型在只能看一张时会看到它。
-    final referenceImages = _referenceImages(manager, character, scene);
 
     onProgress(0.15);
     try {
@@ -140,26 +275,34 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
     } finally {
       // 引擎失败也要把新组装的 Prompt 留下：用户重试时不该丢字段。
       // 这一步放在 finally 里，成功路径同样受益。
-      final updated = episode.shots.toList();
-      updated[shotIndex] = shot.copyWith(assembledPrompt: assembled.positive);
-      await manager.saveEpisode(episode.copyWith(shots: updated));
+      await manager.updateShot(
+        seriesId,
+        episodeId,
+        shotNumber,
+        (current) => current.copyWith(assembledPrompt: assembled.positive),
+      );
     }
     if (_cancelled) throw StateError('任务已被取消');
 
     onProgress(0.95);
-    final updated = episode.shots.toList();
-    updated[shotIndex] = shot.copyWith(
-      assembledPrompt: assembled.positive,
-      framePath: p.basename(outputFile.path),
-      status: ShotGenerationStatus.done,
+    final updatedShot = await manager.updateShot(
+      seriesId,
+      episodeId,
+      shotNumber,
+      (current) => current.copyWith(
+        assembledPrompt: assembled.positive,
+        framePath: p.basename(outputFile.path),
+        status: ShotGenerationStatus.done,
+      ),
     );
-    await manager.saveEpisode(episode.copyWith(shots: updated));
     // 关键帧可能覆盖了同名文件（如 shot_1.png），必须主动清除 Flutter 内存中的图片缓存，
     // 否则前端 Image.file 仍会命中旧图，需要重启或重开窗口才能展示。
     try {
       await FileImage(outputFile).evict();
     } catch (_) {}
-    onPersisted?.call(updated[shotIndex]);
+    if (updatedShot != null) {
+      onPersisted?.call(updatedShot);
+    }
     onProgress(1);
     return p.basename(outputFile.path);
   }
@@ -234,31 +377,104 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
         ? KenBurnsVideoAdapter()
         : adapter;
 
+    File inputImageFile = frameFile;
+
     final clipsDir = manager.episodeClipsDir(seriesId, episodeId);
     final outputFile =
         File(p.join(clipsDir.path, 'shot_$shotNumber.mp4'));
 
+    // 连续镜头首尾帧接力：当前后镜头连续时，提取前镜尾帧作为后镜首帧
+    if (shotIndex > 0) {
+      final prevShot = episode.shots[shotIndex - 1];
+      if (prevShot.clipPath != null && prevShot.clipPath!.isNotEmpty) {
+        final prevClipFile = File(p.join(clipsDir.path, prevShot.clipPath!));
+        if (prevClipFile.existsSync()) {
+          final framesDir = manager.episodeFramesDir(seriesId, episodeId);
+          final prevLastFrameFile =
+              File(p.join(framesDir.path, 'shot_${prevShot.number}_last.png'));
+          final extracted = await FfmpegComposer.extractLastFrame(
+            videoFile: prevClipFile,
+            outputFile: prevLastFrameFile,
+          );
+          if (extracted != null && extracted.existsSync()) {
+            if (prevShot.sceneId == shot.sceneId || shot.sceneId.isEmpty) {
+              inputImageFile = extracted;
+            }
+          }
+        }
+      }
+    }
+
+    // 提取出场人物卡与场景卡，组装声画一体化视频生成 Prompt
+    final allCharacters = await manager.listCharacters(seriesId);
+    final shotCharacters = allCharacters
+        .where((c) => shot.characterIds.contains(c.id))
+        .toList();
+    shotCharacters.sort((a, b) {
+      final aIdx = shot.characterIds.indexOf(a.id);
+      final bIdx = shot.characterIds.indexOf(b.id);
+      return aIdx.compareTo(bIdx);
+    });
+
+    final allScenes = await manager.listScenes(seriesId);
+    final scene = allScenes.where((s) => s.id == shot.sceneId).firstOrNull;
+
+    final videoPrompt = PromptAssembler.buildVideoGenPrompt(
+      shot: shot,
+      episode: episode,
+      characters: shotCharacters,
+      scene: scene,
+    );
+
     onProgress(0.1);
     await effectiveAdapter.generateVideo(
       VideoGenRequest(
-        inputImage: frameFile,
+        inputImage: inputImageFile,
+        promptZh: videoPrompt,
         cameraMove: shot.cameraMove,
         durationSec: shot.durationSec,
         shotNumber: shotNumber,
         outputFile: outputFile,
         productionType: _productionTypeOf(episode),
+        // 台账上下文，同片段级：重启后靠这些字段对回这个分镜。
+        // shotNumber 上面已传（请求体本身需要它），这里只补剧集维度。
+        seriesId: seriesId,
+        episodeId: episodeId,
+        label: '分镜 $shotNumber 视频',
       ),
       onProgress: onProgress,
     );
     if (_cancelled) throw StateError('任务已被取消');
 
-    final updated = episode.shots.toList();
-    updated[shotIndex] = shot.copyWith(
-      clipPath: p.basename(outputFile.path),
-      status: ShotGenerationStatus.done,
+    // 视频生成完毕后，自动抽取本镜最后一帧，为下镜接力打好基础
+    String? lastFrameFileName;
+    if (outputFile.existsSync()) {
+      final framesDir = manager.episodeFramesDir(seriesId, episodeId);
+      final lastFrameFile =
+          File(p.join(framesDir.path, 'shot_${shotNumber}_last.png'));
+      final extracted = await FfmpegComposer.extractLastFrame(
+        videoFile: outputFile,
+        outputFile: lastFrameFile,
+      );
+      if (extracted != null) {
+        lastFrameFileName = p.basename(extracted.path);
+      }
+    }
+
+    final updatedShot = await manager.updateShot(
+      seriesId,
+      episodeId,
+      shotNumber,
+      (current) => current.copyWith(
+        clipPath: p.basename(outputFile.path),
+        firstFramePath: p.basename(inputImageFile.path),
+        lastFramePath: lastFrameFileName ?? current.lastFramePath,
+        status: ShotGenerationStatus.done,
+      ),
     );
-    await manager.saveEpisode(episode.copyWith(shots: updated));
-    onPersisted?.call(updated[shotIndex]);
+    if (updatedShot != null) {
+      onPersisted?.call(updatedShot);
+    }
     onProgress(1);
     return p.basename(outputFile.path);
   }
@@ -336,10 +552,14 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
     final characterIds = <String>{
       for (final s in shots) ...s.characterIds,
     };
-    final sceneIds = <String>{
-      for (final s in shots)
-        if (s.sceneId.isNotEmpty) s.sceneId,
-    };
+    // 锁定主物理场景（Dominant Primary Scene）：单个视频片段为单次连贯物理镜头，仅绑定首个有效主场景
+    String? dominantSceneId;
+    for (final s in shots) {
+      if (s.sceneId.isNotEmpty) {
+        dominantSceneId = s.sceneId;
+        break;
+      }
+    }
 
     final characters = <CharacterCard>[];
     for (final id in characterIds) {
@@ -347,8 +567,8 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
       if (card != null) characters.add(card);
     }
     final scenes = <SceneCard>[];
-    for (final id in sceneIds) {
-      final card = manager.readScene(seriesId, id);
+    if (dominantSceneId != null) {
+      final card = manager.readScene(seriesId, dominantSceneId);
       if (card != null) scenes.add(card);
     }
 
@@ -371,13 +591,39 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
       referenceLabels.add(c.name);
     }
     for (final s in scenes) {
-      if (s.referenceImages.isEmpty) continue;
-      final file = File(
-        p.join(manager.sceneDir(seriesId, s.id).path, s.referenceImages.first),
-      );
-      if (!file.existsSync()) continue;
-      referenceFiles.add(file);
-      referenceLabels.add(s.name);
+      File? file;
+      for (final shot in shots.where((sh) => sh.sceneId == s.id)) {
+        final matched = PromptAssembler.resolveSpatialViewForShot(
+          scene: s,
+          cameraMove: shot.cameraMove,
+          shotSize: ShotSizeTokens.of(shot.shotSize),
+          actionZh: shot.actionZh,
+        );
+        if (matched != null &&
+            matched.imagePath != null &&
+            matched.imagePath!.trim().isNotEmpty) {
+          final rel = matched.imagePath!.trim();
+          final candidate = File(
+            p.isAbsolute(rel)
+                ? rel
+                : p.join(manager.sceneDir(seriesId, s.id).path, rel),
+          );
+          if (candidate.existsSync()) {
+            file = candidate;
+            break;
+          }
+        }
+      }
+      if (file == null && s.referenceImages.isNotEmpty) {
+        final candidate = File(
+          p.join(manager.sceneDir(seriesId, s.id).path, s.referenceImages.first),
+        );
+        if (candidate.existsSync()) file = candidate;
+      }
+      if (file != null && file.existsSync()) {
+        referenceFiles.add(file);
+        referenceLabels.add(s.name);
+      }
     }
 
     // --- 2. 组装片段提示词 ----------------------------------------------
@@ -387,6 +633,7 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
     final series = manager.readSeries(seriesId);
     final assembled = PromptAssembler.buildSegmentPrompt(
       SegmentPromptParts(
+        productionType: series?.productionType,
         styleTokens: series?.styleTokens ?? '',
         targetDurationSec: segment.targetDurationSec,
         characters: characters,
@@ -426,12 +673,19 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
         // 片段级不带首帧：输入是参考图集合，不是某一张关键帧。
         inputImage: null,
         referenceImages: referenceFiles,
+        mode: AgnesVideoMode.reference,
         promptZh: assembled.positive,
         cameraMove: shots.first.cameraMove,
         durationSec: segment.targetDurationSec.toDouble(),
         shotNumber: segment.effectiveShotNumbers.first,
         outputFile: outputFile,
         productionType: series?.productionType.id ?? 'drama',
+        // 台账上下文：任务创建即计费，这几个字段决定重启后能否把云端任务
+        // 对回这个片段。缺一个，取回的视频就不知道该写进哪里。
+        seriesId: seriesId,
+        episodeId: episodeId,
+        segmentId: segmentId,
+        label: '片段视频 $segmentId',
       ),
       onProgress: (v) => onProgress(0.1 + v * 0.85),
     );
@@ -449,16 +703,37 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
     // 降级数量与「实际提交时长」一并落盘：用户得知道「我传了 3 张只用了 1 张」
     // 与「我请求 15s 提交的是 12s」，否则会以为约束与参数都生效了
     // （design 决策 4 / spec: 分镜看板展示本次提交的实际参数）。
-    final degraded = referenceFiles.length - 1;
-    final updated = episode.segments.toList();
-    updated[segIndex] = segment.copyWith(
+    final currentAdapter = adapter;
+    final int? maxRefs = currentAdapter is NormalizingVideoAdapter
+        ? currentAdapter.capability.maxReferenceImages
+        : 8;
+    final int degraded = (maxRefs != null && referenceFiles.length > maxRefs)
+        ? (referenceFiles.length - maxRefs)
+        : 0;
+
+    // 关键修复：长异步生成完成后，重新从磁盘读取剧集最新状态，
+    // 避免覆盖并发生成的其他大段（如 seg-3、seg-4 相互覆盖）。
+    final latestEpisode = manager.readEpisode(seriesId, episodeId) ?? episode;
+    final latestSegIndex =
+        latestEpisode.segments.indexWhere((s) => s.id == segmentId);
+    final targetSegment = latestSegIndex >= 0
+        ? latestEpisode.segments[latestSegIndex]
+        : segment;
+
+    final updatedSegments = latestEpisode.segments.toList();
+    final updatedSegment = targetSegment.copyWith(
       clipPath: p.basename(outputFile.path),
       status: SegmentStatus.done,
-      degradedRefCount: degraded < 0 ? 0 : degraded,
+      degradedRefCount: degraded,
       submittedDurationSec: submittedDuration,
     );
-    await manager.saveEpisode(episode.copyWith(segments: updated));
-    onPersisted?.call(updated[segIndex]);
+    if (latestSegIndex >= 0) {
+      updatedSegments[latestSegIndex] = updatedSegment;
+    } else {
+      updatedSegments.add(updatedSegment);
+    }
+    await manager.saveEpisode(latestEpisode.copyWith(segments: updatedSegments));
+    onPersisted?.call(updatedSegment);
     onProgress(1);
     return p.basename(outputFile.path);
   }

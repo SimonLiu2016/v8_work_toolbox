@@ -16,11 +16,25 @@ class NoteStore {
   NoteStore._();
   static final NoteStore instance = NoteStore._();
 
-  late final NoteDatabase _db;
+  // `late` 而非 `late final`：测试注入（[setDatabaseForTesting]）需要在
+  // [init] 之外再赋值一次。生产代码仍然只经 init 赋值一次。
+  late NoteDatabase _db;
   bool _initialized = false;
   String? _attachmentsDir;
 
   static const _uuid = Uuid();
+
+  /// 测试注入：替换底层数据库（内存 db 等）。
+  ///
+  /// 存在的理由：回填的「已尝试跳过」契约要能在不碰真实 notebook.db 的
+  /// 前提下验证——它读 `config/notebook.json`、跑 sqlite3 子进程、写 stack，
+  /// 三者都得可隔离。生产代码只经 [init] 打开真实库，不要调这个。
+  @visibleForTesting
+  void setDatabaseForTesting(NoteDatabase db) {
+    _db = db;
+    _attachmentsDir ??= Directory.systemTemp.createTempSync('note_store_test_').path;
+    _initialized = true;
+  }
 
   Future<void> init() async {
     if (_initialized) return;
@@ -70,6 +84,19 @@ class NoteStore {
   /// v3 = 修复正文提取（v2 用 Quill 解析器读 AppFlowy 格式，正文全空，
   ///      只有标题进索引；v3 改为 AppFlowyCodec.jsonToPlainText）
   static const int ftsTokenizerVersion = 3;
+
+  /// `config/notebook.json` 中记录「已尝试但印象笔记库无对应 stack」的 key。
+  ///
+  /// 语义是**试过且没结果**，不是「不需要」：本机有 2 个笔记本在印象笔记里的
+  /// ZSTACK 也是空，回填永远填不上，而子窗口是独立进程（内存缓存无效），
+  /// 于是每次打开笔记本窗口都要白跑一次 `Process.run('sqlite3', …)`。
+  ///
+  /// 手动重试方式：删掉 `config/notebook.json` 里的这个 key（或把版本号
+  /// +1），下次启动会重新尝试全部未回填的笔记本。
+  static const int stackBackfillAttemptVersion = 1;
+
+  static String _stackBackfillAttemptKey() =>
+      'stackBackfillAttemptV$stackBackfillAttemptVersion';
 
   /// 检测分词方案变更并重建 FTS 索引。旧索引存的是未分词原始文本，
   /// `unicode61` 对中文整串当单 token，不重建则既有笔记搜不到。
@@ -183,11 +210,24 @@ class NoteStore {
       _db.defaultCaptureNotebook();
 
   /// 从本地印象笔记 SQLite 数据库自动为现有笔记本补全 stack 分组
+  ///
+  /// 已尝试过且印象笔记库无对应值的笔记本 id 记在 `config/notebook.json`，
+  /// 下次启动直接跳过——否则每次打开笔记本窗口（子窗口是独立进程，内存
+  /// 缓存无效）都要为这些永远填不上的笔记本跑一次 sqlite3 子进程。
+  /// 见 [_stackBackfillAttemptKey] 的语义说明与手动重试方式。
   Future<void> autoBackfillNotebookStacksFromEvernote() async {
     try {
+      final cfg = await SettingsStore.instance.readToolConfig('notebook');
+      final attemptKey = _stackBackfillAttemptKey();
+      final attempted =
+          (cfg[attemptKey] as List?)?.map((e) => e.toString()).toSet() ??
+              const <String>{};
+
       final notebooks = await _db.allNotebooks();
       final needBackfill = notebooks
-          .where((nb) => nb.stack == null || nb.stack!.isEmpty)
+          .where((nb) =>
+              (nb.stack == null || nb.stack!.isEmpty) &&
+              !attempted.contains(nb.id))
           .toList();
       if (needBackfill.isEmpty) return;
 
@@ -232,13 +272,21 @@ class NoteStore {
         if (targetDb != null) break;
       }
 
-      if (targetDb == null) return;
+      if (targetDb == null) {
+        // 印象笔记库根本不在本机——同样把这些笔记本标记为已尝试，避免每次
+        // 开窗都遍历四遍候选路径。
+        await _markStackBackfillAttempted(cfg, attemptKey, needBackfill);
+        return;
+      }
 
       final res = await Process.run('sqlite3', [
         targetDb,
         'SELECT ZNAME, ZSTACK FROM ZENNOTEBOOK WHERE ZSTACK IS NOT NULL;',
       ]);
-      if (res.exitCode != 0) return;
+      if (res.exitCode != 0) {
+        await _markStackBackfillAttempted(cfg, attemptKey, needBackfill);
+        return;
+      }
 
       final lines = (res.stdout as String).split('\n');
       final stackMap = <String, String>{};
@@ -249,17 +297,43 @@ class NoteStore {
         }
       }
 
+      final stillMissing = <Notebook>[];
       for (final nb in needBackfill) {
         final stack = stackMap[nb.name];
         if (stack != null && stack.isNotEmpty) {
           await updateNotebookStack(nb.id, stack);
           debugPrint('[NoteStore] 自动补全笔记本层级组: "${nb.name}" -> "$stack"');
+        } else {
+          // 印象笔记库里也没有这个笔记本的 stack——记下 id，下次跳过。
+          stillMissing.add(nb);
         }
       }
+      await _markStackBackfillAttempted(cfg, attemptKey, stillMissing);
     } catch (e) {
       debugPrint(
         '[NoteStore] autoBackfillNotebookStacksFromEvernote error: $e',
       );
+    }
+  }
+
+  /// 把「已尝试但没回填上」的笔记本 id 合入 `config/notebook.json`。
+  ///
+  /// 合并而非覆盖：保留其他入口（或将来其他版本）写入的 id。
+  /// 写失败只记日志——标记只是性能优化，丢了最坏退回到「每次开窗都试」。
+  Future<void> _markStackBackfillAttempted(
+    Map<String, dynamic> cfg,
+    String attemptKey,
+    List<Notebook> missing,
+  ) async {
+    if (missing.isEmpty) return;
+    try {
+      final existing =
+          (cfg[attemptKey] as List?)?.map((e) => e.toString()).toSet() ??
+              const <String>{};
+      cfg[attemptKey] = {...existing, ...missing.map((nb) => nb.id)}.toList();
+      await SettingsStore.instance.writeToolConfig('notebook', cfg);
+    } catch (e) {
+      debugPrint('[NoteStore] 记录 stack 回填已尝试标记失败: $e');
     }
   }
 

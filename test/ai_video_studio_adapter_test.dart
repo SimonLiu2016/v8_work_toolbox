@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:V8WorkToolbox/services/app_paths.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
@@ -352,6 +353,77 @@ void main() {
 
       expect(await result.exists(), isTrue);
       expect(await result.readAsBytes(), dummyPngBytes);
+      if (await out.exists()) await out.delete();
+    });
+
+    test('遇到 HTTP 429 速率限制时自动退避重试，后续成功则正常返回', () async {
+      final out = File('${AppPaths.root.path}/test_429_retry.png');
+      final dummyPngBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final b64 = base64Encode(dummyPngBytes);
+      var callCount = 0;
+
+      final adapter = SystemAiImageAdapter(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'dall-e-3',
+        apiKey: 'sk-mock-key',
+        retryBaseDelay: const Duration(milliseconds: 10),
+        httpFn: (req) async {
+          callCount++;
+          if (callCount == 1) {
+            return http.Response('{"error": {"message": "Rate limit reached"}}', 429);
+          }
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {'b64_json': b64}
+              ]
+            }),
+            200,
+          );
+        },
+      );
+
+      final result = await adapter.generate(ImageGenRequest(
+        prompt: 'a tranquil lake',
+        shotNumber: 1,
+        outputFile: out,
+      ));
+
+      expect(callCount, 2);
+      expect(await result.exists(), isTrue);
+      expect(await result.readAsBytes(), dummyPngBytes);
+      if (await out.exists()) await out.delete();
+    });
+
+    test('HTTP 429 持续返回并在重试耗尽后抛出明确异常', () async {
+      final out = File('${AppPaths.root.path}/test_429_exhausted.png');
+      var callCount = 0;
+
+      final adapter = SystemAiImageAdapter(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'dall-e-3',
+        apiKey: 'sk-mock-key',
+        retryBaseDelay: const Duration(milliseconds: 10),
+        httpFn: (req) async {
+          callCount++;
+          return http.Response('{"error": {"message": "Rate limit exceeded"}}', 429);
+        },
+      );
+
+      await expectLater(
+        adapter.generate(ImageGenRequest(
+          prompt: 'test exhausted',
+          shotNumber: 1,
+          outputFile: out,
+        )),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('429'),
+        )),
+      );
+
+      expect(callCount, 4); // 初始 1 次 + 重试 3 次 = 4 次
       if (await out.exists()) await out.delete();
     });
   });
@@ -757,6 +829,373 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  /// Agnes 视频模式三态与参数化（spec: storyboard-visual-composition /
+  /// media-model-capability-matrix）。
+  ///
+  /// 关键约束是**行为兼容**：不传 mode/sizeTier/ratio 时提交体必须与改动前
+  /// 逐字一致。所以这里既有新形态的断言，也有一条锁旧形态的回归。
+  group('Agnes 视频模式三态与参数化', () {
+    late Directory tempDir;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync('agnes_mode_test');
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    /// 造一张真实 PNG。尺寸守卫会解码并可能缩放，所以不能用字节桩——
+    /// 只有能解码出宽高的图才能走到 resize/encodeJpg 分支。
+    File writePng(String name, {int width = 800, int height = 1400}) {
+      final image = img.Image(width: width, height: height);
+      final file = File(p.join(tempDir.path, name));
+      file.writeAsBytesSync(img.encodePng(image));
+      return file;
+    }
+
+    /// 造一个走完整链路的 Agnes 适配器：创建→轮询→下载，全部 mock。
+    /// 每次 [buildAdapter] 的创建请求 payload 落在哪。用一个持有者而不是
+    /// 每个测试各自的局部变量：httpFn 是闭包，它引用的变量必须在它之前声明。
+    final payloadHolder = <String, Map<String, dynamic>>{};
+
+    /// 造一个走完整链路的 Agnes 适配器：创建→轮询→下载，全部 mock。
+    AgnesVideoAdapter buildAdapter(
+      Map<String, dynamic>? Function() readCaptured, {
+      String model = 'agnes-video-2.5-flash',
+      int createStatus = 200,
+      String createBody = '{"video_id": "video_test_1"}',
+    }) {
+      final slot = <String, dynamic>{};
+      payloadHolder['captured'] = slot;
+      return AgnesVideoAdapter(
+        apiKey: 'test-key',
+        baseUrl: 'https://api.agnes-ai.cn/v1',
+        model: model,
+        httpFn: (req) async {
+          if (req.method == 'POST' && req.url.path == '/v1/videos') {
+            final body = jsonDecode(req.body) as Map<String, dynamic>;
+            slot
+              ..clear()
+              ..addAll(body);
+            return http.Response(createBody, createStatus);
+          }
+          if (req.method == 'GET' && req.url.path == '/agnesapi') {
+            return http.Response(
+              '{"status": "completed", "progress": 100, '
+              '"url": "https://mock.cdn/out.mp4"}',
+              200,
+            );
+          }
+          if (req.url.host == 'mock.cdn') {
+            return http.Response.bytes(List<int>.filled(2048, 0), 200);
+          }
+          return http.Response('{}', 404);
+        },
+      );
+    }
+
+    test('仅尾帧 → keyframe 模式且带 last_frame，不要求首帧', () async {
+      final adapter = buildAdapter(() => null);
+      final last = writePng('last.png');
+
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          lastFrameImage: last,
+          promptZh: '人物走向窗边',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o1.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['mode'], 'keyframe');
+      expect(captured['last_frame'], startsWith('data:image/'));
+      expect(captured.containsKey('first_frame'), isFalse,
+          reason: '只给了尾帧，payload 里不该出现 first_frame');
+      expect(captured.containsKey('images'), isFalse);
+    });
+
+    test('首尾帧齐备 → 两个字段都在', () async {
+      final adapter = buildAdapter(() => null);
+
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('first.png'),
+          lastFrameImage: writePng('last.png'),
+          promptZh: '转身',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o2.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['mode'], 'keyframe');
+      expect(captured['first_frame'], startsWith('data:image/'));
+      expect(captured['last_frame'], startsWith('data:image/'));
+    });
+
+    test('仅参考图 → reference 模式提交 images，禁首尾帧', () async {
+      final adapter = buildAdapter(() => null);
+      final refs = [writePng('a.png'), writePng('b.png')];
+
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          referenceImages: refs,
+          promptZh: '以 <Picture 1> 为参考',
+          durationSec: 5,
+          shotNumber: 1,
+          // 显式 reference：auto 推导下"只有参考图"仍走 keyframe（第一张
+          // 参考图提升为首帧）——那是工坊片段级的既有行为，见 _deriveMode 注释。
+          mode: AgnesVideoMode.reference,
+          outputFile: File(p.join(tempDir.path, 'o3.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['mode'], 'reference');
+      expect(captured['images'], isA<List>());
+      expect((captured['images'] as List).length, 2);
+      expect(captured.containsKey('first_frame'), isFalse);
+      expect(captured.containsKey('last_frame'), isFalse);
+    });
+
+    test('auto 推导：片段级形状（多参考图无首帧）仍走 keyframe', () async {
+      // 这是工坊 SegmentVideoGenTask 的形状。它今天走 keyframe 且把第一张
+      // 参考图当首帧——本次改动不得改变这一点，否则主路径行为就漂了。
+      final adapter = buildAdapter(() => null);
+
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          referenceImages: [writePng('char.png'), writePng('scene.png')],
+          promptZh: 'shot 1 | 回眸',
+          durationSec: 8,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o3b.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['mode'], 'keyframe');
+      expect(captured['first_frame'], startsWith('data:image/'));
+      expect(captured.containsKey('images'), isFalse,
+          reason: 'keyframe 模式禁参考素材——片段级今天就是把第一张提成首帧');
+    });
+
+    test('纯提示词 → text 模式且无任何媒体字段', () async {
+      final adapter = buildAdapter(() => null);
+
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          promptZh: '雨后的城市街道',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o4.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['mode'], 'text');
+      for (final key in ['first_frame', 'last_frame', 'images']) {
+        expect(captured.containsKey(key), isFalse,
+            reason: 'text 模式不得携带 $key');
+      }
+    });
+
+    test('首帧 + 参考图同时存在时拒绝提交，不发出请求', () async {
+      var httpCalled = false;
+      final adapter = AgnesVideoAdapter(
+        apiKey: 'k',
+        baseUrl: 'https://api.agnes-ai.cn/v1',
+        model: 'agnes-video-2.5-flash',
+        httpFn: (req) async {
+          httpCalled = true;
+          return http.Response('{}', 200);
+        },
+      );
+
+      await expectLater(
+        adapter.generateVideo(
+          VideoGenRequest(
+            inputImage: writePng('first.png'),
+            referenceImages: [writePng('ref.png')],
+            promptZh: 'x',
+            durationSec: 5,
+            shotNumber: 1,
+            // 显式 keyframe + 参考图 = 官方明令禁止的组合。auto 下这个形状
+            // 会走 keyframe 并把第一张参考图当首帧（工坊片段级的行为），
+            // 所以冲突检测必须用显式模式才验得到。
+            mode: AgnesVideoMode.keyframe,
+            outputFile: File(p.join(tempDir.path, 'o5.mp4')),
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('参考素材'), contains('不能同时使用')),
+          ),
+        ),
+      );
+      expect(httpCalled, isFalse,
+          reason: '模式冲突必须在提交前拒绝——上游 400 只会给一句英文错误码');
+    });
+
+    test('Flash 型号请求 2K 时提交 720P 并留吸附记录', () async {
+      // 直接构造适配器（不走工厂）时没有规整层，这里验的是适配器自己的兜底：
+      // 非 Flash 型号才允许非 720P 档位。
+      final adapter = buildAdapter(() => null);
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('f.png'),
+          promptZh: 'x',
+          durationSec: 5,
+          shotNumber: 1,
+          sizeTier: '2k',
+          outputFile: File(p.join(tempDir.path, 'o6.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      // size 大小写归一：请求写小写 '2k'，提交的是 Agnes 要求的大写 '2K'。
+      expect(captured['size'], '2K');
+    });
+
+    test('Flash 型号不接受非 720P：规整层把它吸附掉', () async {
+      final adapter = buildAdapter(() => null);
+      // 经工厂的适配器被 NormalizingVideoAdapter 包着，规整层按
+      // agnesVideo25Flash 的能力（resolutions: ['720p']）把 2K 吸成 720p，
+      // 适配器再归一为大写。
+      final wrapped = NormalizingVideoAdapter(
+        adapter,
+        MediaCapabilityPresets.forModel('agnes-video-2.5-flash')!,
+        modelId: 'agnes-video-2.5-flash',
+      );
+      await wrapped.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('f.png'),
+          promptZh: 'x',
+          durationSec: 5,
+          shotNumber: 1,
+          sizeTier: '2k',
+          outputFile: File(p.join(tempDir.path, 'o7.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['size'], '720P');
+      expect(wrapped.lastChanges, isNotEmpty,
+          reason: '吸附必须可见，否则用户以为参数生效了');
+    });
+
+    test('画幅比例随请求，不再写死 9:16', () async {
+      final adapter = buildAdapter(() => null);
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('f.png'),
+          promptZh: 'x',
+          durationSec: 5,
+          shotNumber: 1,
+          ratio: '16:9',
+          outputFile: File(p.join(tempDir.path, 'o8.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['aspect_ratio'], '16:9');
+    });
+
+    test('seed 非空时进 payload', () async {
+      final adapter = buildAdapter(() => null);
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('f.png'),
+          promptZh: 'x',
+          durationSec: 5,
+          shotNumber: 1,
+          seed: 1101,
+          outputFile: File(p.join(tempDir.path, 'o9.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      expect(captured['seed'], 1101);
+    });
+
+    test('行为兼容：不传新字段时 payload 与改动前逐字一致', () async {
+      final adapter = buildAdapter(() => null);
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: writePng('f.png'),
+          cameraMove: 'slow push-in',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o10.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      // 这几个值就是改动前硬编码的那几个。任何一项变了，说明工坊主路径的
+      // 提交体被本次改动影响了——那是必须被这条断言抓住的回归。
+      expect(captured['size'], '720P');
+      expect(captured['aspect_ratio'], '9:16');
+      expect(captured['mode'], 'keyframe');
+      expect(captured['seconds'], '5');
+      expect(captured.containsKey('last_frame'), isFalse);
+      expect(captured.containsKey('images'), isFalse);
+      expect(captured.containsKey('seed'), isFalse);
+    });
+
+    test('尾帧尺寸过小被守卫拒绝', () async {
+      final adapter = buildAdapter(() => null);
+      await expectLater(
+        adapter.generateVideo(
+          VideoGenRequest(
+            inputImage: null,
+            lastFrameImage: writePng('tiny.png', width: 100, height: 100),
+            promptZh: 'x',
+            durationSec: 5,
+            shotNumber: 1,
+            outputFile: File(p.join(tempDir.path, 'o11.mp4')),
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('不小于'),
+          ),
+        ),
+      );
+    });
+
+    test('超大尾帧被缩放编码而不是原样提交', () async {
+      final adapter = buildAdapter(() => null);
+      await adapter.generateVideo(
+        VideoGenRequest(
+          inputImage: null,
+          lastFrameImage: writePng('huge.png', width: 4000, height: 6000),
+          promptZh: 'x',
+          durationSec: 5,
+          shotNumber: 1,
+          outputFile: File(p.join(tempDir.path, 'o12.mp4')),
+        ),
+      );
+
+      final captured = payloadHolder['captured']!;
+      final uri = captured['last_frame'] as String;
+      // 守卫把超大图转成 JPEG：前缀从 image/png 变成 image/jpeg，且体积
+      // 远小于原始 PNG。这条同时证明守卫对尾帧生效。
+      expect(uri, startsWith('data:image/jpeg;base64,'));
     });
   });
 }

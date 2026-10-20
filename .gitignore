@@ -114,3 +114,7 @@ macos/Runner/Resources/
 
 # Node sidecar dependencies (registrar_sidecar; 100MB+, restored via npm install)
 packages/registrar_sidecar/node_modules/
+
+# Local CodeGraph index
+.codegraph/
+

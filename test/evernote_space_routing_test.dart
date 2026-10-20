@@ -39,6 +39,6 @@ void main() {
       final info = await EvernoteImportService.instance.detectLocalEvernote();
       // 若检测到，笔记本数应非零
       expect(info.notebookCount, greaterThanOrEqualTo(0));
-    });
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

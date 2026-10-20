@@ -149,6 +149,7 @@ class _NetworkTopologyGraphState extends State<NetworkTopologyGraph> {
               painter: _TopologyPainter(
                 placed: _placed,
                 gatewayIp: widget.gatewayIp,
+                colors: context.colors,
               ),
             ),
           ),
@@ -173,8 +174,13 @@ class _NetworkTopologyGraphState extends State<NetworkTopologyGraph> {
 class _TopologyPainter extends CustomPainter {
   final List<_PlacedNode> placed;
   final String gatewayIp;
+  final AppColors colors;
 
-  const _TopologyPainter({required this.placed, required this.gatewayIp});
+  const _TopologyPainter({
+    required this.placed,
+    required this.gatewayIp,
+    required this.colors,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -200,11 +206,11 @@ class _TopologyPainter extends CustomPainter {
     final severity = node.severity;
 
     final fillColor = switch (severity) {
-      Severity.critical => AppTheme.error,
+      Severity.critical => colors.errorSolid,
       Severity.high => const Color(0xFFF97316),
-      Severity.medium => AppTheme.warning,
-      Severity.low => AppTheme.info,
-      Severity.info => AppTheme.bgCardHover,
+      Severity.medium => colors.warningSolid,
+      Severity.low => colors.infoSolid,
+      Severity.info => colors.bgCardHover,
     };
 
     final paint = Paint()

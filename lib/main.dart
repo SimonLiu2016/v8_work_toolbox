@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'services/ai_config_store.dart';
@@ -19,7 +20,8 @@ import 'services/privacy_security_service.dart';
 import 'tools/artex_engine/services/artex_compose_service.dart';
 import 'tools/dola_pool/services/dola_account_store.dart';
 import 'tools/dola_pool/services/dola_config_store.dart';
-import 'tools/toonflow_studio/services/toonflow_compose_service.dart';
+import 'tools/infinite_canvas/services/infinite_canvas_compose_service.dart';
+import 'tools/infinite_canvas/services/infinite_canvas_bridge_server.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
 import 'tools/vocab_book/services/vocab_store.dart';
 import 'services/proxy_settings.dart';
@@ -30,6 +32,8 @@ import 'shell/app_shell.dart';
 import 'tools/network_proxy/services/network_proxy_service.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
+import 'tools/agnes_playground/ui/playground_page.dart';
+import 'tools/ai_video_studio/services/studio_preset_store.dart';
 import 'tools/ai_video_studio/ui/studio_shell.dart';
 import 'tools/notebook/asset_reminder_service.dart';
 import 'tools/notebook/note_database.dart';
@@ -76,6 +80,9 @@ enum WindowKind {
 
   /// AI 短视频工坊独立窗口：长时合成（FFmpeg / 云端图生视频），复用 AI 配置与代理
   aiVideoStudio,
+
+  /// Agnes 试炼场独立窗口：三通道直连调用，复用 AI 配置与代理
+  agnesPlayground,
 }
 
 /// 按窗口类型声明的必需服务。
@@ -118,6 +125,11 @@ class WindowServices {
     ServiceInit('DolaConfigStore', _initDolaConfigStore),
   ];
 
+  /// AI 短视频工坊全局美学风格与时代题材预设库。
+  static const List<ServiceInit> _studioPresetStore = [
+    ServiceInit('StudioPresetStore', _initStudioPresetStore),
+  ];
+
   /// 每个窗口类型的必需服务，按依赖拓扑序排列。
   ///
   /// 主窗口包含 [WindowKind.notebook] 与 [WindowKind.singleNote] 的全部条目
@@ -131,6 +143,7 @@ class WindowServices {
       ..._noteStore,
       // 主窗口的 AI 配置页有「Dola 号池」tab，必须能读到账号。
       ..._dolaStore,
+      ..._studioPresetStore,
     ],
     WindowKind.notebook: [
       ..._appPaths,
@@ -179,6 +192,16 @@ class WindowServices {
       // 该窗口的分镜看板可以直接提交视频生成，Dola 是可选引擎之一——
       // 漏了它号池在此窗口显示为空，用户以为没配账号。
       ..._dolaStore,
+      ..._studioPresetStore,
+    ],
+    // 试炼场不需要 Dola 号池：它只调用户自己配的 Agnes 供应商，不像工坊
+    // 那样把免费号池当可选引擎。漏列 _aiConfig 才会出问题——那会让供应商
+    // 列表为空，用户看不到任何可选型号。
+    WindowKind.agnesPlayground: [
+      ..._appPaths,
+      ..._settingsStore,
+      ..._proxy,
+      ..._aiConfig,
     ],
   };
 
@@ -212,6 +235,8 @@ class WindowServices {
       DolaAccountStore.instance.init();
   static Future<void> _initDolaConfigStore() =>
       DolaConfigStore.instance.init();
+  static Future<void> _initStudioPresetStore() =>
+      StudioPresetStore.instance.init();
 }
 
 /// 单个服务的惰性初始化入口。`name` 仅用于诊断与测试断言。
@@ -268,56 +293,99 @@ Future<void> main(List<String> args) async {
     debugPrint('windowManager.ensureInitialized failed: $e');
   }
 
-  // 全局多媒体运行时（必须在任何主窗口或子窗口启动前初始化，供私有播放器、AI视频工坊等原生纹理渲染使用）
-  MediaKit.ensureInitialized();
-
   // Check if this is a sub-window by looking at args
   // desktop_multi_window passes ["multi_window", windowId, arguments] for sub-windows
   final isSubWindow = args.isNotEmpty && args.first == 'multi_window';
   final subWindowArgument = isSubWindow && args.length > 2 ? args[2] : '';
 
+  // 【一次性计时，验证完启动链优化即删】黑屏时长归因用：引擎启动到 runApp
+  // 之间每一段各占多少 ms。见 change fix-notebook-window-launch-black-and-size
+  // 的 task 1.1/1.2。
+  final bootWatch = Stopwatch()..start();
+  void bootMark(String label) {
+    debugPrint('[boot] $label: +${bootWatch.elapsedMilliseconds}ms');
+  }
+
   if (isSubWindow && subWindowArgument == 'password-vault') {
     // 密码工具子窗口：VaultStore 自管加载与 DEK，不消费 AI。
     await WindowServices.initFor(WindowKind.passwordVault);
+    bootMark('password-vault initFor');
     await _sizeSubWindow(const Size(900, 600));
+    bootMark('password-vault sized');
     runAppWithErrorHandling(const _PasswordVaultWindowApp());
+    bootMark('password-vault runApp');
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'notebook') {
+    bootMark('notebook branch entered');
+    await _sizeNotebookSubWindowToWorkArea();
+    bootMark('notebook sized');
+    await _applyNotebookWindowFallbackBackground();
+    bootMark('notebook bg');
     await WindowServices.initFor(WindowKind.notebook);
-    await _sizeSubWindow(const Size(1100, 700));
+    bootMark('notebook initFor');
+    // 启动链跑完才让窗口可见。窗口是以 hiddenAtLaunch: true 创建的，若不在此
+    // 处 show，用户点了「笔记本」会毫无反应。
+    await _showNotebookWindowWhenReady();
+    bootMark('notebook shown');
     runAppWithErrorHandling(const _NotebookWindowApp());
+    bootMark('notebook runApp');
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'ops-tool') {
     await WindowServices.initFor(WindowKind.opsTool);
+    bootMark('ops-tool initFor');
     await _sizeSubWindow(const Size(1200, 800));
+    bootMark('ops-tool sized');
     runAppWithErrorHandling(const _OpsToolWindowApp());
+    bootMark('ops-tool runApp');
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'security-toolbox') {
     await WindowServices.initFor(WindowKind.securityToolbox);
+    bootMark('security-toolbox initFor');
     await _sizeSubWindow(const Size(1300, 850));
+    bootMark('security-toolbox sized');
     runAppWithErrorHandling(const _SecurityToolboxWindowApp());
+    bootMark('security-toolbox runApp');
     return;
   }
 
   if (isSubWindow && subWindowArgument == 'ai-video-studio') {
-    await WindowServices.initFor(WindowKind.aiVideoStudio);
+    // 分镜看板可直接提交视频生成，且资产库有视频预览——该窗口消费多媒体运行时。
+    MediaKit.ensureInitialized();
+    bootMark('ai-video-studio MediaKit');
     await _sizeSubWindow(const Size(1400, 900));
+    bootMark('ai-video-studio sized');
+    await WindowServices.initFor(WindowKind.aiVideoStudio);
+    bootMark('ai-video-studio initFor');
     runAppWithErrorHandling(const _AiVideoStudioWindowApp());
+    bootMark('ai-video-studio runApp');
+    return;
+  }
+
+  if (isSubWindow && subWindowArgument == 'agnes-playground') {
+    await WindowServices.initFor(WindowKind.agnesPlayground);
+    bootMark('agnes-playground initFor');
+    await _sizeSubWindow(const Size(1100, 800));
+    bootMark('agnes-playground sized');
+    runAppWithErrorHandling(const _AgnesPlaygroundWindowApp());
+    bootMark('agnes-playground runApp');
     return;
   }
 
   if (isSubWindow && subWindowArgument.startsWith('note:')) {
     // Sub-window mode for a single note.
     final noteId = subWindowArgument.substring('note:'.length);
-    await WindowServices.initFor(WindowKind.singleNote);
     await _sizeSubWindow(const Size(900, 650));
+    bootMark('single-note sized');
+    await WindowServices.initFor(WindowKind.singleNote);
+    bootMark('single-note initFor');
     runAppWithErrorHandling(_SingleNoteWindowApp(noteId: noteId));
+    bootMark('single-note runApp');
     return;
   }
 
@@ -329,10 +397,14 @@ Future<void> main(List<String> args) async {
     final hasMode = splitAt > 0 && (rest.startsWith('dict:') || rest.startsWith('ai:'));
     final mode = hasMode ? rest.substring(0, splitAt) : 'dict';
     final query = hasMode ? rest.substring(splitAt + 1) : rest;
+    // 查词浮窗刻意不在此处设尺寸：它的 420×520 由 _setupWindowStyle() 在
+    // 首帧后自己声明（同时设透明背景与无边框）。见 lookup_window.dart。
     await WindowServices.initFor(WindowKind.lookupPanel);
+    bootMark('lookup initFor');
     runAppWithErrorHandling(
       LookupWindowApp(initialQuery: query, initialMode: parseLookupStartMode(mode)),
     );
+    bootMark('lookup runApp');
     return;
   }
 
@@ -341,9 +413,14 @@ Future<void> main(List<String> args) async {
   // 主窗口：注册关闭监听，退出前清理 mihomo 进程。
   windowManager.addListener(_mainWindowCloseListener);
 
+  // 主窗口承载私有播放器（嵌入而非独立窗口），多媒体运行时在此初始化。
+  MediaKit.ensureInitialized();
+  bootMark('main MediaKit');
+
   // Main window mode
   // 主窗口的服务初始化走同一份清单（见 WindowServices.required）。
   await WindowServices.initFor(WindowKind.main);
+  bootMark('main initFor');
 
   // 初始化定时资讯检索与通知调度
   await ScheduledNewsService.instance.init();
@@ -436,13 +513,72 @@ Future<void> main(List<String> args) async {
   runAppWithErrorHandling(const V8WorkToolboxApp());
 }
 
+/// 笔记本子窗口：让窗口在启动链跑完后可见。
+///
+/// 窗口以 `hiddenAtLaunch: true` 创建（原生侧因此不会 `setIsVisible`），
+/// 所以必须由这一侧显式 show，否则用户点了「笔记本」毫无反应。
+///
+/// 放在 `runApp` **之前**而不是等首帧：`runApp` 返回后首帧还要经过一次
+/// 引擎的 build/layout/paint，等它会把可见时机推迟到更晚；而此刻尺寸、
+/// 背景色、服务都已就绪，窗口一可见就是终态。spec 要求的是「引擎完成服务
+/// 初始化并具备渲染首帧条件之前保持不可见」——此处即该临界点。
+///
+/// 失败不抛：show 本身失败时窗口确实不会出现，但启动链仍继续走到 runApp
+/// （fail-soft 契约），并留下诊断信号。这比让整个窗口打不开好。
+///
+/// **show 超时兜底**：`windowManager.show()` 走平台通道，若原生侧无响应
+/// （窗口控制器未注册等），这个 await 会一直挂着——用户看到的就是「点了
+/// 笔记本什么都没发生」。加一道超时：到点后不再等待，让启动链继续走，
+/// 并留下诊断信号。窗口最终仍会由原生侧那次 setIsVisible 补上（或由用户
+/// 再次点击触发 show），至少不是永久无响应。
+Future<void> _showNotebookWindowWhenReady() async {
+  try {
+    await windowManager.show().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        debugPrint(
+          '[main] 笔记本窗口 show 超时（5s 未响应，启动链继续；'
+          '窗口可能延迟可见或不可见）',
+        );
+      },
+    );
+  } catch (e) {
+    debugPrint('[main] 笔记本窗口 show 失败（窗口可能不可见）: $e');
+  }
+}
+
+/// 笔记本子窗口：设置引擎绘制前的兜底背景色。
+///
+/// 引擎尚未绘制任何内容时，NSWindow 的 surface 是黑的。窗口以
+/// `hiddenAtLaunch: true` 创建后这段黑不再被用户看到；但 show 失败兜底、
+/// 或将来有人改回提前可见时，这个底色就是第二道防线——至少不是纯黑。
+///
+/// 取当前主题对应的窗口底色，与首帧后 `_NotebookWindowApp` 的
+/// `Scaffold` 背景一致，避免可见的色差跳变。
+///
+/// 只对笔记本窗口调用：查词浮窗的窗口必须保持透明（圆角由 macOS 原生层挖出，
+/// 见 `lookup_window.dart` 中 `backgroundColor: Colors.transparent` 的注释），
+/// 给它设底色会盖掉透明通道。
+Future<void> _applyNotebookWindowFallbackBackground() async {
+  try {
+    final isDark =
+        SettingsStore.instance.themeModeNotifier.value == ThemeMode.dark;
+    // 与 AppTheme 的 bgWindow / lightBgWindow 对应（app_theme.dart:12 / :49）。
+    await windowManager.setBackgroundColor(
+      isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF8FAFC),
+    );
+  } catch (e) {
+    debugPrint('[main] 笔记本窗口兜底背景色设置失败: $e');
+  }
+}
+
 /// 子窗口尺寸声明。
 ///
 /// [size] 由各窗口种类自己决定：查词浮窗是 420×520 的贴口气泡，单篇笔记
-/// 900×650，笔记本克隆主窗口的 1100×700，运维工具多面板要 1200×800，
-/// 密码库 900×600。原生的 MainFlutterWindow 原来会把所有子窗口一律
-/// setFrame(screen.visibleFrame) 铺满屏幕，那里现在只管样式；尺寸交给
-/// 持有着 arguments、知道自己是哪种窗口的这一侧。
+/// 900×650，运维工具多面板要 1200×800，密码库 900×600。原生的
+/// MainFlutterWindow 原来会把所有子窗口一律 setFrame(screen.visibleFrame)
+/// 铺满屏幕，那里现在只管样式；尺寸交给持有着 arguments、知道自己是哪种
+/// 窗口的这一侧。
 ///
 /// 失败不抛：窗口尺寸声明失败时窗口仍会打开（用包默认的 800×600），
 /// 比让窗口打不开好。
@@ -452,6 +588,71 @@ Future<void> _sizeSubWindow(Size size) async {
     await windowManager.center();
   } catch (e) {
     debugPrint('[main] 子窗口尺寸声明失败: $e');
+  }
+}
+
+/// 从候选显示器中挑出光标所在的那一块；都不匹配时返回 null（由调用方回落主屏）。
+///
+/// 抽成纯函数是为了可测：窗口 frame 的计算是「不超过屏幕可见工作区」这条
+/// spec 的核心，不能因为依赖平台通道就只能靠实机点。
+@visibleForTesting
+Display? displayContainingPoint(List<Display> displays, Offset point) {
+  for (final d in displays) {
+    final pos = d.visiblePosition;
+    final size = d.visibleSize;
+    if (pos == null || size == null) continue;
+    if (Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height)
+        .contains(point)) {
+      return d;
+    }
+  }
+  return null;
+}
+
+/// 笔记本子窗口：铺满当前屏幕的可见工作区（排除菜单栏与 Dock）。
+///
+/// 实现 `notebook-tool` spec 的「Maximizing notebook sub-window on creation」。
+/// 该要求自 f2c6c0d 起就在 spec 里，但 ff84105 删掉原生侧无条件
+/// setFrame(screen.visibleFrame) 时只留下硬编码 1100×700（占 1680×1050
+/// 屏幕的 44%），maximize 一直没有实现。
+///
+/// 为什么不用 `windowManager.maximize()`：macOS 上它是 `mainWindow.zoom(nil)`，
+/// 语义是「在用户尺寸与标准尺寸间切换」而非铺满可见区，且会把窗口置为
+/// zoomed 态，用户之后点绿箭头回到一个不可预期的尺寸。
+///
+/// 【已知限制，多屏不修】`window_manager` 的 `setBounds` 与
+/// `screen_retriever` 的 `NSRect.topLeft` 扩展都用 `NSScreen.screens[0]`
+/// 换算 y 坐标，而 `windowManager.center()` 走的 `calcWindowPosition` 用光标
+/// 所在屏。两条路径的屏幕基准不一致：多显示器用户的窗口会被算到主屏。
+/// 修它需 patch 第三方包或改为原生侧实现——见 change
+/// fix-notebook-window-launch-black-and-size 的 design open question。
+/// 本函数只保证单屏正确。
+///
+/// 失败不抛：声明失败时窗口仍会打开（包默认 800×600 + 原生 (0,0) 原点），
+/// 比让窗口打不开好。
+Future<void> _sizeNotebookSubWindowToWorkArea() async {
+  try {
+    final displays = await screenRetriever.getAllDisplays();
+    if (displays.isEmpty) return;
+
+    // 光标所在屏即用户正在看的那块；都不匹配时回落主屏（多屏但光标在
+    // 屏幕外等异常情形）。
+    final cursor = await screenRetriever.getCursorScreenPoint();
+    final current =
+        displayContainingPoint(displays, cursor) ?? displays.first;
+
+    // 一次 setBounds 同时定位置与尺寸，避免 setSize 后 center 的中间态。
+    await windowManager.setBounds(
+      Rect.fromLTWH(
+        current.visiblePosition!.dx,
+        current.visiblePosition!.dy,
+        current.visibleSize!.width,
+        current.visibleSize!.height,
+      ),
+      animate: false,
+    );
+  } catch (e) {
+    debugPrint('[main] 笔记本窗口工作区尺寸声明失败: $e');
   }
 }
 
@@ -518,12 +719,18 @@ Future<void> runShutdownCleanup({bool forTest = false}) async {
   } catch (e, stack) {
     debugPrint('[main] ARTEX 引擎清理失败（仍然退出）: $e\n$stack');
   }
-  // Toonflow 工作台容器：同上，只 stop 不动数据卷。它的数据目录是 bind
-  // mount，stop 之后 settings.json 与工作区都留在宿主机上。
+  // 无限画布容器：同上，只 stop。它的数据全在浏览器本地，stop 不影响。
   try {
-    await ToonflowComposeService.instance.disposeOnExit();
+    await InfiniteCanvasComposeService.instance.disposeOnExit();
   } catch (e, stack) {
-    debugPrint('[main] Toonflow 容器清理失败（仍然退出）: $e\n$stack');
+    debugPrint('[main] 无限画布容器清理失败（仍然退出）: $e\n$stack');
+  }
+  // 资产桥 loopback 服务：退出时关掉，避免孤儿进程持有端口（与本地词典桥
+  // 同一类问题）。
+  try {
+    await InfiniteCanvasBridgeServer.instance.stop();
+  } catch (e, stack) {
+    debugPrint('[main] 资产桥服务清理失败（仍然退出）: $e\n$stack');
   }
   if (forTest) {
     exitOverride?.call(0);
@@ -801,6 +1008,39 @@ class _SecurityToolboxWindowApp extends StatelessWidget {
             body: Padding(
               padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
               child: SecurityToolboxMainPage(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Agnes 试炼场独立子窗口 app。
+class _AgnesPlaygroundWindowApp extends StatelessWidget {
+  const _AgnesPlaygroundWindowApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsStore.instance.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: 'Agnes 试炼场',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: currentThemeMode,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          home: const Scaffold(
+            body: Padding(
+              padding: EdgeInsets.only(top: 28), // macOS 沉浸式红绿灯避让
+              child: PlaygroundPage(),
             ),
           ),
         );

@@ -8,6 +8,7 @@ import 'test_keychain_bridge.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/models/studio_models.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/services/studio_project_manager.dart';
 import 'package:V8WorkToolbox/theme/app_theme.dart';
+import 'package:V8WorkToolbox/tools/ai_video_studio/services/ffmpeg_composer.dart';
 import 'package:V8WorkToolbox/tools/ai_video_studio/ui/studio_shell.dart';
 
 /// 让外壳的异步 bootstrap 跑完。
@@ -69,12 +70,10 @@ void main() {
     // bootstrap 同步返回，pump 一帧就能看到结果。
     await StudioProjectManager.instance.ensureBaseStructure();
 
-    // 预热 Keychain：外壳的 `_checkEngineStatus` 要读两次密钥，而
-    // `flutter_secure_storage` 在没有平台通道的测试环境里，**第一次**读取
-    // 要等平台调用超时后才回退（约 60ms），后续读取才走缓存同步返回。
-    // 不预热的话第一个 test 的 bootstrap 必然停在 loading——这是测试环境
-    // 的固有行为，不是外壳的 bug。
+    // 预热 Keychain 与 FFmpeg 可用性探测：外壳的 DeliveryPanel 与 engine status 会在
+    // 没有平台通道的测试环境里起进程或读密钥。提前探测使缓存命中，避免 pending timer。
     await KeychainService.instance.readSecret('warmup');
+    await FfmpegComposer.checkAvailability();
   });
 
   testWidgets('外壳可构建并显示工序导航', (tester) async {
@@ -202,5 +201,46 @@ void main() {
     session.select(series);
     session.select(series);
     expect(notifications, 1);
+  });
+
+  test('StudioSession 更新同 ID 剧集时更新 series 并保留 episode', () {
+    final session = StudioSession();
+    final seriesA1 = StudioSeries(
+      id: 'a',
+      name: 'A',
+      eraGenre: '',
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+    final seriesA2 = seriesA1.copyWith(
+      eraGenre: 'xianxia',
+      worldview: '玄幻修仙世界',
+      updatedAt: DateTime(2026, 1, 2),
+    );
+    session.select(seriesA1);
+    session.selectEpisode(
+      StudioEpisode(
+        id: 'ep1',
+        seriesId: 'a',
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      ),
+    );
+    expect(session.episode?.id, 'ep1');
+
+    var notified = false;
+    session.addListener(() => notified = true);
+
+    session.select(seriesA2);
+    expect(session.series?.eraGenre, 'xianxia');
+    expect(session.series?.worldview, '玄幻修仙世界');
+    expect(session.episode?.id, 'ep1', reason: '同 ID 剧集更新不应清空已选中的集');
+    expect(notified, isTrue);
+
+    // updateSeries 同样就地更新
+    final seriesA3 = seriesA2.copyWith(eraGenre: 'cyberpunk_sci_fi');
+    session.updateSeries(seriesA3);
+    expect(session.series?.eraGenre, 'cyberpunk_sci_fi');
+    expect(session.episode?.id, 'ep1');
   });
 }

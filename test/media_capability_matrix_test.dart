@@ -239,10 +239,51 @@ void main() {
       expect(cap.isDeclared, isTrue);
     });
 
-    test('Agnes 的 maxReferenceImages 只能是 1（官方禁止混用）', () {
+    test('Agnes Flash 的参考图上限与型号限制一致', () {
       final cap = MediaCapabilityPresets.forModel('agnes-video-2.5-flash')!;
-      expect(cap.maxReferenceImages, 1);
+      expect(cap.maxReferenceImages, 5);
       expect(cap.durations.last, 12);
+      // Flash 只支持 720P——传其他档位 Agnes 直接 400。
+      expect(cap.resolutions, ['720p']);
+    });
+
+    test('Agnes 标准型号支持四档分辨率与更多参考图', () {
+      final cap = MediaCapabilityPresets.forModel('agnes-video-2.5')!;
+      expect(cap.maxReferenceImages, 8);
+      expect(cap.resolutions, ['720p', '1080p', '1k', '2k']);
+      expect(cap.supportsLastFrame, isTrue);
+    });
+
+    test('Agnes 视频两型号的画幅比例覆盖官方六种白名单', () {
+      // 文档的 aspect_ratio 白名单是六种。以前只列五种、缺 21:9，而适配器
+      // 又把 aspect_ratio 写死 9:16——两边一起把超宽屏挡在外面。
+      const expected = ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'];
+      for (final id in ['agnes-video-2.5', 'agnes-video-2.5-flash']) {
+        final cap = MediaCapabilityPresets.forModel(id)!;
+        expect(cap.ratios, expected, reason: '$id 的画幅集合应与官方白名单一致');
+      }
+    });
+
+    test('Agnes 尾帧能力与适配器可达性一致', () {
+      // 声明 supportsLastFrame 就必须真的发得出 last_frame——以前声明了
+      // 但 VideoGenRequest 与 payload 都没有这个字段（spec: 能力声明描述
+      // 真实可达的能力）。
+      for (final id in ['agnes-video-2.5', 'agnes-video-2.5-flash']) {
+        final cap = MediaCapabilityPresets.forModel(id)!;
+        expect(cap.supportsLastFrame, isTrue, reason: '$id 应声明支持尾帧');
+        expect(cap.supportsFirstFrame, isTrue, reason: '$id 应声明支持首帧');
+      }
+      // 适配器侧的可达性由 test/ai_video_studio_adapter_test.dart 的
+      // 「Agnes 视频模式三态与参数化」组用 payload 断言覆盖，这里不重复。
+    });
+
+    test('supportsNativeAudio 描述输出而非音频参考输入', () {
+      // Agnes 的 audios[] 是 reference 模式的输入参考，与"输出是否带音轨"
+      // 无关。两个字段曾经被混为一谈，导致有人想靠翻这个布尔判断能否传音频。
+      final cap = MediaCapabilityPresets.forModel('agnes-video-2.5')!;
+      expect(cap.supportsNativeAudio, isFalse,
+          reason: '输出不带原生音轨；音频参考由 reference 模式与参考数上限表达');
+      expect(cap.modes, contains(MediaGenMode.multiReference));
     });
 
     test('Dola 免费号池按型号命中不同的时长集合', () {
@@ -556,6 +597,134 @@ void main() {
       // fromJson 的宽容解析会返回一个空壳而不是抛。
       expect(restored.mediaCapabilities.containsKey('good'), isTrue);
       expect(restored.mediaCapabilities.containsKey('bad'), isFalse);
+    });
+  });
+
+  group('Agnes 视频模型能力上限与历史配置自愈', () {
+    test('MediaCapabilityDefaults.agnes 默认 maxReferenceImages 为 8', () {
+      expect(MediaCapabilityDefaults.agnes.maxReferenceImages, 8);
+      expect(MediaCapabilityDefaults.agnes.modes, contains(MediaGenMode.multiReference));
+    });
+
+    test('agnesVideo25 与 agnesVideo25Flash 官方预设 maxReferenceImages 分别为 8 与 5', () {
+      expect(MediaCapabilityPresets.agnesVideo25.maxReferenceImages, 8);
+      expect(MediaCapabilityPresets.agnesVideo25Flash.maxReferenceImages, 5);
+      expect(MediaCapabilityPresets.agnesVideo25Flash.modes, contains(MediaGenMode.multiReference));
+    });
+
+    test('历史旧配置 maxReferenceImages: 1 在 resolve 时自愈升格为预设上限', () {
+      final oldDeclared = const MediaModelCapability(
+        durations: [4, 5, 6, 8, 10, 12],
+        resolutions: ['720p'],
+        ratios: ['9:16', '16:9'],
+        maxReferenceImages: 1, // 历史配置残留
+        supportsFirstFrame: true,
+        isDeclared: true,
+      );
+
+      final p = provider(
+        protocol: AiProtocolType.agnes,
+        capabilities: {
+          'agnes-video-2.5': oldDeclared,
+          'agnes-video-2.5-flash': oldDeclared,
+        },
+      );
+
+      final resolvedStandard = MediaCapabilityResolver.resolve(p, 'agnes-video-2.5');
+      expect(resolvedStandard.maxReferenceImages, 8);
+      expect(resolvedStandard.modes, contains(MediaGenMode.multiReference));
+
+      final resolvedFlash = MediaCapabilityResolver.resolve(p, 'agnes-video-2.5-flash');
+      expect(resolvedFlash.maxReferenceImages, 5);
+      expect(resolvedFlash.modes, contains(MediaGenMode.multiReference));
+    });
+
+    test('携带 4 到 8 张参考图的大段请求规整正常通过，超过上限时抛出 MediaCapabilityException', () {
+      final oldDeclared = const MediaModelCapability(
+        durations: [4, 5, 6, 8, 10, 12],
+        resolutions: ['720p'],
+        ratios: ['9:16', '16:9'],
+        maxReferenceImages: 1,
+        supportsFirstFrame: true,
+        isDeclared: true,
+      );
+
+      final p = provider(
+        protocol: AiProtocolType.agnes,
+        capabilities: {'agnes-video-2.5': oldDeclared},
+      );
+
+      final capability = MediaCapabilityResolver.resolve(p, 'agnes-video-2.5');
+      final normalizer = MediaRequestNormalizer(capability);
+
+      // 4 张参考图（用户场景）：通过
+      final result4 = normalizer.normalize(
+        const MediaRequestSpec(
+          durationSec: 8,
+          resolution: '720p',
+          ratio: '9:16',
+          referenceImageCount: 4,
+          mode: MediaGenMode.multiReference,
+        ),
+      );
+      expect(result4.request.durationSec, 8);
+
+      // 8 张参考图：通过
+      final result8 = normalizer.normalize(
+        const MediaRequestSpec(
+          durationSec: 8,
+          resolution: '720p',
+          ratio: '9:16',
+          referenceImageCount: 8,
+          mode: MediaGenMode.multiReference,
+        ),
+      );
+      expect(result8.request.durationSec, 8);
+
+      // 超过 8 张（如 9 张）：拒绝抛异常
+      expect(
+        () => normalizer.normalize(
+          const MediaRequestSpec(
+            durationSec: 8,
+            resolution: '720p',
+            ratio: '9:16',
+            referenceImageCount: 9,
+            mode: MediaGenMode.multiReference,
+          ),
+        ),
+        throwsA(isA<MediaCapabilityException>()),
+      );
+    });
+  });
+
+  group('图像模型负向提示词支持声明', () {
+    test('默认能力声明 supportsNegativePrompt 为 true', () {
+      const cap = MediaModelCapability();
+      expect(cap.supportsNegativePrompt, isTrue);
+    });
+
+    test('agnesImage 显式声明 supportsNegativePrompt 为 false', () {
+      expect(MediaCapabilityPresets.agnesImage.supportsNegativePrompt, isFalse);
+    });
+
+    test('解析 agnes-image-2.0/2.1/2.5-flash 型号时命中 supportsNegativePrompt: false', () {
+      for (final model in [
+        'agnes-image-2.0-flash',
+        'agnes-image-2.1-flash',
+        'agnes-image-2.5-flash',
+      ]) {
+        final cap = MediaCapabilityPresets.forModel(model);
+        expect(cap, isNotNull);
+        expect(cap!.supportsNegativePrompt, isFalse, reason: '$model 应不支持负向词');
+      }
+    });
+
+    test('MediaModelCapability 序列化与反序列化保留 supports_negative_prompt 字段', () {
+      const original = MediaModelCapability(supportsNegativePrompt: false, isDeclared: true);
+      final json = original.toJson();
+      expect(json['supports_negative_prompt'], isFalse);
+      final restored = MediaModelCapability.fromJson(json);
+      expect(restored.supportsNegativePrompt, isFalse);
     });
   });
 }

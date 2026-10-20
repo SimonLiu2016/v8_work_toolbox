@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import '../models/studio_models.dart';
 import 'ffmpeg_composer.dart';
 import 'studio_project_manager.dart';
+import 'asset_library.dart';
 
 /// 剪映草饺内容格式版本（随剪映版本升级而变）。
 ///
@@ -54,6 +55,7 @@ abstract final class JianyingExporter {
     required List<StudioShot> shots,
     String? srtPath,
     String? bgmPath,
+    List<StudioTimelineInsert> timelineInserts = const [],
   }) async {
     final draftDir = Directory(p.join(outputDir, 'jianying_draft'));
     await draftDir.create(recursive: true);
@@ -75,9 +77,47 @@ abstract final class JianyingExporter {
       for (final seg in episode.segments) seg.id: seg,
     };
 
+    // 时间轴上的资产插入，按 afterShotNumber 分組（spec: 视频资产可作为
+    // 合成时间线素材）。与 DeliveryPanel._timelineClips 同一套展开规则，
+    // 这样合成与剪映导出看到的是同一条时间轴。
+    final insertsByShot = <int, List<StudioTimelineInsert>>{};
+    for (final ins in timelineInserts) {
+      insertsByShot.putIfAbsent(ins.afterShotNumber, () => []).add(ins);
+    }
+
+    void appendAssetInserts(int afterShotNumber) {
+      final list = insertsByShot.remove(afterShotNumber);
+      if (list == null) return;
+      for (final ins in list) {
+        final asset = AssetLibrary.instance.assetSync(ins.assetId);
+        if (asset == null) continue;
+        final f = asset.file;
+        if (!f.existsSync()) continue;
+        // 本地导入的资产可能没有时长信息，按 5 秒兜底——与 DeliveryPanel
+        // 的 _timelineDuration 用同一个值，否则两条路径的时长会对不上。
+        final durationUs = ((asset.durationSec ?? 5) * 1000000).round();
+        final linkName = 'asset_${asset.id}.mp4';
+        videoTrack.add({
+          'material_id': linkName,
+          'start': cursorUs,
+          'duration': durationUs,
+          'source_start': 0,
+          'speed': 1.0,
+        });
+        materialRefs.add({
+          'id': linkName,
+          'path': f.path,
+          'type': 'asset',
+        });
+        cursorUs += durationUs;
+      }
+    }
+
     // 按分镜顺序走，遇到属于同一片段的连续镜头就合并成一条轨道项。
+    final shotStartUs = <int, int>{};
     var i = 0;
     while (i < shots.length) {
+      appendAssetInserts(i == 0 ? 0 : shots[i - 1].number);
       final shot = shots[i];
       final segment = shot.segmentId.isEmpty
           ? null
@@ -108,12 +148,18 @@ abstract final class JianyingExporter {
             'path': segment.clipPath!,
             'type': 'segment',
           });
+          var offsetUs = 0;
+          for (final s in group) {
+            shotStartUs[s.number] = cursorUs + offsetUs;
+            offsetUs += (s.durationSec * 1000000).round();
+          }
           cursorUs += durationUs;
           continue;
         }
       }
 
       // 分镜级产物：一镜一条，与改造前一致。
+      shotStartUs[shot.number] = cursorUs;
       final durationUs = (shot.durationSec * 1000000).round();
       if (shot.clipPath == null || shot.clipPath!.isEmpty) {
         // 没有片段的镜头跳过：剪映轨道上留空洞比插入一段空视频更难排查。
@@ -138,6 +184,14 @@ abstract final class JianyingExporter {
       i++;
     }
 
+    // 收尾：把还没被消费的插入按镜号顺序补齐。它们指向的位置可能是"最后一
+    // 镜之后"，也可能是"某个没有视频的镜号"——循环内的 append 经过不了
+    // 这些位置，但用户确实配了插入， silently 丢掉比放在末尾更糟。
+    final leftovers = insertsByShot.keys.toList()..sort();
+    for (final after in leftovers) {
+      appendAssetInserts(after);
+    }
+
     // --- 字幕轨（时间码转微秒）---------------------------------------------
     // SRT 的毫秒精度转成剪映的微秒，误差远小于 spec 要求的 50ms。
     if (srtPath != null && File(srtPath).existsSync()) {
@@ -154,9 +208,10 @@ abstract final class JianyingExporter {
     // --- 台词音频轨 --------------------------------------------------------
     for (final shot in shots) {
       if (shot.audioPath == null || shot.audioPath!.isEmpty) continue;
+      final startUs = shotStartUs[shot.number] ?? 0;
       audioTrack.add({
         'material_id': 'audio_${shot.number}',
-        'start': 0,
+        'start': startUs,
         'duration':
             (shot.audioDurationMs ?? 0) * 1000, // 毫秒 → 微秒
         'text': shot.dialogue,
@@ -328,11 +383,14 @@ abstract final class JianyingExporter {
     for (final ref in refs) {
       final id = ref['id'] as String;
       final type = ref['type'] as String;
+      // 'asset' 的 path 是资产库里的**绝对路径**——资产在剧集目录之外，
+      // 不能按 episode 的子目录拼。所以它必须是独立分支而不是 default。
       final source = switch (type) {
         'video' => File(p.join(episodeClipsDirOf(episode), ref['path'] as String)),
         'segment' => File(
           p.join(episodeSegmentsDirOf(episode), ref['path'] as String),
         ),
+        'asset' => File(ref['path'] as String),
         _ => File(p.join(episodeAudioDirOf(episode), ref['path'] as String)),
       };
       final link = Link(p.join(materialsDir.path, id));

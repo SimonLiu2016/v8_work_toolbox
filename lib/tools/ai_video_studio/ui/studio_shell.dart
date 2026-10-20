@@ -6,17 +6,23 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../../theme/app_theme.dart';
 import '../models/studio_models.dart';
 import '../services/image_gen_adapter.dart';
+import '../services/novel_import_task_service.dart';
 import '../services/studio_asset_bridge.dart';
 import '../services/studio_project_manager.dart';
 import '../services/video_gen_adapter.dart';
+import '../services/video_task_recovery.dart';
 import 'delivery_panel.dart';
 import 'idea_incubator_panel.dart';
+import 'novel_task_drawer.dart';
+import 'asset_library_page.dart';
 import 'project_list_page.dart';
 import 'series_page.dart';
+import 'screenplay_panel.dart';
 import 'sound_design_panel.dart';
 import 'storyboard_board.dart';
 import 'studio_settings_dialog.dart';
@@ -26,6 +32,8 @@ enum StudioStage {
   projects('projects', '剧集库', Icons.video_collection_outlined),
   ideas('ideas', '创意孵化', Icons.lightbulb_outline),
   series('series', 'IP 主库', Icons.people_outline),
+  screenplay('screenplay', '剧本工作台', Icons.auto_stories_outlined),
+  assets('assets', '资产库', Icons.photo_library_outlined),
   storyboard('storyboard', '分镜看板', Icons.dashboard_outlined),
   sound('sound', '声音设计', Icons.graphic_eq_outlined),
   delivery('delivery', '合成交付', Icons.movie_creation_outlined);
@@ -45,9 +53,19 @@ class StudioSession extends ChangeNotifier {
   bool get hasSeries => series != null;
 
   void select(StudioSeries? next) {
-    if (series?.id == next?.id) return;
+    if (identical(series, next)) return;
+    final changedProject = series?.id != next?.id;
     series = next;
-    episode = null;
+    if (changedProject) {
+      episode = null;
+    }
+    _publishActiveProject();
+    notifyListeners();
+  }
+
+  /// 就地更新当前选中的剧集对象（如修改世界观、时代题材、风格词等），保留选中集。
+  void updateSeries(StudioSeries next) {
+    series = next;
     _publishActiveProject();
     notifyListeners();
   }
@@ -94,7 +112,7 @@ class StudioShellPage extends StatefulWidget {
   State<StudioShellPage> createState() => _StudioShellPageState();
 }
 
-class _StudioShellPageState extends State<StudioShellPage> {
+class _StudioShellPageState extends State<StudioShellPage> with WindowListener {
   final _session = StudioSession();
   final _manager = StudioProjectManager.instance;
   StudioStage _stage = StudioStage.projects;
@@ -103,10 +121,76 @@ class _StudioShellPageState extends State<StudioShellPage> {
   String? _loadError;
   bool _isLocalDemoMode = true;
 
+  /// 进行中的导入任务数。用 ValueNotifier 而不是整页 setState：任务每秒都在
+  /// 推进，整页重建会让侧导航与顶栏一起重排。
+  final _importRunningCount = ValueNotifier<int>(0);
+
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
+    _initWindowCloseHandler();
+    NovelImportTaskService.instance.addListener(_syncImportBadge);
+    _importRunningCount.value = NovelImportTaskService.instance.runningCount;
     _bootstrap();
+  }
+
+  Future<void> _initWindowCloseHandler() async {
+    try {
+      await windowManager.setPreventClose(true);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    try {
+      windowManager.setPreventClose(false);
+    } catch (_) {}
+    NovelImportTaskService.instance.removeListener(_syncImportBadge);
+    _importRunningCount.dispose();
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() async {
+    final running = NovelImportTaskService.instance.runningCount;
+    if (running > 0 && mounted) {
+      final shouldClose = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('正在进行小说导入'),
+          content: Text(
+            '当前有 $running 个小说解构任务正在执行中。\n'
+            '关闭工坊窗口将直接中断未完成的 AI 解构任务。\n\n'
+            '确定要立即关闭窗口吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('继续等待'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: ctx.errorText),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认关闭并中断'),
+            ),
+          ],
+        ),
+      );
+      if (shouldClose != true) return;
+    }
+    try {
+      // 必须先解除拦截，再关闭当前子窗口；严禁调用 windowManager.destroy()（其在 macOS 下是 NSApp.terminate）
+      await windowManager.setPreventClose(false);
+      await windowManager.close();
+    } catch (_) {}
+  }
+
+  void _syncImportBadge() {
+    if (!mounted) return;
+    _importRunningCount.value = NovelImportTaskService.instance.runningCount;
   }
 
   Future<void> _checkEngineStatus() async {
@@ -132,6 +216,13 @@ class _StudioShellPageState extends State<StudioShellPage> {
       await _manager.ensureBaseStructure();
       final series = await _manager.listSeries();
       await _checkEngineStatus();
+      // 云端视频任务恢复：必须在结构就绪之后——写回要读 episode。
+      // 失败不阻断启动（那个类自己吞异常），但留在这里比留到某个页面里
+      // 更可靠：用户可能整场都不进分镜看板，而那些任务在云端继续计费。
+      await VideoTaskRecovery.instance.startOnce();
+      // 小说导入任务全量水合还原：从持久化台账恢复历史已完成与中断任务，
+      // 避免窗口重启后任务列表丢失；同时将上次异常关窗遗留的 polling 条目标记为中断。
+      await NovelImportTaskService.instance.hydrateFromLedger();
       if (!mounted) return;
       // 有剧集就默认停在剧集库，没剧集时也是剧集库（那页有新建引导）。
       _session.select(series.isNotEmpty ? series.first : null);
@@ -264,8 +355,12 @@ class _StudioShellPageState extends State<StudioShellPage> {
             _StageItem(
               stage: stage,
               selected: _stage == stage,
+              // 资产库是跨剧的：没选剧集也要能进——用户常常正是为了
+              // 找一张图才来翻资产库。
               enabled: stage == StudioStage.projects ||
-                  stage == StudioStage.series || _session.hasSeries,
+                  stage == StudioStage.series ||
+                  stage == StudioStage.assets ||
+                  _session.hasSeries,
               onTap: () => _go(stage),
             ),
           const Spacer(),
@@ -345,7 +440,7 @@ class _StudioShellPageState extends State<StudioShellPage> {
                 children: [
                   Icon(
                     _isLocalDemoMode
-                        ? Icons.info_outline
+                        ? Icons.settings_suggest_outlined
                         : Icons.check_circle_outline,
                     size: 14,
                     color: _isLocalDemoMode
@@ -353,16 +448,19 @@ class _StudioShellPageState extends State<StudioShellPage> {
                         : context.successText,
                   ),
                   const SizedBox(width: 5),
-                  Text(
-                    _isLocalDemoMode
-                        ? '本地免费演示模式 (点击配置)'
-                        : 'AI 商业引擎已就绪',
-                    style: TextStyle(
-                      color: _isLocalDemoMode
-                          ? context.warningText
-                          : context.successText,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
+                  Flexible(
+                    child: Text(
+                      _isLocalDemoMode
+                          ? '⚙ 点击配置 AI 引擎'
+                          : 'AI 商业引擎已就绪',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _isLocalDemoMode
+                            ? context.warningText
+                            : context.successText,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
@@ -370,6 +468,11 @@ class _StudioShellPageState extends State<StudioShellPage> {
             ),
           ),
           const SizedBox(width: 12),
+          // 常驻导入任务中心入口：任何页签下均常驻显示，支持状态角标与一键管理
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: NovelTaskCenterButton(onTap: _openNovelTaskDrawer),
+          ),
           TextButton.icon(
             onPressed: _bootstrap,
             icon: const Icon(Icons.refresh, size: 16),
@@ -380,28 +483,54 @@ class _StudioShellPageState extends State<StudioShellPage> {
     );
   }
 
+  void _openNovelTaskDrawer() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: context.bgCard,
+      isScrollControlled: true,
+      builder: (_) => NovelTaskDrawer(
+        onRetry: () {
+          setState(() => _stage = StudioStage.ideas);
+        },
+        onNavigateToSeries: (seriesId) {
+          final s = _manager.readSeries(seriesId);
+          if (s != null) {
+            _session.select(s);
+            setState(() => _stage = StudioStage.series);
+          }
+        },
+      ),
+    );
+  }
+
   Widget _buildStage(BuildContext context) {
-    switch (_stage) {
-      case StudioStage.projects:
-        return ProjectListPage(
+    return IndexedStack(
+      index: _stage.index,
+      children: [
+        ProjectListPage(
           session: _session,
           onChanged: _bootstrap,
           onNavigateStage: _go,
-        );
-      case StudioStage.ideas:
-        return IdeaIncubatorPanel(
+        ),
+        IdeaIncubatorPanel(
           session: _session,
           onConfirmed: () => setState(() => _stage = StudioStage.series),
-        );
-      case StudioStage.series:
-        return SeriesPage(session: _session);
-      case StudioStage.storyboard:
-        return StoryboardBoard(session: _session);
-      case StudioStage.sound:
-        return SoundDesignPanel(session: _session);
-      case StudioStage.delivery:
-        return DeliveryPanel(session: _session);
-    }
+          onNavigateStage: _go,
+        ),
+        SeriesPage(session: _session),
+        ScreenplayPanel(
+          session: _session,
+          onNavigateToStoryboard: () => _go(StudioStage.storyboard),
+        ),
+        AssetLibraryPage(session: _session),
+        StoryboardBoard(
+          session: _session,
+          onNavigateStage: _go,
+        ),
+        SoundDesignPanel(session: _session),
+        DeliveryPanel(session: _session),
+      ],
+    );
   }
 
   Future<void> _openSettings(BuildContext context) async {

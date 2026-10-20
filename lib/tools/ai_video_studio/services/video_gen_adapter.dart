@@ -22,10 +22,30 @@ import '../../../services/ai_logger.dart';
 import '../../../services/app_http_client.dart';
 import '../../../services/keychain_service.dart';
 import '../../../services/media_capability.dart';
+import '../../../services/settings_store.dart';
 import '../../dola_pool/services/dola_config_store.dart';
 import '../../dola_pool/services/dola_pool_video_adapter.dart';
 import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart' show ImageHttpFn;
+import 'video_task_ledger.dart';
+
+/// Agnes 视频生成模式。
+enum AgnesVideoMode {
+  auto('auto'),
+  text('text'),
+  keyframe('keyframe'),
+  reference('reference');
+
+  const AgnesVideoMode(this.id);
+  final String id;
+
+  static AgnesVideoMode fromId(String id) {
+    return AgnesVideoMode.values.firstWhere(
+      (m) => m.id == id,
+      orElse: () => AgnesVideoMode.auto,
+    );
+  }
+}
 
 /// 一次视频生成请求。
 ///
@@ -39,6 +59,9 @@ import 'image_gen_adapter.dart' show ImageHttpFn;
 class VideoGenRequest {
   /// 首帧图片（已生成的关键帧）。本地 Ken Burns 必需；I2V 也用它。
   final File? inputImage;
+
+  /// 尾帧图片（已生成的关键帧）。可选。
+  final File? lastFrameImage;
 
   /// 多参考图（片段级生成用）。按序对应提示词里的 `{{ref N}}`。
   final List<File> referenceImages;
@@ -61,8 +84,32 @@ class VideoGenRequest {
   /// 制作类型 id，用于选默认策略。
   final String productionType;
 
+  /// 生成模式（auto / text / keyframe / reference）。
+  final AgnesVideoMode mode;
+
+  /// 分辨率档位（'' 表示不指定，沿用适配器默认值，如 '720P'）。
+  final String sizeTier;
+
+  /// 画幅比例（'' 表示不指定，沿用适配器默认值，如 '9:16'）。
+  final String ratio;
+
+  /// 随机种子（可选）。
+  final int? seed;
+
+  /// 台账关联上下文。全部为可选：不传时台账条目只有目标路径可依。
+  ///
+  /// 恢复路径靠这几个字段把云端任务对回本地的片段/分镜——缺了它们，重启后
+  /// 即使取回视频也不知道该写进哪个剧集的哪个片段。
+  final String? seriesId;
+  final String? episodeId;
+  final String? segmentId;
+
+  /// 台账里的人类可读任务名（如「片段 3 视频」）。
+  final String? label;
+
   const VideoGenRequest({
     required this.inputImage,
+    this.lastFrameImage,
     this.referenceImages = const [],
     this.promptZh = '',
     this.cameraMove = '',
@@ -70,6 +117,14 @@ class VideoGenRequest {
     required this.shotNumber,
     required this.outputFile,
     this.productionType = 'drama',
+    this.mode = AgnesVideoMode.auto,
+    this.sizeTier = '',
+    this.ratio = '',
+    this.seed,
+    this.seriesId,
+    this.episodeId,
+    this.segmentId,
+    this.label,
   });
 
   /// 适配器实际使用的提示词：片段提示词优先，否则退回运镜短语。
@@ -82,11 +137,15 @@ class VideoGenRequest {
     return cameraMove.trim();
   }
 
-  /// 本次请求的全部参考图（含首帧）。适配器按协议自行决定怎么用。
+  /// 本次请求的全部参考图（含首帧与尾帧）。适配器按协议自行决定怎么用。
   List<File> get allImages {
     final result = <File>[];
     final first = inputImage;
     if (first != null) result.add(first);
+    final last = lastFrameImage;
+    if (last != null && !result.any((e) => e.path == last.path)) {
+      result.add(last);
+    }
     for (final f in referenceImages) {
       if (!result.any((e) => e.path == f.path)) result.add(f);
     }
@@ -334,6 +393,9 @@ class KlingVideoAdapter
   @override
   void cancelCurrent() => _cancelled = true;
 
+  // Agnes 不用固定轮询超时——预算拆成排队 + 生成两段，见 _pollUntilDone。
+
+  /// 可灵的固定轮询超时。Agnes 用两段预算，不用它（见 [_pollUntilDone]）。
   Duration get _pollTimeout => const Duration(minutes: 5);
 
   @override
@@ -872,6 +934,20 @@ class SenseAudioVideoAdapter
 }
 
 /// Agnes Video 2.5 Flash 视频生成适配器（通过中转站 / 官方 OpenAI Videos 兼容协议接入）。
+///
+/// ## 恢复路径的三个公开入口
+///
+/// 云端视频任务**创建即计费**，所以「轮询到一半进程死了」必须能接着等，
+/// 而不能重新创建（那会二次计费）。这三个方法是 `VideoTaskRecovery` 与任务
+/// 面板的唯一入口，它们与 [generateVideo] 共用同一套轮询逻辑：
+///
+/// - [resumePolling]：为一个已存在的云端任务重新挂起一整段预算的轮询；
+/// - [refreshStatusOnce]：只查一次，不碰预算——用户想看「那个卡住的任务
+///   现在怎样了」时不该被迫再等十几分钟；
+/// - [refetchCompleted]：任务早已完成、只是当初没下载，重新取回产物。
+///
+/// 恢复时按台账里的型号与供应商重建适配器，而不是读当前槽位配置——用户可能
+/// 已经换了默认型号，而那个云端任务还是老型号。
 class AgnesVideoAdapter
     implements VideoGenAdapter, CancellableVideoGenAdapter {
   AgnesVideoAdapter({
@@ -921,6 +997,16 @@ class AgnesVideoAdapter
     return trimmed;
   }
 
+  /// 查询端点的根地址（去掉 `/v1` 后缀）。
+  ///
+  /// `/agnesapi` 挂在根下而不是 `/v1` 下：文档示例是
+  /// `https://api.agnes-ai.cn/agnesapi?...`，而创建端点是
+  /// `https://api.agnes-ai.cn/v1/videos`。两者前缀不同，不能简单地拼。
+  String get _queryRoot {
+    final b = baseUrl;
+    return b.endsWith('/v1') ? b.substring(0, b.length - 3) : b;
+  }
+
   Future<String?> readApiKey() async {
     if (_apiKey != null && _apiKey.isNotEmpty) return _apiKey;
     if (_keychainKeyId != null && _keychainKeyId.isNotEmpty) {
@@ -939,8 +1025,6 @@ class AgnesVideoAdapter
   @override
   void cancelCurrent() => _cancelled = true;
 
-  Duration get _pollTimeout => const Duration(minutes: 5);
-
   @override
   Future<File> generateVideo(
     VideoGenRequest request, {
@@ -952,16 +1036,89 @@ class AgnesVideoAdapter
     }
     _cancelled = false;
 
-    // Agnes 的 keyframe 模式只接受单张 first_frame，且官方禁止首帧与参考素材
-    // 同时使用。因此多参考图在这里只能取第一张，降级数量由调用方记录到
-    // StudioSegment.degradedRefCount（design 决策 4）——不在这里静默丢弃。
-    final firstFrame = request.inputImage ??
-        (request.referenceImages.isNotEmpty
-            ? request.referenceImages.first
-            : null);
-    final String? dataUri = firstFrame != null && await firstFrame.exists()
-        ? await _prepareKeyframeDataUri(firstFrame)
-        : null;
+    // 1. 模式推导与官方互斥校验（官方规则表）
+    final String derivedMode;
+    final String? firstFrameUri;
+    final String? lastFrameUri;
+    final List<String> refUris;
+
+    switch (request.mode) {
+      case AgnesVideoMode.keyframe:
+        if (request.referenceImages.isNotEmpty) {
+          throw StateError('Agnes keyframe 模式下首尾帧素材与参考素材不能同时使用');
+        }
+        if (request.inputImage == null && request.lastFrameImage == null) {
+          throw StateError('Agnes keyframe 模式需要首帧或尾帧');
+        }
+        firstFrameUri = (request.inputImage != null && await request.inputImage!.exists())
+            ? await _prepareFrameDataUri(request.inputImage!, roleName: '首帧')
+            : null;
+        lastFrameUri = (request.lastFrameImage != null && await request.lastFrameImage!.exists())
+            ? await _prepareFrameDataUri(request.lastFrameImage!, roleName: '尾帧')
+            : null;
+        if (firstFrameUri == null && lastFrameUri == null) {
+          throw StateError('Agnes keyframe 模式提供的首尾帧图片文件不存在');
+        }
+        derivedMode = 'keyframe';
+        refUris = const [];
+        break;
+
+      case AgnesVideoMode.reference:
+        if (request.inputImage != null || request.lastFrameImage != null) {
+          throw StateError('Agnes reference 模式下首尾帧素材与参考素材不能同时使用');
+        }
+        if (request.referenceImages.isEmpty) {
+          throw StateError('Agnes reference 模式需要至少一张参考素材');
+        }
+        firstFrameUri = null;
+        lastFrameUri = null;
+        refUris = await Future.wait(
+          request.referenceImages.map((f) => _prepareFrameDataUri(f, roleName: '参考图')),
+        );
+        derivedMode = 'reference';
+        break;
+
+      case AgnesVideoMode.text:
+        if (request.inputImage != null ||
+            request.lastFrameImage != null ||
+            request.referenceImages.isNotEmpty) {
+          throw StateError('Agnes text 模式下不能传递任何图片素材');
+        }
+        firstFrameUri = null;
+        lastFrameUri = null;
+        refUris = const [];
+        derivedMode = 'text';
+        break;
+
+      case AgnesVideoMode.auto:
+        // auto 模式自适应推导：
+        // 1. 若提供了首尾帧且存在，则走 keyframe；
+        // 2. 若仅提供了参考图且第一张存在，则第一张提升为首帧走 keyframe；
+        // 3. 其余情况（无图片或图片在磁盘上不存在）自适应回退到 text 模式。
+        final rawFirst = request.inputImage ??
+            (request.referenceImages.isNotEmpty ? request.referenceImages.first : null);
+        final rawLast = request.lastFrameImage;
+
+        final fUri = (rawFirst != null && await rawFirst.exists())
+            ? await _prepareFrameDataUri(rawFirst, roleName: '首帧')
+            : null;
+        final lUri = (rawLast != null && await rawLast.exists())
+            ? await _prepareFrameDataUri(rawLast, roleName: '尾帧')
+            : null;
+
+        if (fUri != null || lUri != null) {
+          derivedMode = 'keyframe';
+          firstFrameUri = fUri;
+          lastFrameUri = lUri;
+          refUris = const [];
+        } else {
+          derivedMode = 'text';
+          firstFrameUri = null;
+          lastFrameUri = null;
+          refUris = const [];
+        }
+        break;
+    }
 
     // 片段提示词优先：它含逐镜动作与台词，比单独运镜短语更能驱动画面。
     final promptText = request.effectivePrompt.isEmpty
@@ -971,19 +1128,30 @@ class AgnesVideoAdapter
     // 时长：Agnes Video 2.5 Flash 接受字符串 "4"~"12"，默认 "5"
     final durationSeconds = request.durationSec.round().clamp(4, 12).toString();
 
+    // 尺寸档位：大小写归一（能力矩阵小写 → Agnes 大写），未指定时默认 720P
+    final resolvedSize = request.sizeTier.trim().isNotEmpty
+        ? request.sizeTier.trim().toUpperCase()
+        : '720P';
+
+    // 画幅比例：随请求，未指定时默认 9:16
+    final resolvedRatio = request.ratio.trim().isNotEmpty
+        ? request.ratio.trim()
+        : '9:16';
+
     final createUrl =
         baseUrl.endsWith('/v1') ? '$baseUrl/videos' : '$baseUrl/v1/videos';
 
-    // 动态选择模式：有首帧则使用 keyframe 模式，无首帧回退到 text 文生视频
-    // 注意：Agnes 官方严禁首尾帧素材与参考素材同时使用，keyframe 模式下切勿传递 image 或 images 字段
-    final isKeyframe = dataUri != null && dataUri.isNotEmpty;
     final payload = <String, dynamic>{
       'model': _model,
       'prompt': promptText,
-      'mode': isKeyframe ? 'keyframe' : 'text',
+      'mode': derivedMode,
       'seconds': durationSeconds,
-      'aspect_ratio': '9:16',
-      if (isKeyframe) 'first_frame': dataUri,
+      'size': resolvedSize,
+      'aspect_ratio': resolvedRatio,
+      if (firstFrameUri != null) 'first_frame': firstFrameUri,
+      if (lastFrameUri != null) 'last_frame': lastFrameUri,
+      if (refUris.isNotEmpty) 'images': refUris,
+      if (request.seed != null) 'seed': request.seed,
     };
 
     onProgress?.call(0.1);
@@ -996,141 +1164,140 @@ class AgnesVideoAdapter
       },
     );
 
-    final taskId = SenseAudioVideoAdapter._extractTaskId(createResponse);
+    // 查询要用 video_id，不是 id / task_id——文档明言这三者的分工。
+    // 存错字段的后果是恢复路径永远查不到任务，用户失去唯一的线索。
+    final taskId = _readVideoId(createResponse) ??
+        SenseAudioVideoAdapter._extractTaskId(createResponse);
     if (taskId == null || taskId.isEmpty) {
       throw StateError(
         'Agnes 创建视频任务失败: ${SenseAudioVideoAdapter._truncate(SenseAudioVideoAdapter._extractErrorMessage(createResponse), 200)}',
       );
     }
 
-    final deadline = DateTime.now().add(_pollTimeout);
-    var videoUrl = '';
-    var lastStatus = '';
+    final sanitizedPayload = <String, dynamic>{
+      'model': _model,
+      'prompt': promptText,
+      'mode': derivedMode,
+      'seconds': durationSeconds,
+      'size': resolvedSize,
+      'aspect_ratio': resolvedRatio,
+      if (firstFrameUri != null)
+        'first_frame': '<data:image;base64,... len=${firstFrameUri.length}>',
+      if (lastFrameUri != null)
+        'last_frame': '<data:image;base64,... len=${lastFrameUri.length}>',
+      if (refUris.isNotEmpty)
+        'images': refUris
+            .map((u) => '<data:image;base64,... len=${u.length}>')
+            .toList(),
+      if (request.seed != null) 'seed': request.seed,
+    };
 
-    while (DateTime.now().isBefore(deadline)) {
-      if (_cancelled) {
-        throw StateError('视频生成任务已被用户取消');
-      }
+    // **先落台账再轮询**（spec: 创建即持久化）。顺序反了就失去「轮询途中被
+    // 杀也留得下线索」这个性质——而任务创建即计费，线索断了用户只能认损。
+    final parsedSec = int.tryParse(durationSeconds) ?? request.durationSec.round();
+    final ledgerEntry = await VideoTaskLedger.instance.record(
+      providerId: _providerId ?? id,
+      adapterId: id,
+      model: _model,
+      remoteTaskId: taskId,
+      seriesId: request.seriesId ?? '',
+      episodeId: request.episodeId ?? '',
+      segmentId: request.segmentId ?? '',
+      shotNumber: request.shotNumber,
+      label: request.label ?? '视频任务',
+      targetPath: request.outputFile.path,
+      prompt: request.effectivePrompt.isEmpty
+          ? null
+          : request.effectivePrompt,
+      requestSnapshot: <String, dynamic>{
+        'channel': 'video',
+        'providerId': _providerId ?? id,
+        'model': _model,
+        'prompt': promptText,
+        'durationSec': parsedSec,
+        'durationSeconds': parsedSec,
+        'aspectRatio': resolvedRatio,
+        'ratio': resolvedRatio,
+        'sizeTier': resolvedSize,
+        'resolution': resolvedSize,
+        'mode': derivedMode,
+        if (request.seed != null) 'seed': request.seed.toString(),
+        if (request.inputImage != null) 'firstFramePath': request.inputImage!.path,
+        if (request.lastFrameImage != null) 'lastFramePath': request.lastFrameImage!.path,
+        'referencePaths': [
+          ...request.referenceImages.map((f) => f.path),
+        ],
+        'rawPayload': sanitizedPayload,
+      },
+    );
 
-      await Future<void>.delayed(const Duration(seconds: 3));
-      if (_cancelled) {
-        throw StateError('视频生成任务已被用户取消');
-      }
-
-      Map<String, dynamic>? queryData;
-      final rootUrl = baseUrl.endsWith('/v1')
-          ? baseUrl.substring(0, baseUrl.length - 3)
-          : baseUrl;
-
-      // 1. 优先尝试通用 OpenAI Videos 轮询端点：/v1/videos/$taskId（中转站与标准化网关原生兼容）
-      final stdQueryUri = Uri.parse(
-        baseUrl.endsWith('/v1')
-            ? '$baseUrl/videos/$taskId'
-            : '$baseUrl/v1/videos/$taskId',
-      );
-      try {
-        final stdResp = await _getRaw(stdQueryUri, key: key);
-        if (stdResp.statusCode == 200) {
-          final decoded = jsonDecode(stdResp.body);
-          if (decoded is Map) {
-            queryData = decoded.map((k, v) => MapEntry(k as String, v));
-          }
-        }
-      } catch (_) {}
-
-      // 2. 若中转站未开启或直连官方 Hub，尝试专用查询接口：/agnesapi?video_id=...&model_name=...
-      if (queryData == null) {
-        final agnesApiUri = Uri.parse(
-          '$rootUrl/agnesapi?video_id=$taskId&model_name=$_model',
-        );
-        try {
-          final agnesResp = await _getRaw(agnesApiUri, key: key);
-          if (agnesResp.statusCode == 200) {
-            final decoded = jsonDecode(agnesResp.body);
-            if (decoded is Map) {
-              queryData = decoded.map((k, v) => MapEntry(k as String, v));
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (queryData != null) {
-        final status = SenseAudioVideoAdapter._extractStatus(queryData);
-        lastStatus = status;
-
-        final progressVal = SenseAudioVideoAdapter._extractProgress(queryData);
-        if (progressVal != null) {
-          onProgress?.call(progressVal);
-        } else {
-          onProgress?.call(0.5);
-        }
-
-        if (status == 'completed' ||
-            status == 'succeeded' ||
-            status == 'success') {
-          videoUrl = SenseAudioVideoAdapter._extractVideoUrl(queryData);
-          if (videoUrl.isNotEmpty) break;
-        } else if (status == 'failed' || status == 'error') {
-          throw StateError(
-            'Agnes 视频生成失败: ${SenseAudioVideoAdapter._truncate(SenseAudioVideoAdapter._extractErrorMessage(queryData), 200)}',
-          );
-        }
-      }
-    }
+    final videoUrl = await _pollUntilDone(
+      videoId: taskId,
+      key: key,
+      onProgress: onProgress,
+      ledgerEntry: ledgerEntry,
+    );
 
     if (videoUrl.isEmpty) {
+      // 预算耗尽但云端未见失败。**不抛错判失败**——那会让上层记成失败、
+      // 用户以为没花钱也没产出；事实是钱花了、视频还在云端。台账已置为
+      // cloudProcessing，任务面板可继续等待。
+      AiLogger.logWarning(
+        'Agnes 视频任务超出本地轮询预算，云端仍在处理（video_id: $taskId）',
+        providerName: 'Agnes',
+      );
       throw StateError(
-        'Agnes 任务在 ${_pollTimeout.inMinutes} 分钟内未完成（最后状态: $lastStatus）',
+        'Agnes 视频任务在本地等待预算内未完成，但云端仍在处理中（video_id: $taskId）。'
+        '积分已扣除，视频未丢失——可在任务面板点「继续等待」取回，'
+        '或复制该 id 去 Agnes 控制台自查。',
       );
     }
 
-    final http.Response download;
-    if (_httpFn != null) {
-      download = await _httpFn(http.Request('GET', Uri.parse(videoUrl)));
-    } else {
-      final client = _client ?? AppHttpClient.create();
-      download = await client.get(Uri.parse(videoUrl));
-    }
-    if (download.statusCode != 200) {
-      throw StateError('下载生成的视频失败 (HTTP ${download.statusCode}): $videoUrl');
-    }
-
-    await request.outputFile.parent.create(recursive: true);
-    await request.outputFile.writeAsBytes(download.bodyBytes, flush: true);
+    await _downloadTo(videoUrl, request.outputFile);
+    await VideoTaskLedger.instance.update(
+      ledgerEntry.localId,
+      status: VideoTaskLedgerStatus.completed,
+      lastRemoteStatus: 'completed',
+      lastProgress: 100,
+    );
     onProgress?.call(1.0);
     return request.outputFile;
   }
 
-  /// 将关键帧图片高效降采样为 720P JPEG 并返回轻量 Data URI，避免因 Base64 体积过大遭中转网关截断。
-  static Future<String> _prepareKeyframeDataUri(File file) async {
+  /// 将首帧、尾帧或参考图进行合规校验与预处理：
+  /// - 校验单边尺寸需在 256–5760 像素之间，越界抛出 StateError；
+  /// - 等比限制最大边长为 720x1280 规格（竖屏 720x1280，横屏 1280x720）；
+  /// - 统一转码为高质量 JPEG（质量 80），体积精简至 60~100KB。
+  static Future<String> _prepareFrameDataUri(File file, {String roleName = '图片'}) async {
     final rawBytes = await file.readAsBytes();
-    // 超过 180KB 必定触发压缩；即使原图本身略小，也统一进行安全归一化以保证格式与尺寸合规
     try {
       final decoded = img.decodeImage(rawBytes);
       if (decoded != null) {
-        // 等比限制最大边长为 720x1280 竖屏规格（或 1280x720 横屏规格）
+        if (decoded.width < 256 || decoded.height < 256) {
+          throw StateError(
+            '$roleName图片尺寸过小：单边尺寸需不小于 256 像素（当前为 ${decoded.width}×${decoded.height}）',
+          );
+        }
         img.Image processed = decoded;
         if (decoded.width > 720 || decoded.height > 1280) {
           final aspect = decoded.width / decoded.height;
           if (aspect <= 720.0 / 1280.0) {
-            // 高度优先限制为 1280
             processed = img.copyResize(decoded, height: 1280);
           } else {
-            // 宽度优先限制为 720
             processed = img.copyResize(decoded, width: 720);
           }
         }
-        // 编码为高质量 JPEG (质量 80)，体积精简至 60~100KB，传输迅捷且永不被截断
         final jpegBytes = img.encodeJpg(processed, quality: 80);
         return 'data:image/jpeg;base64,${base64Encode(jpegBytes)}';
       }
+    } on StateError {
+      rethrow;
     } catch (e) {
       AiLogger.logWarning(
-        '关键帧预处理转码失败，回退原始编码: $e',
+        '$roleName预处理转码失败，回退原始编码: $e',
         providerName: 'Agnes',
       );
     }
-    // 降级回退
     return 'data:image/png;base64,${base64Encode(rawBytes)}';
   }
 
@@ -1231,7 +1398,427 @@ class AgnesVideoAdapter
             .then(http.Response.fromStream);
   }
 
+  // ---------------------------------------------------------------------------
+  // 轮询核心（generateVideo 与恢复路径共用）
+  // ---------------------------------------------------------------------------
+
+  /// 轮询直到完成。返回视频地址；预算耗尽返回空串（**不抛错**）。
+  ///
+  /// 返回空而不是抛错是刻意的：云端任务创建即计费，此时抛错会让上层把任务
+  /// 记成失败，用户以为"没花钱也没产出"，而事实是钱花了、视频还在云端。
+  /// 调用方据此把台账条目置为 cloudProcessing。
+  ///
+  /// 这个方法与恢复路径共用——重启后重新挂起的轮询走同一套逻辑，不复制第二份。
+  Future<String> _pollUntilDone({
+    required String videoId,
+    required String key,
+    void Function(double progress)? onProgress,
+    VideoTaskLedgerEntry? ledgerEntry,
+  }) async {
+    // 两段预算：排队 + 生成。阶段切换以云端 queued → in_progress 为依据，
+    // 这是唯一可靠的推断（Agnes 不返回"预计开始时间"）。
+    final queueBudget = SettingsStore.instance.videoQueueBudget;
+    final genBudget = SettingsStore.instance.videoGenerateBudget;
+    final totalBudget = Duration(
+      milliseconds: queueBudget.inMilliseconds + genBudget.inMilliseconds,
+    );
+
+    final deadline = DateTime.now().add(totalBudget);
+    var interval = const Duration(seconds: 2);
+    var videoUrl = '';
+    var sawInProgress = ledgerEntry?.sawInProgress ?? false;
+
+    while (DateTime.now().isBefore(deadline)) {
+      if (_cancelled) {
+        throw StateError('视频生成任务已被用户取消');
+      }
+
+      await Future<void>.delayed(interval);
+      if (_cancelled) {
+        throw StateError('视频生成任务已被用户取消');
+      }
+
+      final outcome = await _queryTask(videoId: videoId, key: key);
+
+      if (outcome.notFound) {
+        // 明确的失败信号：任务标识在云端不存在。重试无意义。
+        throw StateError(outcome.errorMessage ?? '云端任务不存在');
+      }
+      if (outcome.rateLimited) {
+        // 限流：退避并保持上一次已知状态与进度。**不得**依据错误体更新
+        // 进度或阶段——它没有那些字段，读了只会得到虚假的"未知"。
+        interval = Duration(
+          milliseconds: (interval.inMilliseconds * 2).clamp(2000, 8000),
+        );
+        AiLogger.logWarning(
+          'Agnes 查询被限流，退避到 ${interval.inSeconds}s',
+          providerName: 'Agnes',
+        );
+        continue;
+      }
+      if (outcome.errorMessage != null) {
+        // 其他查询错误（网络 / 5xx / 响应畸形）。云端可能好着，不当任务失败。
+        interval = Duration(
+          milliseconds: (interval.inMilliseconds * 2).clamp(2000, 8000),
+        );
+        continue;
+      }
+
+      final queryData = outcome.body;
+      if (queryData == null) {
+        interval = Duration(
+          milliseconds: (interval.inMilliseconds * 2).clamp(2000, 8000),
+        );
+        continue;
+      }
+
+      // 间隔恢复：查询成功说明链路是通的
+      interval = const Duration(seconds: 2);
+
+      // 顶层字段，不用 data 嵌套——那是 SenseAudio 的形态，不是 Agnes 的。
+      // 内部字段（internal_status / internal_progress）刻意不读：文档明言
+      // 即使它们仍是 pending/0，也应以 status/progress 为准。
+      //
+      // 状态取值域实测有**五态**（2026-10-13）：queued / pending /
+      // in_progress / completed / failed。文档只列了四态，漏了 pending
+      // （出现在 started_at 之前、progress=0）。所以这里只判两个终态，
+      // 其余一切值一律视为"还在跑"——枚举匹配是个漏不得的游戏。
+      final status = (queryData['status'] as String? ?? '').toLowerCase();
+      final progressVal = (queryData['progress'] as num?)?.toInt();
+      final startedAt = (queryData['started_at'] as num?)?.toInt();
+
+      // started_at 非空即认为已进入生成段。用时间戳而不是状态字符串：
+      // pending 既出现在排队尾也出现在生成前，字符串判不了阶段。
+      if (startedAt != null && startedAt > 0 && !sawInProgress) {
+        sawInProgress = true;
+      }
+
+      if (progressVal != null) {
+        onProgress?.call(progressVal.clamp(0, 100) / 100.0);
+      } else {
+        // 云端没给进度时不编造百分比——只报个"还在跑"的中性值。
+        onProgress?.call(0.5);
+      }
+
+      if (ledgerEntry != null) {
+        await VideoTaskLedger.instance.update(
+          ledgerEntry.localId,
+          lastRemoteStatus: status,
+          lastProgress: progressVal,
+          sawInProgress: sawInProgress ? true : null,
+          elapsedPollMs: totalBudget.inMilliseconds -
+              deadline.difference(DateTime.now()).inMilliseconds,
+        );
+      }
+
+      if (status == 'completed') {
+        final meta = queryData['metadata'];
+        final metaUrl = meta is Map ? meta['url'] as String? : null;
+        videoUrl = (queryData['url'] as String?) ?? metaUrl ?? '';
+        if (videoUrl.isNotEmpty) break;
+      } else if (status == 'failed') {
+        final msg = _readErrorMessage(queryData);
+        if (ledgerEntry != null) {
+          await VideoTaskLedger.instance.update(
+            ledgerEntry.localId,
+            status: VideoTaskLedgerStatus.failed,
+            lastRemoteStatus: status,
+            error: msg,
+          );
+        }
+        throw StateError('Agnes 视频生成失败: $msg');
+      }
+      // 其余状态（queued / pending / in_progress / 文档外的任何值）：继续轮询。
+      // 刻意不做枚举匹配——今天漏一个 pending，明天来个 initializing 又漏。
+    }
+
+    if (videoUrl.isEmpty && ledgerEntry != null) {
+      // 预算耗尽但任务未见 failed——云端还在跑。置为 cloudProcessing 而非
+      // failed，让用户知道东西还在。
+      await VideoTaskLedger.instance.update(
+        ledgerEntry.localId,
+        status: VideoTaskLedgerStatus.cloudProcessing,
+      );
+    }
+    return videoUrl;
+  }
+
+  /// 查询云端任务。主路径是 `/agnesapi`（文档推荐，keyframe/reference 模式
+  /// 必须带 model_name），`/v1/videos/<id>` 降为兜底。
+  Future<_QueryOutcome> _queryTask({
+    required String videoId,
+    required String key,
+  }) async {
+    final primary = Uri.parse(
+      '$_queryRoot/agnesapi?video_id=$videoId&model_name=$_model',
+    );
+    try {
+      final resp = await _getRaw(primary, key: key);
+      final outcome = _QueryOutcome.fromResponse(
+        resp,
+        fromFallback: false,
+        videoId: videoId,
+      );
+      // 成功拿到业务体 → 主路径的结论。
+      if (outcome.body != null) {
+        return outcome;
+      }
+      // notFound / rateLimited 是主路径给出的**明确结论**，不是"主路径坏了"。
+      // 尤其限流是 HTTP 200 带 error body——落兜底只会让兜底也撞同一个限流。
+      if (outcome.notFound || outcome.rateLimited) {
+        return outcome;
+      }
+      // 其余（HTTP 5xx / 响应畸形）视为主路径不可用，落兜底。
+    } on StateError {
+      rethrow;
+    } catch (_) {
+      // 落到兜底路径
+    }
+
+    final fallback = Uri.parse(
+      baseUrl.endsWith('/v1')
+          ? '$baseUrl/videos/$videoId'
+          : '$baseUrl/v1/videos/$videoId',
+    );
+    final resp = await _getRaw(fallback, key: key);
+    return _QueryOutcome.fromResponse(
+      resp,
+      fromFallback: true,
+      videoId: videoId,
+    );
+  }
+
+  Future<void> _downloadTo(String videoUrl, File outputFile) async {
+    final http.Response download;
+    if (_httpFn != null) {
+      download = await _httpFn(http.Request('GET', Uri.parse(videoUrl)));
+    } else {
+      final client = _client ?? AppHttpClient.create();
+      download = await client.get(Uri.parse(videoUrl));
+    }
+    if (download.statusCode != 200) {
+      throw StateError(
+        '下载生成的视频失败 (HTTP ${download.statusCode}): $videoUrl',
+      );
+    }
+    final bytes = download.bodyBytes;
+    // 完整性校验：缺失或大小异常都不算完成。把 200 字节的坏文件当成功，
+    // 用户拿到的是一个打不开的片段，比明确失败难查得多。
+    if (bytes.length < 1024) {
+      throw StateError('下载到的视频文件异常（仅 ${bytes.length} 字节）');
+    }
+    await outputFile.parent.create(recursive: true);
+    await outputFile.writeAsBytes(bytes, flush: true);
+  }
+
+  /// 读取视频 ID。优先顶层 `video_id`，再退 `data.video_id`。
+  static String? _readVideoId(Map<String, dynamic> body) {
+    final data = body['data'];
+    if (data is Map) {
+      final v = data['video_id'] ?? data['videoId'];
+      if (v is String && v.isNotEmpty) return v;
+    }
+    final v = body['video_id'] ?? body['videoId'];
+    if (v is String && v.isNotEmpty) return v;
+    return null;
+  }
+
+  /// 读取失败原因。Agnes 的 error 是对象：`{"message": "..."}`。
+  static String _readErrorMessage(Map<String, dynamic> body) {
+    final err = body['error'];
+    if (err is Map) {
+      final msg = err['message'];
+      if (msg is String && msg.isNotEmpty) return msg;
+    }
+    if (err is String && err.isNotEmpty) return err;
+    final msg = body['message'];
+    if (msg is String && msg.isNotEmpty) return msg;
+    return '未知错误（响应: ${SenseAudioVideoAdapter._truncate(body.toString(), 200)}）';
+  }
+
+  // ---------------------------------------------------------------------------
+  // 恢复路径（与 generateVideo 共用同一套轮询逻辑，不复制第二份）
+  // ---------------------------------------------------------------------------
+
+  /// 恢复路径专用：为一个已存在的云端任务继续轮询。
+  ///
+  /// 与 [_pollUntilDone] 的差别只在这**不创建任务**——恢复时云端任务早已
+  /// 存在，再调创建接口就是第二次计费。返回视频地址；预算耗尽返回 null
+  /// （**不抛错**），让调用方把条目留待下一轮。
+  Future<String?> resumePolling({
+    required VideoTaskLedgerEntry entry,
+    void Function(double progress)? onProgress,
+  }) async {
+    final key = await readApiKey();
+    if (key == null || key.isEmpty) return null;
+    _cancelled = false;
+    final url = await _pollUntilDone(
+      videoId: entry.remoteTaskId,
+      key: key,
+      onProgress: onProgress,
+      ledgerEntry: entry,
+    );
+    return url.isEmpty ? null : url;
+  }
+
+  /// 轻量查询一次任务状态，只更新台账。
+  ///
+  /// **与 [resumePolling] 的分界**：那个重新挂起一整段轮询预算，这个只查
+  /// 一次就返回。用户想看"那个卡住的任务现在怎样了"时不该被迫再等十几分钟
+  /// ——所以它不碰 [_pollUntilDone] 的预算与 `sawInProgress`。
+  ///
+  /// 返回查询到的状态原文；查不到（网络/限流）返回 null，调用方据此提示
+  /// "稍后再试"，而不是假装任务消失了。
+  Future<String?> refreshStatusOnce(VideoTaskLedgerEntry entry) async {
+    final key = await readApiKey();
+    if (key == null || key.isEmpty) return null;
+    _cancelled = false;
+
+    final outcome = await _queryTask(videoId: entry.remoteTaskId, key: key);
+    if (outcome.notFound) {
+      throw StateError(outcome.errorMessage ?? '云端任务不存在');
+    }
+    if (outcome.rateLimited || outcome.errorMessage != null) {
+      return null;
+    }
+    final body = outcome.body;
+    if (body == null) return null;
+
+    final status = (body['status'] as String? ?? '').toLowerCase();
+    final progress = (body['progress'] as num?)?.toInt();
+    final startedAt = (body['started_at'] as num?)?.toInt();
+
+    await VideoTaskLedger.instance.update(
+      entry.localId,
+      lastRemoteStatus: status,
+      lastProgress: progress,
+      // started_at 非空即认为已进入生成段——与 _pollUntilDone 同一套判据。
+      sawInProgress: (startedAt != null && startedAt > 0) ? true : null,
+    );
+    return status;
+  }
+
+  /// 重新下载一个**已完成**任务的产物。
+  ///
+  /// 用于「任务完成了但当时没下载成功」与「用户手动点取回」两种情形。云端
+  /// 地址有过期时间，取不到时明确告知而不是写一个空文件。
+  Future<File> refetchCompleted(VideoTaskLedgerEntry entry) async {
+    final key = await readApiKey();
+    if (key == null || key.isEmpty) {
+      throw StateError('API Key 不可用，无法取回该任务');
+    }
+    final outcome = await _queryTask(videoId: entry.remoteTaskId, key: key);
+    if (outcome.notFound) {
+      throw StateError(outcome.errorMessage ?? '云端任务不存在');
+    }
+    final body = outcome.body;
+    if (body == null) {
+      throw StateError('查询失败，请稍后再试');
+    }
+    final status = (body['status'] as String? ?? '').toLowerCase();
+    if (status != 'completed') {
+      throw StateError('云端任务当前状态为 $status，尚未完成，无法取回');
+    }
+    final url = body['url'] as String?;
+    if (url == null || url.isEmpty) {
+      throw StateError('云端任务已完成但未返回视频地址（可能已过期）');
+    }
+
+    final target = File(entry.targetPath);
+    await _downloadTo(url, target);
+    await VideoTaskLedger.instance.update(
+      entry.localId,
+      status: VideoTaskLedgerStatus.completed,
+      lastRemoteStatus: 'completed',
+      lastProgress: 100,
+    );
+    return target;
+  }
+
+  /// 下载到指定文件。恢复路径直接复用，不另写一份下载逻辑。
+  Future<void> downloadTo(String videoUrl, File outputFile) =>
+      _downloadTo(videoUrl, outputFile);
+
   void disposeForTesting() => _client?.close();
+}
+
+/// 一次查询的结论。
+///
+/// 三个"非业务体"出口（notFound / rateLimited / errorMessage）与 `body`
+/// 分开：它们的处置方式完全不同——前两者要直接采纳主路径的结论，后者要落
+/// 兜底路径。合成一个可空字段就会丢掉这个区别。
+class _QueryOutcome {
+  const _QueryOutcome({
+    this.body,
+    this.notFound = false,
+    this.rateLimited = false,
+    this.errorMessage,
+  });
+
+  /// 业务体。null 表示这次查询没拿到可用响应。
+  final Map<String, dynamic>? body;
+
+  /// 任务标识在云端不存在（404）。明确的失败信号，不重试。
+  final bool notFound;
+
+  /// 被限流。要退避，但**不得**据此更新进度或阶段。
+  final bool rateLimited;
+
+  /// 其他查询错误（5xx / 响应畸形）。调用方退避后重试。
+  final String? errorMessage;
+
+  factory _QueryOutcome.fromResponse(
+    http.Response resp, {
+    required bool fromFallback,
+    required String videoId,
+  }) {
+    if (resp.statusCode == 404) {
+      return _QueryOutcome(
+        notFound: true,
+        errorMessage: '云端任务不存在（video_id: $videoId）',
+      );
+    }
+    if (resp.statusCode == 429) {
+      return const _QueryOutcome(rateLimited: true);
+    }
+    if (resp.statusCode != 200) {
+      return _QueryOutcome(
+        errorMessage: '查询失败 (HTTP ${resp.statusCode})'
+            '${fromFallback ? ' [兜底路径]' : ''}',
+      );
+    }
+
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is Map) {
+        body = decoded.map((k, v) => MapEntry(k as String, v));
+      }
+    } catch (_) {
+      // 响应畸形：落到 errorMessage，让调用方退避重试。
+    }
+    if (body == null) {
+      return _QueryOutcome(
+        errorMessage: '查询响应解析失败'
+            '${fromFallback ? ' [兜底路径]' : ''}',
+      );
+    }
+
+    // HTTP 200 也可能带限流错误体（上游惯用做法）。认它而不是当成任务状态，
+    // 否则会把一次限流读成"任务消失了"。
+    final errText = body['error'];
+    if (errText != null) {
+      final text = errText is Map
+          ? (errText['message']?.toString() ?? errText.toString())
+          : errText.toString();
+      if (text.contains('429') ||
+          text.toLowerCase().contains('rate') ||
+          text.contains('饱和')) {
+        return const _QueryOutcome(rateLimited: true);
+      }
+    }
+    return _QueryOutcome(body: body);
+  }
 }
 
 /// 视频生成适配器工厂。
@@ -1280,6 +1867,9 @@ class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAda
   /// 取回内层适配器。规整发生在 [_inner] 之前，所以拿到的还是原始实现。
   VideoGenAdapter unwrap() => _inner;
 
+  /// 当前适配器遵循的能力约束（时长、画幅、参考图上限等）。
+  MediaModelCapability get capability => _capability;
+
   /// 测试用：读内部的能力声明，验证「配置层是否接上」。
   ///
   /// 不跑 generateVideo——那会真去打云端。只断言解析结果。
@@ -1303,11 +1893,11 @@ class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAda
     final result = normalizer.normalize(
       MediaRequestSpec(
         durationSec: request.durationSec,
-        resolution: '',
-        ratio: '',
+        resolution: request.sizeTier,
+        ratio: request.ratio,
         referenceImageCount: request.allImages.length,
         hasFirstFrame: request.inputImage != null,
-        hasLastFrame: false,
+        hasLastFrame: request.lastFrameImage != null,
       ),
     );
 
@@ -1324,6 +1914,7 @@ class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAda
     return _inner.generateVideo(
       VideoGenRequest(
         inputImage: request.inputImage,
+        lastFrameImage: request.lastFrameImage,
         referenceImages: request.referenceImages,
         promptZh: request.promptZh,
         cameraMove: request.cameraMove,
@@ -1331,6 +1922,14 @@ class NormalizingVideoAdapter implements VideoGenAdapter, CancellableVideoGenAda
         shotNumber: request.shotNumber,
         outputFile: request.outputFile,
         productionType: request.productionType,
+        mode: request.mode,
+        sizeTier: result.request.resolution,
+        ratio: result.request.ratio,
+        seed: request.seed,
+        seriesId: request.seriesId,
+        episodeId: request.episodeId,
+        segmentId: request.segmentId,
+        label: request.label,
       ),
       onProgress: onProgress,
     );
@@ -1360,7 +1959,7 @@ class VideoGenAdapterFactory {
     // null（Kling / Dola 之外的路径没有可传的来源）。
     final capability = switch (capabilitySource) {
       final source? when source.mediaCapabilities.containsKey(modelId) =>
-        source.mediaCapabilities[modelId]!,
+        MediaCapabilityResolver.resolve(source, modelId),
       _ =>
         MediaCapabilityPresets.forModel(modelId) ??
             MediaCapabilityDefaults.openai,
