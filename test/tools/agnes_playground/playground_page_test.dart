@@ -137,7 +137,10 @@ void main() {
           .where((m) => m != AgnesVideoMode.auto)
           .map((m) => m.id)
           .toList();
-      expect(selectable, ['text', 'keyframe', 'reference']);
+      // 不依赖声明顺序：顺序是呈现细节，契约是「三种可选、不含 auto」。
+      expect(selectable, hasLength(3));
+      expect(selectable, containsAll(['text', 'keyframe', 'reference']));
+      expect(selectable, isNot(contains('auto')));
       expect(AgnesVideoMode.values.map((m) => m.id), contains('auto'));
     });
 
@@ -214,8 +217,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('本次提交的请求体'), findsOne);
-      expect(find.textContaining('prompt: 弹窗测试提示词'), findsOne);
-      expect(find.textContaining('mode: keyframe'), findsOne);
+      // 默认落在「HTTP JSON」页，文本是缩进 JSON 而不是 key: value。
+      expect(find.textContaining('"prompt": "弹窗测试提示词"'), findsOne);
+      expect(find.textContaining('"mode": "keyframe"'), findsOne);
     });
 
     testWidgets('图片产物成功后渲染缩略图与打开/访达快捷按钮', (tester) async {

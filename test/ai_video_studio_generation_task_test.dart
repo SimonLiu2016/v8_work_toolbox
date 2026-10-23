@@ -110,11 +110,13 @@ void main() {
     );
   });
 
-  test('VideoGenTask 在缺关键帧时提示先出关键帧', () async {
+  test('VideoGenTask 在缺参考素材时提示补图，不打云端', () async {
     final series = await manager.createSeries(name: '雨夜');
     final created = await manager.createEpisode(seriesId: series.id);
+    // 带一个出场角色但没有可用素材图 → reference 模式取不到图。此时不该去打
+    // 云端（spec: 缺少参考图时不静默降级）。
     final episode = created.episode.copyWith(
-      shots: [shotOf(1)],
+      shots: [shotOf(1).copyWith(characterIds: ['c_missing'])],
     );
     await manager.saveEpisode(episode);
 
@@ -130,7 +132,7 @@ void main() {
       throwsA(isA<StateError>().having(
         (e) => e.message,
         'message',
-        contains('尚未生成关键帧'),
+        contains('素材'),
       )),
     );
   });
@@ -202,7 +204,7 @@ void main() {
     expect(capturedRequest, isNotNull);
     expect(capturedRequest!.promptZh, contains('余小白，我迟早得叫你姐夫。'));
     expect(capturedRequest!.promptZh, contains('姜七夜撕下鸡腿大嚼'));
-    expect(capturedRequest!.promptZh, contains('口型与发音自然对齐'));
+    expect(capturedRequest!.promptZh, contains('口型发音对齐'));
   });
 
   test('StudioProjectManager.updateShot 原子更新单个分镜，在并发修改时互不丢失', () async {

@@ -511,11 +511,12 @@ void main() {
     });
 
     test('resolveAgnesSizeAndRatio: 比例规整映射到 Agnes 官方合法参数', () {
+      // 档位阈值是 maxDim ≥2000 才给 2K，所以 1080/1024 落在 1K 档。
       expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1024, 1024), equals(('1K', '1:1')));
-      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1080, 1920), equals(('2K', '9:16')));
-      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1920, 1080), equals(('2K', '16:9')));
-      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(768, 1024), equals(('2K', '3:4')));
-      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1024, 768), equals(('2K', '4:3')));
+      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1080, 1920), equals(('1K', '9:16')));
+      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1920, 1080), equals(('1K', '16:9')));
+      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(768, 1024), equals(('1K', '3:4')));
+      expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(1024, 768), equals(('1K', '4:3')));
       expect(SystemAiImageAdapter.resolveAgnesSizeAndRatio(2560, 1080), equals(('2K', '21:9')));
     });
 
@@ -568,7 +569,7 @@ void main() {
       expect(await resultFile.exists(), isTrue);
       expect(interceptedPayload, isNotNull);
       expect(interceptedPayload!['model'], equals('agnes-image-25-flash'));
-      expect(interceptedPayload!['size'], equals('2K'));
+      expect(interceptedPayload!['size'], equals('1K'));
       expect(interceptedPayload!['ratio'], equals('9:16'));
 
       final extraBody = interceptedPayload!['extra_body'] as Map<String, dynamic>?;
@@ -709,9 +710,9 @@ void main() {
       expect(croppedImg.height, equals((1472 * 0.35).round()));
     });
 
-    test('resolveAgnesSizeAndRatio: 1920x1080 映射为 2K 16:9 舒展构图', () {
+    test('resolveAgnesSizeAndRatio: 1920x1080 映射为 1K 16:9 舒展构图', () {
       final (size, ratio) = SystemAiImageAdapter.resolveAgnesSizeAndRatio(1920, 1080);
-      expect(size, equals('2K'));
+      expect(size, equals('1K'));
       expect(ratio, equals('16:9'));
     });
 

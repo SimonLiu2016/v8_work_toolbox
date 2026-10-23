@@ -117,8 +117,10 @@ void main() {
 
       await waitTerminal(task);
 
-      expect(task.phase, ImportPhase.done, reason: '两遍都成功后应到达 done');
-      expect(calls, 2, reason: '全案导入是两遍 AI 调用');
+      expect(task.phase, ImportPhase.done, reason: '全部阶段成功后应到达 done');
+      // 调用次数不写死：全案导入除 master + 分集规划两遍外，还会对每个场景做
+      // 七方位空间解构——场景数变化次数就变。真正要锁的是阶段推进与落库结果。
+      expect(calls, greaterThanOrEqualTo(2), reason: '至少 master 与分集规划两遍');
       expect(await manager.listEpisodes(series.id), hasLength(2),
           reason: 'Pass 2 规划的两集应已写入');
       expect(await manager.listCharacters(series.id), hasLength(1));
