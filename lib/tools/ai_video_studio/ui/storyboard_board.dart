@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import '../../../components/app_components.dart';
 import '../../../services/ai_config_store.dart';
 import '../../../services/keychain_service.dart';
+import '../../../services/settings_store.dart';
 import '../../../shell/ai_config_page.dart';
 import '../../../theme/app_theme.dart';
 import '../../ai_video_studio/models/studio_models.dart';
@@ -544,97 +545,27 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   }
 
   void _showAuditReportDialog(BuildContext context, ValidationReport report) {
+    final ep = _episode;
+    if (ep == null) return;
+    final messenger = ScaffoldMessenger.of(context);
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              report.isValid ? Icons.verified_outlined : Icons.report_problem_outlined,
-              color: report.isValid ? const Color(0xFF22C55E) : ctx.errorText,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Text(report.isValid ? '导演质检报告（通过）' : '导演质检报告（存在阻断项）'),
-          ],
-        ),
-        content: SizedBox(
-          width: 580,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Text('阻断项: ${report.blockingCount}', style: TextStyle(color: ctx.errorText, fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 16),
-                    Text('建议项: ${report.warningCount}', style: TextStyle(color: ctx.warningText, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const Divider(height: 20),
-                if (report.issues.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Center(child: Text('恭喜！全案所有分镜完全符合 C01~C09 视听与物理可执行性规范。')),
-                  )
-                else
-                  ...report.issues.map((issue) {
-                    final isBlocking = issue.severity == ValidationSeverity.blocking;
-                    final color = isBlocking ? ctx.errorText : ctx.warningText;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: color.withAlpha(20),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: color.withAlpha(80)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: color.withAlpha(40),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  '${issue.ruleId} · ${issue.ruleName}',
-                                  style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              if (issue.shotNumber != null) ...[
-                                const SizedBox(width: 8),
-                                Text('镜 #${issue.shotNumber}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
-                              ],
-                              const Spacer(),
-                              Text(
-                                issue.severity.label,
-                                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(issue.message, style: const TextStyle(fontSize: 12)),
-                          const SizedBox(height: 4),
-                          Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 11, color: ctx.textSecondary)),
-                        ],
-                      ),
-                    );
-                  }),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
+      builder: (ctx) => _AuditReportDialog(
+        report: report,
+        episode: ep,
+        characters: _characters,
+        scenes: _scenes,
+        onFixCompleted: (updatedEpisode) async {
+          setState(() {
+            _episode = updatedEpisode;
+          });
+          await _manager.saveEpisode(updatedEpisode);
+          if (mounted) {
+            messenger.showSnackBar(
+              const SnackBar(content: Text('AI 一键自愈完成，已修正不合规分镜并同步保存！')),
+            );
+          }
+        },
       ),
     );
   }
@@ -1505,6 +1436,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   ) {
     return _ShotCard(
       shot: shot,
+      episode: episode,
       scenes: _scenes,
       characters: _characters,
       queue: _queue,
@@ -2248,6 +2180,7 @@ class _SegmentGroupCard extends StatelessWidget {
 class _ShotCard extends StatelessWidget {
   const _ShotCard({
     required this.shot,
+    required this.episode,
     required this.scenes,
     required this.characters,
     required this.queue,
@@ -2269,6 +2202,7 @@ class _ShotCard extends StatelessWidget {
   });
 
   final StudioShot shot;
+  final StudioEpisode episode;
   final List<SceneCard> scenes;
   final List<CharacterCard> characters;
   final StudioTaskQueue queue;
@@ -2454,12 +2388,6 @@ class _ShotCard extends StatelessWidget {
         tasks.where((t) => t.status == StudioTaskStatus.running).toList();
     final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
     final tooLong = shot.isDialogueTooLong;
-    final selectedCharacter = shot.characterIds.isEmpty
-        ? null
-        : characters.where((c) => c.id == shot.characterIds.first).firstOrNull;
-    final selectedVariationId = selectedCharacter != null
-        ? shot.characterVariations[selectedCharacter.id]
-        : null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2518,6 +2446,8 @@ class _ShotCard extends StatelessWidget {
                         const SizedBox(width: 6),
                         _buildValidationBadge(context),
                       ],
+                      const SizedBox(width: 6),
+                      _buildVideoModeBadge(context),
                       const Spacer(),
                       _StatusBadge(tasks: tasks),
                       if (onDeleteShot != null || onInsertShotAfter != null) ...[
@@ -2593,96 +2523,20 @@ class _ShotCard extends StatelessWidget {
                           ),
                         ],
                       ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.person_outline, size: 14, color: context.textTertiary),
-                          const SizedBox(width: 4),
-                          Text('角色:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                          const SizedBox(width: 4),
-                          DropdownButton<String>(
-                            value: (selectedCharacter != null) ? selectedCharacter.id : '',
-                            isDense: true,
-                            underline: const SizedBox.shrink(),
-                            dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
-                            items: [
-                              DropdownMenuItem(
-                                value: '',
-                                child: Text('无角色(空镜)', style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                              ),
-                              ...characters.map((c) => DropdownMenuItem(
-                                    value: c.id,
-                                    child: Text(c.name, style: const TextStyle(fontSize: 11)),
-                                  )),
-                            ],
-                            onChanged: (val) {
-                              if (val == null || val.isEmpty) {
-                                onEdited(shot.copyWith(
-                                  characterIds: const [],
-                                  characterVariations: const {},
-                                ));
-                              } else {
-                                onEdited(shot.copyWith(
-                                  characterIds: [val],
-                                ));
-                              }
-                            },
-                          ),
-                        ],
+                      // 出场资产面板（spec: shot-asset-binding）。
+                      //
+                      // 原「角色」单选下拉写死 characterIds: [val]，选第二个角色
+                      // 会覆盖第一个——双人镜在 UI 上根本无法表达。这里改为可增删
+                      // 的多角色列表，每行带分工与素材指定，「形态」从属于角色。
+                      _ShotAssetPanel(
+                        shot: shot,
+                        characters: characters,
+                        seriesId: episode.seriesId,
+                        scene: scenes.any((s) => s.id == shot.sceneId)
+                            ? scenes.firstWhere((s) => s.id == shot.sceneId)
+                            : null,
+                        onEdited: onEdited,
                       ),
-                      if (selectedCharacter != null && selectedCharacter.variations.isNotEmpty)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.style_outlined, size: 14, color: context.textTertiary),
-                            const SizedBox(width: 4),
-                            Text('形态:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                            const SizedBox(width: 4),
-                            DropdownButton<String>(
-                              value: (selectedVariationId != null &&
-                                      selectedCharacter.variations.any((v) => v.id == selectedVariationId))
-                                  ? selectedVariationId
-                                  : '',
-                              isDense: true,
-                              underline: const SizedBox.shrink(),
-                              dropdownColor: context.bgCard,
-                              style: TextStyle(color: context.textPrimary, fontSize: 11),
-                              items: [
-                                DropdownMenuItem(
-                                  value: '',
-                                  child: Text('默认形态', style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                                ),
-                                ...selectedCharacter.variations.map((v) {
-                                  final hasTurnaround = (v.turnaroundPath != null && v.turnaroundPath!.isNotEmpty) ||
-                                      v.referenceImages.isNotEmpty;
-                                  return DropdownMenuItem(
-                                    value: v.id,
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(v.name, style: const TextStyle(fontSize: 11)),
-                                        if (hasTurnaround) ...[
-                                          const SizedBox(width: 4),
-                                          const Icon(Icons.check_circle_rounded, size: 12, color: Color(0xFF22C55E)),
-                                        ],
-                                      ],
-                                    ),
-                                  );
-                                }),
-                              ],
-                              onChanged: (val) {
-                                final nextMap = Map<String, String>.from(shot.characterVariations);
-                                if (val == null || val.isEmpty) {
-                                  nextMap.remove(selectedCharacter.id);
-                                } else {
-                                  nextMap[selectedCharacter.id] = val;
-                                }
-                                onEdited(shot.copyWith(characterVariations: nextMap));
-                              },
-                            ),
-                          ],
-                        ),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -2712,6 +2566,85 @@ class _ShotCard extends StatelessWidget {
                               if (val != null && val != shot.durationSec) {
                                 onEdited(shot.copyWith(durationSec: val));
                               }
+                            },
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.tune_outlined, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('模式:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: shot.videoMode,
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: const [
+                              DropdownMenuItem(value: 'auto', child: Text('自动(推荐)', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: 'keyframe', child: Text('首尾帧(keyframe)', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: 'reference', child: Text('参考图(reference)', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: 'text', child: Text('纯文本(text)', style: TextStyle(fontSize: 11))),
+                            ],
+                            onChanged: (val) {
+                              onEdited(shot.copyWith(videoMode: val));
+                            },
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.aspect_ratio_outlined, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('画幅:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: shot.aspectRatio ?? '',
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: const [
+                              DropdownMenuItem(value: '', child: Text('继承默认', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '9:16', child: Text('9:16 竖屏', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '16:9', child: Text('16:9 横屏', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '21:9', child: Text('21:9 宽画幅', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '4:3', child: Text('4:3 复古', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '1:1', child: Text('1:1 方形', style: TextStyle(fontSize: 11))),
+                            ],
+                            onChanged: (val) {
+                              onEdited(shot.copyWith(aspectRatio: (val == null || val.isEmpty) ? null : val));
+                            },
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.hd_outlined, size: 14, color: context.textTertiary),
+                          const SizedBox(width: 4),
+                          Text('清晰度:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: shot.resolution ?? '',
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            dropdownColor: context.bgCard,
+                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            items: const [
+                              DropdownMenuItem(value: '', child: Text('继承默认', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '720P', child: Text('720P', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '1080P', child: Text('1080P', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '1K', child: Text('1K', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '2K', child: Text('2K 超清', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(value: '4K', child: Text('4K 影院', style: TextStyle(fontSize: 11))),
+                            ],
+                            onChanged: (val) {
+                              onEdited(shot.copyWith(resolution: (val == null || val.isEmpty) ? null : val));
                             },
                           ),
                         ],
@@ -2802,6 +2735,19 @@ class _ShotCard extends StatelessWidget {
                         icon: const Icon(Icons.videocam_outlined, size: 15),
                         label: Text(
                           shot.cameraMove.isEmpty ? '运镜' : shot.cameraMove,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message: '查看并优化分镜视频 Prompt（AI 消解冲突、规则过滤、分流定制）',
+                        child: TextButton.icon(
+                          onPressed: () => _openVideoPromptDialog(context),
+                          icon: Icon(
+                            shot.videoPrompt.isNotEmpty ? Icons.auto_awesome : Icons.edit_note,
+                            size: 15,
+                            color: shot.videoPrompt.isNotEmpty ? context.accentText : null,
+                          ),
+                          label: Text(shot.videoPrompt.isNotEmpty ? '视频提示词*' : 'AI提示词'),
                         ),
                       ),
                       if (_hasMedia) ...[
@@ -2987,6 +2933,373 @@ class _ShotCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildVideoModeBadge(BuildContext context) {
+    final hasFrame = (_frameFile != null && _frameFile!.existsSync()) ||
+        (shot.firstFramePath != null && shot.firstFramePath!.isNotEmpty);
+    final hasRef = shot.characterIds.isNotEmpty || shot.sceneId.trim().isNotEmpty;
+    final effectiveMode = shot.resolveEffectiveVideoMode(
+      hasKeyframe: hasFrame,
+      hasCharacterOrSceneRef: hasRef,
+    );
+    final isCustom = shot.videoMode != 'auto';
+    final label = '${effectiveMode.id}${isCustom ? "(手动)" : "(自动)"}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: context.accentSubtle.withAlpha(50),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: context.accentSubtle),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: context.accentText,
+        ),
+      ),
+    );
+  }
+
+  void _openVideoPromptDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _VideoPromptDialog(
+        shot: shot,
+        episode: episode,
+        characters: characters,
+        scenes: scenes,
+        framesDir: framesDir,
+        onSave: onEdited,
+      ),
+    );
+  }
+}
+
+/// 出场资产面板（spec: shot-asset-binding）。
+///
+/// 折叠式：分镜卡已有场景/模式/画幅/时长/景别等一排控件，面板默认收起，
+/// 展开时才占空间。
+///
+/// 每行一个角色，含分工（主体/对峙/配角）与素材指定；素材下拉列出该角色
+/// 资产下**磁盘上真实存在**的候选图，默认选中系统默认项。用户未显式指定时
+/// 显示「自动：<默认文件名>」，让「程序挑了哪张」始终可见、可覆盖。
+class _ShotAssetPanel extends StatelessWidget {
+  const _ShotAssetPanel({
+    required this.shot,
+    required this.characters,
+    required this.scene,
+    required this.seriesId,
+    required this.onEdited,
+  });
+
+  final StudioShot shot;
+  final List<CharacterCard> characters;
+
+  /// 当前分镜关联的场景卡；null 表示未关联。
+  final SceneCard? scene;
+
+  final String seriesId;
+  final ValueChanged<StudioShot> onEdited;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedIds = shot.characterIds;
+    final available = characters.where((c) => !selectedIds.contains(c.id)).toList();
+    final bindings = shot.assetBindings;
+
+    // 素材总数（角色 + 场景）= 将要提交的参考图数量。
+    final materialCount = selectedIds.length + (scene != null ? 1 : 0);
+    final maxRefs = SettingsStore.instance.videoMaxReferenceImages;
+
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 0),
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        initiallyExpanded: false,
+        title: Row(
+          children: [
+            Icon(Icons.perm_media_outlined, size: 14, color: context.textTertiary),
+            const SizedBox(width: 4),
+            Text('出场资产', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+            const SizedBox(width: 8),
+            Text(
+              '${selectedIds.length} 角色 · ${scene != null ? 1 : 0} 场景',
+              style: TextStyle(color: context.textPrimary, fontSize: 11),
+            ),
+          ],
+        ),
+        children: [
+          if (maxRefs != null && materialCount > maxRefs)
+            _OverLimitBanner(count: materialCount, max: maxRefs),
+          for (final id in selectedIds) ...[
+            _AssetRow(
+              key: ValueKey('char_$id'),
+              assetId: id,
+              assetName: characters.firstWhere((c) => c.id == id).name,
+              isScene: false,
+              binding: bindings[id] ?? const ShotAssetBinding(),
+              seriesId: seriesId,
+              onChanged: (b) => _updateBinding(id, b),
+              onRemove: () => _removeCharacter(id),
+              trailing: _RoleDropdown(
+                role: bindings[id]?.role ?? ShotAssetRole.subject,
+                onChanged: (r) => _updateBinding(id, (bindings[id] ?? const ShotAssetBinding()).copyWith(role: r)),
+              ),
+            ),
+          ],
+          if (scene != null)
+            _AssetRow(
+              key: ValueKey('scene_${scene!.id}'),
+              assetId: scene!.id,
+              assetName: scene!.name,
+              isScene: true,
+              binding: bindings[scene!.id] ?? const ShotAssetBinding(),
+              seriesId: seriesId,
+              onChanged: (b) => _updateBinding(scene!.id, b),
+              onChangedScene: null,
+              onRemove: null,
+              trailing: null,
+            ),
+          if (available.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.person_add_alt, size: 14),
+                label: const Text('添加角色', style: TextStyle(fontSize: 11)),
+                style: TextButton.styleFrom(
+                  foregroundColor: context.textSecondary,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                ),
+                onPressed: () => _addCharacter(available.first.id),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _addCharacter(String characterId) {
+    final nextIds = [...shot.characterIds, characterId];
+    onEdited(shot.copyWith(characterIds: nextIds));
+  }
+
+  void _removeCharacter(String characterId) {
+    final nextIds = shot.characterIds.where((id) => id != characterId).toList();
+    final nextBindings = Map<String, ShotAssetBinding>.from(shot.assetBindings)
+      ..remove(characterId);
+    final nextVariations = Map<String, String>.from(shot.characterVariations)
+      ..remove(characterId);
+    onEdited(shot.copyWith(
+      characterIds: nextIds,
+      assetBindings: nextBindings,
+      characterVariations: nextVariations,
+    ));
+  }
+
+  void _updateBinding(String assetId, ShotAssetBinding binding) {
+    final next = Map<String, ShotAssetBinding>.from(shot.assetBindings);
+    next[assetId] = binding;
+    onEdited(shot.copyWith(assetBindings: next));
+  }
+}
+
+/// 单个资产的素材指定行。
+class _AssetRow extends StatelessWidget {
+  const _AssetRow({
+    super.key,
+    required this.assetId,
+    required this.assetName,
+    required this.isScene,
+    required this.binding,
+    required this.seriesId,
+    required this.onChanged,
+    this.trailing,
+    this.onRemove,
+    this.onChangedScene,
+  });
+
+  final String assetId;
+  final String assetName;
+  final bool isScene;
+  final ShotAssetBinding binding;
+  final String seriesId;
+
+  /// 素材选择变更。
+  final ValueChanged<ShotAssetBinding> onChanged;
+
+  /// 角色行显示分工下拉；场景行传 null。
+  final Widget? trailing;
+
+  /// 角色行的移除按钮；场景行传 null（场景由主行选择，不在此处移除）。
+  final VoidCallback? onRemove;
+
+  /// 场景变更（保留字段，暂由主行「场景」下拉承担）。
+  final ValueChanged<String>? onChangedScene;
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = _loadCandidates();
+    final binding = this.binding;
+    // 用户未显式指定时，下拉指向默认项（若能枚举出默认项）。
+    final effectiveValue = binding.hasExplicitMaterial
+        ? binding.materialPath
+        : (candidates.isNotEmpty && candidates.first.isDefault ? candidates.first.fileName : '');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              assetName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: context.textPrimary, fontSize: 11),
+            ),
+          ),
+          if (trailing != null) ...[
+            trailing!,
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: DropdownButton<String>(
+              value: candidates.any((c) => c.fileName == effectiveValue) ? effectiveValue : null,
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              dropdownColor: context.bgCard,
+              style: TextStyle(color: context.textSecondary, fontSize: 11),
+              items: [
+                if (candidates.isNotEmpty && candidates.first.isDefault)
+                  DropdownMenuItem(
+                    value: '',
+                    child: Text('自动：${candidates.first.fileName}',
+                        style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                  ),
+                ...candidates.map((c) => DropdownMenuItem(
+                      value: c.fileName,
+                      child: Text(
+                        '${c.label} · ${c.fileName}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    )),
+              ],
+              onChanged: (val) {
+                onChanged(binding.copyWith(materialPath: val ?? ''));
+              },
+            ),
+          ),
+          if (onRemove != null)
+            InkWell(
+              onTap: onRemove,
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 13, color: context.textTertiary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<AssetMaterialCandidate> _loadCandidates() {
+    if (isScene) {
+      final scene = _sceneCard;
+      if (scene == null) return const [];
+      return AssetMaterialEnumerator.forScene(
+        scene,
+        sceneDirPath: StudioProjectManager.instance.sceneDir(seriesId, assetId).path,
+      );
+    }
+    final character = _characterCard;
+    if (character == null) return const [];
+    return AssetMaterialEnumerator.forCharacter(
+      character,
+      activeVariation: character.activeVariation,
+      charDirPath: StudioProjectManager.instance.characterDir(seriesId, assetId).path,
+    );
+  }
+
+  SceneCard? get _sceneCard {
+    // 场景行只在面板内渲染，场景卡由调用方通过 scene 传入；此处按 id 反查。
+    try {
+      return StudioProjectManager.instance.readScene(seriesId, assetId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  CharacterCard? get _characterCard {
+    try {
+      return StudioProjectManager.instance.readCharacter(seriesId, assetId);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// 角色分工下拉。
+class _RoleDropdown extends StatelessWidget {
+  const _RoleDropdown({required this.role, required this.onChanged});
+
+  final ShotAssetRole role;
+  final ValueChanged<ShotAssetRole> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButton<ShotAssetRole>(
+      value: role,
+      isDense: true,
+      underline: const SizedBox.shrink(),
+      dropdownColor: context.bgCard,
+      style: TextStyle(color: context.textSecondary, fontSize: 11),
+      items: ShotAssetRole.values
+          .map((r) => DropdownMenuItem(
+                value: r,
+                child: Text(r.label, style: const TextStyle(fontSize: 11)),
+              ))
+          .toList(),
+      onChanged: (v) {
+        if (v != null) onChanged(v);
+      },
+    );
+  }
+}
+
+/// 参考素材超限警告条（spec: 超限阻止而非静默截断）。
+class _OverLimitBanner extends StatelessWidget {
+  const _OverLimitBanner({required this.count, required this.max});
+
+  final int count;
+  final int max;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: context.errorSolid.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 14, color: context.errorText),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '已选 $count 个素材，当前模型上限 $max 个。请减少角色或场景后再生成。',
+              style: TextStyle(color: context.errorText, fontSize: 10),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4846,6 +5159,482 @@ class _CameraMoveSheet extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AuditReportDialog extends StatefulWidget {
+  const _AuditReportDialog({
+    required this.report,
+    required this.episode,
+    required this.characters,
+    required this.scenes,
+    required this.onFixCompleted,
+  });
+
+  final ValidationReport report;
+  final StudioEpisode episode;
+  final List<CharacterCard> characters;
+  final List<SceneCard> scenes;
+  final ValueChanged<StudioEpisode> onFixCompleted;
+
+  @override
+  State<_AuditReportDialog> createState() => _AuditReportDialogState();
+}
+
+class _AuditReportDialogState extends State<_AuditReportDialog> {
+  bool _isAutoFixing = false;
+
+  Future<void> _handleAutoFix() async {
+    setState(() {
+      _isAutoFixing = true;
+    });
+
+    try {
+      final result = await AiConstraintEngine.autoFixAuditIssues(
+        shots: widget.episode.shots,
+        report: widget.report,
+        characters: widget.characters,
+        scenes: widget.scenes,
+      );
+
+      final fixedShotsList = result.data['fixed_shots'] as List? ?? const [];
+      final fixedMap = <int, Map<String, dynamic>>{};
+      for (final item in fixedShotsList) {
+        if (item is Map) {
+          final num = item['number'] is int
+              ? item['number'] as int
+              : int.tryParse(item['number'].toString());
+          if (num != null) {
+            fixedMap[num] = item.map((k, v) => MapEntry(k.toString(), v));
+          }
+        }
+      }
+
+      final updatedShots = widget.episode.shots.map((orig) {
+        final fix = fixedMap[orig.number];
+        if (fix == null) return orig;
+        return orig.copyWith(
+          actionZh: fix['action_zh'] as String? ?? orig.actionZh,
+          dialogue: fix['dialogue'] as String? ?? orig.dialogue,
+          cameraMove: fix['camera_move'] as String? ?? orig.cameraMove,
+          mood: fix['mood'] as String? ?? orig.mood,
+          shotSize: fix['shot_size'] != null
+              ? StudioShotSize.fromId(fix['shot_size'].toString())
+              : orig.shotSize,
+          durationSec: fix['duration_sec'] is num
+              ? (fix['duration_sec'] as num).toDouble()
+              : orig.durationSec,
+        );
+      }).toList();
+
+      final updatedEpisode = widget.episode.copyWith(shots: updatedShots);
+
+      if (!mounted) return;
+      widget.onFixCompleted(updatedEpisode);
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('AI 一键自愈失败: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAutoFixing = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = widget.report;
+    final errorColor = context.errorText;
+    final warningColor = context.warningText;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(
+            report.isValid ? Icons.verified_outlined : Icons.report_problem_outlined,
+            color: report.isValid ? const Color(0xFF22C55E) : errorColor,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              report.isValid ? '导演质检报告（全部通过）' : '导演质检报告（存在待优化项）',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 620,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: (report.blockingCount > 0 ? errorColor : const Color(0xFF22C55E)).withAlpha(25),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '阻断项: ${report.blockingCount}',
+                      style: TextStyle(
+                        color: report.blockingCount > 0 ? errorColor : const Color(0xFF22C55E),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: (report.warningCount > 0 ? warningColor : context.textTertiary).withAlpha(25),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '建议项: ${report.warningCount}',
+                      style: TextStyle(
+                        color: report.warningCount > 0 ? warningColor : context.textTertiary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '合规分: ${report.passCount} / 10',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: report.passCount >= 8 ? const Color(0xFF22C55E) : errorColor,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 24),
+              if (report.issues.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: Text(
+                      '恭喜！全案所有分镜完全符合 C01~C10 视听与物理可执行性规范。',
+                      style: TextStyle(fontSize: 13, color: Color(0xFF22C55E)),
+                    ),
+                  ),
+                )
+              else
+                ...report.issues.map((issue) {
+                  final isBlocking = issue.severity == ValidationSeverity.blocking;
+                  final color = isBlocking ? errorColor : warningColor;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: color.withAlpha(16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: color.withAlpha(70)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: color.withAlpha(40),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '${issue.ruleId} · ${issue.ruleName}',
+                                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            if (issue.shotNumber != null) ...[
+                              const SizedBox(width: 8),
+                              Text('镜 #${issue.shotNumber}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                            ],
+                            const Spacer(),
+                            Text(
+                              issue.severity.label,
+                              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(issue.message, style: const TextStyle(fontSize: 12)),
+                        const SizedBox(height: 4),
+                        Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 11, color: context.textSecondary)),
+                      ],
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        if (report.issues.isNotEmpty)
+          ElevatedButton.icon(
+            onPressed: _isAutoFixing ? null : _handleAutoFix,
+            icon: _isAutoFixing
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.auto_fix_high, size: 16),
+            label: Text(_isAutoFixing ? 'AI 一键自愈中…' : 'AI 一键自愈'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+class _VideoPromptDialog extends StatefulWidget {
+  const _VideoPromptDialog({
+    required this.shot,
+    required this.episode,
+    required this.characters,
+    required this.scenes,
+    required this.framesDir,
+    required this.onSave,
+  });
+
+  final StudioShot shot;
+  final StudioEpisode episode;
+  final List<CharacterCard> characters;
+  final List<SceneCard> scenes;
+  final String framesDir;
+  final ValueChanged<StudioShot> onSave;
+
+  @override
+  State<_VideoPromptDialog> createState() => _VideoPromptDialogState();
+}
+
+class _VideoPromptDialogState extends State<_VideoPromptDialog> {
+  late final TextEditingController _controller;
+  bool _isRewriting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialText = widget.shot.videoPrompt.isNotEmpty
+        ? widget.shot.videoPrompt
+        : PromptAssembler.buildSanitizedVideoPrompt(
+            shot: widget.shot,
+            episode: widget.episode,
+            characters: widget.characters,
+            scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+          );
+    _controller = TextEditingController(text: initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleAiRewrite() async {
+    setState(() {
+      _isRewriting = true;
+    });
+
+    try {
+      final result = await AiConstraintEngine.rewriteVideoPrompt(
+        shot: widget.shot,
+        episode: widget.episode,
+        characters: widget.characters,
+        scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+      );
+
+      final rewritten = (result.data['rewritten_prompt'] as String?)?.trim() ?? '';
+      if (rewritten.isEmpty) {
+        throw Exception('AI 返回重写结果为空');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _controller.text = rewritten;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI 提示词消解重写完成！')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('AI 提示词重写失败: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRewriting = false;
+        });
+      }
+    }
+  }
+
+  void _handleRuleClean() {
+    final cleaned = PromptAssembler.cleanAndResolveConflicts(_controller.text);
+    setState(() {
+      _controller.text = cleaned;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已应用视听与机位规则清洗！')),
+    );
+  }
+
+  void _handleResetDefault() {
+    final defaultPrompt = PromptAssembler.buildSanitizedVideoPrompt(
+      shot: widget.shot.copyWith(videoPrompt: ''),
+      episode: widget.episode,
+      characters: widget.characters,
+      scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+    );
+    setState(() {
+      _controller.text = defaultPrompt;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已重置为默认装配提示词')),
+    );
+  }
+
+  void _handleSave() {
+    widget.onSave(widget.shot.copyWith(videoPrompt: _controller.text.trim()));
+    Navigator.of(context).pop();
+  }
+
+  void _handleClearOverride() {
+    widget.onSave(widget.shot.copyWith(videoPrompt: ''));
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFrame = (widget.shot.firstFramePath != null && widget.shot.firstFramePath!.isNotEmpty) ||
+        (widget.shot.framePath != null && widget.shot.framePath!.isNotEmpty);
+    final hasRef = widget.shot.characterIds.isNotEmpty || widget.shot.sceneId.trim().isNotEmpty;
+    final effectiveMode = widget.shot.resolveEffectiveVideoMode(
+      hasKeyframe: hasFrame,
+      hasCharacterOrSceneRef: hasRef,
+    );
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Icon(Icons.movie_filter_outlined, size: 20),
+          const SizedBox(width: 8),
+          Text('分镜 #${widget.shot.number} 视频生成 Prompt'),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: context.accentSubtle.withAlpha(50),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: context.accentSubtle),
+            ),
+            child: Text(
+              '当前生效: ${effectiveMode.id}',
+              style: TextStyle(
+                fontSize: 11,
+                color: context.accentText,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 650,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '此处为最终发送给 Agnes 视频模型的 Prompt 内容。你可以直接手动微调，也可使用 AI 重写消除冲突，或使用规则清洗。',
+              style: TextStyle(fontSize: 12, color: context.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              maxLines: 8,
+              style: TextStyle(
+                fontSize: 12,
+                color: context.textPrimary,
+                fontFamily: 'monospace',
+              ),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                isDense: true,
+                hintText: '输入或生成视频提示词…',
+                helperText: effectiveMode == AgnesVideoMode.text
+                    ? '纯文本(text)模式：模型完全依据本段提示词生成画面，不传递图像。'
+                    : (effectiveMode == AgnesVideoMode.reference
+                        ? '参考图(reference)模式：已自动分离角色与场景图，提示词仅描述动态。'
+                        : '首尾帧(keyframe)模式：首尾画面已由关键帧锁定，提示词聚焦动作与光影。'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _isRewriting ? null : _handleAiRewrite,
+                  icon: _isRewriting
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome, size: 14),
+                  label: Text(_isRewriting ? 'AI 重写中…' : 'AI 智能消解冲突'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _handleRuleClean,
+                  icon: const Icon(Icons.cleaning_services_outlined, size: 14),
+                  label: const Text('规则清洗'),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: _handleResetDefault,
+                  icon: const Icon(Icons.refresh, size: 14),
+                  label: const Text('重置为默认装配'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        if (widget.shot.videoPrompt.isNotEmpty)
+          TextButton(
+            onPressed: _handleClearOverride,
+            child: Text('恢复动态组装', style: TextStyle(color: context.warningText)),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          onPressed: _handleSave,
+          child: const Text('保存修改'),
+        ),
+      ],
     );
   }
 }

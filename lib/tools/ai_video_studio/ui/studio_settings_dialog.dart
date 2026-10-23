@@ -11,6 +11,7 @@ import '../../../services/ai_config_store.dart';
 import '../../../services/media_capability.dart';
 import '../../../shell/ai_log_dialog.dart';
 import '../../../services/keychain_service.dart';
+import '../../../services/settings_store.dart';
 import '../../../shell/ai_config_page.dart';
 import '../../../theme/app_theme.dart';
 import '../../registry.dart';
@@ -269,6 +270,7 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
                           onOpenAiConfig: _openAiConfig,
                         ),
                     _buildPresetLibraryEntry(context),
+                    const _ReferenceLimitSection(),
                   ],
                 ),
               ),
@@ -825,6 +827,107 @@ class _CapabilityInfoBox extends StatelessWidget {
               style: TextStyle(fontSize: 10, color: context.warningText),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 参考素材上限设置（spec: 上限来自能力声明且用户可改）。
+///
+/// 供应商调整上限时不必等发版——这里改完，分镜卡的警告条与 adapter 的校验
+/// 立即读新值。留空 = 未确认上限（放行任意数量），刻意不用 0 表达「没测过」。
+class _ReferenceLimitSection extends StatefulWidget {
+  const _ReferenceLimitSection();
+
+  @override
+  State<_ReferenceLimitSection> createState() => _ReferenceLimitSectionState();
+}
+
+class _ReferenceLimitSectionState extends State<_ReferenceLimitSection> {
+  late final TextEditingController _controller;
+  bool _dirty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final current = SettingsStore.instance.videoMaxReferenceImages;
+    _controller = TextEditingController(text: current?.toString() ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final text = _controller.text.trim();
+    int? value;
+    if (text.isNotEmpty) {
+      value = int.tryParse(text);
+      if (value == null || value <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请输入正整数，或留空表示未设上限')),
+        );
+        return;
+      }
+    }
+    await SettingsStore.instance.setVideoMaxReferenceImages(value);
+    if (!mounted) return;
+    setState(() => _dirty = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value == null ? '已设为未确认上限' : '已设为最多 $value 个素材'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: context.bgInput,
+        borderRadius: AppTheme.borderRadiusSmall,
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '视频参考素材上限',
+            style: TextStyle(
+              color: context.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '单个分镜最多可绑定多少个参考素材（角色 + 场景）。留空表示未确认上限。',
+            style: TextStyle(color: context.textTertiary, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              SizedBox(
+                width: 90,
+                child: AppTextField(
+                  controller: _controller,
+                  keyboardType: TextInputType.number,
+                  hintText: '未设上限',
+                  onChanged: (_) => setState(() => _dirty = true),
+                ),
+              ),
+              const SizedBox(width: 8),
+              AppButton.primary(
+                label: '保存',
+                onPressed: _dirty ? _save : null,
+              ),
+            ],
+          ),
         ],
       ),
     );

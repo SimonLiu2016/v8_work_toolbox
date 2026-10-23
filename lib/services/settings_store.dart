@@ -485,6 +485,24 @@ class SettingsStore {
     await _saveAppConfig();
   }
 
+  /// 视频模型可接受的参考素材数量上限。
+  ///
+  /// null = 未确认上限（放行任意数量）。刻意不用 0 表达「没测过」——那会让
+  /// 界面显示"不支持参考图"这句假话，用户于是根本不用这个引擎做片段级生成。
+  /// 该值在界面可改：供应商调整上限时不必等发版（spec: 上限来自能力声明且
+  /// 用户可改）。
+  int? get videoMaxReferenceImages =>
+      _appConfig['videoMaxReferenceImages'] as int?;
+
+  Future<void> setVideoMaxReferenceImages(int? value) async {
+    if (value == null) {
+      _appConfig.remove('videoMaxReferenceImages');
+    } else {
+      _appConfig['videoMaxReferenceImages'] = value;
+    }
+    await _saveAppConfig();
+  }
+
   HotKeyConfig getHotKeyConfig() {
     final hotkeyJson = _appConfig['hotkey'] as Map<String, dynamic>?;
     return HotKeyConfig.fromJson(hotkeyJson);
@@ -492,6 +510,43 @@ class SettingsStore {
 
   Future<void> setHotKeyConfig(HotKeyConfig config) async {
     _appConfig['hotkey'] = config.toJson();
+    await _saveAppConfig();
+  }
+
+  // ---------------------------------------------------------------------------
+  // IT 会议听力播放热键
+  // ---------------------------------------------------------------------------
+
+  /// 读取 IT 会议听力的播放控制热键绑定。
+  ///
+  /// 存的是「动作 → modifiers/keyCode」的映射，不存 label——label 是给人看的，
+  /// 键位变了它得跟着变，存下来只会显示过期的信息。
+  List<Map<String, dynamic>> getListeningHotKeyBindings() {
+    final raw = _appConfig['listeningHotKeys'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<void> setListeningHotKeyBindings(List<Map<String, dynamic>> bindings) async {
+    _appConfig['listeningHotKeys'] = bindings;
+    await _saveAppConfig();
+  }
+
+  /// 记录 IT 会议听力热键注册失败的键位（供 UI 提示）。
+  ///
+  /// 单独存而不是只打日志：热键被占用是**用户要处理的事**——他得知道
+  /// 哪个键没生效，否则会以为"热键坏了"。
+  List<String> getListeningHotKeyFailures() {
+    final raw = _appConfig['listeningHotKeyFailures'];
+    if (raw is! List) return const [];
+    return raw.whereType<String>().toList();
+  }
+
+  Future<void> setListeningHotKeyFailures(List<String> actions) async {
+    _appConfig['listeningHotKeyFailures'] = actions;
     await _saveAppConfig();
   }
 
