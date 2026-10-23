@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import '../models/studio_models.dart';
 import 'studio_preset_store.dart';
+import 'studio_project_manager.dart';
 
 /// 目标生图引擎的 Prompt 长度上限（词）。
 ///
@@ -1018,6 +1019,8 @@ abstract final class PromptAssembler {
     required StudioEpisode episode,
     List<CharacterCard> characters = const [],
     SceneCard? scene,
+    List<ResolvedAssetMaterial> materials = const [],
+    List<AudioReference> audioReferences = const [],
   }) {
     // 0. 若分镜已由 AI 重写或用户定制专属视频提示词，直接优先使用
     if (shot.videoPrompt.trim().isNotEmpty) {
@@ -1025,6 +1028,23 @@ abstract final class PromptAssembler {
     }
 
     final sections = <String>[];
+
+    // 0.5 素材指代（spec: shot-asset-binding）。
+    //
+    // images[] 传了 N 张图，若提示词里没有任何地方声明「第 N 张是谁」，模型
+    // 只能自己猜——猜错就把参考图当氛围参考，自行臆造人物长相。这一段让每张
+    // 图有名字、有编号，编号在动作行与台词行复现（见下面的出场人物与时间轴）。
+    final refLines = <String>[];
+    for (final m in materials) {
+      refLines.add('${m.pictureTag} = ${m.assetName}（${m.roleLabel}）');
+    }
+    // 音频参考与图片参考各自独立编号（spec: 音频参考契约）。
+    for (var i = 0; i < audioReferences.length; i++) {
+      refLines.add('<Audio ${i + 1}> = ${audioReferences[i].label}');
+    }
+    if (refLines.isNotEmpty) {
+      sections.add('【素材指代】${refLines.join('；')}');
+    }
 
     // 对白段先算但不入列：因果链必须在提示词执行顺序上先于台词，否则视频模型
     // 会先把台词演完再演动作（spec: shot-causality-ordering 反应性台词时序）。
@@ -1092,18 +1112,41 @@ abstract final class PromptAssembler {
     }
 
     // 1. 出场人物与同框构图
+    //
+    //    已绑定素材图角色的外貌由参考图约束，这里 SHALL NOT 再写一遍静态
+    //    外貌长文——那既浪费模型注意力，又与参考图构成两处可能冲突的真相。
+    //    只写名称、分工与画面位置；未绑定素材的才回落到文字描述。
     if (characters.isNotEmpty) {
+      final boundIds = {for (final m in materials) m.assetId};
+      final roleOf = {
+        for (final m in materials)
+          if (!m.isScene) m.assetId: m.role
+      };
       if (characters.length == 1) {
         final c = characters.first;
-        final desc = c.descriptionZh.isNotEmpty ? c.descriptionZh : c.name;
-        sections.add('【出场人物】: ${c.name}（$desc）');
+        final role = roleOf[c.id];
+        final roleSuffix = role == null ? '' : '，分工：${role.label}';
+        if (boundIds.contains(c.id)) {
+          sections.add('【出场人物】: ${c.name}（形象以${_tagOf(materials, c.id)}为准$roleSuffix）');
+        } else {
+          final desc = c.descriptionZh.isNotEmpty ? c.descriptionZh : c.name;
+          sections.add('【出场人物】: ${c.name}（$desc$roleSuffix）');
+        }
       } else {
         final charParts = <String>[];
         for (var i = 0; i < characters.length; i++) {
           final c = characters[i];
-          final role = i == 0 ? '主体近景' : (i == 1 ? '背景/对峙中景' : '同框配角');
-          final desc = c.descriptionZh.isNotEmpty ? '，${c.descriptionZh}' : '';
-          charParts.add('${c.name}（处于画面$role$desc）');
+          final role = roleOf[c.id];
+          final roleLabel = role == ShotAssetRole.confrontation
+              ? '对峙'
+              : (i == 0 ? '主体近景' : '同框配角');
+          final roleSuffix = role == null ? '' : '，分工：${role.label}';
+          if (boundIds.contains(c.id)) {
+            charParts.add('${c.name}（处于画面$roleLabel，形象以${_tagOf(materials, c.id)}为准$roleSuffix）');
+          } else {
+            final desc = c.descriptionZh.isNotEmpty ? '，$c.descriptionZh' : '';
+            charParts.add('${c.name}（处于画面$roleLabel$desc$roleSuffix）');
+          }
         }
         sections.add('【同框人物与构图】: ${charParts.join('；')}');
       }
@@ -1140,6 +1183,7 @@ abstract final class PromptAssembler {
       shot: shot,
       isInnerVoice: isInnerVoice,
       hasDialogue: dialogue.isNotEmpty,
+      materials: materials,
     );
     if (timeline.isNotEmpty) {
       sections.add('【因果时间轴】$timeline');
@@ -1230,6 +1274,20 @@ abstract final class PromptAssembler {
       sections.add('【场景与环境】: ${scene.name}（$sceneDesc）');
     }
 
+    // 6.5 空间关系（spec: shot-continuity 相对关系编译）。
+    //
+    // 台账里 screenPosition 是「画面右侧面向左」、gazeDirection 是「面向北门
+    // 警惕注视」——都是单角色绝对描述，模型要自己推导二人的相对关系，推导不出
+    // 就各摆中立站姿，而中立站姿的默认视线就是镜头。这里编译成「谁立于何处、
+    // 面朝哪、目光聚焦于谁」，含对峙分工的角色对明确相互注视。
+    final spatial = buildSpatialRelationSection(
+      shot: shot,
+      materials: materials,
+    );
+    if (spatial.isNotEmpty) {
+      sections.add('【空间关系】$spatial');
+    }
+
     // 7. 连续性台账与末态动势（剔除单镜头无效的 180° 轴线指令，消解地标冲突）
     final continuity = shot.continuity;
     if (!continuity.isEmpty) {
@@ -1290,6 +1348,7 @@ abstract final class PromptAssembler {
     required StudioShot shot,
     required bool isInnerVoice,
     required bool hasDialogue,
+    List<ResolvedAssetMaterial> materials = const [],
   }) {
     if (isInnerVoice) return '';
 
@@ -1331,12 +1390,23 @@ abstract final class PromptAssembler {
       dialoguePhase = '';
     }
 
+    // 主体判定：动作行取动作描述中最早出现的角色；台词行取该台词的说话人。
+    // 都没有时退化为「本镜主体」（materials 里第一个非场景素材）。
+    final actionSubject = AssetBindingResolver.findSubject(action, materials);
+    final dialogueSubject = AssetBindingResolver.findSubject(
+      shot.dialogue, materials,
+    );
+    final fallbackSubject = materials.where((m) => !m.isScene).firstOrNull;
+    String tagOf(ResolvedAssetMaterial? m) => m == null ? '' : '（${m.pictureTag}）';
+
     final parts = <String>[];
     if (action.isNotEmpty) {
-      parts.add('$actionPhase $action');
+      final m = actionSubject ?? fallbackSubject;
+      parts.add('$actionPhase $action${tagOf(m)}');
     }
     if (hasDialogue && dialoguePhase.isNotEmpty) {
-      parts.add('$dialoguePhase 台词（${_dialogueSecLabel(shot)}）');
+      final m = dialogueSubject ?? fallbackSubject;
+      parts.add('$dialoguePhase 台词（${_dialogueSecLabel(shot)}）${tagOf(m)}');
     }
     if (parts.isEmpty) return '';
 
@@ -1348,6 +1418,71 @@ abstract final class PromptAssembler {
       return '$timeline。相位说明：$temporal';
     }
     return timeline;
+  }
+
+  /// 编译【空间关系】段（spec: shot-continuity 相对关系编译）。
+  ///
+  /// 输入是角色分工 + 台账的 screenPosition / gazeDirection / gazeTarget，输出
+  /// 角色间的**相对关系**：
+  /// - 每个角色的所立位置与面朝方向（来自 screenPosition 原文）；
+  /// - gazeTarget 非空时写「目光聚焦于X」；
+  /// - 同镜两个及以上角色且存在 confrontation 分工时，明确写出二者相对对峙、
+  ///   视线交会——这是治「两个人都对着镜头」的关键。
+  ///
+  /// 单角色镜不编造他人注视；gazeTarget 为空时不编造注视对象。
+  static String buildSpatialRelationSection({
+    required StudioShot shot,
+    List<ResolvedAssetMaterial> materials = const [],
+  }) {
+    if (materials.isEmpty) return '';
+    final roleChars = materials.where((m) => !m.isScene).toList();
+    if (roleChars.isEmpty) return '';
+
+    final continuity = shot.continuity;
+    final screenPos = continuity.screenPosition.trim();
+    final gazeDir = continuity.gazeDirection.trim();
+    final gazeTarget = continuity.gazeTarget.trim();
+
+    final hasConfrontation = roleChars.any((m) => m.role == ShotAssetRole.confrontation);
+    final isMulti = roleChars.length >= 2;
+
+    final parts = <String>[];
+
+    // 所立位置与面朝方向：直接沿用台账原文，那是唯一记录绝对方位的来源。
+    if (screenPos.isNotEmpty) {
+      parts.add(screenPos);
+    }
+    if (gazeDir.isNotEmpty && gazeTarget.isEmpty) {
+      // 没有明确注视对象时才把方向向量写进去——有对象时「目光聚焦于X」
+      // 已经比「面向北门」更准确地表达了同一件事。
+      parts.add('视线$gazeDir');
+    }
+    if (gazeTarget.isNotEmpty) {
+      parts.add('目光聚焦于$gazeTarget');
+    }
+
+    // 对峙关系：两个角色相对而立、视线交会。
+    if (isMulti && hasConfrontation) {
+      final subjects = roleChars.where((m) => m.role == ShotAssetRole.subject).toList();
+      final confronters = roleChars.where((m) => m.role == ShotAssetRole.confrontation).toList();
+      final a = subjects.isNotEmpty ? subjects.first : roleChars.first;
+      final b = confronters.isNotEmpty ? confronters.first : roleChars.last;
+      if (a.assetId != b.assetId) {
+        parts.add('${a.assetName}与${b.assetName}相对对峙，视线在中线交会，'
+            '${a.assetName}面朝${b.assetName}、${b.assetName}面朝${a.assetName}');
+      }
+    }
+
+    if (parts.isEmpty) return '';
+    return parts.join('；');
+  }
+
+  /// 按资产 id 取它在素材列表中的 `<Picture N>` 编号；未找到返回空串。
+  static String _tagOf(List<ResolvedAssetMaterial> materials, String assetId) {
+    for (final m in materials) {
+      if (m.assetId == assetId) return m.pictureTag;
+    }
+    return '';
   }
 
   /// 台词时长的可读标注：台词带「预估N秒」标注时为确切值，否则为按字数
@@ -1600,6 +1735,35 @@ abstract final class PromptAssembler {
     return _promptWordsOf(prompt).length;
   }
 
+  /// 片段时间轴行的素材指代（spec: shot-asset-binding）。
+  ///
+  /// 只在该镜**只有一个出场角色**时给编号——多角色同镜时分不清这一行到底是
+  /// 谁在动，给错编号比不给更糟（那会让模型把动作安到另一个人身上）。
+  /// 台词行额外尝试按说话人匹配：说话人能从台词前缀解析出来时，即使该镜有
+  /// 多个角色也能确定归属。
+  static String _segmentTagFor(
+    SegmentShotParts shot,
+    String text,
+    List<ResolvedAssetMaterial> materials,
+  ) {
+    if (materials.isEmpty) return '';
+    final isDialogue = text.trim() == shot.dialogue.trim();
+    if (isDialogue) {
+      final speaker = PromptAssembler.extractSpeakerName(shot.dialogue);
+      if (speaker.isNotEmpty) {
+        final m = materials.where((e) => !e.isScene && e.assetName == speaker).firstOrNull;
+        if (m != null) return '（${m.pictureTag}）';
+      }
+    }
+    // 该镜只有一个出场角色 → 归属明确。
+    final shotCharIds = shot.characterIds.where((id) => materials.any((m) => m.assetId == id)).toList();
+    if (shotCharIds.length == 1) {
+      final idx = materials.indexWhere((e) => e.assetId == shotCharIds.first);
+      if (idx >= 0) return '（${materials[idx].pictureTag}）';
+    }
+    return '';
+  }
+
   /// 组装一条片段视频提示词（spec: 片段提示词组装）。
   ///
   /// **确定性组装，不让 AI 自由发挥**（design 决策 5）：AI 只负责划片段边界
@@ -1703,6 +1867,7 @@ abstract final class PromptAssembler {
   static AssembledPrompt buildSegmentPrompt(
     SegmentPromptParts parts, {
     List<SegmentReference> references = const [],
+    List<ResolvedAssetMaterial> materials = const [],
   }) {
     final positiveSegments = <String>[];
     final missing = <String>[];
@@ -1750,12 +1915,15 @@ abstract final class PromptAssembler {
 
     // 3. 角色身份锚点与素材占位符（官方标准 <Picture N> 格式）。
     //    同一角色在多镜出场只写一次（身份不随镜头变化）。
+    //
+    //    编号靠**资产名精确相等**而不是 contains——名称可能互相包含
+    //    （「老王」vs「老王头」），contains 会让两个角色都命中第一个，
+    //    于是两张图用同一个编号，模型看到的是矛盾的指代。
     for (final character in parts.characters) {
       final anchor = _characterAnchor(character);
       if (anchor.isEmpty) continue;
-      final refIndex = references.indexWhere(
-        (r) => r.usage.contains(character.name.trim()),
-      );
+      final name = character.name.trim();
+      final refIndex = references.indexWhere((r) => r.usage == name);
       if (refIndex >= 0) {
         positiveSegments.add('$anchor <Picture ${refIndex + 1}>');
       } else {
@@ -1793,7 +1961,7 @@ abstract final class PromptAssembler {
 
       if (anchor.isNotEmpty) {
         final refIndex = references.indexWhere(
-          (r) => r.usage.contains(dominantScene.name.trim()),
+          (r) => r.usage == dominantScene.name.trim(),
         );
         final prefix = anchor.toLowerCase().startsWith('scene:')
             ? ''
@@ -1853,16 +2021,41 @@ abstract final class PromptAssembler {
       // 台词行带秒数标注：让模型知道这句话要占掉区间里的一段，而不是瞬间说完。
       final dialogueLine = rawDialogue.isEmpty
           ? ''
-          : '  对白：${cleanDialogueForSpeech(rawDialogue)}';
+          : '  对白：${cleanDialogueForSpeech(rawDialogue)}'
+              '${_segmentTagFor(shot, rawDialogue, materials)}';
 
       if (act.isEmpty && dialogueLine.isEmpty) continue;
 
       timelineBuffer.writeln('$range 镜号 ${shot.number}：');
-      if (act.isNotEmpty) timelineBuffer.writeln('  动作：$act');
+      if (act.isNotEmpty) {
+        timelineBuffer.writeln('  动作：$act${_segmentTagFor(shot, act, materials)}');
+      }
       if (dialogueLine.isNotEmpty) timelineBuffer.writeln(dialogueLine);
     }
     if (timelineBuffer.isNotEmpty) {
       positiveSegments.add(timelineBuffer.toString().trimRight());
+    }
+
+    // 5a. 空间关系（spec: shot-continuity 相对关系编译）。
+    //
+    // 片段覆盖 N 个分镜，取**首个有台账的分镜**作为空间基准——片段是一次连贯
+    // 物理镜头，中途换站位比用错一次更糟。
+    for (final shotParts in parts.shots) {
+      if (shotParts.continuity.isEmpty) continue;
+      final spatial = buildSpatialRelationSection(
+        shot: StudioShot(
+          number: shotParts.number,
+          actionZh: shotParts.actionZh,
+          dialogue: shotParts.dialogue,
+          characterIds: shotParts.characterIds,
+          continuity: shotParts.continuity,
+        ),
+        materials: materials,
+      );
+      if (spatial.isNotEmpty) {
+        positiveSegments.add('【空间关系】$spatial');
+      }
+      break;
     }
 
     // 5b. 含对白的片段必须声明全员闭口守卫。
@@ -2152,6 +2345,202 @@ class _JoinResult {
 }
 
 /// 因果时间轴编译器（spec: shot-causality-ordering）。
+/// 一个音频参考素材（spec: 音频参考契约）。
+///
+/// 编号与提交给适配器的 `audioReferences` 数组严格同序，首段为 `<Audio 1>`。
+/// 当前无任何调用方传入——配音流水线前移后再启用。
+class AudioReference {
+  /// 音频文件路径（仅用于日志与错误信息）。
+  final String filePath;
+
+  /// 人类可读标签，进入【素材指代】段。
+  final String label;
+
+  const AudioReference({required this.filePath, required this.label});
+}
+
+/// 一个已解析的素材绑定（spec: shot-asset-binding）。
+///
+/// [index] 是该素材在有序列表中的下标，`<Picture ${index + 1}>` 即它的指代
+/// 编号。编号不由名称匹配得出——名称可能互相包含（「老王」vs「老王头」），
+/// 下标不会错位。
+class ResolvedAssetMaterial {
+  /// 资产 id（角色卡 id 或场景卡 id）。
+  final String assetId;
+
+  /// 资产名称（角色名或场景名）。
+  final String assetName;
+
+  /// 该资产是角色还是场景。
+  final bool isScene;
+
+  /// 叙事分工。场景无分工语义，恒为 [ShotAssetRole.subject]。
+  final ShotAssetRole role;
+
+  /// 素材文件的绝对路径。
+  final String filePath;
+
+  /// 在有序列表中的下标（0 起）。
+  final int index;
+
+  const ResolvedAssetMaterial({
+    required this.assetId,
+    required this.assetName,
+    required this.isScene,
+    required this.role,
+    required this.filePath,
+    required this.index,
+  });
+
+  /// `<Picture N>` 指代编号（1 起）。
+  String get pictureTag => '<Picture ${index + 1}>';
+
+  /// 该素材的人类可读描述，用于【素材指代】段。
+  String get roleLabel => isScene ? '场景' : role.label;
+}
+
+/// 出场资产的素材绑定解析器（spec: shot-asset-binding）。
+///
+/// 这是素材指代的**唯一来源**：分镜级与片段级共用它，因此两条路径不可能
+/// 再出现「关键帧用三视图、视频用上传图」的分裂。编号 = 有序列表下标 + 1，
+/// 提示词编译与提交给生成模型的参考媒体数组从同一个列表产出，编号错位在
+/// 结构上不可能发生。
+abstract final class AssetBindingResolver {
+  /// 解析一个分镜的出场素材，返回**有序的**绑定列表。
+  ///
+  /// 顺序：按 `characterIds` 的既有顺序排列角色，场景排在最后（若已关联）。
+  /// 空 `materialPath` 时按资产自身的既定优先级取默认素材；取不到默认素材
+  /// 的资产被跳过（不占编号）——调用方应通过 [resolveWithGaps] 发现缺口。
+  static List<ResolvedAssetMaterial> resolve({
+    required StudioShot shot,
+    required List<CharacterCard> characters,
+    SceneCard? scene,
+    required String seriesId,
+    StudioProjectManager? manager,
+  }) {
+    final mgr = manager ?? StudioProjectManager.instance;
+    final result = <ResolvedAssetMaterial>[];
+    final charMap = {for (final c in characters) c.id: c};
+
+    for (final cid in shot.characterIds) {
+      final card = charMap[cid];
+      if (card == null) continue;
+      final binding = shot.assetBindings[cid];
+      final dir = mgr.characterDir(seriesId, cid).path;
+      final fileName = _pickMaterial(
+        explicit: binding?.materialPath ?? '',
+        defaultPicker: () => AssetMaterialEnumerator.defaultMaterialFor(
+          isScene: false,
+          character: card,
+          activeVariation: card.activeVariation,
+          assetDirPath: dir,
+        ),
+      );
+      if (fileName == null) continue;
+      result.add(ResolvedAssetMaterial(
+        assetId: cid,
+        assetName: card.name.trim(),
+        isScene: false,
+        role: binding?.role ?? ShotAssetRole.subject,
+        filePath: p.join(dir, fileName),
+        index: result.length,
+      ));
+    }
+
+    if (scene != null) {
+      final binding = shot.assetBindings[scene.id];
+      final dir = mgr.sceneDir(seriesId, scene.id).path;
+      final fileName = _pickMaterial(
+        explicit: binding?.materialPath ?? '',
+        defaultPicker: () => AssetMaterialEnumerator.defaultMaterialFor(
+          isScene: true,
+          scene: scene,
+          assetDirPath: dir,
+        ),
+      );
+      if (fileName != null) {
+        result.add(ResolvedAssetMaterial(
+          assetId: scene.id,
+          assetName: scene.name.trim(),
+          isScene: true,
+          role: ShotAssetRole.subject,
+          filePath: p.join(dir, fileName),
+          index: result.length,
+        ));
+      }
+    }
+
+    return result;
+  }
+
+  /// 解析并报告缺口：返回素材列表与「声明了但没有可用素材」的资产名列表。
+  ///
+  /// 缺口不静默跳过——调用方应阻止生成并提示用户补图，而不是提交一个没有
+  /// 一致性约束的请求（spec: 缺少参考图时不静默降级）。
+  static ({List<ResolvedAssetMaterial> materials, List<String> missing})
+      resolveWithGaps({
+    required StudioShot shot,
+    required List<CharacterCard> characters,
+    SceneCard? scene,
+    required String seriesId,
+    StudioProjectManager? manager,
+  }) {
+    final materials = resolve(
+      shot: shot,
+      characters: characters,
+      scene: scene,
+      seriesId: seriesId,
+      manager: manager,
+    );
+
+    final resolvedIds = {for (final m in materials) m.assetId};
+    final missing = <String>[];
+    for (final cid in shot.characterIds) {
+      if (resolvedIds.contains(cid)) continue;
+      final name = characters.where((c) => c.id == cid).firstOrNull?.name ?? cid;
+      missing.add(name);
+    }
+    if (scene != null && !resolvedIds.contains(scene.id)) {
+      missing.add(scene.name.trim());
+    }
+    return (materials: materials, missing: missing);
+  }
+
+  /// 选定素材文件名：显式指定优先，否则取系统默认。
+  ///
+  /// 显式指定的文件若在磁盘上不存在，回落到系统默认——那比提交一个必然失败
+  /// 的路径好，且默认值在 UI 上可见，用户能发现自己选的文件已丢失。
+  static String? _pickMaterial({
+    required String explicit,
+    required String? Function() defaultPicker,
+  }) {
+    if (explicit.trim().isNotEmpty) return explicit.trim();
+    return defaultPicker();
+  }
+
+  /// 从一段文本里找出引用了哪个素材，返回其编号；未引用返回 null。
+  ///
+  /// 按角色名/场景名在文本中出现的次序取**最早出现**的那个——这与「谁是本
+  /// 行的主体」的直觉一致（先被提到的人通常就是动作的执行者）。
+  static ResolvedAssetMaterial? findSubject(
+    String text,
+    List<ResolvedAssetMaterial> materials,
+  ) {
+    ResolvedAssetMaterial? best;
+    var bestIdx = -1;
+    for (final m in materials) {
+      if (m.isScene) continue;
+      final idx = text.indexOf(m.assetName);
+      if (idx < 0) continue;
+      if (bestIdx < 0 || idx < bestIdx) {
+        bestIdx = idx;
+        best = m;
+      }
+    }
+    return best;
+  }
+}
+
 ///
 /// 三条生成路径（分镜级、片段级、执行稿导出）共用同一套 `[起始s - 结束s]`
 /// 区间语法——格式一旦漂移，用户从「复制 Seedance 执行稿」和「实际生成的
@@ -3097,6 +3486,9 @@ class SegmentShotParts {
   /// 运镜关键词。
   final String cameraMove;
 
+  /// 该镜出场角色卡 id（用于时间轴行的素材指代）。
+  final List<String> characterIds;
+
   /// 该镜的建议时长（秒）。0 表示未提供，此时由片段目标时长均摊兜底。
   final double durationSec;
 
@@ -3109,6 +3501,7 @@ class SegmentShotParts {
     this.actionZh = '',
     this.dialogue = '',
     this.cameraMove = '',
+    this.characterIds = const [],
     this.durationSec = 0,
     this.continuity = ShotContinuity.empty,
   });

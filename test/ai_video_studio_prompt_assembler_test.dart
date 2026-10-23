@@ -274,8 +274,8 @@ void main() {
           ],
         ),
         references: const [
-          SegmentReference(label: 'lin.png', usage: '林晓角色参考'),
-          SegmentReference(label: 'alley.png', usage: '雨夜巷道场景参考'),
+          SegmentReference(label: 'lin.png', usage: '林晓'),
+          SegmentReference(label: 'alley.png', usage: '雨夜巷道'),
         ],
       );
       expect(result.positive, contains('<Picture 1>'));
@@ -463,7 +463,7 @@ void main() {
       expect(keptWithoutChars, contains('no humans'));
     });
 
-    test('剥离对白台词与剧本标头，锁定主物理场景，机位协调', () {
+    test('对白保留为时间区间内的配音行，剧本标头被剥离，锁定主物理场景，机位协调', () {
       final result = PromptAssembler.buildSegmentPrompt(
         SegmentPromptParts(
           productionType: StudioProductionType.anime3d,
@@ -490,9 +490,9 @@ void main() {
           ],
         ),
         references: const [
-          SegmentReference(label: 'yu.png', usage: '余小白角色参考'),
-          SegmentReference(label: 'tavern.png', usage: '酒楼场景参考'),
-          SegmentReference(label: 'street.png', usage: '长街场景参考'),
+          SegmentReference(label: 'yu.png', usage: '余小白'),
+          SegmentReference(label: 'tavern.png', usage: '酒楼'),
+          SegmentReference(label: 'street.png', usage: '长街'),
         ],
       );
 
@@ -511,13 +511,19 @@ void main() {
       expect(result.positive, isNot(contains('no humans')));
       expect(result.positive, isNot(contains('stone archway')));
 
-      // 4. 台词与剧本符号剥离
+      // 4. 剧本符号剥离（对白不再被剥，改为时间区间内的配音行——见
+      //    fix-shot-causality-inversion-in-video-prompts：旧实现把 dialogue 整段
+      //    删掉，导致片段提示词一句台词都没有，模型自己编谁在什么时间做什么）
       expect(result.positive, isNot(contains('dialogue:')));
-      expect(result.positive, isNot(contains('姜七夜，你给我站住！')));
-      expect(result.positive, isNot(contains('快躲开！')));
       expect(result.positive, isNot(contains('shot 7 |')));
       expect(result.positive, isNot(contains('camera: static')));
-      expect(result.positive, contains('余小白双手端着盘子狠狠砸出，长街两侧行人猛然止步避让'));
+      expect(result.positive, contains('对白：姜七夜，你给我站住！'));
+      expect(result.positive, contains('对白：快躲开！'));
+      // 对白是配音轨内容，画面全员闭口——含对白后必须补这层守卫。
+      expect(result.positive, contains('声音与画面约束'));
+      // 动作叙事不再被逗号压成一行，时间区间与动作/对白分行呈现。
+      expect(result.positive, isNot(contains('余小白双手端着盘子狠狠砸出，长街两侧行人猛然止步避让')));
+      expect(result.positive, contains('动作：余小白双手端着盘子狠狠砸出'));
 
       // 5. 机位协调：静态机位映射，屏蔽全局 dynamic airborne camera
       expect(result.positive, contains('static camera, steady composition'));

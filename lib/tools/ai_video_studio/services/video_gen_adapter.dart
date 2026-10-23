@@ -25,27 +25,11 @@ import '../../../services/media_capability.dart';
 import '../../../services/settings_store.dart';
 import '../../dola_pool/services/dola_config_store.dart';
 import '../../dola_pool/services/dola_pool_video_adapter.dart';
+import '../models/studio_models.dart' show AgnesVideoMode;
+export '../models/studio_models.dart' show AgnesVideoMode;
 import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart' show ImageHttpFn;
 import 'video_task_ledger.dart';
-
-/// Agnes 视频生成模式。
-enum AgnesVideoMode {
-  auto('auto'),
-  text('text'),
-  keyframe('keyframe'),
-  reference('reference');
-
-  const AgnesVideoMode(this.id);
-  final String id;
-
-  static AgnesVideoMode fromId(String id) {
-    return AgnesVideoMode.values.firstWhere(
-      (m) => m.id == id,
-      orElse: () => AgnesVideoMode.auto,
-    );
-  }
-}
 
 /// 一次视频生成请求。
 ///
@@ -65,6 +49,12 @@ class VideoGenRequest {
 
   /// 多参考图（片段级生成用）。按序对应提示词里的 `{{ref N}}`。
   final List<File> referenceImages;
+
+  /// 音频参考素材（reference 模式可用 `<Audio N>` 指代；spec: 音频参考契约）。
+  ///
+  /// 默认空列表且当前无任何调用方传入——配音流水线排在视频生成之后，要用
+  /// `<Audio N>` 驱动口型得先把 TTS 前移。字段先立住，省得将来改一轮协议。
+  final List<File> audioReferences;
 
   /// 完整画面描述（片段级生成用）。为空时适配器回退到 [cameraMove]。
   final String promptZh;
@@ -111,6 +101,7 @@ class VideoGenRequest {
     required this.inputImage,
     this.lastFrameImage,
     this.referenceImages = const [],
+    this.audioReferences = const [],
     this.promptZh = '',
     this.cameraMove = '',
     required this.durationSec,
@@ -1000,6 +991,17 @@ class AgnesVideoAdapter
   /// 查询端点的根地址（去掉 `/v1` 后缀）。
   ///
   /// `/agnesapi` 挂在根下而不是 `/v1` 下：文档示例是
+  /// 当前模型的参考素材上限（spec: 上限来自能力声明且用户可改）。
+  ///
+  /// 读取优先级：用户在工坊设置里改的值 > 型号能力声明。null = 未确认上限，
+  /// 放行任意数量——刻意不用 0 表达「没测过」，那会让界面显示"不支持参考图"
+  /// 这句假话。
+  int? get _maxReferenceImages {
+    final userValue = SettingsStore.instance.videoMaxReferenceImages;
+    if (userValue != null && userValue > 0) return userValue;
+    return MediaCapabilityPresets.forModel(_model)?.maxReferenceImages;
+  }
+
   /// `https://api.agnes-ai.cn/agnesapi?...`，而创建端点是
   /// `https://api.agnes-ai.cn/v1/videos`。两者前缀不同，不能简单地拼。
   String get _queryRoot {
@@ -1041,6 +1043,7 @@ class AgnesVideoAdapter
     final String? firstFrameUri;
     final String? lastFrameUri;
     final List<String> refUris;
+    final List<String> audioUris;
 
     switch (request.mode) {
       case AgnesVideoMode.keyframe:
@@ -1061,6 +1064,7 @@ class AgnesVideoAdapter
         }
         derivedMode = 'keyframe';
         refUris = const [];
+        audioUris = const [];
         break;
 
       case AgnesVideoMode.reference:
@@ -1075,6 +1079,11 @@ class AgnesVideoAdapter
         refUris = await Future.wait(
           request.referenceImages.map((f) => _prepareFrameDataUri(f, roleName: '参考图')),
         );
+        // 音频参考与图片参考共用同一个媒体数组，编号由其在数组中的位置决定
+        // （spec: 音频参考契约）。没有音频时一个字段都不提交。
+        audioUris = await Future.wait(
+          request.audioReferences.map((f) => _prepareAudioDataUri(f)),
+        );
         derivedMode = 'reference';
         break;
 
@@ -1087,35 +1096,56 @@ class AgnesVideoAdapter
         firstFrameUri = null;
         lastFrameUri = null;
         refUris = const [];
+        audioUris = const [];
         derivedMode = 'text';
         break;
 
       case AgnesVideoMode.auto:
         // auto 模式自适应推导：
         // 1. 若提供了首尾帧且存在，则走 keyframe；
-        // 2. 若仅提供了参考图且第一张存在，则第一张提升为首帧走 keyframe；
+        // 2. 若未提供首尾帧但提供了参考图（且至少一张存在），则走 reference 模式；
         // 3. 其余情况（无图片或图片在磁盘上不存在）自适应回退到 text 模式。
-        final rawFirst = request.inputImage ??
-            (request.referenceImages.isNotEmpty ? request.referenceImages.first : null);
-        final rawLast = request.lastFrameImage;
+        final hasInput = request.inputImage != null && await request.inputImage!.exists();
+        final hasLast = request.lastFrameImage != null && await request.lastFrameImage!.exists();
 
-        final fUri = (rawFirst != null && await rawFirst.exists())
-            ? await _prepareFrameDataUri(rawFirst, roleName: '首帧')
-            : null;
-        final lUri = (rawLast != null && await rawLast.exists())
-            ? await _prepareFrameDataUri(rawLast, roleName: '尾帧')
-            : null;
-
-        if (fUri != null || lUri != null) {
+        if (hasInput || hasLast) {
           derivedMode = 'keyframe';
-          firstFrameUri = fUri;
-          lastFrameUri = lUri;
+          firstFrameUri = hasInput
+              ? await _prepareFrameDataUri(request.inputImage!, roleName: '首帧')
+              : null;
+          lastFrameUri = hasLast
+              ? await _prepareFrameDataUri(request.lastFrameImage!, roleName: '尾帧')
+              : null;
           refUris = const [];
+          audioUris = const [];
+        } else if (request.referenceImages.isNotEmpty) {
+          final existingRefs = <File>[];
+          for (final f in request.referenceImages) {
+            if (await f.exists()) existingRefs.add(f);
+          }
+          if (existingRefs.isNotEmpty) {
+            derivedMode = 'reference';
+            firstFrameUri = null;
+            lastFrameUri = null;
+            refUris = await Future.wait(
+              existingRefs.map((f) => _prepareFrameDataUri(f, roleName: '参考图')),
+            );
+            audioUris = await Future.wait(
+              request.audioReferences.map((f) => _prepareAudioDataUri(f)),
+            );
+          } else {
+            derivedMode = 'text';
+            firstFrameUri = null;
+            lastFrameUri = null;
+            refUris = const [];
+            audioUris = const [];
+          }
         } else {
           derivedMode = 'text';
           firstFrameUri = null;
           lastFrameUri = null;
           refUris = const [];
+          audioUris = const [];
         }
         break;
     }
@@ -1128,15 +1158,35 @@ class AgnesVideoAdapter
     // 时长：Agnes Video 2.5 Flash 接受字符串 "4"~"12"，默认 "5"
     final durationSeconds = request.durationSec.round().clamp(4, 12).toString();
 
-    // 尺寸档位：大小写归一（能力矩阵小写 → Agnes 大写），未指定时默认 720P
-    final resolvedSize = request.sizeTier.trim().isNotEmpty
-        ? request.sizeTier.trim().toUpperCase()
-        : '720P';
+    // 尺寸档位：大小写归一（能力矩阵小写 → Agnes 大写），未指定时默认 720P。
+    // ⚠️ 极其关键（官方规范）：agnes-video-2.5-flash 模型仅支持 "720P"（其他值报 HTTP 400 size must be 720P），
+    // 实际输出像素（例如 720x1280、1280x704）完全由 aspect_ratio 决定。
+    final isFlashModel = _model.contains('flash');
+    final resolvedSize = isFlashModel
+        ? '720P'
+        : (request.sizeTier.trim().isNotEmpty
+            ? request.sizeTier.trim().toUpperCase()
+            : '720P');
 
     // 画幅比例：随请求，未指定时默认 9:16
     final resolvedRatio = request.ratio.trim().isNotEmpty
         ? request.ratio.trim()
         : '9:16';
+
+    // 参考素材上限来自模型能力声明（spec: 上限来自能力声明且用户可改）。
+    //
+    // 旧实现在此硬编码 5 并静默 take(5)：用户传 6 张，云端只收到 5 张，而台账
+    // 记的是提交值——于是「我的约束没生效」看起来像灵异问题。超限改为抛错，
+    // 让用户在花钱前自己决定减哪个资产。
+    final maxRefs = _maxReferenceImages;
+    if (derivedMode == 'reference' && maxRefs != null && refUris.length > maxRefs) {
+      throw StateError(
+        '当前模型最多支持 $maxRefs 个参考素材，本次提交了 ${refUris.length} 个。'
+        '请在分镜的出场资产中减少角色或场景，'
+        '或在「工坊设置 → 视频参考素材上限」中按该型号的实际能力调整上限。',
+      );
+    }
+    final effectiveRefUris = refUris;
 
     final createUrl =
         baseUrl.endsWith('/v1') ? '$baseUrl/videos' : '$baseUrl/v1/videos';
@@ -1150,7 +1200,8 @@ class AgnesVideoAdapter
       'aspect_ratio': resolvedRatio,
       if (firstFrameUri != null) 'first_frame': firstFrameUri,
       if (lastFrameUri != null) 'last_frame': lastFrameUri,
-      if (refUris.isNotEmpty) 'images': refUris,
+      if (effectiveRefUris.isNotEmpty) 'images': effectiveRefUris,
+      if (audioUris.isNotEmpty) 'audios': audioUris,
       if (request.seed != null) 'seed': request.seed,
     };
 
@@ -1185,8 +1236,8 @@ class AgnesVideoAdapter
         'first_frame': '<data:image;base64,... len=${firstFrameUri.length}>',
       if (lastFrameUri != null)
         'last_frame': '<data:image;base64,... len=${lastFrameUri.length}>',
-      if (refUris.isNotEmpty)
-        'images': refUris
+      if (effectiveRefUris.isNotEmpty)
+        'images': effectiveRefUris
             .map((u) => '<data:image;base64,... len=${u.length}>')
             .toList(),
       if (request.seed != null) 'seed': request.seed,
@@ -1268,6 +1319,17 @@ class AgnesVideoAdapter
   /// - 校验单边尺寸需在 256–5760 像素之间，越界抛出 StateError；
   /// - 等比限制最大边长为 720x1280 规格（竖屏 720x1280，横屏 1280x720）；
   /// - 统一转码为高质量 JPEG（质量 80），体积精简至 60~100KB。
+  /// 音频参考的 Data URI 预处理。
+  ///
+  /// 不做尺寸/缩放那套（音频没有这些），只做存在性检查与 base64 编码。
+  static Future<String> _prepareAudioDataUri(File file) async {
+    if (!await file.exists()) {
+      throw StateError('音频参考文件不存在: ${file.path}');
+    }
+    final bytes = await file.readAsBytes();
+    return 'data:audio/mpeg;base64,${base64Encode(bytes)}';
+  }
+
   static Future<String> _prepareFrameDataUri(File file, {String roleName = '图片'}) async {
     final rawBytes = await file.readAsBytes();
     try {

@@ -92,6 +92,10 @@ class StudioProjectManager {
   Directory episodeExportsDir(String seriesId, String episodeId) =>
       Directory(p.join(episodeDir(seriesId, episodeId).path, 'exports'));
 
+  /// 历史废弃或归档媒体存放目录（避免分镜清空/重拆后幽灵复活与物理冲突）。
+  Directory episodeArchiveDir(String seriesId, String episodeId) =>
+      Directory(p.join(episodeDir(seriesId, episodeId).path, 'archive'));
+
   Directory charactersDir(String seriesId) =>
       Directory(p.join(seriesDir(seriesId).path, 'characters'));
 
@@ -280,6 +284,64 @@ class StudioProjectManager {
     }
   }
 
+  /// 归档剧集已生成的物理媒体文件（clips/、frames/、segments/）。
+  ///
+  /// 将媒体文件安全移动至 `archive/archived_<yyyyMMdd_HHmmss>/` 目录，
+  /// 杜绝被后续清空重拆的分镜按镜号误认或幽灵绑回，同时避免粗暴物理删除导致算力成果丢失。
+  /// 返回归档的文件总数。
+  Future<int> archiveEpisodeMedia(String seriesId, String episodeId) async {
+    final epDir = episodeDir(seriesId, episodeId);
+    if (!epDir.existsSync()) return 0;
+
+    final now = DateTime.now();
+    final timestamp = '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}_'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}';
+    final archiveTargetDir = Directory(p.join(epDir.path, 'archive', 'archived_$timestamp'));
+
+    int archivedCount = 0;
+    // audio/ 以前被漏掉：清空重拆后旧的台词音频与 SRT 留在原处，而新分镜的
+    // 音频按 shot_<n>.m4a 同名覆盖——镜数一变，残留文件就成了幽灵素材。
+    // exports/ 刻意不归档：成片是对外交付物，文件名固定（episode.mp4）会被
+    // 重新合成覆盖，不构成幽灵。
+    final subDirs = [
+      episodeClipsDir(seriesId, episodeId),
+      episodeFramesDir(seriesId, episodeId),
+      episodeSegmentsDir(seriesId, episodeId),
+      episodeAudioDir(seriesId, episodeId),
+    ];
+
+    for (final dir in subDirs) {
+      if (!dir.existsSync()) continue;
+      final entities = dir.listSync();
+      for (final entity in entities) {
+        if (entity is File) {
+          final fileName = p.basename(entity.path);
+          if (fileName.startsWith('.')) continue; // 跳过 .DS_Store 等
+          final targetSubDir = Directory(p.join(archiveTargetDir.path, p.basename(dir.path)));
+          if (!targetSubDir.existsSync()) {
+            targetSubDir.createSync(recursive: true);
+          }
+          final targetFile = File(p.join(targetSubDir.path, fileName));
+          try {
+            entity.renameSync(targetFile.path);
+            archivedCount++;
+          } catch (_) {
+            try {
+              entity.copySync(targetFile.path);
+              entity.deleteSync();
+              archivedCount++;
+            } catch (_) {}
+          }
+        }
+      }
+    }
+    return archivedCount;
+  }
+
   /// 原子更新剧集中的单个分镜（在写锁链路中重读最新 JSON、仅定位更新单个分镜并落盘）。
   ///
   /// 杜绝并发异步生图/生视频任务使用启动时获取的旧快照覆盖回写造成的其他分镜成果丢失。
@@ -353,9 +415,20 @@ class StudioProjectManager {
         final candidateFile = File(p.join(segDir.path, '${seg.id}.mp4'));
         if (candidateFile.existsSync()) {
           int len = 0;
+          DateTime? fileModTime;
           try {
             len = candidateFile.lengthSync();
+            fileModTime = candidateFile.lastModifiedSync();
           } catch (_) {}
+          // 防幽灵自愈安全防线：若片段处于初始未生成状态（clipPath 为空且 status 为 pending），
+          // 且物理文件修改时间明显早于剧集最近更新时间，说明是历史遗留旧资产，禁止自动挂载。
+          if (seg.clipPath == null &&
+              seg.status == SegmentStatus.pending &&
+              fileModTime != null &&
+              fileModTime.isBefore(ep.updatedAt.subtract(const Duration(seconds: 1)))) {
+            healedSegments.add(seg);
+            continue;
+          }
           if (len > 1024) {
             healedSegments.add(seg.copyWith(
               clipPath: '${seg.id}.mp4',
@@ -383,9 +456,18 @@ class StudioProjectManager {
         for (final candidateClip in candidateClips) {
           if (candidateClip.existsSync()) {
             int len = 0;
+            DateTime? fileModTime;
             try {
               len = candidateClip.lengthSync();
+              fileModTime = candidateClip.lastModifiedSync();
             } catch (_) {}
+            // 防幽灵自愈安全防线：分镜处于初始未生成状态且文件早于剧集更新，禁止自动重连
+            if (shot.clipPath == null &&
+                shot.status == ShotGenerationStatus.pending &&
+                fileModTime != null &&
+                fileModTime.isBefore(ep.updatedAt.subtract(const Duration(seconds: 1)))) {
+              continue;
+            }
             if (len > 1024) {
               shotUpdated = shotUpdated.copyWith(
                 clipPath: p.basename(candidateClip.path),
@@ -405,9 +487,18 @@ class StudioProjectManager {
         for (final candidateFrame in candidateFrames) {
           if (candidateFrame.existsSync()) {
             int len = 0;
+            DateTime? fileModTime;
             try {
               len = candidateFrame.lengthSync();
+              fileModTime = candidateFrame.lastModifiedSync();
             } catch (_) {}
+            // 防幽灵自愈安全防线：关键帧处于初始未生成状态且文件早于剧集更新，禁止自动重连
+            if (shot.framePath == null &&
+                shot.status == ShotGenerationStatus.pending &&
+                fileModTime != null &&
+                fileModTime.isBefore(ep.updatedAt.subtract(const Duration(seconds: 1)))) {
+              continue;
+            }
             if (len > 1024) {
               shotUpdated = shotUpdated.copyWith(
                 framePath: p.basename(candidateFrame.path),

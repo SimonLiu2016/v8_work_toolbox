@@ -308,6 +308,17 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   }
 
   /// 带高危防误触弹窗的一键清空本集分镜。
+  /// 清空成功后的提示文案（spec: 归档位置对用户可见）。
+  String _clearSnackbarText(int archivedCount, String? archiveError) {
+    if (archiveError != null) {
+      return '已清空当前集的所有分镜，但媒体归档失败：$archiveError';
+    }
+    if (archivedCount <= 0) {
+      return '已清空当前集的所有分镜（无可归档的媒体文件）';
+    }
+    return '已清空当前集的所有分镜，$archivedCount 个媒体文件已归档到本集 archive/ 目录';
+  }
+
   Future<void> _confirmAndClearAllShots() async {
     final ep = _episode;
     if (ep == null || ep.shots.isEmpty) return;
@@ -326,7 +337,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
         ),
         content: Text(
           '警告：此操作将彻底清空当前集的全部 $count 个分镜卡片以及大段划分，重置为空白看板状态。\n\n'
-          '已拆解的台词、动作描写与提示词将被删除（已生成的视频/关键帧媒体文件仍安全保留在本地磁盘）。是否确认继续清空？',
+          '已拆解的台词、动作描写与提示词将被删除。已生成的视频、关键帧、片段与台词音频'
+          '将被移入 archive/archived_<时间戳>/ 目录（不再留在制作目录，避免与重新拆出的分镜混淆），'
+          '导出的成片保持原处不动。是否确认继续清空？',
         ),
         actions: [
           TextButton(
@@ -345,11 +358,25 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (confirmed != true) return;
     final cleared = ep.clearShots();
     await _manager.saveEpisode(cleared);
+
+    // 归档物理媒体（spec: 清空本集分镜时归档物理媒体）。
+    //
+    // archiveEpisodeMedia 早就写好了，但一直没有调用方——于是清空后旧视频原封
+    // 不动留在 clips/，与新拆出的分镜共用 shot_<n>.mp4 命名空间。归档失败不
+    // 阻断清空主流程（分镜数据已经没了，回不去），但必须告知用户。
+    var archivedCount = 0;
+    String? archiveError;
+    try {
+      archivedCount = await _manager.archiveEpisodeMedia(ep.seriesId, ep.id);
+    } catch (e) {
+      archiveError = e.toString();
+    }
+
     _reload();
     _summarizeEpisode(cleared);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已清空当前集的所有分镜')),
+        SnackBar(content: Text(_clearSnackbarText(archivedCount, archiveError))),
       );
     }
   }

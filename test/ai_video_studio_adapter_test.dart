@@ -967,9 +967,11 @@ void main() {
       expect(captured.containsKey('last_frame'), isFalse);
     });
 
-    test('auto 推导：片段级形状（多参考图无首帧）仍走 keyframe', () async {
-      // 这是工坊 SegmentVideoGenTask 的形状。它今天走 keyframe 且把第一张
-      // 参考图当首帧——本次改动不得改变这一点，否则主路径行为就漂了。
+    test('auto 推导：片段级形状（多参考图无首帧）走 reference', () async {
+      // 这是工坊 SegmentVideoGenTask 的形状，而它显式传的就是
+      // AgnesVideoMode.reference。auto 与显式 reference 必须一致，否则同一种
+      // 输入会因 mode 字段写没写而走两条不同协议——参考图本该以 <Picture N>
+      // 指代，提成首帧会让第 2 张起彻底失去身份约束。
       final adapter = buildAdapter(() => null);
 
       await adapter.generateVideo(
@@ -984,10 +986,10 @@ void main() {
       );
 
       final captured = payloadHolder['captured']!;
-      expect(captured['mode'], 'keyframe');
-      expect(captured['first_frame'], startsWith('data:image/'));
-      expect(captured.containsKey('images'), isFalse,
-          reason: 'keyframe 模式禁参考素材——片段级今天就是把第一张提成首帧');
+      expect(captured['mode'], 'reference');
+      expect(captured['images'], isA<List>());
+      expect((captured['images'] as List).length, 2);
+      expect(captured.containsKey('first_frame'), isFalse);
     });
 
     test('纯提示词 → text 模式且无任何媒体字段', () async {
@@ -1050,10 +1052,10 @@ void main() {
           reason: '模式冲突必须在提交前拒绝——上游 400 只会给一句英文错误码');
     });
 
-    test('Flash 型号请求 2K 时提交 720P 并留吸附记录', () async {
-      // 直接构造适配器（不走工厂）时没有规整层，这里验的是适配器自己的兜底：
-      // 非 Flash 型号才允许非 720P 档位。
-      final adapter = buildAdapter(() => null);
+    test('非 Flash 型号的 sizeTier 原样归一为大写', () async {
+      // 直接构造适配器（不走工厂）时没有规整层，这里验的是适配器自己的归一：
+      // 非 Flash 型号才允许非 720P 档位（Flash 固定 720P 由下面的场景覆盖）。
+      final adapter = buildAdapter(() => null, model: 'agnes-video-2.5');
       await adapter.generateVideo(
         VideoGenRequest(
           inputImage: writePng('f.png'),
