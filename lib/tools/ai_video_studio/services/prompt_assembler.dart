@@ -6,6 +6,9 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
 
 import '../models/studio_models.dart';
 import 'studio_preset_store.dart';
@@ -70,8 +73,8 @@ class PromptParts {
   /// 视觉任务与剪辑动机。
   final String? visualTask;
 
-  /// 五维导演决策字典。
-  final Map<String, String>? directorDecisions;
+  /// 五维导演决策（可为 `DirectorDecisions` 或 `Map<String, String>`）。
+  final dynamic directorDecisions;
 
   /// 战斗攻防步骤。
   final List<Map<String, dynamic>>? combatSteps;
@@ -167,7 +170,8 @@ abstract final class PromptAssembler {
     String? actionZh,
   }) {
     if (explicitDirection != null) return explicitDirection;
-    final text = '${cameraMove ?? ''} ${shotSize ?? ''} ${actionZh ?? ''}'.toLowerCase();
+    final text = '${cameraMove ?? ''} ${shotSize ?? ''} ${actionZh ?? ''}'
+        .toLowerCase();
     // 仰角/天顶/梁木/藻井/穹顶 -> top
     if (text.contains('low angle') ||
         text.contains('仰拍') ||
@@ -256,20 +260,63 @@ abstract final class PromptAssembler {
   /// 判断场景是否属于室内、地下或封闭空间（用于剔除天空云海等室外冲突词）。
   static bool isEnclosedScene(SceneCard? scene, {String? actionZh}) {
     if (scene == null) return false;
-    final combined =
-        '${scene.name} ${scene.descriptionZh} ${actionZh ?? ''}'.toLowerCase();
+    final combined = '${scene.name} ${scene.descriptionZh} ${actionZh ?? ''}'
+        .toLowerCase();
     const enclosedKeywords = [
-      '内景', '室内', '牢', '大牢', '牢房', '水牢', '地牢', '狱', '暗室', '密室',
-      '值房', '大殿', '内殿', '寝宫', '厢房', '书房', '卧房', '客栈内', '酒楼内',
-      '茶馆内', '石室', '洞窟', '地宫', '地道', '地下', '监牢', '囚室', '深牢',
-      '刑房', '殿', '堂', '窟', '阁', '廊', '舱', '屋', '内堂', '房内',
-      'indoor', 'interior', 'cell', 'jail', 'prison', 'dungeon', 'room',
+      '内景',
+      '室内',
+      '牢',
+      '大牢',
+      '牢房',
+      '水牢',
+      '地牢',
+      '狱',
+      '暗室',
+      '密室',
+      '值房',
+      '大殿',
+      '内殿',
+      '寝宫',
+      '厢房',
+      '书房',
+      '卧房',
+      '客栈内',
+      '酒楼内',
+      '茶馆内',
+      '石室',
+      '洞窟',
+      '地宫',
+      '地道',
+      '地下',
+      '监牢',
+      '囚室',
+      '深牢',
+      '刑房',
+      '殿',
+      '堂',
+      '窟',
+      '阁',
+      '廊',
+      '舱',
+      '屋',
+      '内堂',
+      '房内',
+      'indoor',
+      'interior',
+      'cell',
+      'jail',
+      'prison',
+      'dungeon',
+      'room',
     ];
     return enclosedKeywords.any((kw) => combined.contains(kw));
   }
 
   /// 对封闭室内/地下场景自动净化室外互斥词，并注入室内环境微光。
-  static String sanitizeStyleForScene(String style, {required bool isEnclosed}) {
+  static String sanitizeStyleForScene(
+    String style, {
+    required bool isEnclosed,
+  }) {
     if (!isEnclosed || style.trim().isEmpty) return style;
 
     final outdoorPattern = RegExp(
@@ -284,12 +331,14 @@ abstract final class PromptAssembler {
         .where((s) => s.isNotEmpty && !outdoorPattern.hasMatch(s))
         .toList();
 
-    final hasIndoorLighting = parts.any((p) =>
-        p.contains('室内') ||
-        p.contains('微光') ||
-        p.contains('油灯') ||
-        p.contains('局部光') ||
-        p.contains('暗光'));
+    final hasIndoorLighting = parts.any(
+      (p) =>
+          p.contains('室内') ||
+          p.contains('微光') ||
+          p.contains('油灯') ||
+          p.contains('局部光') ||
+          p.contains('暗光'),
+    );
     if (!hasIndoorLighting) {
       parts.add('室内局部微光，环境阴影与真实空间质感');
     }
@@ -397,7 +446,9 @@ abstract final class PromptAssembler {
       '床前',
       '刑架旁',
     ]) {
-      if (worldPos.contains(mark) || action.contains(mark) || screenPos.contains(mark)) {
+      if (worldPos.contains(mark) ||
+          action.contains(mark) ||
+          screenPos.contains(mark)) {
         landmark = mark;
         break;
       }
@@ -416,9 +467,11 @@ abstract final class PromptAssembler {
         staging = '$name${screenPos.contains('呼应') ? '' : '（次景呼应）'}';
       } else {
         final isLeft = screenPos.contains('左') || action.contains('左侧');
-        final isRight = screenPos.contains('右') || action.contains('右侧') || (!isLeft);
+        final isRight =
+            screenPos.contains('右') || action.contains('右侧') || (!isLeft);
         final side = isRight ? '右侧' : '左侧';
-        final isConfronting = action.contains('对峙') ||
+        final isConfronting =
+            action.contains('对峙') ||
             action.contains('审问') ||
             action.contains('对视') ||
             totalCount == 2;
@@ -430,10 +483,21 @@ abstract final class PromptAssembler {
     }
 
     final extras = <String>[];
+    // 容貌与发型双重锁定：全景/远景镜头下多角色参考图特征易被稀释，必须追加原生容貌与发型特征描述
+    final facial = character.facialFeaturesZh.trim().isNotEmpty
+        ? character.facialFeaturesZh.trim()
+        : (character.descriptionZh.trim().isNotEmpty
+              ? character.descriptionZh.trim()
+              : '');
+    if (facial.isNotEmpty) {
+      extras.add('容貌特征：$facial');
+    }
     if (delta != null && delta.trim().isNotEmpty) {
       extras.add('状态：${delta.trim()}');
     }
-    if (continuity != null && continuity.gazeDirection.trim().isNotEmpty && index == 0) {
+    if (continuity != null &&
+        continuity.gazeDirection.trim().isNotEmpty &&
+        index == 0) {
       extras.add('视线：${continuity.gazeDirection.trim()}');
     }
 
@@ -503,7 +567,8 @@ abstract final class PromptAssembler {
 
     // 0. 画质基线与三层负向防崩词初始化（时代排他 + 风格专属 + 通用防崩）
     final prodType = parts.productionType;
-    var qualityTokens = prodType != null && prodType.defaultPositiveStyle.isNotEmpty
+    var qualityTokens =
+        prodType != null && prodType.defaultPositiveStyle.isNotEmpty
         ? prodType.defaultPositiveStyle
         : _qualityBaseline;
 
@@ -517,7 +582,8 @@ abstract final class PromptAssembler {
       }
     }
 
-    final isLiveAction = prodType == StudioProductionType.drama ||
+    final isLiveAction =
+        prodType == StudioProductionType.drama ||
         parts.productionType?.id == 'live_action' ||
         parts.productionType?.id == 'liveAction' ||
         parts.aestheticStyle?.category == '实拍电影质感' ||
@@ -541,11 +607,12 @@ abstract final class PromptAssembler {
     final defaultProdNegative = isLiveAction
         ? StudioProductionType.drama.defaultNegativeStyle
         : (prodType != null ? prodType.defaultNegativeStyle : '');
-    final rawStyleNegative = parts.negativeStyleTokens?.trim().isNotEmpty == true
+    final rawStyleNegative =
+        parts.negativeStyleTokens?.trim().isNotEmpty == true
         ? parts.negativeStyleTokens!.trim()
         : (parts.aestheticStyle?.negativeBan.trim().isNotEmpty == true
-            ? parts.aestheticStyle!.negativeBan.trim()
-            : defaultProdNegative);
+              ? parts.aestheticStyle!.negativeBan.trim()
+              : defaultProdNegative);
     final styleNegative = isLiveAction
         ? sanitizeNegativeForLiveAction(rawStyleNegative)
         : rawStyleNegative;
@@ -557,8 +624,14 @@ abstract final class PromptAssembler {
     negativeSegments.add(AestheticStyle.universalNegativeBrief);
     negativeSegments.add(defaultNegativePrompt);
 
+    // 全局第四面墙防御（除明确解说外，严禁人物直视镜头屏幕破坏沉浸感）
+    negativeSegments.add(
+      'looking at camera, eye contact with viewer, facing viewer directly, looking at viewer, selfie pose',
+    );
+
     // 段落 1: 多图参考自然语言指令（Agnes Image 2.5 Flash 多图合成规范）
-    final isMulti = parts.isMultiImage ??
+    final isMulti =
+        parts.isMultiImage ??
         (effectiveCharacters.length + (scene != null ? 1 : 0) >= 2);
     if (isMulti) {
       final multiDirective = buildAgnesMultiImageDirective(
@@ -578,8 +651,44 @@ abstract final class PromptAssembler {
       if (action.isNotEmpty) {
         actionParts.add(action);
       }
+
+      // 视线轴线与机位视角编译注入
+      final ddCameraAngle = parts.directorDecisions is DirectorDecisions
+          ? (parts.directorDecisions as DirectorDecisions).cameraAngle
+          : (parts.directorDecisions is Map
+                ? ((parts.directorDecisions as Map)['camera_angle']
+                          as String? ??
+                      '')
+                : '');
+      final ddGazeDirection = parts.directorDecisions is DirectorDecisions
+          ? (parts.directorDecisions as DirectorDecisions).gazeDirection
+          : (parts.directorDecisions is Map
+                ? ((parts.directorDecisions as Map)['gaze_direction']
+                          as String? ??
+                      '')
+                : '');
+      final cameraAngle = parts.continuity?.cameraAngle.isNotEmpty == true
+          ? parts.continuity!.cameraAngle
+          : ddCameraAngle;
+      final gazeDirection = parts.continuity?.gazeDirection.isNotEmpty == true
+          ? parts.continuity!.gazeDirection
+          : ddGazeDirection;
+      final gazeTarget = parts.continuity?.gazeTarget ?? '';
+      final elevation = parts.continuity?.elevationLevel ?? '';
+
+      final eyelineDirective = compileGazeAndEyeline(
+        cameraAngle: cameraAngle,
+        gazeDirection: gazeDirection,
+        gazeTarget: gazeTarget,
+        elevationLevel: elevation,
+      );
+      if (eyelineDirective.isNotEmpty) {
+        actionParts.add(eyelineDirective);
+      }
+
       if (dialogue.isNotEmpty) {
-        final isInnerVoice = (parts.voiceType == UtteranceVoiceType.innerVoice) ||
+        final isInnerVoice =
+            (parts.voiceType == UtteranceVoiceType.innerVoice) ||
             dialogue.contains('内心 OS') ||
             dialogue.contains('内心OS') ||
             dialogue.contains('（OS）') ||
@@ -587,17 +696,29 @@ abstract final class PromptAssembler {
             dialogue.contains('心声') ||
             dialogue.contains('内心独白');
 
+        final extractedSpeaker = extractSpeakerName(dialogue);
+        final speaker = parts.dialogueSpeaker?.trim().isNotEmpty == true
+            ? parts.dialogueSpeaker!.trim()
+            : extractedSpeaker;
+
         if (isInnerVoice) {
-          final speaker = parts.dialogueSpeaker?.trim() ?? '';
-          final speakerPrefix = speaker.isNotEmpty ? '$speaker心声：' : '心声独白：';
+          final speakerPrefix = speaker.isNotEmpty ? '$speaker心声微表情：' : '心理神态：';
+          final inSceneNames = effectiveCharacters.map((c) => c.name).toList();
+          final sanitized = sanitizeInnerMonologue(
+            dialogue: dialogue,
+            speaker: speaker,
+            inSceneCharacters: inSceneNames,
+          );
           actionParts.add(
-            '$speakerPrefix“$dialogue”（自然闭口与深邃眼神微表情，呈现心理活动与从容沉思，严禁张嘴开口，严禁画内文字）',
+            '$speakerPrefix$sanitized（自然闭口与深邃眼神微表情，呈现心理活动与从容沉思，严禁张嘴开口，严禁在画面中渲染心声所指代的非在场第三人，严禁画内文字）',
           );
           negativeSegments.add('mouth open, speaking, parted lips, talking');
         } else {
-          final speaker = parts.dialogueSpeaker?.trim() ?? '';
+          final cleanSpeech = cleanDialogueForSpeech(dialogue);
           final speakerPrefix = speaker.isNotEmpty ? '$speaker说话态势：' : '对白态势：';
-          actionParts.add('$speakerPrefix“$dialogue”（保持戏剧性情绪面部微表情，严禁生硬张嘴或画内文字）');
+          actionParts.add(
+            '$speakerPrefix“$cleanSpeech”（保持戏剧性情绪面部微表情，严禁生硬张嘴或画内文字）',
+          );
         }
       }
       positiveSegments.add('【核心视觉动作与焦点】: ${actionParts.join('，')}');
@@ -606,14 +727,16 @@ abstract final class PromptAssembler {
     // 段落 3: 角色基础 Prompt + 形态差异词与站位
     String? variationName;
     if (effectiveCharacters.isNotEmpty) {
-      final hasCharacterRef = parts.hasCharacterReferences ??
+      final hasCharacterRef =
+          parts.hasCharacterReferences ??
           (parts.isMultiImage == true ||
               effectiveCharacters.any((c) => c.hasVisualReference));
 
       if (effectiveCharacters.length == 1) {
         final character = effectiveCharacters.first;
         final base = character.basePromptPositive.trim();
-        final variation = parts.characterVariations[character.id] ??
+        final variation =
+            parts.characterVariations[character.id] ??
             parts.variation ??
             character.activeVariation;
         final delta = variation?.positiveDelta.trim() ?? '';
@@ -648,7 +771,8 @@ abstract final class PromptAssembler {
           final variation =
               parts.characterVariations[c.id] ?? c.activeVariation;
           final delta = variation?.positiveDelta.trim() ?? '';
-          if (variation != null) appliedNames.add('${c.name}:${variation.name}');
+          if (variation != null)
+            appliedNames.add('${c.name}:${variation.name}');
 
           if (hasCharacterRef) {
             final staging = resolveCharacterStaging(
@@ -686,7 +810,9 @@ abstract final class PromptAssembler {
               '【同框人物与站位】: ${effectiveCharacters.length} people in scene，${charListTokens.join('，')}',
             );
           } else {
-            positiveSegments.add('${effectiveCharacters.length} people in scene');
+            positiveSegments.add(
+              '${effectiveCharacters.length} people in scene',
+            );
             positiveSegments.add('【同框人物与站位】: ${charListTokens.join('；')}');
           }
         }
@@ -720,8 +846,7 @@ abstract final class PromptAssembler {
     // 段落 5: 画质与画风基线 + 景别/构图/情绪
     positiveSegments.addAll([
       qualityTokens,
-      if (styleTokens.isNotEmpty && styleTokens != qualityTokens)
-        styleTokens,
+      if (styleTokens.isNotEmpty && styleTokens != qualityTokens) styleTokens,
     ]);
 
     final composition = [
@@ -738,7 +863,9 @@ abstract final class PromptAssembler {
     }
 
     final positive = _joinWithinLimit(positiveSegments, kMaxPromptWords);
-    final deduplicatedNegative = AestheticStyle.deduplicateTokens(negativeSegments.join(', '));
+    final deduplicatedNegative = AestheticStyle.deduplicateTokens(
+      negativeSegments.join(', '),
+    );
     final finalNegative = isLiveAction
         ? sanitizeNegativeForLiveAction(deduplicatedNegative)
         : deduplicatedNegative;
@@ -773,13 +900,15 @@ abstract final class PromptAssembler {
   }) {
     final assembled = AestheticStyle.assembleNegative(
       eraBans: eraBans ?? eraGenre?.negativeBans,
-      styleBans: styleBans ?? aestheticStyle?.negativeBan ?? negativeStyleTokens,
+      styleBans:
+          styleBans ?? aestheticStyle?.negativeBan ?? negativeStyleTokens,
       extraNegative: extraNegative,
       additionalBans: additionalBans,
       universalBans: universalNegative,
       includeUniversal: includeUniversal,
     );
-    final isLive = isLiveAction ||
+    final isLive =
+        isLiveAction ||
         aestheticStyle?.category == '实拍电影质感' ||
         (aestheticStyle?.id.contains('realism') ?? false) ||
         (aestheticStyle?.id.contains('live_action') ?? false);
@@ -792,6 +921,96 @@ abstract final class PromptAssembler {
   /// 1. 结构化角色发声口令（对白文本、语气提示、口型同步）；
   /// 2. 多角色同框构图与主次站位；
   /// 3. 微动作因果与具象肢体链；
+  /// 纯净台词发声净化器：剥离剧本中一切元数据标签，保证 TTS 发音与视频口型仅拿到真实口播台词。
+  ///
+  /// 支持剥离的元数据：
+  /// 1. 预估时长注记：如 `（预估2.5秒）`、`（预估3秒）`、`(预估 4.0s)`、`（预估 2 秒）`、`（2.5秒）`
+  /// 2. 角色名 + 内心独白前缀：如 `姜七夜（内心 OS）：`、`（内心 OS）：`、`姜七夜（OS）：`、`心声：`
+  /// 3. 普通角色名台词前缀：如 `老王：“`、`老王：`、`姜七夜:`
+  /// 4. 首尾包裹的成对或不成对双引号、单引号与多余空白字符。
+  static String cleanDialogueForSpeech(String dialogue) {
+    if (dialogue.trim().isEmpty) return '';
+
+    var text = dialogue.trim();
+
+    // 1. 剥离所有形式的预估时长注记
+    text = text.replaceAll(
+      RegExp(
+        r'[（\(]\s*预估\s*[\d\.]+\s*(?:秒|s|sec|seconds)?[）\)]|[（\(]\s*[\d\.]+\s*(?:秒|s|sec)[）\)]',
+        caseSensitive: false,
+      ),
+      '',
+    );
+
+    // 2. 剥离角色名及内心独白标记，如：`姜七夜（内心 OS）：`、`（内心 OS）：`、`姜七夜(OS):`
+    text = text.replaceFirst(
+      RegExp(
+        r'^(?:[^：:\(（\n\r]{1,12}\s*)?[（\(]\s*(?:内心\s*OS|OS|心声|内心独白)\s*[）\)][：:]?\s*',
+        caseSensitive: false,
+      ),
+      '',
+    );
+
+    // 3. 剥离普通角色名台词前缀，如 `老王：“`、`老王：`、`姜七夜:`
+    text = text.replaceFirst(RegExp(r'^[^：:\n\r"“]{1,10}[：:]\s*'), '');
+
+    // 4. 剥离首尾残留的引号、括号与多余空白
+    text = text.trim();
+    while (text.isNotEmpty &&
+        (text.startsWith('“') ||
+            text.startsWith('"') ||
+            text.startsWith('‘') ||
+            text.startsWith("'"))) {
+      text = text.substring(1).trim();
+    }
+    while (text.isNotEmpty &&
+        (text.endsWith('”') ||
+            text.endsWith('"') ||
+            text.endsWith('’') ||
+            text.endsWith("'"))) {
+      text = text.substring(0, text.length - 1).trim();
+    }
+
+    return text.trim();
+  }
+
+  /// 从台词头部结构精准提取真实说话人姓名。
+  ///
+  /// 例如：
+  /// - `姜七夜（内心 OS）：今天真晦气...` -> `姜七夜`
+  /// - `老王：“姜七夜！你还有没有点规矩？...”` -> `老王`
+  /// - `余小白：“姜七少...”` -> `余小白`
+  /// 若无法从台词提取，则返回 [defaultSpeaker]。
+  static String extractSpeakerName(
+    String dialogue, {
+    String defaultSpeaker = '',
+  }) {
+    if (dialogue.trim().isEmpty) return defaultSpeaker;
+
+    final trimmed = dialogue.trim();
+
+    // 1. 匹配格式：`姓名（内心 OS）：` 或 `姓名(OS):`
+    final innerMatch = RegExp(
+      r'^([^：:\(（\n\r]{1,12})\s*[（\(]\s*(?:内心\s*OS|OS|心声|内心独白)\s*[）\)][：:]',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (innerMatch != null) {
+      final name = innerMatch.group(1)?.trim() ?? '';
+      if (name.isNotEmpty) return name;
+    }
+
+    // 2. 匹配普通对白前缀：`姓名：“` 或 `姓名:`
+    final normalMatch = RegExp(r'^([^：:\n\r"“]{1,10})[：:]').firstMatch(trimmed);
+    if (normalMatch != null) {
+      final name = normalMatch.group(1)?.trim() ?? '';
+      if (name.isNotEmpty && !name.contains('（') && !name.contains('(')) {
+        return name;
+      }
+    }
+
+    return defaultSpeaker;
+  }
+
   /// 4. 5D 导演决策（光影、景别、运镜、时空节拍）；
   /// 5. 跨镜头连续性台账与末态物理动势衔接。
   static String buildVideoGenPrompt({
@@ -800,22 +1019,26 @@ abstract final class PromptAssembler {
     List<CharacterCard> characters = const [],
     SceneCard? scene,
   }) {
+    // 0. 若分镜已由 AI 重写或用户定制专属视频提示词，直接优先使用
+    if (shot.videoPrompt.trim().isNotEmpty) {
+      return shot.videoPrompt.trim();
+    }
+
     final sections = <String>[];
 
-    // 1. 角色对白与声画同步口令
+    // 对白段先算但不入列：因果链必须在提示词执行顺序上先于台词，否则视频模型
+    // 会先把台词演完再演动作（spec: shot-causality-ordering 反应性台词时序）。
+    // 用户看到的「老王先骂、姜七夜再走」就是台词段落在最前导致的。
+    String? dialogueSection;
+    var isInnerVoice = false;
     final dialogue = shot.dialogue.trim();
     if (dialogue.isNotEmpty) {
-      // 提取预估时长如（预估2.5秒）或（预估3秒）
-      final cleanDialogue = dialogue
-          .replaceAll(
-            RegExp(r'[（\(]预估[\d\.]+秒[）\)]|[（\(][\d\.]+秒[）\)]'),
-            '',
-          )
-          .trim();
+      final cleanSpeech = cleanDialogueForSpeech(dialogue);
+      final explicitSpeaker = extractSpeakerName(dialogue);
 
-      // 确定对白说话者
-      String speaker = '';
-      if (characters.isNotEmpty) {
+      // 确定对白说话者：优先信任台词前缀提取结果
+      String speaker = explicitSpeaker;
+      if (speaker.isEmpty && characters.isNotEmpty) {
         // 尝试从 actionZh 中匹配角色名
         for (final c in characters) {
           if (shot.actionZh.contains(c.name)) {
@@ -826,36 +1049,49 @@ abstract final class PromptAssembler {
         if (speaker.isEmpty) speaker = characters.first.name;
       }
 
-      final isInnerVoice = shot.voiceType == UtteranceVoiceType.innerVoice ||
-          cleanDialogue.contains('内心 OS') ||
-          cleanDialogue.contains('内心OS') ||
-          cleanDialogue.contains('（OS）') ||
-          cleanDialogue.contains('(OS)') ||
-          cleanDialogue.contains('心声') ||
-          cleanDialogue.contains('内心独白');
+      isInnerVoice =
+          shot.isInnerVoice ||
+          shot.voiceType == UtteranceVoiceType.innerVoice ||
+          dialogue.contains('内心 OS') ||
+          dialogue.contains('内心OS') ||
+          dialogue.contains('（OS）') ||
+          dialogue.contains('(OS)') ||
+          dialogue.contains('心声') ||
+          dialogue.contains('内心独白');
+
+      // 收集在场所有角色名称，用于点名全员守卫
+      final inSceneNames = <String>[];
+      if (speaker.isNotEmpty) inSceneNames.add(speaker);
+      for (final c in characters) {
+        if (!inSceneNames.contains(c.name)) {
+          inSceneNames.add(c.name);
+        }
+      }
+      final allNamesDesc = inSceneNames.isNotEmpty
+          ? inSceneNames.join('、')
+          : '画面中所有在场人物';
 
       if (isInnerVoice) {
-        final stripped = cleanDialogue
-            .replaceAll(RegExp(r'^[（\(]?内心\s*OS[）\)]?[：:]?'), '')
-            .replaceAll(RegExp(r'^[（\(]?OS[）\)]?[：:]?'), '')
-            .trim();
-        final speakerPrefix = speaker.isNotEmpty ? '$speaker心声：' : '';
-        sections.add(
-          '[角色内心独白/心声]: $speakerPrefix“$stripped”（画外心声配音，画面主体保持自然闭口与从容微表情，严禁开口嘴型与画内文字，严禁对口型，展现沉思微神态）',
-        );
+        // 彻底消除中括号机器标记，显式正向点名全员闭口，防止配角抢台词开口
+        final speakerLabel = speaker.isNotEmpty ? '$speaker画外心声念白' : '画外心声念白';
+        dialogueSection =
+            '正向画音约束：$speakerLabel（“$cleanSpeech”）。全员闭口守卫：画面中$allNamesDesc等全员嘴唇全程严密闭合，面部无口型变化，绝对不说话、不张嘴、不念台词，无画内文字与字幕，全员保持沉思内敛神态与微表情。';
       } else {
-        final speakerPrefix = speaker.isNotEmpty ? '$speaker说话：' : '';
+        final speakerLabel = speaker.isNotEmpty ? '$speaker说话' : '角色说话';
+        final otherChars = inSceneNames.where((n) => n != speaker).toList();
+        final listenerGuard = otherChars.isNotEmpty
+            ? '；同框倾听者（${otherChars.join('、')}）保持自然闭口倾听，不说话不张嘴'
+            : '';
         final moodLabel = ShotMood.fromId(shot.mood).label;
-        final toneHint = moodLabel.isNotEmpty ? '语气：$moodLabel，' : '';
-        sections.add(
-          '[角色对白发声]: $speakerPrefix“$cleanDialogue”（$toneHint口型与发音自然对齐，声画一体）',
-        );
+        final toneHint = moodLabel.isNotEmpty ? '，语气：$moodLabel' : '';
+        dialogueSection =
+            '正向对白约束：$speakerLabel（“$cleanSpeech”）$toneHint。说话者嘴唇随台词自然开合，口型发音对齐，声画一体$listenerGuard。';
       }
     } else {
-      sections.add('[无对白镜头]: 环境音与动作自然音效');
+      dialogueSection = '正向动作约束：无对白镜头，纯环境音与动作自然音效。';
     }
 
-    // 2. 出场人物与同框构图
+    // 1. 出场人物与同框构图
     if (characters.isNotEmpty) {
       if (characters.length == 1) {
         final c = characters.first;
@@ -865,9 +1101,7 @@ abstract final class PromptAssembler {
         final charParts = <String>[];
         for (var i = 0; i < characters.length; i++) {
           final c = characters[i];
-          final role = i == 0
-              ? '主体近景'
-              : (i == 1 ? '背景/对峙中景' : '同框配角');
+          final role = i == 0 ? '主体近景' : (i == 1 ? '背景/对峙中景' : '同框配角');
           final desc = c.descriptionZh.isNotEmpty ? '，${c.descriptionZh}' : '';
           charParts.add('${c.name}（处于画面$role$desc）');
         }
@@ -875,13 +1109,13 @@ abstract final class PromptAssembler {
       }
     }
 
-    // 3. 画面微动作与行为具象化
+    // 2. 画面微动作与行为具象化（因果链起点，先于台词入列）
     final action = shot.actionZh.trim();
     if (action.isNotEmpty) {
       sections.add('【画面微动作】: $action');
     }
 
-    // 4. 攻防因果与动作节拍（若有）
+    // 3. 攻防因果与动作节拍（若有）
     if (shot.combatSteps.isNotEmpty) {
       final combatStr = shot.combatSteps
           .map((s) => '${s.actorName}发起${s.attack}，受到${s.impact}')
@@ -892,30 +1126,103 @@ abstract final class PromptAssembler {
       }
     }
 
-    // 5. 5D 导演决策与运镜轨迹
+    // 4. 角色对白与声画同步口令（动作因果链之后才入列）
+    sections.add(dialogueSection);
+
+    // 5. 因果时间轴（spec: shot-causality-ordering）。
+    //
+    // 段落顺序只解决「提示词里谁在前」，不解决模型把同一镜内两个主体的动作
+    // 演成同时发生。秒数标注是唯一能约束同镜相位的手段，所以这里独立成段。
+    //
+    // 这一段是**派生段**：时间戳只写进这里，绝不回写 `actionZh`——后者是
+    // C02 对白保真、C05 地标衔接等规则的匹配源，污染它会让那些规则失效。
+    final timeline = buildShotCausalityTimeline(
+      shot: shot,
+      isInnerVoice: isInnerVoice,
+      hasDialogue: dialogue.isNotEmpty,
+    );
+    if (timeline.isNotEmpty) {
+      sections.add('【因果时间轴】$timeline');
+    }
+
+    // 6. 5D 导演决策与运镜轨迹（冲突消解：推镜 vs 定机位、温馨 vs 阴冷）
     final dirDecisions = shot.directorDecisions;
-    final moodLabel = ShotMood.fromId(shot.mood).label;
+
+    // 场景空间暗色与压抑判断
+    final sceneDescCombined =
+        '${scene?.name ?? ''} ${scene?.descriptionZh ?? ''}';
+    final isDungeonOrOppressive =
+        sceneDescCombined.contains('地牢') ||
+        sceneDescCombined.contains('牢房') ||
+        sceneDescCombined.contains('大牢') ||
+        sceneDescCombined.contains('阴冷') ||
+        sceneDescCombined.contains('暗室') ||
+        sceneDescCombined.contains('刑具');
+
+    // 消解氛围情绪冲突：如果是地牢压抑环境且情绪标记为温馨，自动纠正为压抑/冷峻
+    var effectiveMood = shot.mood;
+    if (isDungeonOrOppressive && effectiveMood == 'warm') {
+      effectiveMood = 'depressing';
+    }
+    final moodLabel = ShotMood.fromId(effectiveMood).label;
+
     final cameraDetails = <String>[
       '景别：${shot.shotSize.label}',
       '氛围情绪：$moodLabel',
     ];
-    if (shot.cameraMove.trim().isNotEmpty) {
-      cameraDetails.add('运镜调度：${shot.cameraMove.trim()}');
+
+    final cameraMove = shot.cameraMove.trim();
+    final hasDynamicMove =
+        cameraMove.isNotEmpty &&
+        !cameraMove.toLowerCase().contains('static') &&
+        !cameraMove.contains('定机位');
+
+    if (cameraMove.isNotEmpty) {
+      cameraDetails.add('运镜调度：$cameraMove');
     }
+
     if (dirDecisions.isNotEmpty) {
-      if (dirDecisions.lightingStaging.trim().isNotEmpty) {
-        cameraDetails.add('光影布置：${dirDecisions.lightingStaging.trim()}');
+      var lighting = dirDecisions.lightingStaging.trim();
+      // 消解室内地牢火光 vs 室外黄昏残阳冲突
+      if (isDungeonOrOppressive &&
+          (lighting.contains('残阳') ||
+              lighting.contains('黄昏') ||
+              lighting.contains('夕阳'))) {
+        lighting = lighting
+            .replaceAll(RegExp(r'黄昏[，,\s]*残阳如血[，,\s]*'), '')
+            .replaceAll(RegExp(r'巡城司朱门半开[，,\s]*衙役往来[，,\s]*'), '')
+            .trim();
+        if (lighting.isEmpty) {
+          lighting = '微弱火把与摇曳火光，砖石潮湿反光与深沉阴影';
+        }
       }
-      if (dirDecisions.cameraStaging.trim().isNotEmpty) {
-        cameraDetails.add('摄影调度：${dirDecisions.cameraStaging.trim()}');
+      if (lighting.isNotEmpty) {
+        cameraDetails.add('光影布置：$lighting');
       }
+
+      var staging = dirDecisions.cameraStaging.trim();
+      // 消解推镜 vs 定机位冲突：若运镜已明确动态推进/移动，清洗定机位描述
+      if (hasDynamicMove) {
+        staging = staging
+            .replaceAll('平视定机位', '平视视角')
+            .replaceAll('定机位', '')
+            .replaceAll('固定机位', '')
+            .replaceAll('镜头不动', '')
+            .replaceAll('机位不动', '')
+            .replaceAll(RegExp(r'^[，,\s]+|[，,\s]+$'), '')
+            .trim();
+      }
+      if (staging.isNotEmpty) {
+        cameraDetails.add('摄影调度：$staging');
+      }
+
       if (dirDecisions.physicalMomentum.trim().isNotEmpty) {
         cameraDetails.add('物理动势：${dirDecisions.physicalMomentum.trim()}');
       }
     }
     sections.add('【摄影运镜与机位调度】: ${cameraDetails.join('，')}');
 
-    // 6. 场景空间与光照氛围
+    // 6. 场景空间与环境
     if (scene != null) {
       final sceneDesc = scene.descriptionZh.trim().isNotEmpty
           ? scene.descriptionZh.trim()
@@ -923,30 +1230,41 @@ abstract final class PromptAssembler {
       sections.add('【场景与环境】: ${scene.name}（$sceneDesc）');
     }
 
-    // 7. 连续性台账与末态动势
+    // 7. 连续性台账与末态动势（剔除单镜头无效的 180° 轴线指令，消解地标冲突）
     final continuity = shot.continuity;
     if (!continuity.isEmpty) {
       final contTokens = <String>[];
-      if (continuity.lightingState.isNotEmpty) {
-        contTokens.add('光照：${continuity.lightingState}');
+      var contLighting = continuity.lightingState.trim();
+      if (isDungeonOrOppressive &&
+          (contLighting.contains('黄昏') || contLighting.contains('残阳'))) {
+        contLighting = '昏暗地牢火光';
       }
-      if (continuity.worldPosition.isNotEmpty) {
-        contTokens.add('空间地标：${continuity.worldPosition}');
+      if (contLighting.isNotEmpty) {
+        contTokens.add('光照：$contLighting');
       }
+
+      var worldPos = continuity.worldPosition.trim();
+      // 消解场景二选一冲突：若场景已为大牢/地牢，但世界坐标误带衙门口，自动清洗
+      if (isDungeonOrOppressive &&
+          (worldPos.contains('衙门口') || worldPos.contains('朱门'))) {
+        worldPos = '大牢木栅牢房内侧';
+      }
+      if (worldPos.isNotEmpty) {
+        contTokens.add('空间地标：$worldPos');
+      }
+
       if (continuity.screenPosition.isNotEmpty) {
         contTokens.add('画内方位：${continuity.screenPosition}');
       }
       if (continuity.gazeDirection.isNotEmpty) {
         contTokens.add('视线朝向：${continuity.gazeDirection}');
       }
-      if (continuity.cameraAxis.isNotEmpty) {
-        contTokens.add('动作轴线：保持在${continuity.cameraAxis}侧（遵守180度法则）');
-      }
+
+      // 注意：单镜头不注入“动作轴线：保持在180度轴线右侧，与前镜保持同轴关系”，避免模型注意力浪费与无效指令负担
+
       if (continuity.dynamicExitState.isNotEmpty &&
           continuity.dynamicExitState.velocityVector.isNotEmpty) {
-        contTokens.add(
-          '末态动势惯性：${continuity.dynamicExitState.velocityVector}',
-        );
+        contTokens.add('末态动势惯性：${continuity.dynamicExitState.velocityVector}');
       }
       if (contTokens.isNotEmpty) {
         sections.add('【连贯性约束】: ${contTokens.join('，')}');
@@ -954,6 +1272,170 @@ abstract final class PromptAssembler {
     }
 
     return sections.join('\n');
+  }
+
+  /// 编译单镜的【因果时间轴】文本（spec: shot-causality-ordering）。
+  ///
+  /// 秒数分配策略（design 决策 3）：
+  /// - 有 `temporalEvolution` 且能解析出显式秒数分界 → 按解析结果切分；
+  /// - 有 `temporalEvolution` 但解析不出 → 按默认次序分配，原文保留作相位说明；
+  /// - 都没有 → 台词时段贴在本镜末尾，动作时段占前部。
+  ///
+  /// **台词默认贴末尾**是与模型倾向的对冲：实践中模型倾向先把台词演完再演
+  /// 动作（用户反馈的「老王先骂、姜七夜再走」即此），把台词钉在时间轴尾部是
+  /// 最简的反向约束。`temporalEvolution` 存在时以它为准。
+  ///
+  /// 内心独白返回空串——它与画面并行，不参与动作因果排序（spec 要求）。
+  static String buildShotCausalityTimeline({
+    required StudioShot shot,
+    required bool isInnerVoice,
+    required bool hasDialogue,
+  }) {
+    if (isInnerVoice) return '';
+
+    final total = shot.durationSec > 0 ? shot.durationSec : 0.0;
+    final action = shot.actionZh.trim();
+    if (action.isEmpty && !hasDialogue) return '';
+    // 纯动作镜头不出时间轴：没有台词就没有「谁先谁后」的问题，单主体动作的
+    // 先后由动作描述自身承载。多这一段只是给提示词添噪。
+    if (!hasDialogue) return '';
+
+    final temporal = shot.directorDecisions.temporalEvolution.trim();
+    final phaseSplit = CausalityTimelineCompiler.parsePhaseSplitSec(temporal);
+
+    // 台词秒数：台词标注了「预估N秒」时用标注值，否则按总时长 40% 兜底。
+    // 兜底只用于给模型一个相位参照，真实音轨仍由 audioDurationMs 驱动，
+    // 两者不一致时以音轨为准。
+    final dialogueSec = hasDialogue ? shot.dialogueEstimatedSec : 0.0;
+    final hasExplicitDialogueSec = hasDialogue && dialogueSec > 0;
+    final fallbackDialogueSec = total * 0.4;
+
+    String actionPhase;
+    String dialoguePhase;
+
+    if (phaseSplit != null && phaseSplit > 0 && phaseSplit < total) {
+      // 有显式相位分界：动作占前段，台词占后段。
+      actionPhase = '0.0s-${phaseSplit.toStringAsFixed(1)}s';
+      dialoguePhase =
+          '${phaseSplit.toStringAsFixed(1)}s-${total.toStringAsFixed(1)}s';
+    } else if (hasDialogue) {
+      final span = hasExplicitDialogueSec && dialogueSec < total
+          ? dialogueSec
+          : fallbackDialogueSec;
+      final actionEnd = (total - span).clamp(0.0, total);
+      actionPhase = '0.0s-${actionEnd.toStringAsFixed(1)}s';
+      dialoguePhase =
+          '${actionEnd.toStringAsFixed(1)}s-${total.toStringAsFixed(1)}s';
+    } else {
+      actionPhase = '0.0s-${total.toStringAsFixed(1)}s';
+      dialoguePhase = '';
+    }
+
+    final parts = <String>[];
+    if (action.isNotEmpty) {
+      parts.add('$actionPhase $action');
+    }
+    if (hasDialogue && dialoguePhase.isNotEmpty) {
+      parts.add('$dialoguePhase 台词（${_dialogueSecLabel(shot)}）');
+    }
+    if (parts.isEmpty) return '';
+
+    final timeline = parts.join(' → ');
+
+    // temporalEvolution 解析不出秒数时不丢弃原文——它是作者对相位的唯一描述，
+    // 对模型仍有约束力。
+    if (temporal.isNotEmpty) {
+      return '$timeline。相位说明：$temporal';
+    }
+    return timeline;
+  }
+
+  /// 台词时长的可读标注：台词带「预估N秒」标注时为确切值，否则为按字数
+  /// 推算的近似值。
+  static String _dialogueSecLabel(StudioShot shot) {
+    final sec = shot.dialogueEstimatedSec;
+    if (sec <= 0) return '时长未标注';
+    if (shot.dialogue.contains('预估')) {
+      return '${sec.toStringAsFixed(1)}s';
+    }
+    return '约${sec.toStringAsFixed(1)}s';
+  }
+
+  /// 规则级冲突清洗与重写助手，对既有提示词中的场景二选一、动静机位冲突与机器中括号进行确定性清洗。
+  static String cleanAndResolveConflicts(
+    String rawPrompt, {
+    SceneCard? scene,
+    List<CharacterCard> characters = const [],
+  }) {
+    if (rawPrompt.trim().isEmpty) return '';
+
+    var result = rawPrompt;
+
+    // 1. 清洗括号机器标记
+    result = result.replaceAll(RegExp(r'\[角色内心独白/心声\][：:\s]*'), '画外心声念白：');
+    result = result.replaceAll(RegExp(r'\[角色对白发声\][：:\s]*'), '角色对白：');
+    result = result.replaceAll(RegExp(r'\[无对白镜头\][：:\s]*'), '无对白镜头：');
+
+    // 2. 清洗 180 度轴线单镜头无效标记
+    result = result.replaceAll(
+      RegExp(r'【?动作轴线】?[：:][^\n\r]*(?:180度|同轴)[^\n\r]*[\r\n]?'),
+      '',
+    );
+    result = result.replaceAll(
+      RegExp(r'[^，,\n\r]*(?:180度法则|180度轴线)[^，,\n\r]*[，,\s]*'),
+      '',
+    );
+
+    // 3. 运镜冲突：若包含 push-in / slow_push_in / 推进，清洗定机位
+    if (result.contains('push') ||
+        result.contains('推镜') ||
+        result.contains('推进')) {
+      result = result.replaceAll('平视定机位', '平视机位');
+      result = result.replaceAll('定机位', '');
+      result = result.replaceAll('固定机位', '');
+      result = result.replaceAll('镜头完全不动', '');
+    }
+
+    // 4. 场景二选一冲突清洗
+    if (result.contains('大牢') || result.contains('地牢')) {
+      result = result.replaceAll(
+        RegExp(r'【?空间地标】?[：:][^\n\r]*衙门口[^\n\r]*'),
+        '空间地标：巡城司大牢木栅内',
+      );
+      result = result.replaceAll(RegExp(r'[^，,\n\r]*衙门口[^，,\n\r]*[，,\s]*'), '');
+      result = result.replaceAll('氛围情绪：温馨', '氛围情绪：压抑冷峻');
+    }
+
+    // 5. 光源冲突消解（黄昏残阳 vs 地牢火把）
+    if ((result.contains('大牢') || result.contains('地牢')) &&
+        result.contains('火把')) {
+      result = result.replaceAll(
+        RegExp(r'[^，,\n\r]*(?:黄昏|残阳如血)[^，,\n\r]*[，,\s]*'),
+        '',
+      );
+    }
+
+    // 清理可能产生的双逗号与空白行
+    result = result.replaceAll(RegExp(r'[，,]\s*[，,]'), '，');
+    result = result.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+
+    return result.trim();
+  }
+
+  /// 静态纯文本重写辅助：依据分镜构造清洗后的自然视频提示词。
+  static String buildSanitizedVideoPrompt({
+    required StudioShot shot,
+    required StudioEpisode episode,
+    List<CharacterCard> characters = const [],
+    SceneCard? scene,
+  }) {
+    final raw = buildVideoGenPrompt(
+      shot: shot,
+      episode: episode,
+      characters: characters,
+      scene: scene,
+    );
+    return cleanAndResolveConflicts(raw, scene: scene, characters: characters);
   }
 
   /// 负向 Prompt 单独的上限——它通常短得多，且截断它的代价是画面上出现瑕疵。
@@ -1078,11 +1560,16 @@ abstract final class PromptAssembler {
     required String positiveDelta,
   }) {
     final base = basePrompt.trim();
-    final normalizedDelta = normalizeDeltaWords(positiveDelta, isNegative: false).trim();
+    final normalizedDelta = normalizeDeltaWords(
+      positiveDelta,
+      isNegative: false,
+    ).trim();
     if (normalizedDelta.isEmpty) return base;
     if (base.isEmpty) return normalizedDelta;
-    final existing = _wordsOf(base).toSet();
-    final fresh = _wordsOf(normalizedDelta).where((w) => !existing.contains(w));
+    final existing = _promptWordsOf(base).toSet();
+    final fresh = _promptWordsOf(
+      normalizedDelta,
+    ).where((w) => !existing.contains(w));
     if (fresh.isEmpty) return base;
     return '$base, ${fresh.join(', ')}';
   }
@@ -1093,11 +1580,16 @@ abstract final class PromptAssembler {
     required String negativeDelta,
   }) {
     final base = baseNegative.trim();
-    final normalizedDelta = normalizeDeltaWords(negativeDelta, isNegative: true).trim();
+    final normalizedDelta = normalizeDeltaWords(
+      negativeDelta,
+      isNegative: true,
+    ).trim();
     if (normalizedDelta.isEmpty) return base;
     if (base.isEmpty) return normalizedDelta;
-    final existing = _wordsOf(base).toSet();
-    final fresh = _wordsOf(normalizedDelta).where((w) => !existing.contains(w));
+    final existing = _promptWordsOf(base).toSet();
+    final fresh = _promptWordsOf(
+      normalizedDelta,
+    ).where((w) => !existing.contains(w));
     if (fresh.isEmpty) return base;
     return '$base, ${fresh.join(', ')}';
   }
@@ -1105,7 +1597,7 @@ abstract final class PromptAssembler {
   /// 按字数统计（空格分词，逗号/句号也算分隔）。
   static int wordCount(String prompt) {
     if (prompt.trim().isEmpty) return 0;
-    return _wordsOf(prompt).length;
+    return _promptWordsOf(prompt).length;
   }
 
   /// 组装一条片段视频提示词（spec: 片段提示词组装）。
@@ -1123,7 +1615,10 @@ abstract final class PromptAssembler {
   /// 过滤场景提示词中的空镜排他词（如 empty room, no humans 等）。
   ///
   /// 当片段中有角色出场 ([hasCharacters] 为 true) 时，剔除与人物同框互斥的空场景声明。
-  static String filterEmptySceneTokens(String scenePrompt, {bool hasCharacters = false}) {
+  static String filterEmptySceneTokens(
+    String scenePrompt, {
+    bool hasCharacters = false,
+  }) {
     if (!hasCharacters || scenePrompt.trim().isEmpty) {
       return scenePrompt;
     }
@@ -1133,7 +1628,8 @@ abstract final class PromptAssembler {
         .where((s) {
           if (s.isEmpty) return false;
           final cleaned = s.replaceAll(_emptyScenePattern, '').trim();
-          return cleaned.isNotEmpty && !cleaned.toLowerCase().startsWith('with no');
+          return cleaned.isNotEmpty &&
+              !cleaned.toLowerCase().startsWith('with no');
         })
         .map((s) {
           return s
@@ -1213,7 +1709,8 @@ abstract final class PromptAssembler {
 
     // 1. 画质与风格基线（短语级去重与渲染器冲突排除）。
     final prodType = parts.productionType;
-    final qualityTokens = prodType != null && prodType.defaultPositiveStyle.isNotEmpty
+    final qualityTokens =
+        prodType != null && prodType.defaultPositiveStyle.isNotEmpty
         ? prodType.defaultPositiveStyle
         : _qualityBaseline;
     final style = parts.styleTokens?.trim() ?? '';
@@ -1238,7 +1735,10 @@ abstract final class PromptAssembler {
     if (cameraMoves.isNotEmpty) {
       final normalizedMoves = cameraMoves.map((m) {
         final lower = m.toLowerCase();
-        if (lower == 'static' || lower == 'fixed' || lower.contains('固定') || lower.contains('静止')) {
+        if (lower == 'static' ||
+            lower == 'fixed' ||
+            lower.contains('固定') ||
+            lower.contains('静止')) {
           return 'static camera, steady composition';
         }
         return m;
@@ -1283,8 +1783,8 @@ abstract final class PromptAssembler {
       var anchor = (spatialAnchor != null && spatialAnchor.isNotEmpty)
           ? spatialAnchor
           : (dominantScene.promptEn.trim().isNotEmpty
-              ? dominantScene.promptEn.trim()
-              : dominantScene.name.trim());
+                ? dominantScene.promptEn.trim()
+                : dominantScene.name.trim());
 
       // 当片段有出场角色时，自动过滤场景提示词中的 empty room, no humans 等空镜头排他词
       final hasCharacters = parts.characters.isNotEmpty;
@@ -1295,7 +1795,9 @@ abstract final class PromptAssembler {
         final refIndex = references.indexWhere(
           (r) => r.usage.contains(dominantScene.name.trim()),
         );
-        final prefix = anchor.toLowerCase().startsWith('scene:') ? '' : 'scene: ';
+        final prefix = anchor.toLowerCase().startsWith('scene:')
+            ? ''
+            : 'scene: ';
         if (refIndex >= 0) {
           positiveSegments.add('$prefix$anchor <Picture ${refIndex + 1}>');
         } else {
@@ -1305,27 +1807,74 @@ abstract final class PromptAssembler {
       }
     }
 
-    // 5. 纯视觉画面动作叙事整合。
-    //    彻底剥离 dialogue: 对白台词与 shot N |、camera:、| 等剧本结构标头。
-    final actions = <String>[];
-    for (final shot in parts.shots) {
-      var act = shot.actionZh.trim();
-      if (act.isEmpty) continue;
-      act = act.replaceAll(
-        RegExp(r'^(shot\s*\d+|镜头\s*\d+|第\s*\d+\s*镜)[\s:\|、，]*', caseSensitive: false),
-        '',
+    // 5. 分段时空动作与对白序列（spec: shot-causality-ordering）。
+    //
+    // 每个分镜获得一个累加区间，区间内动作与对白分行：动作行是「要演的」，
+    // 对白行是「要配的」，两者分开让模型不把台词当成动作指令。
+    //
+    // 这里**不再**从 actionZh 里剥离 dialogue——旧实现用正则删掉对白，导致
+    // 整段片段提示词一句台词都没有，模型连"谁在什么时间做什么"都得自己编。
+    // 时长：优先用分镜自身的 durationSec；为 0（未提供）时按片段目标时长均摊
+    // 兜底。均摊只在缺数据时发生——正常路径下 studio_generation_tasks 会传入
+    // 真实分镜时长，使区间与 SRT 游标、剪映导出对得上。
+    final fallbackPerShot = parts.shots.isEmpty
+        ? 0.0
+        : ((parts.targetDurationSec ?? 0) / parts.shots.length).toDouble();
+    final effectiveDurations = parts.shots
+        .map((s) => s.durationSec > 0 ? s.durationSec : fallbackPerShot)
+        .toList();
+    final ranges = CausalityTimelineCompiler.cumulativeRanges(
+      effectiveDurations,
+    );
+
+    final hasAnyDialogue = parts.shots.any((s) => s.dialogue.trim().isNotEmpty);
+
+    final timelineBuffer = StringBuffer();
+    for (var i = 0; i < parts.shots.length; i++) {
+      final shot = parts.shots[i];
+      final range = CausalityTimelineCompiler.formatRange(
+        ranges[i].$1,
+        ranges[i].$2,
       );
-      act = act.replaceAll(
-        RegExp(r'(dialogue|台词|对白)\s*[:：].*', caseSensitive: false),
-        '',
-      ).trim();
-      act = act.replaceAll(RegExp(r'[，,；;。]+$'), '').trim();
-      if (act.isNotEmpty && !actions.contains(act)) {
-        actions.add(act);
+
+      var act = shot.actionZh.trim();
+      if (act.isNotEmpty) {
+        act = act.replaceAll(
+          RegExp(
+            r'^(shot\s*\d+|镜头\s*\d+|第\s*\d+\s*镜)[\s:\|、，]*',
+            caseSensitive: false,
+          ),
+          '',
+        );
+        act = act.replaceAll(RegExp(r'[，,；;。]+$'), '').trim();
       }
+
+      final rawDialogue = shot.dialogue.trim();
+      // 台词行带秒数标注：让模型知道这句话要占掉区间里的一段，而不是瞬间说完。
+      final dialogueLine = rawDialogue.isEmpty
+          ? ''
+          : '  对白：${cleanDialogueForSpeech(rawDialogue)}';
+
+      if (act.isEmpty && dialogueLine.isEmpty) continue;
+
+      timelineBuffer.writeln('$range 镜号 ${shot.number}：');
+      if (act.isNotEmpty) timelineBuffer.writeln('  动作：$act');
+      if (dialogueLine.isNotEmpty) timelineBuffer.writeln(dialogueLine);
     }
-    if (actions.isNotEmpty) {
-      positiveSegments.add(actions.join('，'));
+    if (timelineBuffer.isNotEmpty) {
+      positiveSegments.add(timelineBuffer.toString().trimRight());
+    }
+
+    // 5b. 含对白的片段必须声明全员闭口守卫。
+    //
+    // 分镜级提示词一直有这段（正向对白约束里的"同框倾听者保持闭口"），但片段级
+    // 以前靠"没有对白"规避画面内开口。对白一旦进来，这层规避就没了，必须补上
+    // 等强度的守卫——否则模型会让所有在场角色一起张嘴。
+    if (hasAnyDialogue) {
+      positiveSegments.add(
+        '声音与画面约束：以上台词为配音轨内容，画面中全员嘴唇保持自然闭合，'
+        '不对口型、不张嘴、不念白，无画内文字与字幕，仅以微表情与肢体动作表演。',
+      );
     }
 
     // 6. 连续性绝对状态（钉住，不参与超限丢弃；去除 shot N state: 剧本结构前缀）。
@@ -1366,14 +1915,13 @@ abstract final class PromptAssembler {
     String subjectName = '',
     String triggerAction = '',
     String endSettling = '',
-  }) =>
-      CameraStagingCompiler.compile4Stage(
-        cameraMove: cameraMove,
-        cameraStaging: cameraStaging,
-        subjectName: subjectName,
-        triggerAction: triggerAction,
-        endSettling: endSettling,
-      );
+  }) => CameraStagingCompiler.compile4Stage(
+    cameraMove: cameraMove,
+    cameraStaging: cameraStaging,
+    subjectName: subjectName,
+    triggerAction: triggerAction,
+    endSettling: endSettling,
+  );
 
   /// 编译即梦 Seedance 任务执行稿。
   static String buildSeedancePrompt({
@@ -1384,16 +1932,15 @@ abstract final class PromptAssembler {
     StudioProductionType? productionType,
     String styleTokens = '',
     DynamicExitState? previousExitState,
-  }) =>
-      SeedanceTaskCompiler.compileSegment(
-        segment: segment,
-        shots: shots,
-        characters: characters,
-        scenes: scenes,
-        productionType: productionType,
-        styleTokens: styleTokens,
-        previousExitState: previousExitState,
-      );
+  }) => SeedanceTaskCompiler.compileSegment(
+    segment: segment,
+    shots: shots,
+    characters: characters,
+    scenes: scenes,
+    productionType: productionType,
+    styleTokens: styleTokens,
+    previousExitState: previousExitState,
+  );
 
   /// 编译商用通用写实视频自然语言提示词。
   static String buildPhotorealisticPrompt({
@@ -1403,15 +1950,14 @@ abstract final class PromptAssembler {
     StudioProductionType? productionType,
     String styleTokens = '',
     DynamicExitState? previousExitState,
-  }) =>
-      PhotorealisticPromptCompiler.compileShot(
-        shot: shot,
-        character: character,
-        scene: scene,
-        productionType: productionType,
-        styleTokens: styleTokens,
-        previousExitState: previousExitState,
-      );
+  }) => PhotorealisticPromptCompiler.compileShot(
+    shot: shot,
+    character: character,
+    scene: scene,
+    productionType: productionType,
+    styleTokens: styleTokens,
+    previousExitState: previousExitState,
+  );
 
   /// 编译 H3 六列 CSV 二进制数据。
   static List<int> buildH3Csv({
@@ -1421,15 +1967,14 @@ abstract final class PromptAssembler {
     List<SceneCard> scenes = const [],
     StudioProductionType? productionType,
     String styleTokens = '',
-  }) =>
-      H3CsvCompiler.compileCsvBytes(
-        episode: episode,
-        shots: shots,
-        characters: characters,
-        scenes: scenes,
-        productionType: productionType,
-        styleTokens: styleTokens,
-      );
+  }) => H3CsvCompiler.compileCsvBytes(
+    episode: episode,
+    shots: shots,
+    characters: characters,
+    scenes: scenes,
+    productionType: productionType,
+    styleTokens: styleTokens,
+  );
 
   /// 角色卡 → 身份锚点段。
   ///
@@ -1454,12 +1999,6 @@ abstract final class PromptAssembler {
     return character.name.trim();
   }
 
-  static List<String> _wordsOf(String text) => text
-      .split(RegExp(r'[,\.\n;]+'))
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-
   /// 拼接并在超限时从尾部丢弃。
   ///
   /// [pinnedFrom] 指定**从该下标起**的段是钉住的（不进入丢弃候选）。
@@ -1482,7 +2021,7 @@ abstract final class PromptAssembler {
     var count = 0;
     for (var i = 0; i < segments.length; i++) {
       final segment = segments[i];
-      final words = _wordsOf(segment);
+      final words = _promptWordsOf(segment);
       if (words.isEmpty) continue;
       // `null` 表示没有钉住的段，全部参与丢弃判定。
       final pinned = pinnedFrom != null && i >= pinnedFrom;
@@ -1494,10 +2033,109 @@ abstract final class PromptAssembler {
       count += words.length;
     }
     return _JoinResult(
-      text: kept.map((s) => s.trim()).where((s) => s.isNotEmpty).join(', '),
+      text: _joinPromptSegments(kept),
       truncated: dropped.isNotEmpty,
       dropped: dropped,
     );
+  }
+
+  /// 对内心独白（内心 OS / 心声）进行生图层脱敏净化。
+  ///
+  /// TTS 配音需要原汁原味的原著台词，但文生图模型会将台词文本直接送入注意力机制。
+  /// 若台词中提及“老王”、“师尊”等非在场人物，模型会产生幻觉臆造实体（如老王牵驴）。
+  /// 本方法剥离时间标注、剥离非在场第三人人名、剥离口语杂质，转化为纯粹的微表情与心理神态描写。
+  static String sanitizeInnerMonologue({
+    required String dialogue,
+    String speaker = '',
+    List<String> inSceneCharacters = const [],
+  }) {
+    var text = dialogue
+        .replaceAll(RegExp(r'[（\(][^）\)]*秒[）\)]'), '') // 移除（预估2.5秒）
+        .replaceAll(
+          RegExp(r'^[^\s：:]+[（\(][^）\)]*[）\)][：:]\s*'),
+          '',
+        ) // 移除“角色（内心 OS）：”
+        .replaceAll(RegExp(r'^(内心\s*OS|心声|内心独白)[：:]\s*'), '')
+        .trim();
+
+    // 移除包裹引号
+    if (text.startsWith('“') && text.endsWith('”') && text.length >= 2) {
+      text = text.substring(1, text.length - 1).trim();
+    } else if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+      text = text.substring(1, text.length - 1).trim();
+    }
+
+    // 针对常见“又被老王训了/想起老王/念及师傅”等模式，将非在场的人名泛化为中性指代
+    // 防止扩散大模型将老王直接渲染进画面
+    final commonMentions = [
+      '老王',
+      '老李',
+      '师傅',
+      '师尊',
+      '掌门',
+      '皇帝',
+      '殿下',
+      '总管',
+      '管事',
+    ];
+    for (final mention in commonMentions) {
+      if (!inSceneCharacters.contains(mention)) {
+        text = text.replaceAll(mention, '他人');
+      }
+    }
+
+    if (text.isEmpty) {
+      return '眼眸深邃微阖，若有所思';
+    }
+    return '心忖“$text”';
+  }
+
+  /// 编译视线轴线（Eye-line）与机位俯仰（Camera Angle）指令。
+  static String compileGazeAndEyeline({
+    String cameraAngle = '',
+    String gazeDirection = '',
+    String gazeTarget = '',
+    String elevationLevel = '',
+  }) {
+    final tokens = <String>[];
+
+    final isHigh =
+        cameraAngle == 'high_angle' ||
+        elevationLevel.contains('balcony') ||
+        elevationLevel.contains('rooftop') ||
+        elevationLevel.contains('high') ||
+        gazeDirection.contains('俯视') ||
+        gazeDirection.contains('向下');
+
+    final isLow =
+        cameraAngle == 'low_angle' ||
+        (elevationLevel == 'ground' &&
+            (gazeDirection.contains('仰望') || gazeDirection.contains('向上'))) ||
+        gazeDirection.contains('仰视') ||
+        gazeDirection.contains('仰望') ||
+        gazeDirection.contains('向上');
+
+    if (isHigh) {
+      tokens.add('机位为高角度俯拍视角（high-angle downward perspective）');
+      tokens.add(
+        '人物视线向斜下方长街地面注视（gazing downwards towards the street below, 3/4 profile, strictly no eye contact with camera）',
+      );
+    } else if (isLow) {
+      tokens.add('机位为低角度仰拍视角（low-angle upward perspective）');
+      tokens.add(
+        '人物下颌微抬向斜上方楼台仰视（gazing upwards towards the balcony above, tilted head, 3/4 profile, strictly no eye contact with camera）',
+      );
+    } else if (gazeDirection.isNotEmpty) {
+      tokens.add(
+        '视线朝向：$gazeDirection（侧面半侧面角度，严禁直视镜头，3/4 profile view, no eye contact with viewer）',
+      );
+    }
+
+    if (gazeTarget.isNotEmpty) {
+      tokens.add('目光聚焦于$gazeTarget');
+    }
+
+    return tokens.join('，');
   }
 }
 
@@ -1511,6 +2149,71 @@ class _JoinResult {
     required this.truncated,
     required this.dropped,
   });
+}
+
+/// 因果时间轴编译器（spec: shot-causality-ordering）。
+///
+/// 三条生成路径（分镜级、片段级、执行稿导出）共用同一套 `[起始s - 结束s]`
+/// 区间语法——格式一旦漂移，用户从「复制 Seedance 执行稿」和「实际生成的
+/// 提示词」里看到不同写法，会以为其中一个是错的。
+abstract final class CausalityTimelineCompiler {
+  /// 把一组时长转成累加区间。
+  ///
+  /// 首区间从 0.0 起算，每个区间的起点是前序时长之和，末区间结束时刻等于
+  /// 总时长。这样片段级提示词的区间与分镜游标模型（SRT 的 `cursorMs +=
+  /// holdMs`）天然对齐，不需要两套各自累加。
+  ///
+  /// 非正时长按 0 计但不跳过占位——区间数必须与输入一一对应，否则下游按
+  /// 下标取值时会静默错位。
+  static List<(double, double)> cumulativeRanges(List<double> durationsSec) {
+    final ranges = <(double, double)>[];
+    var cursor = 0.0;
+    for (final d in durationsSec) {
+      final span = d > 0 ? d : 0.0;
+      ranges.add((cursor, cursor + span));
+      cursor += span;
+    }
+    return ranges;
+  }
+
+  /// 单个区间渲染成 `[0.0s - 4.0s]`。
+  ///
+  /// 一位小数：分镜时长本身就是 0.5 秒粒度，更多位数是虚假精度。
+  static String formatRange(double startSec, double endSec) =>
+      '[${startSec.toStringAsFixed(1)}s - ${endSec.toStringAsFixed(1)}s]';
+
+  /// 一组区间渲染成 `[0.0s - 4.0s] [4.0s - 7.0s] ...`。
+  static String formatRanges(List<(double, double)> ranges) =>
+      ranges.map((r) => formatRange(r.$1, r.$2)).join(' ');
+
+  /// 从 `temporalEvolution` 自由文本里解析显式秒数分界。
+  ///
+  /// AI 拆镜产出的是「前1.5秒屏息试探，后1.5秒暴起接触」这类描述，没有固定
+  /// schema。这里只认两种最常见的写法：
+  /// - `前N秒…` / `后N秒…`：以 N 为分界点；
+  /// - `N秒…`（句首数字）：同样以 N 为分界点。
+  ///
+  /// 解析不出返回 null，调用方回落到默认次序分配——**不因为解析失败就省略
+  /// 时间轴段**，那会把最难约束的镜头变成完全无时序的平铺文本。
+  static double? parsePhaseSplitSec(String temporalEvolution) {
+    if (temporalEvolution.trim().isEmpty) return null;
+    final normalized = temporalEvolution.replaceAll('：', ':');
+
+    // 「前1.5秒」「后1.5秒」——取第一个出现的数字作为分界。
+    final preMatch = RegExp(r'[前后]\s*([\d.]+)\s*秒').firstMatch(normalized);
+    if (preMatch != null) {
+      final v = double.tryParse(preMatch.group(1) ?? '');
+      if (v != null && v > 0) return v;
+    }
+
+    // 句首裸数字，如「0.8秒破空突刺，0.5秒发丝断落」。
+    final leadMatch = RegExp(r'^\s*([\d.]+)\s*秒').firstMatch(normalized);
+    if (leadMatch != null) {
+      final v = double.tryParse(leadMatch.group(1) ?? '');
+      if (v != null && v > 0) return v;
+    }
+    return null;
+  }
 }
 
 /// 景别 → 英文摄影词。AI 拆镜给的是中文标签，Prompt 要英文。
@@ -1528,7 +2231,8 @@ abstract final class ShotSizeTokens {
 /// 情绪 → 光线/氛围词。BGM 匹配也读同一批标签，但那边按 id 匹配文件名。
 abstract final class MoodTokens {
   static String of(String moodId) => switch (moodId) {
-    'depressing' => 'desaturated cold lighting, heavy shadows, gloomy atmosphere',
+    'depressing' =>
+      'desaturated cold lighting, heavy shadows, gloomy atmosphere',
     'excited' => 'high contrast lighting, dynamic composition, energetic',
     'warm' => 'warm soft lighting, gentle atmosphere',
     'battle' => 'dramatic rim lighting, intense atmosphere, motion blur',
@@ -1542,9 +2246,11 @@ abstract final class MoodTokens {
 /// 分镜功能 → 构图提示。
 abstract final class ShotFunctionTokens {
   static String of(ShotFunction function) => switch (function) {
-    ShotFunction.opening => 'hook composition, subject centered, strong focal point',
+    ShotFunction.opening =>
+      'hook composition, subject centered, strong focal point',
     ShotFunction.advance => 'rule of thirds, leading lines',
-    ShotFunction.burst => 'dutch angle, extreme perspective, high tension framing',
+    ShotFunction.burst =>
+      'dutch angle, extreme perspective, high tension framing',
     ShotFunction.ending => 'balanced composition, lingering framing',
   };
 }
@@ -1634,7 +2340,8 @@ abstract final class CharacterTurnaroundPrompt {
     String descriptionZh = '',
     String positiveText = '',
   }) {
-    final combined = '${descriptionZh.toLowerCase()} ${positiveText.toLowerCase()}';
+    final combined =
+        '${descriptionZh.toLowerCase()} ${positiveText.toLowerCase()}';
 
     // 1. 少年/青少年（13~19岁，少年，及笄，弱冠，书童，少东家等）
     // 优先于幼童检测，避免“十六岁”中的“六岁”误匹配为幼童
@@ -1671,14 +2378,16 @@ abstract final class CharacterTurnaroundPrompt {
     String positiveText = '',
     CharacterAgeGroup? explicitGroup,
   }) {
-    final group = explicitGroup ??
+    final group =
+        explicitGroup ??
         detectAgeGroup(
           descriptionZh: descriptionZh,
           positiveText: positiveText,
         );
 
-    final template =
-        StudioPresetStore.instance.getPromptContent('character_age_staging');
+    final template = StudioPresetStore.instance.getPromptContent(
+      'character_age_staging',
+    );
     final extracted = _extractSectionFromAgeTemplate(template, group);
     if (extracted.isNotEmpty) return extracted;
 
@@ -1686,31 +2395,53 @@ abstract final class CharacterTurnaroundPrompt {
       CharacterAgeGroup.child => '稚嫩孩童身形，儿童面部轮廓，自然儿童比例',
       CharacterAgeGroup.teen =>
         '具备接近成年男性的纵向骨骼身长，青少年身高（约165~170cm），骨骼发育充分拉伸，宽厚肩膀，成年男子头身比例，体态身型符合设定，面部光洁无须，少年青涩容貌，下颌轮廓分明',
-      CharacterAgeGroup.adult =>
-        '完全成型的成年写实骨架，真实人体肌肉骨骼结构，成熟身姿，体态身型符合角色设定',
+      CharacterAgeGroup.adult => '完全成型的成年写实骨架，真实人体肌肉骨骼结构，成熟身姿，体态身型符合角色设定',
       CharacterAgeGroup.elder => '长者身姿与长者骨相，自然面部岁月纹理与岁月风霜感',
     };
   }
 
   static String _extractSectionFromAgeTemplate(
-      String template, CharacterAgeGroup group) {
+    String template,
+    CharacterAgeGroup group,
+  ) {
     if (template.trim().isEmpty) return '';
     final tagPatterns = switch (group) {
-      CharacterAgeGroup.child => ['【幼童】', '• 幼童', '【儿童】', '• 儿童', '[幼童]', '[儿童]'],
-      CharacterAgeGroup.teen => ['【少年】', '• 少年', '【青少年】', '• 青少年', '[少年]', '[青少年]'],
+      CharacterAgeGroup.child => [
+        '【幼童】',
+        '• 幼童',
+        '【儿童】',
+        '• 儿童',
+        '[幼童]',
+        '[儿童]',
+      ],
+      CharacterAgeGroup.teen => [
+        '【少年】',
+        '• 少年',
+        '【青少年】',
+        '• 青少年',
+        '[少年]',
+        '[青少年]',
+      ],
       CharacterAgeGroup.adult => [
-          '【青年/成年】',
-          '• 青年/成年',
-          '【青年与成年】',
-          '【青年】',
-          '• 青年',
-          '【成年】',
-          '• 成年',
-          '[青年与成年]',
-          '[青年]',
-          '[成年]'
-        ],
-      CharacterAgeGroup.elder => ['【老年】', '• 老年', '【长者】', '• 长者', '[老年]', '[长者]'],
+        '【青年/成年】',
+        '• 青年/成年',
+        '【青年与成年】',
+        '【青年】',
+        '• 青年',
+        '【成年】',
+        '• 成年',
+        '[青年与成年]',
+        '[青年]',
+        '[成年]',
+      ],
+      CharacterAgeGroup.elder => [
+        '【老年】',
+        '• 老年',
+        '【长者】',
+        '• 长者',
+        '[老年]',
+        '[长者]',
+      ],
     };
 
     for (final tag in tagPatterns) {
@@ -1726,7 +2457,9 @@ abstract final class CharacterTurnaroundPrompt {
             .replaceAll(RegExp(r'[；;\n\r]+$'), '')
             .trim();
         // 清洗类似 （13~18岁）： 或 (<13岁)： 等年龄段标签前缀
-        cleaned = cleaned.replaceAll(RegExp(r'^\s*[(（][^()（）]*[)）]\s*[：:]\s*'), '').trim();
+        cleaned = cleaned
+            .replaceAll(RegExp(r'^\s*[(（][^()（）]*[)）]\s*[：:]\s*'), '')
+            .trim();
         // 自动净化可能存在的历史否定词
         cleaned = sanitizePositiveAffirmative(cleaned);
         if (cleaned.isNotEmpty) return cleaned;
@@ -1741,7 +2474,9 @@ abstract final class CharacterTurnaroundPrompt {
     var result = text;
     // 剔除包含“非...”、“不要...”、“严禁...”等低幼/儿童相关的否定短语
     result = result.replaceAll(
-      RegExp(r'[,，、\s]*(非|不是|不要|严禁|杜绝|没有|无需)[^,，。；\n\r]*(低幼|幼童|小娃娃|儿童|年画|矮短|童子|婴儿|幼儿|小孩)[^,，。；\n\r]*'),
+      RegExp(
+        r'[,，、\s]*(非|不是|不要|严禁|杜绝|没有|无需)[^,，。；\n\r]*(低幼|幼童|小娃娃|儿童|年画|矮短|童子|婴儿|幼儿|小孩)[^,，。；\n\r]*',
+      ),
       '',
     );
     // 清洗多余的分隔符
@@ -1763,7 +2498,9 @@ abstract final class CharacterTurnaroundPrompt {
     if (text.trim().isEmpty) return '';
 
     // 1. 匹配具体的十几岁少年数字
-    final teenAgeMatch = RegExp(r'(1[3-9]岁|十三岁|十四岁|十五六岁|十五岁|十六七岁|十六岁|十七八岁|十七岁|十八九岁|十八岁|十九岁)').firstMatch(text);
+    final teenAgeMatch = RegExp(
+      r'(1[3-9]岁|十三岁|十四岁|十五六岁|十五岁|十六七岁|十六岁|十七八岁|十七岁|十八九岁|十八岁|十九岁)',
+    ).firstMatch(text);
     if (teenAgeMatch != null) {
       final raw = teenAgeMatch.group(0)!;
       final normalized = raw
@@ -1782,7 +2519,9 @@ abstract final class CharacterTurnaroundPrompt {
     }
 
     // 2. 匹配具体成年/中年数字 (20~50岁)
-    final adultAgeMatch = RegExp(r'([2-4]\d岁|二十多岁|二十岁出头|二十出头|二十岁|三十岁|四十岁|青年|年轻男子|成年男性)').firstMatch(text);
+    final adultAgeMatch = RegExp(
+      r'([2-4]\d岁|二十多岁|二十岁出头|二十出头|二十岁|三十岁|四十岁|青年|年轻男子|成年男性)',
+    ).firstMatch(text);
     if (adultAgeMatch != null) {
       return '成年男性骨架身量，骨骼完全成型，身高约178cm，成年人体态比例';
     }
@@ -1803,8 +2542,8 @@ abstract final class CharacterTurnaroundPrompt {
     final combined =
         '${descriptionZh.toLowerCase()} ${positiveText.toLowerCase()}';
     return RegExp(
-            r'(矮壮|敦实|微胖|肥胖|圆滚滚|富态|胖|肉嘟嘟|矮胖|胖墩|魁梧|壮硕|宽胖|plump|chubby|stout|husky|fat|portly)')
-        .hasMatch(combined);
+      r'(矮壮|敦实|微胖|肥胖|圆滚滚|富态|胖|肉嘟嘟|矮胖|胖墩|魁梧|壮硕|宽胖|plump|chubby|stout|husky|fat|portly)',
+    ).hasMatch(combined);
   }
 
   /// 动态解析体态比例正向锚点（若角色为微胖/矮壮，解绑修长挺拔；标准成人则保持）。
@@ -1909,8 +2648,7 @@ abstract final class CharacterTurnaroundPrompt {
   }
 
   /// 正向无须防御词：针对少年/青年或排斥胡须的设定，在 Positive 中强力注入以彻底阻断古装先验蓄须
-  static const String cleanShavenGuardPositive =
-      '面部光洁无须，少年青涩容貌，皮肤细腻平滑，无胡须，无胡茬';
+  static const String cleanShavenGuardPositive = '面部光洁无须，少年青涩容貌，皮肤细腻平滑，无胡须，无胡茬';
 
   /// 负向排须词：在支持 Negative Prompt 的引擎中协同排查成熟与老态特征
   static const String cleanShavenGuardNegative =
@@ -1928,21 +2666,23 @@ abstract final class CharacterTurnaroundPrompt {
 
     // 1. 如果在正向提示词或描述中明确要求蓄须（如“大胡子”、“美髯”、“full beard”），且负向没有排斥，则不注入去须守卫
     final wantsBeard = RegExp(
-            r'(大胡子|浓密胡须|美髯|留有胡须|蓄须|full beard|thick beard|heavy stubble|with beard)')
-        .hasMatch(combinedPositive);
-    final rejectsBeard = RegExp(
-                r'(长胡子|胡子|胡须|美髯|胡茬|去除胡须|没有胡子|无须|去胡子|beard|mustache|goatee|facial hair|stubble)')
-            .hasMatch(combinedNegative) ||
-        RegExp(r'(无须|没胡子|没有胡子|不留胡子|去除胡须|去胡子|clean-shaven|hairless face|no beard|no facial hair)')
-            .hasMatch(combinedPositive);
+      r'(大胡子|浓密胡须|美髯|留有胡须|蓄须|full beard|thick beard|heavy stubble|with beard)',
+    ).hasMatch(combinedPositive);
+    final rejectsBeard =
+        RegExp(
+          r'(长胡子|胡子|胡须|美髯|胡茬|去除胡须|没有胡子|无须|去胡子|beard|mustache|goatee|facial hair|stubble)',
+        ).hasMatch(combinedNegative) ||
+        RegExp(
+          r'(无须|没胡子|没有胡子|不留胡子|去除胡须|去胡子|clean-shaven|hairless face|no beard|no facial hair)',
+        ).hasMatch(combinedPositive);
 
     if (wantsBeard && !rejectsBeard) return false;
     if (rejectsBeard) return true;
 
     // 2. 少年、青年、儿童等年轻特征检测：古装/商贾先验在没有无须声明时极易被扩散模型带偏出胡须
     final isYouth = RegExp(
-            r'(少年|男孩|小弟|书童|幼年|正太|男童|青年|年轻|稚嫩|娃娃脸|teenager|teen boy|young boy|youthful|adolescent|1[0-8] years old)')
-        .hasMatch(combinedPositive);
+      r'(少年|男孩|小弟|书童|幼年|正太|男童|青年|年轻|稚嫩|娃娃脸|teenager|teen boy|young boy|youthful|adolescent|1[0-8] years old)',
+    ).hasMatch(combinedPositive);
     return isYouth;
   }
 
@@ -1975,8 +2715,9 @@ abstract final class CharacterTurnaroundPrompt {
     var trimmedChar = characterPositivePrompt.trim();
     final trimmedAttire = attirePrompt.trim();
     if (trimmedAttire.isNotEmpty && !trimmedChar.contains(trimmedAttire)) {
-      trimmedChar =
-          trimmedChar.isEmpty ? trimmedAttire : '$trimmedChar, $trimmedAttire';
+      trimmedChar = trimmedChar.isEmpty
+          ? trimmedAttire
+          : '$trimmedChar, $trimmedAttire';
     }
     final trimmedStyle = cleanTurnaroundStyleTokens(styleTokens);
     final costumeAnchor = eraGenre?.costumeAnchor.trim() ?? '';
@@ -2005,17 +2746,19 @@ abstract final class CharacterTurnaroundPrompt {
       explicitGroup: ageGroup,
     ).trim();
 
-    final cleanShavenAnchor = shouldInjectCleanShavenGuard(
-      positiveText: trimmedChar,
-      negativeText: negativePrompt,
-      descriptionZh: effectiveFullDesc,
-    )
+    final cleanShavenAnchor =
+        shouldInjectCleanShavenGuard(
+          positiveText: trimmedChar,
+          negativeText: negativePrompt,
+          descriptionZh: effectiveFullDesc,
+        )
         ? cleanShavenGuardPositive
         : '';
 
     // 动态从 StudioPresetStore 读取 character_turnaround 规范
-    final customTurnaround =
-        StudioPresetStore.instance.getPromptContent('character_turnaround').trim();
+    final customTurnaround = StudioPresetStore.instance
+        .getPromptContent('character_turnaround')
+        .trim();
     final layoutParts = customTurnaround.isNotEmpty
         ? [customTurnaround]
         : [
@@ -2083,11 +2826,12 @@ abstract final class CharacterTurnaroundPrompt {
     String positiveText = '',
     String styleNegativeBan = '',
   }) {
-    final cleanShavenNegative = shouldInjectCleanShavenGuard(
-      positiveText: positiveText,
-      negativeText: baseNegative,
-      descriptionZh: descriptionZh,
-    )
+    final cleanShavenNegative =
+        shouldInjectCleanShavenGuard(
+          positiveText: positiveText,
+          negativeText: baseNegative,
+          descriptionZh: descriptionZh,
+        )
         ? cleanShavenGuardNegative
         : '';
 
@@ -2096,7 +2840,8 @@ abstract final class CharacterTurnaroundPrompt {
       positiveText: positiveText,
     );
 
-    final shouldInjectAntiToddler = (ageGroup == CharacterAgeGroup.teen ||
+    final shouldInjectAntiToddler =
+        (ageGroup == CharacterAgeGroup.teen ||
             ageGroup == CharacterAgeGroup.adult) &&
         proportion != CharacterTurnaroundProportion.chibi;
 
@@ -2132,20 +2877,22 @@ abstract final class CharacterTurnaroundPrompt {
             .toLowerCase();
 
     final isVarWhiteOrLight = RegExp(
-            r'(white|silver|ivory|pale|雪白|白衣|白袍|白色|素衣|银白|白长袍)')
-        .hasMatch(varText);
+      r'(white|silver|ivory|pale|雪白|白衣|白袍|白色|素衣|银白|白长袍)',
+    ).hasMatch(varText);
     final isBaseDark = RegExp(
-            r'(black|dark|cyan|navy|charcoal|玄色|黑|深青|玄衣|狱卒|墨色|青衫)')
-        .hasMatch(baseAttire);
+      r'(black|dark|cyan|navy|charcoal|玄色|黑|深青|玄衣|狱卒|墨色|青衫)',
+    ).hasMatch(baseAttire);
 
     if (isVarWhiteOrLight && isBaseDark) {
       bans.add('深色衣物，黑袍，黑衣，黑色服装，深色长袍，玄色袍服，深青色服饰，黑色制服，暗色衣袍');
     }
 
-    final isVarDark = RegExp(r'(black|dark|charcoal|玄色|黑衣|黑袍|暗色|墨色)')
-        .hasMatch(varText);
-    final isBaseLight =
-        RegExp(r'(white|silver|ivory|雪白|白衣|白袍|白色|素衣)').hasMatch(baseAttire);
+    final isVarDark = RegExp(
+      r'(black|dark|charcoal|玄色|黑衣|黑袍|暗色|墨色)',
+    ).hasMatch(varText);
+    final isBaseLight = RegExp(
+      r'(white|silver|ivory|雪白|白衣|白袍|白色|素衣)',
+    ).hasMatch(baseAttire);
 
     if (isVarDark && isBaseLight) {
       bans.add('白色衣物，白袍，白衣，白色服装，浅色长袍，素色袍服，浅色衣服，素白衣裳');
@@ -2165,7 +2912,8 @@ abstract final class CharacterTurnaroundPrompt {
     required CharacterVariation variation,
     String styleTokens = '',
     VisualEraGenre? eraGenre,
-    CharacterTurnaroundProportion proportion = CharacterTurnaroundProportion.standard,
+    CharacterTurnaroundProportion proportion =
+        CharacterTurnaroundProportion.standard,
     bool inheritBaseFace = true,
   }) {
     final normalizedAttire = PromptAssembler.normalizeDeltaWords(
@@ -2179,12 +2927,11 @@ abstract final class CharacterTurnaroundPrompt {
       if (normalizedAttire.isNotEmpty) normalizedAttire,
     ].join('， ');
 
-    const faceIdentityTokens =
-        '完全一致的人物面容身份，与基准参考图保持相同的五官神态特征，角色风格统一';
+    const faceIdentityTokens = '完全一致的人物面容身份，与基准参考图保持相同的五官神态特征，角色风格统一';
     final combined = inheritBaseFace
         ? (combinedCharPrompt.isEmpty
-            ? faceIdentityTokens
-            : '$combinedCharPrompt， $faceIdentityTokens')
+              ? faceIdentityTokens
+              : '$combinedCharPrompt， $faceIdentityTokens')
         : combinedCharPrompt;
 
     return build(
@@ -2206,7 +2953,8 @@ abstract final class CharacterTurnaroundPrompt {
     required CharacterCard character,
     required CharacterVariation variation,
     VisualEraGenre? eraGenre,
-    CharacterTurnaroundProportion proportion = CharacterTurnaroundProportion.standard,
+    CharacterTurnaroundProportion proportion =
+        CharacterTurnaroundProportion.standard,
     String styleNegativeBan = '',
   }) {
     final hedging = computeAttireNegativeHedging(
@@ -2252,11 +3000,12 @@ abstract final class CharacterTurnaroundPrompt {
   }) {
     final trimmedFacial = facialPrompt.trim();
     final trimmedStyle = styleTokens.trim();
-    final cleanShavenAnchor = shouldInjectCleanShavenGuard(
-      positiveText: trimmedFacial,
-      negativeText: negativePrompt,
-      descriptionZh: descriptionZh,
-    )
+    final cleanShavenAnchor =
+        shouldInjectCleanShavenGuard(
+          positiveText: trimmedFacial,
+          negativeText: negativePrompt,
+          descriptionZh: descriptionZh,
+        )
         ? cleanShavenGuardPositive
         : '';
 
@@ -2276,11 +3025,12 @@ abstract final class CharacterTurnaroundPrompt {
     String positiveText = '',
     String styleNegativeBan = '',
   }) {
-    final cleanShavenNegative = shouldInjectCleanShavenGuard(
-      positiveText: positiveText,
-      negativeText: baseNegative,
-      descriptionZh: descriptionZh,
-    )
+    final cleanShavenNegative =
+        shouldInjectCleanShavenGuard(
+          positiveText: positiveText,
+          negativeText: baseNegative,
+          descriptionZh: descriptionZh,
+        )
         ? cleanShavenGuardNegative
         : '';
 
@@ -2347,6 +3097,9 @@ class SegmentShotParts {
   /// 运镜关键词。
   final String cameraMove;
 
+  /// 该镜的建议时长（秒）。0 表示未提供，此时由片段目标时长均摊兜底。
+  final double durationSec;
+
   /// 该镜的连续性台账。空台账的镜号会被跳过——那意味着用户还没补台账，
   /// 强行写「绝对状态」会写成空话。
   final ShotContinuity continuity;
@@ -2356,6 +3109,7 @@ class SegmentShotParts {
     this.actionZh = '',
     this.dialogue = '',
     this.cameraMove = '',
+    this.durationSec = 0,
     this.continuity = ShotContinuity.empty,
   });
 }
@@ -2392,8 +3146,12 @@ abstract final class CameraStagingCompiler {
     }
     final move = cameraMove.trim().isEmpty ? '中景平视平稳起始' : cameraMove.trim();
     final subject = subjectName.trim().isEmpty ? '核心画面主体' : subjectName.trim();
-    final trigger = triggerAction.trim().isEmpty ? '主体动作展开或受力变向瞬间' : triggerAction.trim();
-    final end = endSettling.trim().isEmpty ? '落点平稳聚焦主体动作余势' : endSettling.trim();
+    final trigger = triggerAction.trim().isEmpty
+        ? '主体动作展开或受力变向瞬间'
+        : triggerAction.trim();
+    final end = endSettling.trim().isEmpty
+        ? '落点平稳聚焦主体动作余势'
+        : endSettling.trim();
 
     return '起始：$move；跟随：聚焦$subject；触发：$trigger；落点：$end';
   }
@@ -2416,7 +3174,8 @@ abstract final class SeedanceTaskCompiler {
 
     // 1. 画质与风格基线
     final prodType = productionType;
-    final qualityTokens = prodType != null && prodType.defaultPositiveStyle.isNotEmpty
+    final qualityTokens =
+        prodType != null && prodType.defaultPositiveStyle.isNotEmpty
         ? prodType.defaultPositiveStyle
         : 'cinematic lighting, master quality, highly detailed';
     buffer.writeln('【画风与基线】$qualityTokens');
@@ -2434,7 +3193,9 @@ abstract final class SeedanceTaskCompiler {
         if (seenCharIds.add(cid)) {
           final c = charMap[cid];
           if (c != null) {
-            final desc = c.descriptionZh.isNotEmpty ? c.descriptionZh : c.basePromptPositive;
+            final desc = c.descriptionZh.isNotEmpty
+                ? c.descriptionZh
+                : c.basePromptPositive;
             buffer.writeln('- 主体【${c.name}】：$desc');
           }
         }
@@ -2453,7 +3214,9 @@ abstract final class SeedanceTaskCompiler {
       if (shot.sceneId.isNotEmpty && seenSceneIds.add(shot.sceneId)) {
         final s = sceneMap[shot.sceneId];
         if (s != null) {
-          buffer.writeln('- 场景【${s.name}】：${s.descriptionZh.isNotEmpty ? s.descriptionZh : s.promptEn}');
+          buffer.writeln(
+            '- 场景【${s.name}】：${s.descriptionZh.isNotEmpty ? s.descriptionZh : s.promptEn}',
+          );
         }
       }
     }
@@ -2466,7 +3229,8 @@ abstract final class SeedanceTaskCompiler {
       final end = timeCursor + shot.durationSec;
       timeCursor = end;
 
-      final timeRange = '[${start.toStringAsFixed(1)}s - ${end.toStringAsFixed(1)}s]';
+      final timeRange =
+          '[${start.toStringAsFixed(1)}s - ${end.toStringAsFixed(1)}s]';
       final shotSizeLabel = shot.shotSize.label;
       final cameraStaging = CameraStagingCompiler.compile4Stage(
         cameraMove: shot.cameraMove,
@@ -2490,7 +3254,9 @@ abstract final class SeedanceTaskCompiler {
       if (shot.combatSteps.isNotEmpty) {
         buffer.writeln('  攻防因果链：');
         for (final step in shot.combatSteps) {
-          buffer.writeln('    * [${step.duty.label}] ${step.actorName} -> ${step.targetNames.join("/")}: ${step.attack} | 反馈=${step.impact} | 位移=${step.displacement}');
+          buffer.writeln(
+            '    * [${step.duty.label}] ${step.actorName} -> ${step.targetNames.join("/")}: ${step.attack} | 反馈=${step.impact} | 位移=${step.displacement}',
+          );
         }
       }
     }
@@ -2500,12 +3266,16 @@ abstract final class SeedanceTaskCompiler {
     final exitState = lastShot?.continuity.dynamicExitState;
     buffer.writeln('\n【剪辑接力 (Handoff Continuity)】');
     if (previousExitState != null && previousExitState.isNotEmpty) {
-      buffer.writeln('入口承接：支撑脚=${previousExitState.supportFoot}，初速度=${previousExitState.velocityVector}，接续动势=${previousExitState.unfinishedPhase}');
+      buffer.writeln(
+        '入口承接：支撑脚=${previousExitState.supportFoot}，初速度=${previousExitState.velocityVector}，接续动势=${previousExitState.unfinishedPhase}',
+      );
     } else {
       buffer.writeln('入口承接：平稳入场，顺接上镜空间关系');
     }
     if (exitState != null && exitState.isNotEmpty) {
-      buffer.writeln('出口接力：支撑脚=${exitState.supportFoot}，末速度=${exitState.velocityVector}，未完成动势=${exitState.unfinishedPhase}');
+      buffer.writeln(
+        '出口接力：支撑脚=${exitState.supportFoot}，末速度=${exitState.velocityVector}，未完成动势=${exitState.unfinishedPhase}',
+      );
     } else {
       buffer.writeln('出口接力：动作处于自然衔接相位');
     }
@@ -2527,8 +3297,10 @@ abstract final class PhotorealisticPromptCompiler {
     if (m.isEmpty) return '平稳固定机位';
     final lower = m.toLowerCase();
     if (lower == 'slow push-in tracking') return '缓慢前推跟随跟拍';
-    if (lower == 'slow push-in' || lower == 'push-in' || lower == 'push in') return '缓慢推镜头';
-    if (lower == 'slow pull-out' || lower == 'pull-out' || lower == 'pull out') return '缓慢拉远镜头';
+    if (lower == 'slow push-in' || lower == 'push-in' || lower == 'push in')
+      return '缓慢推镜头';
+    if (lower == 'slow pull-out' || lower == 'pull-out' || lower == 'pull out')
+      return '缓慢拉远镜头';
     if (lower == 'pan left') return '向左横移扫摄';
     if (lower == 'pan right') return '向右横移扫摄';
     if (lower == 'tilt up') return '由下向上仰摇';
@@ -2584,7 +3356,8 @@ abstract final class PhotorealisticPromptCompiler {
     // 2. 镜头景别与运镜
     final shotSizeLabel = shot.shotSize.label;
     final normalizedMove = normalizeCameraMoveZh(shot.cameraMove);
-    final subjectName = character?.name.trim() ??
+    final subjectName =
+        character?.name.trim() ??
         (characters?.isNotEmpty == true ? characters!.first.name.trim() : '');
     final cameraStaging = CameraStagingCompiler.compile4Stage(
       cameraMove: normalizedMove,
@@ -2636,13 +3409,17 @@ abstract final class PhotorealisticPromptCompiler {
           traits.add(c.basePromptPositive.trim());
         }
         final detail = traits.join('，');
-        charDescList.add(detail.isNotEmpty ? '${c.name.trim()}（$detail）' : c.name.trim());
+        charDescList.add(
+          detail.isNotEmpty ? '${c.name.trim()}（$detail）' : c.name.trim(),
+        );
       }
 
       final subjectBuffer = StringBuffer();
       subjectBuffer.write(charDescList.join(' 与 '));
       if (previousExitState != null && previousExitState.isNotEmpty) {
-        subjectBuffer.write('，接续上镜动势（${previousExitState.unfinishedPhase}，速度：${previousExitState.velocityVector}）');
+        subjectBuffer.write(
+          '，接续上镜动势（${previousExitState.unfinishedPhase}，速度：${previousExitState.velocityVector}）',
+        );
       } else {
         subjectBuffer.write('，初始身姿平衡就位');
       }
@@ -2658,7 +3435,10 @@ abstract final class PhotorealisticPromptCompiler {
     final momentum = shot.directorDecisions.physicalMomentum.trim();
     if (shot.combatSteps.isNotEmpty) {
       final combatSummary = shot.combatSteps
-          .map((c) => '${c.actorName}发起${c.attack}，造成${c.impact}，产生${c.displacement}位移')
+          .map(
+            (c) =>
+                '${c.actorName}发起${c.attack}，造成${c.impact}，产生${c.displacement}位移',
+          )
           .join('；');
       actionParts.add('攻防对抗：$combatSummary');
       if (momentum.isNotEmpty) {
@@ -2676,7 +3456,8 @@ abstract final class PhotorealisticPromptCompiler {
     // 6. 声音与画面约束（音画分流规则）
     final rawDialogue = shot.dialogue.trim();
     if (rawDialogue.isNotEmpty) {
-      final isSystemNotice = rawDialogue.startsWith('【') ||
+      final isSystemNotice =
+          rawDialogue.startsWith('【') ||
           rawDialogue.contains('获得') ||
           rawDialogue.contains('修为') ||
           rawDialogue.contains('幽冥气') ||
@@ -2684,7 +3465,8 @@ abstract final class PhotorealisticPromptCompiler {
           rawDialogue.contains('杀戮值') ||
           rawDialogue.contains('系统');
 
-      final isInnerVoice = rawDialogue.contains('内心 OS') ||
+      final isInnerVoice =
+          rawDialogue.contains('内心 OS') ||
           rawDialogue.contains('内心OS') ||
           rawDialogue.contains('心声') ||
           rawDialogue.contains('内心独白') ||
@@ -2744,7 +3526,9 @@ abstract final class PhotorealisticPromptCompiler {
         styleTokens: styleTokens,
         previousExitState: carryState,
       );
-      shotProseList.add('【分镜 ${shot.number}（${shot.durationSec}秒）】\n$shotProse');
+      shotProseList.add(
+        '【分镜 ${shot.number}（${shot.durationSec}秒）】\n$shotProse',
+      );
       carryState = shot.continuity.dynamicExitState;
     }
 
@@ -2789,25 +3573,31 @@ abstract final class H3CsvCompiler {
         if (segShots.isEmpty) continue;
 
         final firstShot = segShots.first;
-        final char = firstShot.characterIds.isNotEmpty ? charMap[firstShot.characterIds.first] : null;
-        final scene = firstShot.sceneId.isNotEmpty ? sceneMap[firstShot.sceneId] : null;
+        final char = firstShot.characterIds.isNotEmpty
+            ? charMap[firstShot.characterIds.first]
+            : null;
+        final scene = firstShot.sceneId.isNotEmpty
+            ? sceneMap[firstShot.sceneId]
+            : null;
 
         // 1. 序号
         final index = seg.id.replaceAll(RegExp(r'[^0-9]'), '');
         final seq = index.isNotEmpty ? index : '${segShots.first.number}';
 
         // 2. 图片提示词 (首镜图片 Prompt)
-        final imagePrompt = PromptAssembler.buildShotPrompt(PromptParts(
-          productionType: productionType,
-          styleTokens: styleTokens,
-          shotSize: firstShot.shotSize.id,
-          mood: firstShot.mood,
-          shotFunction: firstShot.function.id,
-          character: char,
-          scene: scene,
-          cameraMove: firstShot.cameraMove,
-          actionZh: firstShot.actionZh,
-        )).positive;
+        final imagePrompt = PromptAssembler.buildShotPrompt(
+          PromptParts(
+            productionType: productionType,
+            styleTokens: styleTokens,
+            shotSize: firstShot.shotSize.id,
+            mood: firstShot.mood,
+            shotFunction: firstShot.function.id,
+            character: char,
+            scene: scene,
+            cameraMove: firstShot.cameraMove,
+            actionZh: firstShot.actionZh,
+          ),
+        ).positive;
 
         // 3. 视频提示词 (Seedance 或 Photorealistic 视频稿)
         final videoPrompt = SeedanceTaskCompiler.compileSegment(
@@ -2845,20 +3635,24 @@ abstract final class H3CsvCompiler {
     } else {
       // 无片段，逐镜输出
       for (final shot in shots) {
-        final char = shot.characterIds.isNotEmpty ? charMap[shot.characterIds.first] : null;
+        final char = shot.characterIds.isNotEmpty
+            ? charMap[shot.characterIds.first]
+            : null;
         final scene = shot.sceneId.isNotEmpty ? sceneMap[shot.sceneId] : null;
 
-        final imagePrompt = PromptAssembler.buildShotPrompt(PromptParts(
-          productionType: productionType,
-          styleTokens: styleTokens,
-          shotSize: shot.shotSize.id,
-          mood: shot.mood,
-          shotFunction: shot.function.id,
-          character: char,
-          scene: scene,
-          cameraMove: shot.cameraMove,
-          actionZh: shot.actionZh,
-        )).positive;
+        final imagePrompt = PromptAssembler.buildShotPrompt(
+          PromptParts(
+            productionType: productionType,
+            styleTokens: styleTokens,
+            shotSize: shot.shotSize.id,
+            mood: shot.mood,
+            shotFunction: shot.function.id,
+            character: char,
+            scene: scene,
+            cameraMove: shot.cameraMove,
+            actionZh: shot.actionZh,
+          ),
+        ).positive;
 
         final videoPrompt = PhotorealisticPromptCompiler.compileShot(
           shot: shot,
@@ -2868,7 +3662,9 @@ abstract final class H3CsvCompiler {
           styleTokens: styleTokens,
         );
 
-        final dialogue = shot.dialogue.trim().isNotEmpty ? shot.dialogue.trim() : '（无台词）';
+        final dialogue = shot.dialogue.trim().isNotEmpty
+            ? shot.dialogue.trim()
+            : '（无台词）';
 
         final row = [
           _escapeCsv('${shot.number}'),
@@ -2907,10 +3703,183 @@ abstract final class H3CsvCompiler {
   }
 
   static String _escapeCsv(String field) {
-    if (field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r')) {
+    if (field.contains(',') ||
+        field.contains('"') ||
+        field.contains('\n') ||
+        field.contains('\r')) {
       return '"${field.replaceAll('"', '""')}"';
     }
     return field;
   }
 }
 
+/// 一个可选的素材候选项（spec: shot-asset-binding）。
+///
+/// [isDefault] 标记系统默认项——分镜卡据此显示「自动：<文件名>」，用户可覆盖。
+/// 默认规则与生图路径的取材回退同源，因此两条路径不会
+/// 再出现「关键帧用三视图、视频用上传图」的分裂。
+class AssetMaterialCandidate {
+  /// 素材文件名（相对资产目录）。
+  final String fileName;
+
+  /// 该候选项的人类可读标签（如「基准三视图」「面部锚点」「上传参考图」）。
+  final String label;
+
+  /// 是否为系统默认选用项。
+  final bool isDefault;
+
+  const AssetMaterialCandidate({
+    required this.fileName,
+    required this.label,
+    this.isDefault = false,
+  });
+}
+
+/// 出场资产的素材候选枚举器（spec: shot-asset-binding）。
+///
+/// 分镜卡用它列出「这个角色/场景有哪些图可以拿来生成」，并标出默认项。
+/// 只枚举**磁盘上存在**的文件——列出一个不存在的图会让用户选完后生成才失败。
+abstract final class AssetMaterialEnumerator {
+  /// 列出角色的可用素材候选，顺序即优先级。
+  ///
+  /// 优先级与生图路径一致：形态专属三视图 → 角色基准三视图 → Q版三视图 →
+  /// 面部锚点 → 用户上传参考图。
+  static List<AssetMaterialCandidate> forCharacter(
+    CharacterCard character, {
+    CharacterVariation? activeVariation,
+    required String charDirPath,
+  }) {
+    final candidates = <AssetMaterialCandidate>[];
+    final seen = <String>{};
+
+    void add(String? fileName, String label) {
+      if (fileName == null || fileName.trim().isEmpty) return;
+      final name = fileName.trim();
+      if (!seen.add(name)) return;
+      // 只列磁盘上真实存在的图。
+      if (!File(p.join(charDirPath, name)).existsSync()) return;
+      candidates.add(AssetMaterialCandidate(fileName: name, label: label));
+    }
+
+    final v = activeVariation;
+    if (v != null) {
+      add(v.turnaroundPath, '形态三视图');
+      add('turnaround_${v.id}.png', '形态三视图');
+      add('turnaround_${v.id}_chibi.png', '形态三视图（Q版）');
+      for (final ref in v.referenceImages) {
+        add(ref, '形态参考图');
+      }
+    }
+    add('turnaround.png', '基准三视图');
+    add('turnaround_chibi.png', '基准三视图（Q版）');
+    add(character.faceAnchorPath, '面部锚点');
+    for (final ref in character.referenceImages) {
+      add(ref, '上传参考图');
+    }
+
+    if (candidates.isEmpty) return candidates;
+    // 首个存在的候选即系统默认（与 _referenceImages 的返回顺序一致）。
+    final first = candidates.first;
+    return [
+      AssetMaterialCandidate(
+        fileName: first.fileName,
+        label: first.label,
+        isDefault: true,
+      ),
+      ...candidates.skip(1),
+    ];
+  }
+
+  /// 列出场景的可用素材候选，顺序即优先级。
+  ///
+  /// 优先级：有图的七方位视角 → 用户上传参考图。
+  static List<AssetMaterialCandidate> forScene(
+    SceneCard scene, {
+    required String sceneDirPath,
+  }) {
+    final candidates = <AssetMaterialCandidate>[];
+    final seen = <String>{};
+
+    void add(String? fileName, String label) {
+      if (fileName == null || fileName.trim().isEmpty) return;
+      final name = fileName.trim();
+      if (!seen.add(name)) return;
+      if (!File(p.join(sceneDirPath, name)).existsSync()) return;
+      candidates.add(AssetMaterialCandidate(fileName: name, label: label));
+    }
+
+    // 七方位视角按「正面 → 其余」排列：正面是默认机位最可能对应的视角。
+    final views = scene.fullSpatialViews;
+    for (final dir in SceneDirection.values) {
+      final view = views[dir.name];
+      if (view == null) continue;
+      add(view.imagePath, '${dir.labelZh}视角');
+    }
+    for (final ref in scene.referenceImages) {
+      add(ref, '上传参考图');
+    }
+
+    if (candidates.isEmpty) return candidates;
+    final first = candidates.first;
+    return [
+      AssetMaterialCandidate(
+        fileName: first.fileName,
+        label: first.label,
+        isDefault: true,
+      ),
+      ...candidates.skip(1),
+    ];
+  }
+
+  /// 取角色或场景的系统默认素材文件名；无可用素材返回 null。
+  static String? defaultMaterialFor({
+    required bool isScene,
+    CharacterCard? character,
+    SceneCard? scene,
+    CharacterVariation? activeVariation,
+    required String assetDirPath,
+  }) {
+    final candidates = isScene
+        ? forScene(scene!, sceneDirPath: assetDirPath)
+        : forCharacter(
+            character!,
+            activeVariation: activeVariation,
+            charDirPath: assetDirPath,
+          );
+    return candidates.isEmpty ? null : candidates.first.fileName;
+  }
+}
+
+/// 分段用的词数切分：逗号、分号、句号、换行都算边界。
+///
+/// 时序序列段自带换行结构，按换行切开后每行是一个「词」——这样超限丢弃
+/// 的粒度是「一整镜」而不是「半行」，不会出现区间残缺的提示词。
+List<String> _promptWordsOf(String text) => text
+    .split(RegExp(r'[,\.\n;]+'))
+    .map((s) => s.trim())
+    .where((s) => s.isNotEmpty)
+    .toList();
+
+/// 拼段分隔符：块结构段（时序序列）前后用换行，普通段之间用「, 」。
+///
+/// `_joinWithinLimit` 原来无脑用 ', ' 拼，多行时序段会被压成一行、
+/// 甚至和下一段粘在同一行尾（`...跳脚, 声音与画面约束：...`），可读性归零。
+///
+/// 判据是**段本身**是否含换行，且前后都判：前一段多行说明刚结束一个块，
+/// 本段多行说明要起一个新块。只判前一段会让时间轴块接在场景锚点同一行尾，
+/// 只判本段会让块后面的单行段粘在块的最后一行上。
+String _joinPromptSegments(List<String> segments) {
+  final buffer = StringBuffer();
+  var previousWasMultiline = false;
+  for (var i = 0; i < segments.length; i++) {
+    final segment = segments[i].trim();
+    if (segment.isEmpty) continue;
+    if (buffer.isNotEmpty) {
+      final breakBefore = previousWasMultiline || segment.contains('\n');
+      buffer.write(breakBefore ? '\n\n' : ', ');
+    }
+    buffer.write(segment);
+    previousWasMultiline = segment.contains('\n');
+  }
+  return buffer.toString();
+}

@@ -2094,6 +2094,12 @@ class StudioSeries {
   /// 默认 TTS 音色（角色未绑定时使用）。
   final String defaultVoiceId;
 
+  /// 默认画幅比例（如 '9:16'、'16:9'、'21:9'、'4:3'、'1:1'）。默认 '9:16'。
+  final String defaultAspectRatio;
+
+  /// 默认分辨率档位（如 '2K'、'1K'、'4K'、'720P'、'1080P'）。默认 '2K'。
+  final String defaultResolution;
+
   /// 剧情记忆库。
   final List<EpisodeMemory> memories;
 
@@ -2115,6 +2121,8 @@ class StudioSeries {
     this.styleTokens = '',
     this.negativeStyleTokens = '',
     this.defaultVoiceId = '',
+    this.defaultAspectRatio = '9:16',
+    this.defaultResolution = '2K',
     this.memories = const [],
     this.props = const [],
     required this.createdAt,
@@ -2131,6 +2139,8 @@ class StudioSeries {
     String? styleTokens,
     String? negativeStyleTokens,
     String? defaultVoiceId,
+    String? defaultAspectRatio,
+    String? defaultResolution,
     List<EpisodeMemory>? memories,
     List<PropCard>? props,
     DateTime? createdAt,
@@ -2146,6 +2156,8 @@ class StudioSeries {
       styleTokens: styleTokens ?? this.styleTokens,
       negativeStyleTokens: negativeStyleTokens ?? this.negativeStyleTokens,
       defaultVoiceId: defaultVoiceId ?? this.defaultVoiceId,
+      defaultAspectRatio: defaultAspectRatio ?? this.defaultAspectRatio,
+      defaultResolution: defaultResolution ?? this.defaultResolution,
       memories: memories ?? this.memories,
       props: props ?? this.props,
       createdAt: createdAt ?? this.createdAt,
@@ -2163,6 +2175,8 @@ class StudioSeries {
     'style_tokens': styleTokens,
     'negative_style_tokens': negativeStyleTokens,
     'default_voice_id': defaultVoiceId,
+    'default_aspect_ratio': defaultAspectRatio,
+    'default_resolution': defaultResolution,
     'memories': memories.map((m) => m.toJson()).toList(),
     'props': props.map((e) => e.toJson()).toList(),
     'created_at': createdAt.toIso8601String(),
@@ -2182,6 +2196,8 @@ class StudioSeries {
       styleTokens: json['style_tokens'] as String? ?? '',
       negativeStyleTokens: json['negative_style_tokens'] as String? ?? '',
       defaultVoiceId: json['default_voice_id'] as String? ?? '',
+      defaultAspectRatio: json['default_aspect_ratio'] as String? ?? '9:16',
+      defaultResolution: json['default_resolution'] as String? ?? '2K',
       memories:
           (json['memories'] as List?)
               ?.whereType<Map>()
@@ -2653,6 +2669,104 @@ enum ShotGenerationStatus {
   }
 }
 
+/// 视频生成模式（直通 Agnes API mode）。
+enum AgnesVideoMode {
+  auto('auto', '自动适配'),
+  keyframe('keyframe', '首尾关键帧'),
+  reference('reference', '多图参考'),
+  text('text', '纯文本驱动');
+
+  const AgnesVideoMode(this.id, this.label);
+  final String id;
+  final String label;
+
+  static AgnesVideoMode fromId(String? id) {
+    if (id == null || id.trim().isEmpty) return AgnesVideoMode.auto;
+    final normalized = id.trim().toLowerCase();
+    return AgnesVideoMode.values.firstWhere(
+      (m) => m.id == normalized,
+      orElse: () => AgnesVideoMode.auto,
+    );
+  }
+
+  static AgnesVideoMode fromKey(String? key) => fromId(key);
+}
+
+/// 出场资产在一镜内的叙事分工（spec: shot-asset-binding）。
+///
+/// 分工不只是标签——它是空间关系编译的输入：含 `confrontation` 的角色对会被
+/// 编译成相互注视，而不是各写一个「视线朝左/朝右」的孤立向量。
+enum ShotAssetRole {
+  /// 主体：画面的视觉焦点，动作的发起者。
+  subject('subject', '主体'),
+
+  /// 对峙：与主体相对而立，视线互指。
+  confrontation('confrontation', '对峙'),
+
+  /// 配角：同框但不参与对峙。
+  supporting('supporting', '配角');
+
+  final String id;
+  final String label;
+
+  const ShotAssetRole(this.id, this.label);
+
+  static ShotAssetRole fromId(String? value) {
+    if (value == null) return subject;
+    final normalized = value.trim().toLowerCase();
+    return values.firstWhere(
+      (e) => e.id == normalized,
+      orElse: () => subject,
+    );
+  }
+}
+
+/// 分镜对一个出场资产的素材绑定（spec: shot-asset-binding）。
+///
+/// [materialPath] 为空串表示「用系统默认素材」——此时由程序按资产自身的既定
+/// 优先级选取，并在 UI 上展示实际选了哪一张，用户可覆盖。一旦用户改过，这里
+/// 就是确定值，程序不再猜。
+///
+/// key 用资产 id（角色卡 id 或场景卡 id）而不是名称：名称可能互相包含
+/// （「老王」vs「老王头」），id 不会。
+class ShotAssetBinding {
+  /// 该资产使用的素材文件（相对资产目录的文件名）。空串 = 系统默认。
+  final String materialPath;
+
+  /// 该资产在本镜的叙事分工。场景无分工语义，固定为 [ShotAssetRole.subject]。
+  final ShotAssetRole role;
+
+  const ShotAssetBinding({
+    this.materialPath = '',
+    this.role = ShotAssetRole.subject,
+  });
+
+  /// 是否显式指定了素材文件。
+  bool get hasExplicitMaterial => materialPath.trim().isNotEmpty;
+
+  ShotAssetBinding copyWith({
+    String? materialPath,
+    ShotAssetRole? role,
+  }) {
+    return ShotAssetBinding(
+      materialPath: materialPath ?? this.materialPath,
+      role: role ?? this.role,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'material_path': materialPath,
+    'role': role.id,
+  };
+
+  static ShotAssetBinding fromJson(Map<String, dynamic> json) {
+    return ShotAssetBinding(
+      materialPath: (json['material_path'] as String?) ?? '',
+      role: ShotAssetRole.fromId(json['role'] as String?),
+    );
+  }
+}
+
 /// 单个分镜（`storyboard.json` 的 shots 数组元素）。
 class StudioShot {
   /// 镜号，1 起连续。
@@ -2684,6 +2798,13 @@ class StudioShot {
   ///
   /// 若未指定（空 Map 或无对应角色 key），出图时回退至单集覆盖或角色默认形态。
   final Map<String, String> characterVariations;
+
+  /// 出场资产的素材绑定（key: 角色卡 id 或场景卡 id；spec: shot-asset-binding）。
+  ///
+  /// 这是素材指代编号（`<Picture N>`）的唯一来源：编号 = 该绑定在有序列表中的
+  /// 下标 + 1，提示词编译与提交给生成模型的参考媒体数组从同一列表产出。
+  /// 空 Map 表示尚未声明——读取时按「无绑定」处理，不猜、不迁移。
+  final Map<String, ShotAssetBinding> assetBindings;
 
   /// 场景卡 id。
   final String sceneId;
@@ -2735,6 +2856,18 @@ class StudioShot {
 
   final ShotGenerationStatus status;
 
+  /// 视频生成模式（'auto', 'keyframe', 'reference', 'text'）。默认 'auto'。
+  final String videoMode;
+
+  /// AI 消解冲突或用户定制的视频生成专用提示词（为空时使用动态组装的 buildVideoGenPrompt）。
+  final String videoPrompt;
+
+  /// 本镜独立画幅比例覆盖（为空时继承剧集默认值）。
+  final String? aspectRatio;
+
+  /// 本镜独立分辨率档位覆盖（为空时继承剧集默认值）。
+  final String? resolution;
+
   const StudioShot({
     required this.number,
     this.durationSec = 3,
@@ -2746,6 +2879,7 @@ class StudioShot {
     this.voiceType = UtteranceVoiceType.dialogue,
     this.characterIds = const [],
     this.characterVariations = const {},
+    this.assetBindings = const {},
     this.sceneId = '',
     this.beatId = '',
     this.cameraMove = '',
@@ -2762,6 +2896,10 @@ class StudioShot {
     this.combatSteps = const [],
     this.continuity = ShotContinuity.empty,
     this.status = ShotGenerationStatus.pending,
+    this.videoMode = 'auto',
+    this.videoPrompt = '',
+    this.aspectRatio,
+    this.resolution,
   });
 
   /// 是否为角色内心独白（心声/内心 OS）。
@@ -2795,6 +2933,49 @@ class StudioShot {
     return (cleanText.length / 4.0).clamp(1.0, durationSec);
   }
 
+  /// 机位垂直俯仰视角（high_angle 俯拍、low_angle 仰拍、eye_level 平视）。
+  String get cameraAngle =>
+      continuity.cameraAngle.isNotEmpty ? continuity.cameraAngle : directorDecisions.cameraAngle;
+
+  /// 视线朝向向量描述。
+  String get gazeDirection =>
+      continuity.gazeDirection.isNotEmpty ? continuity.gazeDirection : directorDecisions.gazeDirection;
+
+  /// 空间垂直高度层级（如 ground, balcony_2f, rooftop, mid_air 等）。
+  String get elevationLevel => continuity.elevationLevel;
+
+  /// 视线目标对象或地标描述。
+  String get gazeTarget => continuity.gazeTarget;
+
+  /// 解析本镜实际生效的视频生成模式。
+  ///
+  /// - 若显式指定了非 auto 模式（`keyframe`、`reference`、`text`），直接使用指定模式；
+  /// - 若为 `auto`：
+  ///   - 若已有首帧/关键帧（`firstFramePath`、`framePath` 或调用方传入 `hasKeyframe`），推荐首尾帧模式；
+  ///   - 否则若有出场角色或场景（调用方传入 `hasCharacterOrSceneRef` 或 `characterIds.isNotEmpty || sceneId.isNotEmpty`），推荐参考图模式；
+  ///   - 否则回退为纯文本模式。
+  AgnesVideoMode resolveEffectiveVideoMode({
+    bool hasKeyframe = false,
+    bool hasCharacterOrSceneRef = false,
+  }) {
+    if (videoMode.isNotEmpty && videoMode != 'auto') {
+      return AgnesVideoMode.fromId(videoMode);
+    }
+    final keyframeAvailable = hasKeyframe ||
+        (firstFramePath != null && firstFramePath!.trim().isNotEmpty) ||
+        (framePath != null && framePath!.trim().isNotEmpty);
+    if (keyframeAvailable) {
+      return AgnesVideoMode.keyframe;
+    }
+    final refAvailable = hasCharacterOrSceneRef ||
+        characterIds.isNotEmpty ||
+        sceneId.trim().isNotEmpty;
+    if (refAvailable) {
+      return AgnesVideoMode.reference;
+    }
+    return AgnesVideoMode.text;
+  }
+
   StudioShot copyWith({
     int? number,
     double? durationSec,
@@ -2806,6 +2987,7 @@ class StudioShot {
     UtteranceVoiceType? voiceType,
     List<String>? characterIds,
     Map<String, String>? characterVariations,
+Map<String, ShotAssetBinding>? assetBindings,
     String? sceneId,
     String? beatId,
     String? cameraMove,
@@ -2822,6 +3004,10 @@ class StudioShot {
     List<CombatStep>? combatSteps,
     ShotContinuity? continuity,
     ShotGenerationStatus? status,
+    String? videoMode,
+    String? videoPrompt,
+    String? aspectRatio,
+    String? resolution,
   }) {
     return StudioShot(
       number: number ?? this.number,
@@ -2834,6 +3020,7 @@ class StudioShot {
       voiceType: voiceType ?? this.voiceType,
       characterIds: characterIds ?? this.characterIds,
       characterVariations: characterVariations ?? this.characterVariations,
+      assetBindings: assetBindings ?? this.assetBindings,
       sceneId: sceneId ?? this.sceneId,
       beatId: beatId ?? this.beatId,
       cameraMove: cameraMove ?? this.cameraMove,
@@ -2850,6 +3037,10 @@ class StudioShot {
       combatSteps: combatSteps ?? this.combatSteps,
       continuity: continuity ?? this.continuity,
       status: status ?? this.status,
+      videoMode: videoMode ?? this.videoMode,
+      videoPrompt: videoPrompt ?? this.videoPrompt,
+      aspectRatio: aspectRatio ?? this.aspectRatio,
+      resolution: resolution ?? this.resolution,
     );
   }
 
@@ -2864,6 +3055,10 @@ class StudioShot {
     if (voiceType != UtteranceVoiceType.dialogue) 'voice_type': voiceType.id,
     'character_ids': characterIds,
     'character_variations': characterVariations,
+    // 空绑定不写盘：让 JSON 保持干净，也让「未声明」与「声明了但全默认」
+    // 在磁盘上可区分。
+    if (assetBindings.isNotEmpty)
+      'asset_bindings': assetBindings.map((k, v) => MapEntry(k, v.toJson())),
     'scene_id': sceneId,
     if (beatId.isNotEmpty) 'beat_id': beatId,
     'camera_move': cameraMove,
@@ -2881,6 +3076,10 @@ class StudioShot {
       'combat_steps': combatSteps.map((s) => s.toJson()).toList(),
     'continuity': continuity.toJson(),
     'status': status.id,
+    'video_mode': videoMode,
+    if (videoPrompt.isNotEmpty) 'video_prompt': videoPrompt,
+    if (aspectRatio != null && aspectRatio!.isNotEmpty) 'aspect_ratio': aspectRatio,
+    if (resolution != null && resolution!.isNotEmpty) 'resolution': resolution,
   };
 
   static StudioShot fromJson(Map<String, dynamic> json) {
@@ -2900,6 +3099,17 @@ class StudioShot {
           (json['character_ids'] as List?)?.cast<String>() ?? const [],
       characterVariations: (json['character_variations'] as Map?)?.map(
             (k, v) => MapEntry(k as String, v as String),
+          ) ??
+          const {},
+      // 旧 JSON 没有这个字段 → 空绑定。刻意不做自动推导：那会把「程序猜」这条
+      // 我们正要消除的行为固化下来（spec: 不做旧数据迁移）。
+      assetBindings: (json['asset_bindings'] as Map?)?.map(
+            (k, v) => MapEntry(
+              k as String,
+              v is Map
+                  ? ShotAssetBinding.fromJson(v.map((k2, v2) => MapEntry(k2 as String, v2)))
+                  : const ShotAssetBinding(),
+            ),
           ) ??
           const {},
       sceneId: json['scene_id'] as String? ?? '',
@@ -2928,6 +3138,10 @@ class StudioShot {
               continuityRaw.map((k, v) => MapEntry(k as String, v)))
           : ShotContinuity.empty,
       status: ShotGenerationStatus.fromId(json['status'] as String?),
+      videoMode: json['video_mode'] as String? ?? 'auto',
+      videoPrompt: json['video_prompt'] as String? ?? '',
+      aspectRatio: json['aspect_ratio'] as String?,
+      resolution: json['resolution'] as String?,
     );
   }
 }
@@ -2967,6 +3181,15 @@ class ShotContinuity {
   /// 机位处于动作轴线侧（例如：A侧、B侧，遵循180度轴线法则）。
   final String cameraAxis;
 
+  /// 机位垂直俯仰角（如 high_angle 俯拍、low_angle 仰拍、eye_level 平视）。
+  final String cameraAngle;
+
+  /// 空间垂直高度层级（如 ground, balcony_2f, rooftop, mid_air 等）。
+  final String elevationLevel;
+
+  /// 视线目标对象或地标描述（如 Jiang Qiye on street below）。
+  final String gazeTarget;
+
   /// 动态末态（支撑脚平衡、速度矢量、未完成动作相位）。
   final DynamicExitState dynamicExitState;
 
@@ -2979,6 +3202,9 @@ class ShotContinuity {
     this.stateChanges = const [],
     this.gazeDirection = '',
     this.cameraAxis = '',
+    this.cameraAngle = '',
+    this.elevationLevel = '',
+    this.gazeTarget = '',
     this.dynamicExitState = DynamicExitState.empty,
   });
 
@@ -2999,6 +3225,9 @@ class ShotContinuity {
       stateChanges.isEmpty &&
       gazeDirection.isEmpty &&
       cameraAxis.isEmpty &&
+      cameraAngle.isEmpty &&
+      elevationLevel.isEmpty &&
+      gazeTarget.isEmpty &&
       dynamicExitState.isEmpty;
 
   ShotContinuity copyWith({
@@ -3010,6 +3239,9 @@ class ShotContinuity {
     List<String>? stateChanges,
     String? gazeDirection,
     String? cameraAxis,
+    String? cameraAngle,
+    String? elevationLevel,
+    String? gazeTarget,
     DynamicExitState? dynamicExitState,
   }) {
     return ShotContinuity(
@@ -3021,6 +3253,9 @@ class ShotContinuity {
       stateChanges: stateChanges ?? this.stateChanges,
       gazeDirection: gazeDirection ?? this.gazeDirection,
       cameraAxis: cameraAxis ?? this.cameraAxis,
+      cameraAngle: cameraAngle ?? this.cameraAngle,
+      elevationLevel: elevationLevel ?? this.elevationLevel,
+      gazeTarget: gazeTarget ?? this.gazeTarget,
       dynamicExitState: dynamicExitState ?? this.dynamicExitState,
     );
   }
@@ -3034,6 +3269,9 @@ class ShotContinuity {
     'state_changes': stateChanges,
     if (gazeDirection.isNotEmpty) 'gaze_direction': gazeDirection,
     if (cameraAxis.isNotEmpty) 'camera_axis': cameraAxis,
+    if (cameraAngle.isNotEmpty) 'camera_angle': cameraAngle,
+    if (elevationLevel.isNotEmpty) 'elevation_level': elevationLevel,
+    if (gazeTarget.isNotEmpty) 'gaze_target': gazeTarget,
     if (dynamicExitState.isNotEmpty)
       'dynamic_exit_state': dynamicExitState.toJson(),
   };
@@ -3049,6 +3287,9 @@ class ShotContinuity {
           (json['state_changes'] as List?)?.cast<String>() ?? const [],
       gazeDirection: json['gaze_direction'] as String? ?? '',
       cameraAxis: json['camera_axis'] as String? ?? '',
+      cameraAngle: json['camera_angle'] as String? ?? '',
+      elevationLevel: json['elevation_level'] as String? ?? '',
+      gazeTarget: json['gaze_target'] as String? ?? '',
       dynamicExitState: json['dynamic_exit_state'] is Map
           ? DynamicExitState.fromJson(
               (json['dynamic_exit_state'] as Map).map((k, v) => MapEntry(k as String, v)))
@@ -3440,7 +3681,7 @@ class StudioPromptTemplate {
     );
   }
 
-  /// 5 套核心内置出厂模板定义（纯中文自然语言，对齐 Agnes 规范）。
+  /// 核心内置出厂模板定义（覆盖资产、编剧、拆镜、编舞、视频提示词重写与质检自愈）。
   static List<StudioPromptTemplate> get builtinPresets => [
     StudioPromptTemplate(
       id: 'character_turnaround',
@@ -3489,8 +3730,98 @@ class StudioPromptTemplate {
       updatedAt: DateTime(2026, 10, 20),
     ),
     StudioPromptTemplate(
+      id: 'novel_master_extraction',
+      name: '小说母本资产提取规范',
+      category: 'AI编剧与改编规范',
+      description: '约束小说原著全案提炼：时代题材、世界观、美学风格与词组、核心登场角色（五官容貌与默认服饰）及常驻纯净场景。',
+      defaultContent:
+          '你是一位资深网络文学影视化与爆款短剧 IP 改编架构师。你的任务是从用户给出的长篇小说原著内容中，提炼出可以直接指导短视频制作的核心 IP 主库资产。\n\n'
+          '【核心提取要求】\n'
+          '1. worldview：提炼时代背景、核心规则矛盾、生存利益冲突与叙事主调，控制在 300 字以内。\n'
+          '2. era_genre：根据小说题材与年代，从题材枚举中严格选择最贴合的一项。\n'
+          '3. aesthetic_style：根据故事基调与视觉定位，选择最贴合的工业级美学风格。\n'
+          '4. style_tokens：输出正向风格词组（如 UE5渲染、3D国漫、次世代CG、PBR物理材质、东方仙侠美学、体积光、自然光影）。\n'
+          '5. characters：提炼小说中最关键的 2 到 6 位核心登场角色：\n'
+          '   - 容貌体态原生细致描写（facial_features_zh）：保留明确年龄数字或阶段，仅限五官长相、神态、发型、体格身材，剔除服装配饰；\n'
+          '   - 默认服装装束（default_attire_zh）：服装形制、面料质感、颜色、腰带、长靴与随身标志性配饰，严禁下半身留空；\n'
+          '   - 全身综合描写（description_zh）：完整容貌与服饰统一描写；\n'
+          '   - 性格与身份设定（personality）。\n'
+          '6. scenes：提炼 2 到 6 个核心常驻场景（纯净物理空镜底板）：\n'
+          '   - 场景仅作为舞台物理空间底板，严禁描写任何具体人物姓名、人群聚集或剧情走位；\n'
+          '   - 纯粹描写建筑形制格局、空间进深、家具陈设、光影色温与空间材质。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'novel_episode_segmentation',
+      name: '小说智能分集大纲规范',
+      category: 'AI编剧与改编规范',
+      description: '约束长篇小说戏剧分集：8~20集短剧规划、尊重人设拒绝低俗受辱套路、影视化大纲、前情记忆摘要与集尾悬念卡点。',
+      defaultContent:
+          '你是一位专精于网络文学影视化改编与叙事架构的资深分集编剧。你的任务是通读小说剧情主线，将原著有机拆解为节奏鲜明、戏剧钩子清晰的分集大纲。\n\n'
+          '【核心原则：尊重原著人设与调性】\n'
+          '1. 忠实保留原著主角的人物性格神韵（松弛从容、幽默机智、腹黑毒舌或爽文反套路），严禁套用“开局必须憋屈受辱”等低俗刻板模板！\n'
+          '2. 分集标题（title）：提炼核心事件或人物交锋（10字以内），杜绝低俗流水线起名。\n'
+          '3. 影视大纲（synopsis）：80~150字，清晰交代人物动机、交锋过程与高潮转折。\n'
+          '4. 前情摘要（summary）：150字以内，客观沉淀核心剧情，供下游跨集连贯性注入。\n'
+          '5. 悬念留钩（hook）：本集结尾截断点的悬念钩子（60字以内，身份即将揭晓、意想不到的反转）。\n'
+          '6. 规划 8 到 20 集短剧，首集自然入戏并交代核心看点，尾集给出阶段性闭环。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'novel_chapter_adaptation',
+      name: '单章小说剧本与大纲改编规范',
+      category: 'AI编剧与改编规范',
+      description: '约束单章原著深度提炼：四阶段影视化大纲（开局入戏、矛盾递进、核心高潮、本集断点）、前情摘要与悬念留钩。',
+      defaultContent:
+          '你是一位专精于网络文学影视化改编的资深编剧。你的任务是通读单章小说完整内容，依据影视叙事规律提炼结构化单集影视大纲。\n\n'
+          '【核心结构：四大戏剧阶段】\n'
+          '1. title: 拟定契合小说原味的单集标题（10字以内）。\n'
+          '2. synopsis: 本集影视化完整粗大纲（300到500汉字），必须完整覆盖全章剧情脉络：\n'
+          '   - 【开局入戏】：开场交代的环境、角色初始状态与初发事件；\n'
+          '   - 【矛盾递进】：人物对话交锋、线索交织与行动过程；\n'
+          '   - 【核心高潮】：本章情绪与戏剧张力最强的高光爆发事件；\n'
+          '   - 【本集断点】：章末扣人心弦的转折或悬念。\n'
+          '3. summary: 本集精炼前情摘要（150字以内，客观交代本集核心剧情沉淀）。\n'
+          '4. hook: 本集结尾截断留钩（50字以内，突出未解之谜或即将爆发的悬念）。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'screenplay_generation',
+      name: '影视分场剧本扩写规范',
+      category: 'AI编剧与改编规范',
+      description: '约束将剧情大纲扩写为影视工业标准分场文学剧本：场次三要素（时段/内外景/空间地标）、对白潜台词、微动作与事实保护。',
+      defaultContent:
+          '你是一位专精于网络文学影视化与影视文学剧本的资深编剧兼导演。你的任务是将故事大纲改编为符合影视工业规范的【标准分场剧本】。\n\n'
+          '【核心原则】\n'
+          '1. 尊重原著人物性格与爽点逻辑，杜绝刻板受辱套路，保留主角心理从容与幽默反差。\n'
+          '2. 原生支持内心独白：将角色关键思考与吐槽明确标记为 voice_type: "inner_voice"，让故事因果清晰、动机分明。\n'
+          '3. 影视导演级视听语法推导：每个动作节拍（beat）依据戏剧冲突与空间物理动势，自主推导景别（shot_size）、机位视角高度（camera_staging）、运镜动态轨迹（camera_move）、构图站位（screen_position）与视线正反打（gaze_direction）。\n'
+          '4. 场次规划：按物理空间划分场次（Scene），明确内外景、时段、光影氛围与空间地标。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'script_breakdown_5d',
+      name: '剧本到分镜 5D 拆解规范',
+      category: '导演调度规范',
+      description: '约束单集拆镜时的 5 大核心视听语法：单镜单动词、主体聚焦与背景简化、单一运镜禁止复合、视听节奏与剪辑点、内心独白画外音全员闭口。',
+      defaultContent:
+          '分镜必须遵循专业影视视听语言与五维导演决策，严格落实【5 大视听铁律】：\n\n'
+          '【铁律一：单镜单动作原则】\n'
+          '一个镜头内严禁堆叠“奔跑、拔剑、转身、跳跃、落地”等多个复合动作！复杂戏码必须拆解为连续镜头（例如：镜头1奔跑停步 -> 镜头2拔剑蓄力 -> 镜头3破空出招），每个镜头只承载一个主要动词与清晰受力反馈。\n\n'
+          '【铁律二：画面主体绝对聚焦】\n'
+          '画面严禁多人、烟雾、复杂背景同时抢眼抢焦点。必须主体明确、背景适度虚化简化，动作有明确的交互对象（如先拍递信中景，背景简化，信封作为明确受力对象）。\n\n'
+          '【铁律三：单一明确运镜调度】\n'
+          '单镜头只允许一种主要运镜轨迹（如缓慢推进 slow_push_in 或 定机位 static）。严禁同时堆砌斜向环绕、快速推进、横摇与变焦！需要机位变化时必须切镜。\n\n'
+          '【铁律四：影视视听节奏与长短交替】\n'
+          '严禁全片固定景别与固定时长。必须依据戏剧重音交替运用景别与节奏（如：中景交代动作 -> 特写揭示信物/兵器 -> 近景拍人物反应），按台词与动作完成点精确剪辑。\n\n'
+          '【铁律五：内心独白全员闭口与肉身在场守卫】\n'
+          '• 严禁幽灵角色：仅在内心独白、回忆闪回或台词提及的第三人绝对严禁填入出场角色 character_ids！\n'
+          '• 内心独白（inner_voice）为纯粹画外音心声，画面主体与同框在场全员嘴唇全程严密闭合，不张嘴、不说话、无口型变化，全员展现沉思或微表情神态。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
       id: 'director_breakdown_5d',
-      name: '五维导演决策与拆镜规范',
+      name: '五维导演决策调度规范',
       category: '导演调度规范',
       description: '指导 AI 拆解分镜时的五维导演调度原则（动势、光影、光学机位四段式、时间演变、美学质感）。',
       defaultContent:
@@ -3501,6 +3832,60 @@ class StudioPromptTemplate {
           '4. temporal_evolution（起手/接触/余势动作相位与读时负荷）；\n'
           '5. aesthetic_texture（质感微粒与美学媒介风格）。',
       updatedAt: DateTime(2026, 10, 20),
+    ),
+    StudioPromptTemplate(
+      id: 'action_combat_breakdown',
+      name: '打斗与攻防动作拆解规范',
+      category: '导演调度规范',
+      description: '约束武打与攻防动作戏的拆镜：六步攻防因果链（意图/攻击/阻击/受力/位移/接力）、3~4招连续接力组、支撑脚与速度矢量末态。',
+      defaultContent:
+          '你是一位专精于高武修仙、武侠打斗与激烈追逐的动作导演兼动作编舞师。\n\n'
+          '【核心禁令】严禁“打一招停一下”的回合制摆姿势！上一招余势未尽，下一招反制、变线或接力必须已经启动！\n\n'
+          '【攻防因果与六步链】\n'
+          '以 3 到 4 个分镜构成一个连续接力攻击组。每个动作分镜在 combat_steps 中严格落实六步因果链：\n'
+          '1. intent: 本动作用意（虚招佯攻、破防刺杀、下盘扫击）；\n'
+          '2. attack: 起手动作与兵器路线；\n'
+          '3. defense: 对方应对与阻击（滑步后仰、横刀格挡、侧身避让）；\n'
+          '4. impact: 接触与受力失衡反馈（金铁交鸣火星溅射、虎口震颤）；\n'
+          '5. displacement: 受力位移与空间形变；\n'
+          '6. next_link: 下一招接力方向（承接上一招余势，不提前完成后招）。\n'
+          '同时填充支撑脚、速度矢量与动态末态，确保生成视频时动作矢量连续。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'video_prompt_rewrite',
+      name: 'AI 视频提示词精炼与冲突消解规范',
+      category: 'AI视频生成规范',
+      description: '专门针对视频生成模型（如 Agnes Video 2.5 Flash）的提示词重写规范：消解场景二选一冲突（地牢 vs 衙门）、氛围光影打架（黄昏残阳 vs 地牢火把）、运镜冲突（推镜 vs 定机位）、单镜 180° 轴线无效指令，并消除括号机器标记，点名全员下达画外音闭口守卫，锁定动作—台词因果时序。',
+      defaultContent:
+          '你是一位资深 AI 视频生成 Prompt 调优专家。你的任务是将分镜的画面描述、微动作、摄影运镜与环境光影精炼为最适合主流视频大模型（如 Agnes Video 2.5 Flash / Sora / Kling）执行的高保真视频提示词。\n\n'
+          '【四大致命冲突消解铁律】\n'
+          '1. 场景唯一性：彻底消除二选一冲突（例如写了地牢又写衙门口），统一到当前镜头摄像机所处的唯一起点物理空间。\n'
+          '2. 氛围与光照统一：彻底消除互斥光源与情绪（例如地牢火把与黄昏残阳如血打架、温馨与阴森压抑打架），确定单一主导光影与基调色温。\n'
+          '3. 运镜唯一性：单镜头只保留一种核心运镜轨迹！推镜（push in）严禁与定机位（static）同时出现，剔除矛盾镜头指令。\n'
+          '4. 剔除无效多镜剪辑指令：单镜头不需要 180° 轴线同轴关系说明，彻底剔除单镜无法执行的剪辑规则，节省模型注意力。\n'
+          '5. 因果时序唯一性：反应性台词（对另一角色动作的回应、喝止、怒斥）必须晚于其触发动作！严禁将台词前移至触发动作之前（例如“甲拱手离去，乙在背后喝骂”绝不可写成乙先骂、甲再走）。同一镜头内不同主体的动作必须保留先后次序，严禁合并为同时发生。若原始提示词含【因果时间轴】段，其秒数区间与先后顺序必须原样保留，不得改写为同时发生。\n\n'
+          '【角色发声与画外心声守卫】\n'
+          '1. 严禁使用中括号机器标记（如 `[角色内心独白/心声]`），大模型极易误识别为台词。\n'
+          '2. 若为内心独白（内心 OS / 心声 / 旁白）：直接采用正向画外音自然语言描述，并必须显式点名在场全员（例如：“画外音心声。画面中姜七夜、老王等全员嘴唇全程严密闭合，不张嘴，无口型变化，绝对不说话，无字幕，全员保持沉思微神态”），杜绝配角误张嘴开口抢话！\n'
+          '3. 若为普通对白：明确指出仅说话角色随台词自然开合嘴型，其余倾听者保持闭口倾听。',
+      updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'director_audit_auto_fix',
+      name: '导演质检问题一键 AI 自动修复规范',
+      category: '导演调度规范',
+      description: '约束根据导演质检报告中的违规项（C1~C10 违规，如动作堆叠、主体不清、机位冲突、台词过长、角色漂移等）对分镜执行精准修补。',
+      defaultContent:
+          '你是一位资深影视导演兼分镜监制。你的任务是根据分镜质检引擎给出的违规诊断清单（包含但不限于 C1 动作堆叠、C2 主体不清、C3 机位冲突、C4 角色漂移、C5 表演过满、C6 节奏单一、C7 台词超长、C8 幽灵角色在场、C9 视线穿帮、C10 运镜与动作超载等），对问题分镜实施精准修正。\n\n'
+          '【修复原则】\n'
+          '1. 保持剧情骨干与核心事件 100% 保真，不擅自删减核心剧情。\n'
+          '2. 动作过载时：将复合动作精简为当前镜头最核心的主干微动作，剔除多余次生动作。\n'
+          '3. 运镜与机位冲突时：以动态运镜为准，剔除矛盾的定机位或多重移动。\n'
+          '4. 幽灵角色时：剔除仅在心声、旁白或对话中被提及的第三人，确保出场角色只有肉身在场者。\n'
+          '5. 心声导致配角抢开口时：补全全员闭口守卫指令。\n'
+          '6. 输出修补后的分镜完整字段，直接替换问题分镜。',
+      updatedAt: DateTime(2026, 10, 21),
     ),
   ];
 }
