@@ -80,6 +80,6 @@
 - [x] 10.1 更新 `test/ai_video_studio_prompt_assembler_test.dart` 中受 `<Picture N>` 与 `{{ref N}}` 统一影响的断言
 - [x] 10.2 更新 `test/ai_video_studio_adapter_test.dart` 中依赖静默截断的断言
 - [x] 10.3 跑 `test/ai_video_studio_prompt_assembler_test.dart`、`test/tools/ai_video_studio/shot_causality_ordering_test.dart`、`test/tools/ai_video_studio/director_validation_causality_test.dart`、`test/ai_video_studio_ffmpeg_test.dart`、`test/agnes_studio_pipeline_test.dart`，确认无回归
-- [ ] 10.4 全量 `flutter test`，确认无新增失败
+- [x] 10.4 全量 `flutter test`，确认无新增失败
 - [x] 10.5 `flutter analyze lib/` 确认 0 error
 - [x] 10.6 归档前 `openspec validate unify-reference-material-binding-and-spatial-narrative --strict` 通过
