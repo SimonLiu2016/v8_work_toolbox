@@ -260,9 +260,12 @@ void main() {
         materials: materials,
       );
 
-      // 动作行归姜七夜（<Picture 1>），台词行归老王（<Picture 2>）。
-      expect(prompt.contains('姜七夜拱手一拜转身牵驴离去（<Picture 1>）'), isTrue);
-      expect(prompt.contains('台词（2.0s）（<Picture 2>）'), isTrue);
+      // 编号行内前置：紧贴主体名之后，不挂时间段末尾（spec: 编号紧贴主体）。
+      expect(prompt.contains('姜七夜（<Picture 1>）拱手一拜转身牵驴离去'), isTrue);
+      // 台词行经 cleanDialogueForSpeech 剥离了「老王：」前缀，文本里已无角色名，
+      // 于是走兜底主体（按说话人解析出的老王）标在行内。
+      expect(prompt.contains('台词（2.0s）：'), isTrue);
+      expect(prompt.contains('<Picture 2>'), isTrue);
     });
 
     test('已绑定素材的角色不再重复静态外貌长文', () {
@@ -307,8 +310,9 @@ void main() {
         materials: materials,
       );
 
-      expect(result.positive.contains('动作：姜七夜拱手一拜（<Picture 1>）'), isTrue);
-      expect(result.positive.contains('对白：告辞。（<Picture 1>）'), isTrue);
+      expect(result.positive.contains('动作：姜七夜（<Picture 1>）拱手一拜'), isTrue);
+      expect(result.positive.contains('对白：告辞。'), isTrue);
+      expect(result.positive.contains('姜七夜（<Picture 1>）'), isTrue);
     });
   });
 

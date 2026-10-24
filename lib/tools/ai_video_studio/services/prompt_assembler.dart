@@ -975,6 +975,40 @@ abstract final class PromptAssembler {
     return text.trim();
   }
 
+  /// 从台词文本中解析情绪语气提示（spec: 分镜台词语气来源）。
+  ///
+  /// AI 拆镜模板要求 dialogue「在需要时加入情绪语气提示（例如"（压低声音，
+  /// 咬牙）你找死！（预估2秒）"）」，所以语气数据本来就在台词里——只是
+  /// [cleanDialogueForSpeech] 把它当杂质剥掉后扔了，从未送进提示词编译。
+  /// 这里把它接回来。
+  ///
+  /// 只认**首个括号**且不含时长注记的内容，长度 ≤ 12 字：
+  /// - `（压低声音，咬牙）你找死！（预估2秒）` → `压低声音，咬牙`
+  /// - `你站住！（预估1.5秒）` → 空串（括号里是注记，不是语气）
+  /// - `（起身）` → 空串（纯动作提示，不是情绪）
+  ///
+  /// 解析不到返回空串，调用方 SHALL NOT 填默认值——语气是可选修饰，
+  /// 没有它 prompt 照样成立，而错语气（如用画面氛围顶替）比没语气更糟。
+  static String extractDialogueTone(String dialogue) {
+    if (dialogue.trim().isEmpty) return '';
+    final trimmed = dialogue.trim();
+
+    // 取第一个中文/英文括号的內容。
+    final match = RegExp(r'[（(]([^）)]*)[）)]').firstMatch(trimmed);
+    if (match == null) return '';
+    var inner = (match.group(1) ?? '').trim();
+    if (inner.isEmpty) return '';
+
+    // 时长注记不是语气。
+    if (inner.contains('预估') || RegExp(r'[\d.]+\s*秒').hasMatch(inner)) {
+      return '';
+    }
+    // 过长的一般是场景/动作说明，不是语气短语。
+    if (inner.length > 12) return '';
+
+    return inner;
+  }
+
   /// 从台词头部结构精准提取真实说话人姓名。
   ///
   /// 例如：
@@ -1036,7 +1070,11 @@ abstract final class PromptAssembler {
     // 图有名字、有编号，编号在动作行与台词行复现（见下面的出场人物与时间轴）。
     final refLines = <String>[];
     for (final m in materials) {
-      refLines.add('${m.pictureTag} = ${m.assetName}（${m.roleLabel}）');
+      // 场景参考图必须显式声明「不作人脸参考」——reference 模式的图多数是人物
+      // 三视图，模型容易把场景底图也当人脸图刷，结果背景不生效、画面里乱长脸
+      // （spec: 场景参考图显式声明用途）。
+      final usage = m.isScene ? '场景，仅作环境空间参考，不作为人物人脸参考' : m.roleLabel;
+      refLines.add('${m.pictureTag} = ${m.assetName}（$usage）');
     }
     // 音频参考与图片参考各自独立编号（spec: 音频参考契约）。
     for (var i = 0; i < audioReferences.length; i++) {
@@ -1102,8 +1140,11 @@ abstract final class PromptAssembler {
         final listenerGuard = otherChars.isNotEmpty
             ? '；同框倾听者（${otherChars.join('、')}）保持自然闭口倾听，不说话不张嘴'
             : '';
-        final moodLabel = ShotMood.fromId(shot.mood).label;
-        final toneHint = moodLabel.isNotEmpty ? '，语气：$moodLabel' : '';
+        // 语气只来自台词本身，绝不拿画面氛围（mood）顶替——氛围描写场景基调，
+        // 语气描述人物情绪，二者混用会产出「语气：温馨」配怒斥台词这种矛盾。
+        // 解析不到就省略，留白好过错语气（spec: 分镜台词语气来源）。
+        final tone = extractDialogueTone(dialogue);
+        final toneHint = tone.isNotEmpty ? '，语气：$tone' : '';
         dialogueSection =
             '正向对白约束：$speakerLabel（“$cleanSpeech”）$toneHint。说话者嘴唇随台词自然开合，口型发音对齐，声画一体$listenerGuard。';
       }
@@ -1397,25 +1438,55 @@ abstract final class PromptAssembler {
       shot.dialogue, materials,
     );
     final fallbackSubject = materials.where((m) => !m.isScene).firstOrNull;
-    String tagOf(ResolvedAssetMaterial? m) => m == null ? '' : '（${m.pictureTag}）';
+
+    // 素材编号紧贴主体名（spec: 编号紧贴主体，不挂时间段末尾）。
+    /// 把动作/台词文本里出现的每个角色名后插入其编号。
+    ///
+    /// 同镜多主体时按出现次序各自插入——「姜七夜（<Picture 1>）拱手一拜，
+    /// 转身牵驴走出衙门，老王（<Picture 2>）在背后跳脚」。这样读起来是
+    /// 「谁（用哪张图）做什么」，而不是「做了什么（用这张图）」——后者会被
+    /// 理解成该时段只锁定这一张图。
+    String injectTags(String text, ResolvedAssetMaterial? fallback) {
+      if (materials.isEmpty) return text;
+      // 只对角色素材插编号，且按名字长度降序避免「老王」抢先匹配「老王头」。
+      final roleMats = materials.where((m) => !m.isScene).toList()
+        ..sort((a, b) => b.assetName.length.compareTo(a.assetName.length));
+      if (roleMats.isEmpty) return text;
+
+      var out = text;
+      for (final m in roleMats) {
+        if (out.contains('${m.assetName}（${m.pictureTag}）')) continue;
+        out = out.replaceAll(
+          m.assetName,
+          '${m.assetName}（${m.pictureTag}）',
+        );
+      }
+      // 一个角色都没匹配上时，用兜底主体标在整行头部。
+      final matchedAny = roleMats.any((m) => out.contains(m.pictureTag));
+      if (!matchedAny && fallback != null) {
+        return '${fallback.pictureTag} $out';
+      }
+      return out;
+    }
 
     final parts = <String>[];
     if (action.isNotEmpty) {
-      final m = actionSubject ?? fallbackSubject;
-      parts.add('$actionPhase $action${tagOf(m)}');
+      parts.add('$actionPhase ${injectTags(action, actionSubject ?? fallbackSubject)}');
     }
     if (hasDialogue && dialoguePhase.isNotEmpty) {
-      final m = dialogueSubject ?? fallbackSubject;
-      parts.add('$dialoguePhase 台词（${_dialogueSecLabel(shot)}）${tagOf(m)}');
+      final clean = cleanDialogueForSpeech(shot.dialogue);
+      final tagged = injectTags(clean, dialogueSubject ?? fallbackSubject);
+      parts.add('$dialoguePhase 台词（${_dialogueSecLabel(shot)}）：$tagged');
     }
     if (parts.isEmpty) return '';
 
     final timeline = parts.join(' → ');
 
-    // temporalEvolution 解析不出秒数时不丢弃原文——它是作者对相位的唯一描述，
-    // 对模型仍有约束力。
-    if (temporal.isNotEmpty) {
-      return '$timeline。相位说明：$temporal';
+    // 只有解析出显式秒数分界时，才把相位信息附给模型看（spec: 无法解析秒数的
+    // 相位描述不进提示词）。temporalEvolution 是 AI 自由文本，十句里九句不含
+    // 可解析秒数——把那九句原样塞进去只是噪声，模型不读，人看冗余。
+    if (phaseSplit != null) {
+      return '$timeline。相位：前 ${phaseSplit.toStringAsFixed(1)} 秒为动作相位';
     }
     return timeline;
   }
@@ -1741,27 +1812,25 @@ abstract final class PromptAssembler {
   /// 谁在动，给错编号比不给更糟（那会让模型把动作安到另一个人身上）。
   /// 台词行额外尝试按说话人匹配：说话人能从台词前缀解析出来时，即使该镜有
   /// 多个角色也能确定归属。
-  static String _segmentTagFor(
-    SegmentShotParts shot,
+  /// 把文本里出现的角色名后插入素材编号（spec: 编号紧贴主体）。
+  ///
+  /// 与分镜级的 [PromptAssembler.buildShotCausalityTimeline] 内联逻辑同一套
+  /// 规则：按名字长度降序插入，避免「老王」抢先匹配「老王头」；已插过的跳过。
+  static String _injectSegmentTags(
     String text,
     List<ResolvedAssetMaterial> materials,
   ) {
-    if (materials.isEmpty) return '';
-    final isDialogue = text.trim() == shot.dialogue.trim();
-    if (isDialogue) {
-      final speaker = PromptAssembler.extractSpeakerName(shot.dialogue);
-      if (speaker.isNotEmpty) {
-        final m = materials.where((e) => !e.isScene && e.assetName == speaker).firstOrNull;
-        if (m != null) return '（${m.pictureTag}）';
-      }
+    if (materials.isEmpty || text.trim().isEmpty) return text;
+    final roleMats = materials.where((m) => !m.isScene).toList()
+      ..sort((a, b) => b.assetName.length.compareTo(a.assetName.length));
+    if (roleMats.isEmpty) return text;
+
+    var out = text;
+    for (final m in roleMats) {
+      if (out.contains('${m.assetName}（${m.pictureTag}）')) continue;
+      out = out.replaceAll(m.assetName, '${m.assetName}（${m.pictureTag}）');
     }
-    // 该镜只有一个出场角色 → 归属明确。
-    final shotCharIds = shot.characterIds.where((id) => materials.any((m) => m.assetId == id)).toList();
-    if (shotCharIds.length == 1) {
-      final idx = materials.indexWhere((e) => e.assetId == shotCharIds.first);
-      if (idx >= 0) return '（${materials[idx].pictureTag}）';
-    }
-    return '';
+    return out;
   }
 
   /// 组装一条片段视频提示词（spec: 片段提示词组装）。
@@ -2019,16 +2088,16 @@ abstract final class PromptAssembler {
 
       final rawDialogue = shot.dialogue.trim();
       // 台词行带秒数标注：让模型知道这句话要占掉区间里的一段，而不是瞬间说完。
+      // 编号行内插入，不挂行尾（spec: 编号紧贴主体）。
       final dialogueLine = rawDialogue.isEmpty
           ? ''
-          : '  对白：${cleanDialogueForSpeech(rawDialogue)}'
-              '${_segmentTagFor(shot, rawDialogue, materials)}';
+          : '  对白：${_injectSegmentTags(cleanDialogueForSpeech(rawDialogue), materials)}';
 
       if (act.isEmpty && dialogueLine.isEmpty) continue;
 
       timelineBuffer.writeln('$range 镜号 ${shot.number}：');
       if (act.isNotEmpty) {
-        timelineBuffer.writeln('  动作：$act${_segmentTagFor(shot, act, materials)}');
+        timelineBuffer.writeln('  动作：${_injectSegmentTags(act, materials)}');
       }
       if (dialogueLine.isNotEmpty) timelineBuffer.writeln(dialogueLine);
     }

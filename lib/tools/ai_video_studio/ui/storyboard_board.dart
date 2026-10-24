@@ -209,10 +209,11 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     final episode = _episode;
     final series = widget.session.series;
     if (episode == null || series == null) return;
-    if (episode.scenes.isEmpty || episode.scenes.every((s) => s.beats.isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前剧本没有场次或节拍，请先在剧本工作台添加节拍')),
-      );
+    if (episode.scenes.isEmpty ||
+        episode.scenes.every((s) => s.beats.isEmpty)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前剧本没有场次或节拍，请先在剧本工作台添加节拍')));
       return;
     }
 
@@ -226,13 +227,17 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
         seriesId: series.id,
         episode: episode,
       );
-      final refreshedEp = _manager.readEpisode(series.id, episode.id) ?? episode;
+      final refreshedEp =
+          _manager.readEpisode(series.id, episode.id) ?? episode;
       final newShots = AiConstraintEngine.convertScenesToShots(
         refreshedEp.scenes,
         characters: _characters,
         sceneCards: updatedCards,
       );
-      final segments = StudioEpisode.buildSegmentsFromScenes(refreshedEp.scenes, newShots);
+      final segments = StudioEpisode.buildSegmentsFromScenes(
+        refreshedEp.scenes,
+        newShots,
+      );
       final updated = refreshedEp.copyWith(
         shots: newShots,
         segments: segments,
@@ -244,9 +249,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       _summarizeEpisode(updated);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已从剧本成功生成 ${newShots.length} 个5D分镜！'),
-          ),
+          SnackBar(content: Text('已从剧本成功生成 ${newShots.length} 个5D分镜！')),
         );
       }
     } catch (e) {
@@ -264,7 +267,8 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   Future<void> _confirmAndReBreakdownFromScreenplay() async {
     final episode = _episode;
     if (episode == null) return;
-    if (episode.scenes.isEmpty || episode.scenes.every((s) => s.beats.isEmpty)) {
+    if (episode.scenes.isEmpty ||
+        episode.scenes.every((s) => s.beats.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('当前剧本没有场次或节拍，请先在剧本工作台添加节拍或使用 AI 生成剧本')),
       );
@@ -330,7 +334,11 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
         backgroundColor: context.bgCard,
         title: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, size: 20, color: context.errorText),
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 20,
+              color: context.errorText,
+            ),
             const SizedBox(width: 8),
             const Text('清空本集分镜'),
           ],
@@ -376,7 +384,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     _summarizeEpisode(cleared);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_clearSnackbarText(archivedCount, archiveError))),
+        SnackBar(
+          content: Text(_clearSnackbarText(archivedCount, archiveError)),
+        ),
       );
     }
   }
@@ -394,7 +404,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
             Text('删除分镜 #$shotNumber'),
           ],
         ),
-        content: Text('确认删除分镜 #$shotNumber 吗？删除后后续所有分镜镜号将自动向前递减平移，并重新统计所属场次的总时长。'),
+        content: Text(
+          '确认删除分镜 #$shotNumber 吗？删除后后续所有分镜镜号将自动向前递减平移，并重新统计所属场次的总时长。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -417,9 +429,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     _reload();
     _summarizeEpisode(updated);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已删除分镜 #$shotNumber')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已删除分镜 #$shotNumber')));
     }
   }
 
@@ -432,9 +444,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     _reload();
     _summarizeEpisode(updated);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已在分镜 #$shotNumber 后插入新分镜')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已在分镜 #$shotNumber 后插入新分镜')));
     }
   }
 
@@ -467,14 +479,14 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           protectedContract: episode.protectedContract,
         ),
       );
-      final shots = ((result.data['shots'] as List)
-              .cast<Map<String, dynamic>>())
-          .map(StudioShot.fromJson)
-          .toList();
-      final segments = ((result.data['segments'] as List?) ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .map(StudioSegment.fromJson)
+      final shots =
+          ((result.data['shots'] as List).cast<Map<String, dynamic>>())
+              .map(StudioShot.fromJson)
               .toList();
+      final segments = ((result.data['segments'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(StudioSegment.fromJson)
+          .toList();
       final saved = episode.copyWith(
         synopsis: synopsis,
         shots: shots,
@@ -539,12 +551,16 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (character == null) return null;
     final shotVarId = shot.characterVariations[character.id];
     if (shotVarId != null && shotVarId.isNotEmpty) {
-      final found = character.variations.where((v) => v.id == shotVarId).firstOrNull;
+      final found = character.variations
+          .where((v) => v.id == shotVarId)
+          .firstOrNull;
       if (found != null) return found;
     }
     if (episode.variationOverrides.containsKey(character.id)) {
       final epVarId = episode.variationOverrides[character.id];
-      final found = character.variations.where((v) => v.id == epVarId).firstOrNull;
+      final found = character.variations
+          .where((v) => v.id == epVarId)
+          .firstOrNull;
       if (found != null) return found;
     }
     return character.activeVariation;
@@ -643,28 +659,31 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       );
     }
     final primaryChar = shotCharacters.firstOrNull;
-    final primaryVariation =
-        primaryChar != null ? charVariations[primaryChar.id] : null;
+    final primaryVariation = primaryChar != null
+        ? charVariations[primaryChar.id]
+        : null;
 
-    final assembled = PromptAssembler.buildShotPrompt(PromptParts(
-      productionType: series.productionType,
-      styleTokens: series.styleTokens,
-      eraGenre: VisualEraGenre.fromId(series.eraGenre),
-      negativeStyleTokens: series.negativeStyleTokens,
-      shotSize: ShotSizeTokens.of(shot.shotSize),
-      mood: MoodTokens.of(shot.mood),
-      shotFunction: ShotFunctionTokens.of(shot.function),
-      character: primaryChar,
-      variation: primaryVariation,
-      characters: shotCharacters,
-      characterVariations: charVariations,
-      scene: matchedScene,
-      cameraMove: shot.cameraMove,
-      actionZh: shot.actionZh,
-      dialogue: shot.dialogue,
-      voiceType: shot.voiceType,
-      continuity: shot.continuity,
-    ));
+    final assembled = PromptAssembler.buildShotPrompt(
+      PromptParts(
+        productionType: series.productionType,
+        styleTokens: series.styleTokens,
+        eraGenre: VisualEraGenre.fromId(series.eraGenre),
+        negativeStyleTokens: series.negativeStyleTokens,
+        shotSize: ShotSizeTokens.of(shot.shotSize),
+        mood: MoodTokens.of(shot.mood),
+        shotFunction: ShotFunctionTokens.of(shot.function),
+        character: primaryChar,
+        variation: primaryVariation,
+        characters: shotCharacters,
+        characterVariations: charVariations,
+        scene: matchedScene,
+        cameraMove: shot.cameraMove,
+        actionZh: shot.actionZh,
+        dialogue: shot.dialogue,
+        voiceType: shot.voiceType,
+        continuity: shot.continuity,
+      ),
+    );
 
     final shots = episode.shots.toList();
     shots[index] = shot.copyWith(assembledPrompt: assembled.positive);
@@ -707,19 +726,22 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           styleTokens: series.styleTokens,
         ),
       );
-      final updated = _shotFromJson(
-        (result.data['shot'] as Map).map((k, v) => MapEntry(k as String, v)),
-      ).copyWith(
-        // 保留生成产物与已选运镜：重新生成只重写「内容」，不该让用户
-        // 已经生好的关键帧与视频从磁盘上失联。
-        framePath: shot.framePath,
-        clipPath: shot.clipPath,
-        audioPath: shot.audioPath,
-        audioDurationMs: shot.audioDurationMs,
-        bgmPath: shot.bgmPath,
-        status: shot.status,
-        assembledPrompt: shot.assembledPrompt,
-      );
+      final updated =
+          _shotFromJson(
+            (result.data['shot'] as Map).map(
+              (k, v) => MapEntry(k as String, v),
+            ),
+          ).copyWith(
+            // 保留生成产物与已选运镜：重新生成只重写「内容」，不该让用户
+            // 已经生好的关键帧与视频从磁盘上失联。
+            framePath: shot.framePath,
+            clipPath: shot.clipPath,
+            audioPath: shot.audioPath,
+            audioDurationMs: shot.audioDurationMs,
+            bgmPath: shot.bgmPath,
+            status: shot.status,
+            assembledPrompt: shot.assembledPrompt,
+          );
       final episode = _episode;
       if (episode == null) return;
       final shots = episode.shots.toList();
@@ -782,10 +804,12 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       );
     }
     final primaryChar = shotCharacters.firstOrNull;
-    final primaryVariation =
-        primaryChar != null ? charVariations[primaryChar.id] : null;
+    final primaryVariation = primaryChar != null
+        ? charVariations[primaryChar.id]
+        : null;
 
-    final matchedScene = _scenes.where((s) => s.id == shot.sceneId).firstOrNull ??
+    final matchedScene =
+        _scenes.where((s) => s.id == shot.sceneId).firstOrNull ??
         _manager.readScene(series.id, shot.sceneId);
 
     final adapter = await ImageGenAdapterFactory.create();
@@ -866,9 +890,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
         .toList();
 
     if (targetShots.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前场次没有可生成的分镜')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前场次没有可生成的分镜')));
       return;
     }
 
@@ -898,10 +922,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('已将场次 ${segment.id} 内的 $enqueued 个分镜视频任务加入队列（顺序接力生成）'),
-          action: SnackBarAction(
-            label: '查看队列',
-            onPressed: _showQueueDrawer,
-          ),
+          action: SnackBarAction(label: '查看队列', onPressed: _showQueueDrawer),
         ),
       );
     }
@@ -930,14 +951,16 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     final series = widget.session.series;
     if (series == null) return;
     if (episode.shots.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前剧集暂无分镜')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前剧集暂无分镜')));
       return;
     }
 
     final total = episode.shots.length;
-    final generated = episode.shots.where((s) => s.clipPath != null && s.clipPath!.isNotEmpty).length;
+    final generated = episode.shots
+        .where((s) => s.clipPath != null && s.clipPath!.isNotEmpty)
+        .length;
     final pending = total - generated;
 
     bool skipExisting = true;
@@ -959,21 +982,25 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('当前剧集共有 ${episode.scenes.isNotEmpty ? episode.scenes.length : episode.segments.length} 个场次，包含 $total 个原子分镜（已生成 $generated 个，未生成 $pending 个）。'),
+                  Text(
+                    '当前剧集共有 ${episode.scenes.isNotEmpty ? episode.scenes.length : episode.segments.length} 个场次，包含 $total 个原子分镜（已生成 $generated 个，未生成 $pending 个）。',
+                  ),
                   const SizedBox(height: 16),
                   RadioListTile<bool>(
                     title: const Text('仅生成尚未出片的分镜 (推荐)'),
                     subtitle: Text('跳过已有视频的 $generated 个分镜，仅对剩余 $pending 个入队'),
                     value: true,
                     groupValue: skipExisting,
-                    onChanged: (val) => setDialogState(() => skipExisting = val ?? true),
+                    onChanged: (val) =>
+                        setDialogState(() => skipExisting = val ?? true),
                   ),
                   RadioListTile<bool>(
                     title: const Text('重新生成全部分镜'),
                     subtitle: const Text('覆盖已有成片，将所有分镜按顺序重新加入生成队列'),
                     value: false,
                     groupValue: skipExisting,
-                    onChanged: (val) => setDialogState(() => skipExisting = val ?? false),
+                    onChanged: (val) =>
+                        setDialogState(() => skipExisting = val ?? false),
                   ),
                 ],
               ),
@@ -996,15 +1023,16 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     if (confirmed != true) return;
 
     final targetShots = episode.shots.where((s) {
-      if (skipExisting && s.clipPath != null && s.clipPath!.isNotEmpty) return false;
+      if (skipExisting && s.clipPath != null && s.clipPath!.isNotEmpty)
+        return false;
       return true;
     }).toList();
 
     if (targetShots.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('所有分镜均已完成视频生成，无须重复入队')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('所有分镜均已完成视频生成，无须重复入队')));
       }
       return;
     }
@@ -1035,10 +1063,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('已成功将 $enqueuedCount 个分镜视频任务加入队列（顺序接力生成）'),
-          action: SnackBarAction(
-            label: '查看队列',
-            onPressed: _showQueueDrawer,
-          ),
+          action: SnackBarAction(label: '查看队列', onPressed: _showQueueDrawer),
         ),
       );
     }
@@ -1071,10 +1096,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           ),
         ),
         actions: [
-          AppButton.ghost(
-            label: '稍后再说',
-            onPressed: () => Navigator.pop(ctx),
-          ),
+          AppButton.ghost(label: '稍后再说', onPressed: () => Navigator.pop(ctx)),
           AppButton.primary(
             label: '前往 AI 基础设施配置',
             icon: Icons.settings_suggest_outlined,
@@ -1120,7 +1142,11 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       ),
       child: Row(
         children: [
-          Icon(Icons.video_library_outlined, size: 16, color: context.textTertiary),
+          Icon(
+            Icons.video_library_outlined,
+            size: 16,
+            color: context.textTertiary,
+          ),
           const SizedBox(width: 8),
           Text(
             '分集导航:',
@@ -1144,12 +1170,17 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                     onTap: () => _switchEpisode(ep),
                     borderRadius: BorderRadius.circular(16),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected ? primaryColor : context.bgInput,
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: isSelected ? primaryColor : context.borderSubtle,
+                          color: isSelected
+                              ? primaryColor
+                              : context.borderSubtle,
                         ),
                       ),
                       child: Row(
@@ -1158,14 +1189,21 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                           Text(
                             ep.title,
                             style: TextStyle(
-                              color: isSelected ? Colors.white : context.textPrimary,
+                              color: isSelected
+                                  ? Colors.white
+                                  : context.textPrimary,
                               fontSize: 12,
-                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
                             ),
                           ),
                           const SizedBox(width: 4),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: isSelected
                                   ? Colors.white.withValues(alpha: 0.25)
@@ -1176,7 +1214,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                               '${ep.shots.length}镜',
                               style: TextStyle(
                                 fontSize: 10,
-                                color: isSelected ? Colors.white : context.textTertiary,
+                                color: isSelected
+                                    ? Colors.white
+                                    : context.textTertiary,
                               ),
                             ),
                           ),
@@ -1272,7 +1312,9 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               if (episode != null && episode.scenes.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: _breaking ? null : _confirmAndReBreakdownFromScreenplay,
+                  onPressed: _breaking
+                      ? null
+                      : _confirmAndReBreakdownFromScreenplay,
                   icon: const Icon(Icons.refresh, size: 16),
                   label: const Text('从剧本重拆'),
                 ),
@@ -1280,9 +1322,15 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               if (episode != null && episode.shots.isNotEmpty) ...[
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(foregroundColor: context.errorText),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: context.errorText,
+                  ),
                   onPressed: _breaking ? null : _confirmAndClearAllShots,
-                  icon: Icon(Icons.delete_sweep_outlined, size: 16, color: context.errorText),
+                  icon: Icon(
+                    Icons.delete_sweep_outlined,
+                    size: 16,
+                    color: context.errorText,
+                  ),
                   label: const Text('清空分镜'),
                 ),
               ],
@@ -1303,15 +1351,22 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                       onTap: () => _showAuditReportDialog(context, audit),
                       borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
                           color: audit.isValid
-                              ? (audit.warningCount > 0 ? context.warningText.withAlpha(20) : const Color(0xFF22C55E).withAlpha(20))
+                              ? (audit.warningCount > 0
+                                    ? context.warningText.withAlpha(20)
+                                    : const Color(0xFF22C55E).withAlpha(20))
                               : context.errorText.withAlpha(20),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
                             color: audit.isValid
-                                ? (audit.warningCount > 0 ? context.warningText.withAlpha(90) : const Color(0xFF22C55E).withAlpha(90))
+                                ? (audit.warningCount > 0
+                                      ? context.warningText.withAlpha(90)
+                                      : const Color(0xFF22C55E).withAlpha(90))
                                 : context.errorText.withAlpha(90),
                           ),
                         ),
@@ -1320,23 +1375,31 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                           children: [
                             Icon(
                               audit.isValid
-                                  ? (audit.warningCount > 0 ? Icons.warning_amber_rounded : Icons.check_circle_outline)
+                                  ? (audit.warningCount > 0
+                                        ? Icons.warning_amber_rounded
+                                        : Icons.check_circle_outline)
                                   : Icons.error_outline,
                               size: 14,
                               color: audit.isValid
-                                  ? (audit.warningCount > 0 ? context.warningText : const Color(0xFF22C55E))
+                                  ? (audit.warningCount > 0
+                                        ? context.warningText
+                                        : const Color(0xFF22C55E))
                                   : context.errorText,
                             ),
                             const SizedBox(width: 4),
                             Text(
                               audit.isValid
-                                  ? (audit.warningCount > 0 ? 'C01~C09: ${audit.warningCount}建议' : 'C01~C09通过')
+                                  ? (audit.warningCount > 0
+                                        ? 'C01~C09: ${audit.warningCount}建议'
+                                        : 'C01~C09通过')
                                   : 'C01~C09: ${audit.blockingCount}阻断',
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: audit.isValid
-                                    ? (audit.warningCount > 0 ? context.warningText : const Color(0xFF22C55E))
+                                    ? (audit.warningCount > 0
+                                          ? context.warningText
+                                          : const Color(0xFF22C55E))
                                     : context.errorText,
                               ),
                             ),
@@ -1392,10 +1455,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           child: episode == null
               ? _buildNoEpisode(context)
               : episode.shots.isEmpty
-                  ? _buildNoShots(context)
-                  : _view == _BoardView.bySegment
-                      ? _buildSegmentList(context, episode)
-                      : _buildShotList(context, episode),
+              ? _buildNoShots(context)
+              : _view == _BoardView.bySegment
+              ? _buildSegmentList(context, episode)
+              : _buildShotList(context, episode),
         ),
       ],
     );
@@ -1446,8 +1509,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           clipsDir: clipsDir,
           seriesName: widget.session.series?.name ?? '',
           onGenerateSegment: () => _enqueueSegment(segment, episode),
-          onUpdateDuration: (sec) => _updateSegmentDuration(episode, segment, sec),
-          shotBuilder: (shot) => _buildShotCard(shot, episode, framesDir, clipsDir),
+          onUpdateDuration: (sec) =>
+              _updateSegmentDuration(episode, segment, sec),
+          shotBuilder: (shot) =>
+              _buildShotCard(shot, episode, framesDir, clipsDir),
         );
       },
     );
@@ -1471,7 +1536,8 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       clipsDir: clipsDir,
       seriesName: widget.session.series?.name ?? '',
       episodeTitle: episode.title,
-      validationIssues: _validationReport?.issuesForShot(shot.number) ?? const [],
+      validationIssues:
+          _validationReport?.issuesForShot(shot.number) ?? const [],
       dialogueController: _dialogueControllers.putIfAbsent(
         shot.number,
         () => TextEditingController(text: shot.dialogue),
@@ -1503,10 +1569,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
             style: TextStyle(color: context.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _ensureEpisode,
-            child: const Text('新建第一集'),
-          ),
+          FilledButton(onPressed: _ensureEpisode, child: const Text('新建第一集')),
         ],
       ),
     );
@@ -1514,10 +1577,12 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
 
   Widget _buildNoShots(BuildContext context) {
     final ep = _episode;
-    final hasScreenplay = ep != null &&
+    final hasScreenplay =
+        ep != null &&
         ep.scenes.isNotEmpty &&
         ep.scenes.any((s) => s.beats.isNotEmpty);
-    final totalBeats = ep?.scenes.fold<int>(0, (sum, s) => sum + s.beats.length) ?? 0;
+    final totalBeats =
+        ep?.scenes.fold<int>(0, (sum, s) => sum + s.beats.length) ?? 0;
 
     return Center(
       child: ConstrainedBox(
@@ -1538,7 +1603,11 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                   ),
                   child: Column(
                     children: [
-                      Icon(Icons.movie_creation_outlined, size: 48, color: context.accentText),
+                      Icon(
+                        Icons.movie_creation_outlined,
+                        size: 48,
+                        color: context.accentText,
+                      ),
                       const SizedBox(height: 12),
                       Text(
                         '剧本已就绪（共 ${ep.scenes.length} 场 / $totalBeats 个节拍）',
@@ -1565,12 +1634,16 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                         runSpacing: 10,
                         children: [
                           FilledButton.icon(
-                            onPressed: _breaking ? null : _generateFromScreenplay,
+                            onPressed: _breaking
+                                ? null
+                                : _generateFromScreenplay,
                             icon: const Icon(Icons.auto_awesome, size: 16),
                             label: const Text('根据剧本生成 5D 分镜'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => widget.onNavigateStage?.call(StudioStage.screenplay),
+                            onPressed: () => widget.onNavigateStage?.call(
+                              StudioStage.screenplay,
+                            ),
                             icon: const Icon(Icons.edit_note, size: 16),
                             label: const Text('前往剧本工作台打磨'),
                           ),
@@ -1587,7 +1660,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Text(
                         '或从粗剧情大纲全新 AI 拆分',
-                        style: TextStyle(color: context.textDisabled, fontSize: 12),
+                        style: TextStyle(
+                          color: context.textDisabled,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                     const Expanded(child: Divider()),
@@ -1603,7 +1679,10 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                   labelText: '本集粗剧情大纲',
                   labelStyle: TextStyle(color: context.textSecondary),
                   hintText: '用几句中文描述这一集发生了什么， AI 会拆成分镜',
-                  hintStyle: TextStyle(color: context.textDisabled, fontSize: 12),
+                  hintStyle: TextStyle(
+                    color: context.textDisabled,
+                    fontSize: 12,
+                  ),
                   alignLabelWithHint: true,
                 ),
               ),
@@ -1628,10 +1707,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       context: context,
       backgroundColor: context.bgCard,
       isScrollControlled: true,
-      builder: (_) => _QueueDrawer(
-        queue: _queue,
-        onReloadBoard: _reload,
-      ),
+      builder: (_) => _QueueDrawer(queue: _queue, onReloadBoard: _reload),
     );
   }
 }
@@ -1692,27 +1768,41 @@ class _SynopsisCard extends StatelessWidget {
               if (scenes.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: context.accentSubtle,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     '${scenes.length} 个戏剧场次',
-                    style: TextStyle(color: context.accentText, fontSize: 10, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: context.accentText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               if (contract.utterances.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: context.accentSubtle,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     '${contract.utterances.length} 条锁定金句',
-                    style: TextStyle(color: context.accentText, fontSize: 10, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: context.accentText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
             ],
@@ -1731,7 +1821,10 @@ class _SynopsisCard extends StatelessWidget {
                 final idx = entry.key + 1;
                 final s = entry.value;
                 return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: context.bgInput,
                     borderRadius: BorderRadius.circular(4),
@@ -1739,7 +1832,10 @@ class _SynopsisCard extends StatelessWidget {
                   ),
                   child: Text(
                     '第$idx幕: ${s.title}',
-                    style: TextStyle(color: context.textSecondary, fontSize: 11),
+                    style: TextStyle(
+                      color: context.textSecondary,
+                      fontSize: 11,
+                    ),
                   ),
                 );
               }).toList(),
@@ -1824,22 +1920,18 @@ Future<void> _collectSegmentToAssets(
       originPath: clip.path,
       // 时长取「实际提交时长」而非目标时长：能力矩阵可能把请求吸附到较小值
       // （spec: 规整与降级可见），用目标时长会让时间轴算多。
-      durationSec:
-          (segment.submittedDurationSec ?? segment.targetDurationSec)
-              .toDouble(),
+      durationSec: (segment.submittedDurationSec ?? segment.targetDurationSec)
+          .toDouble(),
     );
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('片段已收进资产库'),
-        duration: Duration(seconds: 2),
-      ),
+      const SnackBar(content: Text('片段已收进资产库'), duration: Duration(seconds: 2)),
     );
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('收进资产库失败: $e')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('收进资产库失败: $e')));
   }
 }
 
@@ -1919,7 +2011,11 @@ class _SegmentGroupCard extends StatelessWidget {
               backgroundColor: context.bgCard,
               title: Row(
                 children: [
-                  Icon(Icons.timer_outlined, size: 20, color: context.accentText),
+                  Icon(
+                    Icons.timer_outlined,
+                    size: 20,
+                    color: context.accentText,
+                  ),
                   const SizedBox(width: 8),
                   Text('修改大段目标时长 (${segment.id})'),
                 ],
@@ -1974,7 +2070,8 @@ class _SegmentGroupCard extends StatelessWidget {
                 ),
                 FilledButton(
                   onPressed: () {
-                    final parsed = int.tryParse(customCtrl.text.trim()) ?? selected;
+                    final parsed =
+                        int.tryParse(customCtrl.text.trim()) ?? selected;
                     final finalSec = parsed.clamp(3, 30);
                     Navigator.pop(ctx);
                     onUpdateDuration?.call(finalSec);
@@ -1996,7 +2093,9 @@ class _SegmentGroupCard extends StatelessWidget {
         .toList();
     final safeId = segment.id.isNotEmpty
         ? segment.id
-        : (segment.shotNumbers.isNotEmpty ? 'seg-${segment.shotNumbers.first}' : 'seg-1');
+        : (segment.shotNumbers.isNotEmpty
+              ? 'seg-${segment.shotNumbers.first}'
+              : 'seg-1');
     final tasks = queue.tasksForSegment(safeId);
     final running = tasks.any((t) => !t.isTerminal);
     final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
@@ -2017,8 +2116,11 @@ class _SegmentGroupCard extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
-                Icon(Icons.view_column_outlined,
-                    size: 16, color: context.accentText),
+                Icon(
+                  Icons.view_column_outlined,
+                  size: 16,
+                  color: context.accentText,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   safeId,
@@ -2030,10 +2132,15 @@ class _SegmentGroupCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 InkWell(
-                  onTap: onUpdateDuration != null ? () => _showDurationPicker(context) : null,
+                  onTap: onUpdateDuration != null
+                      ? () => _showDurationPicker(context)
+                      : null,
                   borderRadius: BorderRadius.circular(4),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: segment.durationWasAdjusted
                           ? context.warningText.withAlpha(20)
@@ -2086,10 +2193,7 @@ class _SegmentGroupCard extends StatelessWidget {
                         : segment.boundaryReason,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: context.textTertiary,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: context.textTertiary, fontSize: 11),
                   ),
                 ),
                 if (running)
@@ -2100,7 +2204,8 @@ class _SegmentGroupCard extends StatelessWidget {
                   )
                 else
                   Tooltip(
-                    message: '依序为该场次包含的 ${shots.length} 个分镜生成独立视频（合计 ${segment.targetDurationSec} 秒），自动依托首尾帧接力保持连贯',
+                    message:
+                        '依序为该场次包含的 ${shots.length} 个分镜生成独立视频（合计 ${segment.targetDurationSec} 秒），自动依托首尾帧接力保持连贯',
                     child: FilledButton.icon(
                       onPressed: tasks.any((t) => !t.isTerminal)
                           ? null
@@ -2147,22 +2252,21 @@ class _SegmentGroupCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Row(
                 children: [
-                  Icon(Icons.check_circle_outline,
-                      size: 13, color: context.successText),
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 13,
+                    color: context.successText,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     '片段视频已生成',
-                    style: TextStyle(
-                      color: context.successText,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: context.successText, fontSize: 11),
                   ),
                   const Spacer(),
                   FilledButton.tonalIcon(
                     onPressed: () => _openPreview(context),
                     icon: const Icon(Icons.play_circle_outline, size: 14),
-                    label: const Text('播放预览',
-                        style: TextStyle(fontSize: 11)),
+                    label: const Text('播放预览', style: TextStyle(fontSize: 11)),
                     style: FilledButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2180,8 +2284,7 @@ class _SegmentGroupCard extends StatelessWidget {
                       coverFile: _coverFrameFile,
                     ),
                     icon: const Icon(Icons.video_library_outlined, size: 14),
-                    label: const Text('收进资产库',
-                        style: TextStyle(fontSize: 11)),
+                    label: const Text('收进资产库', style: TextStyle(fontSize: 11)),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2318,7 +2421,9 @@ class _ShotCard extends StatelessWidget {
             ? '分镜 #${shot.number} 视频'
             : '分镜 #${shot.number} 关键帧',
         coverFile: kind == AssetKind.clip ? _frameFile : null,
-        category: kind == AssetKind.clip ? AssetCategory.clip : AssetCategory.frame,
+        category: kind == AssetKind.clip
+            ? AssetCategory.clip
+            : AssetCategory.frame,
         prompt: shot.assembledPrompt.trim().isNotEmpty
             ? shot.assembledPrompt.trim()
             : shot.cameraMove,
@@ -2329,24 +2434,24 @@ class _ShotCard extends StatelessWidget {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            kind == AssetKind.clip ? '视频已收进资产库' : '关键帧已收进资产库',
-          ),
+          content: Text(kind == AssetKind.clip ? '视频已收进资产库' : '关键帧已收进资产库'),
           duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('收进资产库失败: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('收进资产库失败: $e')));
     }
   }
 
   Future<void> _revealInFinder() async {
     final target = (_clipFile != null && _clipFile!.existsSync())
         ? _clipFile
-        : ((_frameFile != null && _frameFile!.existsSync()) ? _frameFile : null);
+        : ((_frameFile != null && _frameFile!.existsSync())
+              ? _frameFile
+              : null);
     if (target != null && target.existsSync()) {
       if (Platform.isMacOS) {
         await Process.run('open', ['-R', target.path]);
@@ -2357,7 +2462,9 @@ class _ShotCard extends StatelessWidget {
   Future<void> _exportFile(BuildContext context) async {
     final target = (_clipFile != null && _clipFile!.existsSync())
         ? _clipFile
-        : ((_frameFile != null && _frameFile!.existsSync()) ? _frameFile : null);
+        : ((_frameFile != null && _frameFile!.existsSync())
+              ? _frameFile
+              : null);
     if (target == null || !target.existsSync()) return;
 
     final ext = p.extension(target.path);
@@ -2401,9 +2508,9 @@ class _ShotCard extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导出素材失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导出素材失败: $e')));
       }
     }
   }
@@ -2411,8 +2518,9 @@ class _ShotCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tasks = queue.tasksForShot(shot.number);
-    final running =
-        tasks.where((t) => t.status == StudioTaskStatus.running).toList();
+    final running = tasks
+        .where((t) => t.status == StudioTaskStatus.running)
+        .toList();
     final failed = tasks.where((t) => t.status == StudioTaskStatus.failed);
     final tooLong = shot.isDialogueTooLong;
 
@@ -2477,10 +2585,15 @@ class _ShotCard extends StatelessWidget {
                       _buildVideoModeBadge(context),
                       const Spacer(),
                       _StatusBadge(tasks: tasks),
-                      if (onDeleteShot != null || onInsertShotAfter != null) ...[
+                      if (onDeleteShot != null ||
+                          onInsertShotAfter != null) ...[
                         const SizedBox(width: 4),
                         PopupMenuButton<String>(
-                          icon: Icon(Icons.more_vert, size: 16, color: context.textSecondary),
+                          icon: Icon(
+                            Icons.more_vert,
+                            size: 16,
+                            color: context.textSecondary,
+                          ),
                           tooltip: '镜头操作',
                           color: context.bgCard,
                           onSelected: (val) {
@@ -2495,7 +2608,10 @@ class _ShotCard extends StatelessWidget {
                                   children: [
                                     Icon(Icons.add_circle_outline, size: 16),
                                     SizedBox(width: 8),
-                                    Text('在此后插入分镜', style: TextStyle(fontSize: 12)),
+                                    Text(
+                                      '在此后插入分镜',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -2504,9 +2620,19 @@ class _ShotCard extends StatelessWidget {
                                 value: 'delete',
                                 child: Row(
                                   children: [
-                                    Icon(Icons.delete_outline, size: 16, color: context.errorText),
+                                    Icon(
+                                      Icons.delete_outline,
+                                      size: 16,
+                                      color: context.errorText,
+                                    ),
                                     const SizedBox(width: 8),
-                                    Text('删除此分镜', style: TextStyle(fontSize: 12, color: context.errorText)),
+                                    Text(
+                                      '删除此分镜',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: context.errorText,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -2524,29 +2650,107 @@ class _ShotCard extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.landscape_outlined, size: 14, color: context.textTertiary),
+                          Icon(
+                            Icons.landscape_outlined,
+                            size: 14,
+                            color: context.textTertiary,
+                          ),
                           const SizedBox(width: 4),
-                          Text('场景:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          Text(
+                            '场景:',
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           DropdownButton<String>(
-                            value: scenes.any((s) => s.id == shot.sceneId) ? shot.sceneId : '',
+                            value: scenes.any((s) => s.id == shot.sceneId)
+                                ? shot.sceneId
+                                : '',
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 11,
+                            ),
                             items: [
                               DropdownMenuItem(
                                 value: '',
-                                child: Text('无关联场景', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                                child: Text(
+                                  '无关联场景',
+                                  style: TextStyle(
+                                    color: context.textTertiary,
+                                    fontSize: 11,
+                                  ),
+                                ),
                               ),
-                              ...scenes.map((s) => DropdownMenuItem(
-                                    value: s.id,
-                                    child: Text(s.name, style: const TextStyle(fontSize: 11)),
-                                  )),
+                              ...scenes.map(
+                                (s) => DropdownMenuItem(
+                                  value: s.id,
+                                  child: Text(
+                                    s.name,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                ),
+                              ),
                             ],
                             onChanged: (val) {
                               onEdited(shot.copyWith(sceneId: val ?? ''));
                             },
+                          ),
+                          const SizedBox(width: 10),
+                          // 情绪（spec: 分镜情绪的用户可改性）。
+                          //
+                          // mood 原本只能看不能改——7 处引用全是 _Tag 只读展示，
+                          // AI 填错就直接毁掉成片而用户毫无办法。它同时驱动生图
+                          // 光线词（MoodTokens）与 BGM 匹配，所以改这里会一并
+                          // 改变关键帧光线与配乐推荐，这是刻意的一致性。
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.mood_outlined,
+                                size: 14,
+                                color: context.textTertiary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '情绪:',
+                                style: TextStyle(
+                                  color: context.textTertiary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              DropdownButton<String>(
+                                value: shot.mood,
+                                isDense: true,
+                                underline: const SizedBox.shrink(),
+                                dropdownColor: context.bgCard,
+                                style: TextStyle(
+                                  color: context.textPrimary,
+                                  fontSize: 11,
+                                ),
+                                items: ShotMood.values
+                                    .map(
+                                      (m) => DropdownMenuItem(
+                                        value: m.id,
+                                        child: Text(
+                                          m.label,
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (val) {
+                                  if (val != null && val != shot.mood) {
+                                    onEdited(shot.copyWith(mood: val));
+                                  }
+                                },
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -2567,19 +2771,39 @@ class _ShotCard extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.timer_outlined, size: 14, color: context.textTertiary),
+                          Icon(
+                            Icons.timer_outlined,
+                            size: 14,
+                            color: context.textTertiary,
+                          ),
                           const SizedBox(width: 4),
-                          Text('时长:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          Text(
+                            '时长:',
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           DropdownButton<double>(
                             value: shot.durationSec,
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 11,
+                            ),
                             items: [
                               for (final d in {
-                                3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, shot.durationSec
+                                3.0,
+                                4.0,
+                                5.0,
+                                6.0,
+                                8.0,
+                                10.0,
+                                12.0,
+                                shot.durationSec,
                               }.toList()..sort())
                                 DropdownMenuItem(
                                   value: d,
@@ -2600,21 +2824,58 @@ class _ShotCard extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.tune_outlined, size: 14, color: context.textTertiary),
+                          Icon(
+                            Icons.tune_outlined,
+                            size: 14,
+                            color: context.textTertiary,
+                          ),
                           const SizedBox(width: 4),
-                          Text('模式:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          Text(
+                            '模式:',
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           DropdownButton<String>(
                             value: shot.videoMode,
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 11,
+                            ),
                             items: const [
-                              DropdownMenuItem(value: 'auto', child: Text('自动(推荐)', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: 'keyframe', child: Text('首尾帧(keyframe)', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: 'reference', child: Text('参考图(reference)', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: 'text', child: Text('纯文本(text)', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(
+                                value: 'auto',
+                                child: Text(
+                                  '自动(推荐)',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: 'keyframe',
+                                child: Text(
+                                  '首尾帧(keyframe)',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: 'reference',
+                                child: Text(
+                                  '参考图(reference)',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: 'text',
+                                child: Text(
+                                  '纯文本(text)',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
                             ],
                             onChanged: (val) {
                               onEdited(shot.copyWith(videoMode: val));
@@ -2625,26 +2886,81 @@ class _ShotCard extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.aspect_ratio_outlined, size: 14, color: context.textTertiary),
+                          Icon(
+                            Icons.aspect_ratio_outlined,
+                            size: 14,
+                            color: context.textTertiary,
+                          ),
                           const SizedBox(width: 4),
-                          Text('画幅:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          Text(
+                            '画幅:',
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           DropdownButton<String>(
                             value: shot.aspectRatio ?? '',
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 11,
+                            ),
                             items: const [
-                              DropdownMenuItem(value: '', child: Text('继承默认', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '9:16', child: Text('9:16 竖屏', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '16:9', child: Text('16:9 横屏', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '21:9', child: Text('21:9 宽画幅', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '4:3', child: Text('4:3 复古', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '1:1', child: Text('1:1 方形', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text(
+                                  '继承默认',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '9:16',
+                                child: Text(
+                                  '9:16 竖屏',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '16:9',
+                                child: Text(
+                                  '16:9 横屏',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '21:9',
+                                child: Text(
+                                  '21:9 宽画幅',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '4:3',
+                                child: Text(
+                                  '4:3 复古',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '1:1',
+                                child: Text(
+                                  '1:1 方形',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
                             ],
                             onChanged: (val) {
-                              onEdited(shot.copyWith(aspectRatio: (val == null || val.isEmpty) ? null : val));
+                              onEdited(
+                                shot.copyWith(
+                                  aspectRatio: (val == null || val.isEmpty)
+                                      ? null
+                                      : val,
+                                ),
+                              );
                             },
                           ),
                         ],
@@ -2652,26 +2968,81 @@ class _ShotCard extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.hd_outlined, size: 14, color: context.textTertiary),
+                          Icon(
+                            Icons.hd_outlined,
+                            size: 14,
+                            color: context.textTertiary,
+                          ),
                           const SizedBox(width: 4),
-                          Text('清晰度:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+                          Text(
+                            '清晰度:',
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
                           const SizedBox(width: 4),
                           DropdownButton<String>(
                             value: shot.resolution ?? '',
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             dropdownColor: context.bgCard,
-                            style: TextStyle(color: context.textPrimary, fontSize: 11),
+                            style: TextStyle(
+                              color: context.textPrimary,
+                              fontSize: 11,
+                            ),
                             items: const [
-                              DropdownMenuItem(value: '', child: Text('继承默认', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '720P', child: Text('720P', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '1080P', child: Text('1080P', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '1K', child: Text('1K', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '2K', child: Text('2K 超清', style: TextStyle(fontSize: 11))),
-                              DropdownMenuItem(value: '4K', child: Text('4K 影院', style: TextStyle(fontSize: 11))),
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text(
+                                  '继承默认',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '720P',
+                                child: Text(
+                                  '720P',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '1080P',
+                                child: Text(
+                                  '1080P',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '1K',
+                                child: Text(
+                                  '1K',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '2K',
+                                child: Text(
+                                  '2K 超清',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: '4K',
+                                child: Text(
+                                  '4K 影院',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
                             ],
                             onChanged: (val) {
-                              onEdited(shot.copyWith(resolution: (val == null || val.isEmpty) ? null : val));
+                              onEdited(
+                                shot.copyWith(
+                                  resolution: (val == null || val.isEmpty)
+                                      ? null
+                                      : val,
+                                ),
+                              );
                             },
                           ),
                         ],
@@ -2682,8 +3053,7 @@ class _ShotCard extends StatelessWidget {
                   TextField(
                     controller: dialogueController,
                     maxLines: 2,
-                    onChanged: (v) =>
-                        onEdited(shot.copyWith(dialogue: v)),
+                    onChanged: (v) => onEdited(shot.copyWith(dialogue: v)),
                     style: TextStyle(color: context.textPrimary, fontSize: 12),
                     decoration: InputDecoration(
                       isDense: true,
@@ -2692,7 +3062,8 @@ class _ShotCard extends StatelessWidget {
                         color: context.textTertiary,
                         fontSize: 11,
                       ),
-                      suffixText: '${shot.dialogue.trim().length}'
+                      suffixText:
+                          '${shot.dialogue.trim().length}'
                           '/${shot.dialogueCharLimit}',
                     ),
                   ),
@@ -2750,7 +3121,9 @@ class _ShotCard extends StatelessWidget {
                               ? const SizedBox(
                                   width: 14,
                                   height: 14,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.auto_fix_high, size: 15),
                           label: Text(isRegenerating ? '改写中…' : 'AI改写'),
@@ -2770,11 +3143,17 @@ class _ShotCard extends StatelessWidget {
                         child: TextButton.icon(
                           onPressed: () => _openVideoPromptDialog(context),
                           icon: Icon(
-                            shot.videoPrompt.isNotEmpty ? Icons.auto_awesome : Icons.edit_note,
+                            shot.videoPrompt.isNotEmpty
+                                ? Icons.auto_awesome
+                                : Icons.edit_note,
                             size: 15,
-                            color: shot.videoPrompt.isNotEmpty ? context.accentText : null,
+                            color: shot.videoPrompt.isNotEmpty
+                                ? context.accentText
+                                : null,
                           ),
-                          label: Text(shot.videoPrompt.isNotEmpty ? '视频提示词*' : 'AI提示词'),
+                          label: Text(
+                            shot.videoPrompt.isNotEmpty ? '视频提示词*' : 'AI提示词',
+                          ),
                         ),
                       ),
                       if (_hasMedia) ...[
@@ -2792,30 +3171,27 @@ class _ShotCard extends StatelessWidget {
                             if (act == 'finder') _revealInFinder();
                             if (act == 'export') _exportFile(context);
                             if (act == 'collect-frame') {
-                              _collectToAssetLibrary(
-                                context,
-                                AssetKind.image,
-                              );
+                              _collectToAssetLibrary(context, AssetKind.image);
                             }
                             if (act == 'collect-clip') {
-                              _collectToAssetLibrary(
-                                context,
-                                AssetKind.clip,
-                              );
+                              _collectToAssetLibrary(context, AssetKind.clip);
                             }
                           },
                           itemBuilder: (context) => [
-                            if (_frameFile != null &&
-                                _frameFile!.existsSync())
+                            if (_frameFile != null && _frameFile!.existsSync())
                               const PopupMenuItem(
                                 value: 'collect-frame',
                                 child: Row(
                                   children: [
-                                    Icon(Icons.photo_library_outlined,
-                                        size: 16),
+                                    Icon(
+                                      Icons.photo_library_outlined,
+                                      size: 16,
+                                    ),
                                     SizedBox(width: 8),
-                                    Text('关键帧收进资产库',
-                                        style: TextStyle(fontSize: 12)),
+                                    Text(
+                                      '关键帧收进资产库',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -2824,11 +3200,15 @@ class _ShotCard extends StatelessWidget {
                                 value: 'collect-clip',
                                 child: Row(
                                   children: [
-                                    Icon(Icons.video_library_outlined,
-                                        size: 16),
+                                    Icon(
+                                      Icons.video_library_outlined,
+                                      size: 16,
+                                    ),
                                     SizedBox(width: 8),
-                                    Text('视频收进资产库',
-                                        style: TextStyle(fontSize: 12)),
+                                    Text(
+                                      '视频收进资产库',
+                                      style: TextStyle(fontSize: 12),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -2838,7 +3218,10 @@ class _ShotCard extends StatelessWidget {
                                 children: [
                                   Icon(Icons.folder_open_outlined, size: 16),
                                   SizedBox(width: 8),
-                                  Text('在访达中显示', style: TextStyle(fontSize: 12)),
+                                  Text(
+                                    '在访达中显示',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2848,7 +3231,10 @@ class _ShotCard extends StatelessWidget {
                                 children: [
                                   Icon(Icons.download_outlined, size: 16),
                                   SizedBox(width: 8),
-                                  Text('导出保存到本地', style: TextStyle(fontSize: 12)),
+                                  Text(
+                                    '导出保存到本地',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2882,7 +3268,7 @@ class _ShotCard extends StatelessWidget {
                       ),
                     ),
                   ],
-                  _DirectorDecisionsPanel(shot: shot),
+                  _DirectorDecisionsPanel(shot: shot, onEdited: onEdited),
                 ],
               ),
             ),
@@ -2893,7 +3279,9 @@ class _ShotCard extends StatelessWidget {
   }
 
   Widget _buildValidationBadge(BuildContext context) {
-    final hasBlocking = validationIssues.any((i) => i.severity == ValidationSeverity.blocking);
+    final hasBlocking = validationIssues.any(
+      (i) => i.severity == ValidationSeverity.blocking,
+    );
     final color = hasBlocking ? context.errorText : context.warningText;
     return InkWell(
       onTap: () {
@@ -2907,36 +3295,60 @@ class _ShotCard extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: validationIssues.map((issue) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: (issue.severity == ValidationSeverity.blocking ? ctx.errorText : ctx.warningText).withAlpha(20),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '【${issue.ruleId} ${issue.ruleName} · ${issue.severity.label}】',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11,
-                            color: issue.severity == ValidationSeverity.blocking ? ctx.errorText : ctx.warningText,
+                  children: validationIssues
+                      .map(
+                        (issue) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color:
+                                (issue.severity == ValidationSeverity.blocking
+                                        ? ctx.errorText
+                                        : ctx.warningText)
+                                    .withAlpha(20),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '【${issue.ruleId} ${issue.ruleName} · ${issue.severity.label}】',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                  color:
+                                      issue.severity ==
+                                          ValidationSeverity.blocking
+                                      ? ctx.errorText
+                                      : ctx.warningText,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                issue.message,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '建议: ${issue.suggestion}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: ctx.textSecondary,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(issue.message, style: const TextStyle(fontSize: 11)),
-                        const SizedBox(height: 4),
-                        Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 10, color: ctx.textSecondary)),
-                      ],
-                    ),
-                  )).toList(),
+                      )
+                      .toList(),
                 ),
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('了解')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('了解'),
+              ),
             ],
           ),
         );
@@ -2952,11 +3364,21 @@ class _ShotCard extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(hasBlocking ? Icons.error_outline : Icons.warning_amber_rounded, size: 11, color: color),
+            Icon(
+              hasBlocking ? Icons.error_outline : Icons.warning_amber_rounded,
+              size: 11,
+              color: color,
+            ),
             const SizedBox(width: 3),
             Text(
-              hasBlocking ? '${validationIssues.length}阻断' : '${validationIssues.length}提示',
-              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color),
+              hasBlocking
+                  ? '${validationIssues.length}阻断'
+                  : '${validationIssues.length}提示',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
             ),
           ],
         ),
@@ -2965,9 +3387,11 @@ class _ShotCard extends StatelessWidget {
   }
 
   Widget _buildVideoModeBadge(BuildContext context) {
-    final hasFrame = (_frameFile != null && _frameFile!.existsSync()) ||
+    final hasFrame =
+        (_frameFile != null && _frameFile!.existsSync()) ||
         (shot.firstFramePath != null && shot.firstFramePath!.isNotEmpty);
-    final hasRef = shot.characterIds.isNotEmpty || shot.sceneId.trim().isNotEmpty;
+    final hasRef =
+        shot.characterIds.isNotEmpty || shot.sceneId.trim().isNotEmpty;
     final effectiveMode = shot.resolveEffectiveVideoMode(
       hasKeyframe: hasFrame,
       hasCharacterOrSceneRef: hasRef,
@@ -3036,7 +3460,9 @@ class _ShotAssetPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedIds = shot.characterIds;
-    final available = characters.where((c) => !selectedIds.contains(c.id)).toList();
+    final available = characters
+        .where((c) => !selectedIds.contains(c.id))
+        .toList();
     final bindings = shot.assetBindings;
 
     // 素材总数（角色 + 场景）= 将要提交的参考图数量。
@@ -3051,9 +3477,16 @@ class _ShotAssetPanel extends StatelessWidget {
         initiallyExpanded: false,
         title: Row(
           children: [
-            Icon(Icons.perm_media_outlined, size: 14, color: context.textTertiary),
+            Icon(
+              Icons.perm_media_outlined,
+              size: 14,
+              color: context.textTertiary,
+            ),
             const SizedBox(width: 4),
-            Text('出场资产', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+            Text(
+              '出场资产',
+              style: TextStyle(color: context.textTertiary, fontSize: 11),
+            ),
             const SizedBox(width: 8),
             Text(
               '${selectedIds.length} 角色 · ${scene != null ? 1 : 0} 场景',
@@ -3076,7 +3509,10 @@ class _ShotAssetPanel extends StatelessWidget {
               onRemove: () => _removeCharacter(id),
               trailing: _RoleDropdown(
                 role: bindings[id]?.role ?? ShotAssetRole.subject,
-                onChanged: (r) => _updateBinding(id, (bindings[id] ?? const ShotAssetBinding()).copyWith(role: r)),
+                onChanged: (r) => _updateBinding(
+                  id,
+                  (bindings[id] ?? const ShotAssetBinding()).copyWith(role: r),
+                ),
               ),
             ),
           ],
@@ -3123,11 +3559,13 @@ class _ShotAssetPanel extends StatelessWidget {
       ..remove(characterId);
     final nextVariations = Map<String, String>.from(shot.characterVariations)
       ..remove(characterId);
-    onEdited(shot.copyWith(
-      characterIds: nextIds,
-      assetBindings: nextBindings,
-      characterVariations: nextVariations,
-    ));
+    onEdited(
+      shot.copyWith(
+        characterIds: nextIds,
+        assetBindings: nextBindings,
+        characterVariations: nextVariations,
+      ),
+    );
   }
 
   void _updateBinding(String assetId, ShotAssetBinding binding) {
@@ -3177,7 +3615,9 @@ class _AssetRow extends StatelessWidget {
     // 用户未显式指定时，下拉指向默认项（若能枚举出默认项）。
     final effectiveValue = binding.hasExplicitMaterial
         ? binding.materialPath
-        : (candidates.isNotEmpty && candidates.first.isDefault ? candidates.first.fileName : '');
+        : (candidates.isNotEmpty && candidates.first.isDefault
+              ? candidates.first.fileName
+              : '');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -3191,13 +3631,12 @@ class _AssetRow extends StatelessWidget {
               style: TextStyle(color: context.textPrimary, fontSize: 11),
             ),
           ),
-          if (trailing != null) ...[
-            trailing!,
-            const SizedBox(width: 6),
-          ],
+          if (trailing != null) ...[trailing!, const SizedBox(width: 6)],
           Expanded(
             child: DropdownButton<String>(
-              value: candidates.any((c) => c.fileName == effectiveValue) ? effectiveValue : null,
+              value: candidates.any((c) => c.fileName == effectiveValue)
+                  ? effectiveValue
+                  : null,
               isDense: true,
               underline: const SizedBox.shrink(),
               dropdownColor: context.bgCard,
@@ -3206,17 +3645,24 @@ class _AssetRow extends StatelessWidget {
                 if (candidates.isNotEmpty && candidates.first.isDefault)
                   DropdownMenuItem(
                     value: '',
-                    child: Text('自动：${candidates.first.fileName}',
-                        style: TextStyle(color: context.textTertiary, fontSize: 11)),
-                  ),
-                ...candidates.map((c) => DropdownMenuItem(
-                      value: c.fileName,
-                      child: Text(
-                        '${c.label} · ${c.fileName}',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11),
+                    child: Text(
+                      '自动：${candidates.first.fileName}',
+                      style: TextStyle(
+                        color: context.textTertiary,
+                        fontSize: 11,
                       ),
-                    )),
+                    ),
+                  ),
+                ...candidates.map(
+                  (c) => DropdownMenuItem(
+                    value: c.fileName,
+                    child: Text(
+                      '${c.label} · ${c.fileName}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                ),
               ],
               onChanged: (val) {
                 onChanged(binding.copyWith(materialPath: val ?? ''));
@@ -3242,7 +3688,9 @@ class _AssetRow extends StatelessWidget {
       if (scene == null) return const [];
       return AssetMaterialEnumerator.forScene(
         scene,
-        sceneDirPath: StudioProjectManager.instance.sceneDir(seriesId, assetId).path,
+        sceneDirPath: StudioProjectManager.instance
+            .sceneDir(seriesId, assetId)
+            .path,
       );
     }
     final character = _characterCard;
@@ -3250,7 +3698,9 @@ class _AssetRow extends StatelessWidget {
     return AssetMaterialEnumerator.forCharacter(
       character,
       activeVariation: character.activeVariation,
-      charDirPath: StudioProjectManager.instance.characterDir(seriesId, assetId).path,
+      charDirPath: StudioProjectManager.instance
+          .characterDir(seriesId, assetId)
+          .path,
     );
   }
 
@@ -3288,10 +3738,12 @@ class _RoleDropdown extends StatelessWidget {
       dropdownColor: context.bgCard,
       style: TextStyle(color: context.textSecondary, fontSize: 11),
       items: ShotAssetRole.values
-          .map((r) => DropdownMenuItem(
-                value: r,
-                child: Text(r.label, style: const TextStyle(fontSize: 11)),
-              ))
+          .map(
+            (r) => DropdownMenuItem(
+              value: r,
+              child: Text(r.label, style: const TextStyle(fontSize: 11)),
+            ),
+          )
           .toList(),
       onChanged: (v) {
         if (v != null) onChanged(v);
@@ -3407,9 +3859,19 @@ class _Thumbnail extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.image_outlined, color: context.textTertiary, size: 22),
+                      Icon(
+                        Icons.image_outlined,
+                        color: context.textTertiary,
+                        size: 22,
+                      ),
                       const SizedBox(height: 4),
-                      Text('未生成', style: TextStyle(color: context.textDisabled, fontSize: 10)),
+                      Text(
+                        '未生成',
+                        style: TextStyle(
+                          color: context.textDisabled,
+                          fontSize: 10,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -3452,7 +3914,10 @@ class _Thumbnail extends StatelessWidget {
                   top: 4,
                   left: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primary,
                       borderRadius: BorderRadius.circular(3),
@@ -3471,7 +3936,10 @@ class _Thumbnail extends StatelessWidget {
                   bottom: 4,
                   right: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1.5,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(3),
@@ -3491,7 +3959,10 @@ class _Thumbnail extends StatelessWidget {
                   top: 4,
                   left: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(3),
@@ -3545,7 +4016,8 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   File? _clipFile;
   File? _frameFile;
   _PreviewTab _activeTab = _PreviewTab.video;
-  final TransformationController _transformationController = TransformationController();
+  final TransformationController _transformationController =
+      TransformationController();
 
   StreamSubscription? _errorSub;
   StreamSubscription? _videoParamsSub;
@@ -3556,7 +4028,9 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   double get _durationSec {
     if (widget.shot != null) return widget.shot!.durationSec;
     if (widget.segment != null) {
-      return (widget.segment!.submittedDurationSec ?? widget.segment!.targetDurationSec).toDouble();
+      return (widget.segment!.submittedDurationSec ??
+              widget.segment!.targetDurationSec)
+          .toDouble();
     }
     return 0.0;
   }
@@ -3640,7 +4114,10 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   }
 
   Future<void> _revealInFinder() async {
-    final target = (_activeTab == _PreviewTab.frame ? _frameFile : null) ?? _clipFile ?? _frameFile;
+    final target =
+        (_activeTab == _PreviewTab.frame ? _frameFile : null) ??
+        _clipFile ??
+        _frameFile;
     if (target != null && target.existsSync()) {
       if (Platform.isMacOS) {
         await Process.run('open', ['-R', target.path]);
@@ -3649,7 +4126,10 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   }
 
   Future<void> _exportFile() async {
-    final target = (_activeTab == _PreviewTab.frame ? _frameFile : null) ?? _clipFile ?? _frameFile;
+    final target =
+        (_activeTab == _PreviewTab.frame ? _frameFile : null) ??
+        _clipFile ??
+        _frameFile;
     if (target == null || !target.existsSync()) return;
     final ext = p.extension(target.path);
     final isVideo = target.path.endsWith('.mp4');
@@ -3701,9 +4181,9 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导出失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导出失败: $e')));
       }
     }
   }
@@ -3715,7 +4195,9 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
   }
 
   Widget _buildMediaContent() {
-    if (_activeTab == _PreviewTab.video && _hasClip && _videoController != null) {
+    if (_activeTab == _PreviewTab.video &&
+        _hasClip &&
+        _videoController != null) {
       if (_hasError) {
         return Center(
           child: Padding(
@@ -3799,7 +4281,10 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                       _transformationController.value = Matrix4.identity();
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white12,
                         borderRadius: BorderRadius.circular(4),
@@ -3848,11 +4333,14 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
           child: Column(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
-                  border:
-                      Border(bottom: BorderSide(color: context.borderSubtle)),
+                  border: Border(
+                    bottom: BorderSide(color: context.borderSubtle),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -3870,15 +4358,19 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (_hasClip && _frameFile != null && _frameFile!.existsSync()) ...[
+                    if (_hasClip &&
+                        _frameFile != null &&
+                        _frameFile!.existsSync()) ...[
                       const SizedBox(width: 12),
                       SegmentedButton<_PreviewTab>(
                         segments: [
                           ButtonSegment(
                             value: _PreviewTab.video,
-                            label: Text(widget.segment != null
-                                ? '大段视频 (${_durationSec.toStringAsFixed(1)}s)'
-                                : '单镜视频 (${_durationSec.toStringAsFixed(1)}s)'),
+                            label: Text(
+                              widget.segment != null
+                                  ? '大段视频 (${_durationSec.toStringAsFixed(1)}s)'
+                                  : '单镜视频 (${_durationSec.toStringAsFixed(1)}s)',
+                            ),
                             icon: const Icon(Icons.movie_outlined, size: 14),
                           ),
                           const ButtonSegment(
@@ -3899,7 +4391,9 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: _hasClip
                               ? context.accentSubtle
@@ -3909,8 +4403,8 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                         child: Text(
                           _hasClip
                               ? (widget.segment != null
-                                  ? '大段成片 (${_durationSec.toStringAsFixed(1)}s)'
-                                  : '视频片段 (${_durationSec.toStringAsFixed(1)}s)')
+                                    ? '大段成片 (${_durationSec.toStringAsFixed(1)}s)'
+                                    : '视频片段 (${_durationSec.toStringAsFixed(1)}s)')
                               : '关键帧大图',
                           style: TextStyle(
                             fontSize: 11,
@@ -3955,11 +4449,15 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
               ),
               if (widget.shot != null)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: context.bgCard,
-                    border: Border(top: BorderSide(color: context.borderSubtle)),
+                    border: Border(
+                      top: BorderSide(color: context.borderSubtle),
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -3969,7 +4467,10 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                         children: [
                           _Tag(text: '景别: ${widget.shot!.shotSize.label}'),
                           const SizedBox(width: 6),
-                          _Tag(text: '情绪: ${ShotMood.fromId(widget.shot!.mood).label}'),
+                          _Tag(
+                            text:
+                                '情绪: ${ShotMood.fromId(widget.shot!.mood).label}',
+                          ),
                           const SizedBox(width: 6),
                           _Tag(text: '功能: ${widget.shot!.function.label}'),
                           if (widget.shot!.cameraMove.isNotEmpty) ...[
@@ -3982,14 +4483,20 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                         const SizedBox(height: 6),
                         Text(
                           '画面动作: ${widget.shot!.actionZh}',
-                          style: TextStyle(color: context.textPrimary, fontSize: 12),
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                       if (widget.shot!.dialogue.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
                           '台词: ${widget.shot!.dialogue}',
-                          style: TextStyle(color: context.textSecondary, fontSize: 11),
+                          style: TextStyle(
+                            color: context.textSecondary,
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ],
@@ -3997,11 +4504,15 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                 )
               else if (widget.segment != null)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: context.bgCard,
-                    border: Border(top: BorderSide(color: context.borderSubtle)),
+                    border: Border(
+                      top: BorderSide(color: context.borderSubtle),
+                    ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -4013,10 +4524,16 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                           const SizedBox(width: 6),
                           _Tag(text: '时长: ${_durationSec.toStringAsFixed(0)}s'),
                           const SizedBox(width: 6),
-                          _Tag(text: '包含 ${widget.segment!.shotNumbers.length} 个分镜 (${widget.segment!.shotNumbers.join(", ")})'),
+                          _Tag(
+                            text:
+                                '包含 ${widget.segment!.shotNumbers.length} 个分镜 (${widget.segment!.shotNumbers.join(", ")})',
+                          ),
                           if (widget.segment!.durationWasAdjusted) ...[
                             const SizedBox(width: 6),
-                            _Tag(text: '模型吸附: ${widget.segment!.targetDurationSec}s → ${widget.segment!.submittedDurationSec}s'),
+                            _Tag(
+                              text:
+                                  '模型吸附: ${widget.segment!.targetDurationSec}s → ${widget.segment!.submittedDurationSec}s',
+                            ),
                           ],
                         ],
                       ),
@@ -4024,14 +4541,20 @@ class _MediaPreviewDialogState extends State<_MediaPreviewDialog> {
                         const SizedBox(height: 6),
                         Text(
                           '分段依据: ${widget.segment!.boundaryReason}',
-                          style: TextStyle(color: context.textPrimary, fontSize: 12),
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                       if (widget.segment!.promptNote.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(
                           '补充润色: ${widget.segment!.promptNote}',
-                          style: TextStyle(color: context.textSecondary, fontSize: 11),
+                          style: TextStyle(
+                            color: context.textSecondary,
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ],
@@ -4062,19 +4585,26 @@ class _Tag extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(color: textColor ?? context.textSecondary, fontSize: 10),
+        style: TextStyle(
+          color: textColor ?? context.textSecondary,
+          fontSize: 10,
+        ),
       ),
     );
   }
 }
 
 class _DirectorDecisionsPanel extends StatefulWidget {
-  const _DirectorDecisionsPanel({required this.shot});
+  const _DirectorDecisionsPanel({required this.shot, required this.onEdited});
 
   final StudioShot shot;
 
+  /// 五维字段编辑后的回调（spec: 五维导演决策的用户可改性）。
+  final ValueChanged<StudioShot> onEdited;
+
   @override
-  State<_DirectorDecisionsPanel> createState() => _DirectorDecisionsPanelState();
+  State<_DirectorDecisionsPanel> createState() =>
+      _DirectorDecisionsPanelState();
 }
 
 class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
@@ -4100,7 +4630,9 @@ class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
             child: Row(
               children: [
                 Icon(
-                  _expanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                  _expanded
+                      ? Icons.keyboard_arrow_down
+                      : Icons.keyboard_arrow_right,
                   size: 16,
                   color: context.accentText,
                 ),
@@ -4116,7 +4648,10 @@ class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
                 if (d.cutReason.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: context.accentSubtle,
                       borderRadius: BorderRadius.circular(3),
@@ -4149,8 +4684,18 @@ class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
                   _buildDecisionRow(context, '空间光影', d.lightingStaging),
                 if (d.cameraStaging.isNotEmpty)
                   _buildDecisionRow(context, '光学机位', d.cameraStaging),
-                if (d.temporalEvolution.isNotEmpty)
-                  _buildDecisionRow(context, '时间演变', d.temporalEvolution),
+                // 时间演变是唯一开放编辑的五维字段（spec: 五维导演决策的用户
+                // 可改性）——它直接驱动视频提示词的因果时间轴，而 AI 自由文本
+                // 十句里九句不含可解析秒数，用户必须能改写它。其余五维或已被
+                // 运镜面板覆盖（光影/机位），或是 AI 内部推导（美学质感）。
+                _buildDecisionEditor(
+                  context,
+                  '时间演变',
+                  d.temporalEvolution,
+                  hint: '例：前2.0秒拱手，后3.0秒转身',
+                  onChanged: (v) =>
+                      _saveDecisions(d.copyWith(temporalEvolution: v)),
+                ),
                 if (d.aestheticTexture.isNotEmpty)
                   _buildDecisionRow(context, '美学质感', d.aestheticTexture),
                 if (exit.isNotEmpty)
@@ -4171,7 +4716,9 @@ class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
                   ),
                   const SizedBox(height: 4),
                   ...combat.map((step) {
-                    final targets = step.targetNames.isNotEmpty ? step.targetNames.join('、') : '目标';
+                    final targets = step.targetNames.isNotEmpty
+                        ? step.targetNames.join('、')
+                        : '目标';
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
@@ -4191,6 +4738,49 @@ class _DirectorDecisionsPanelState extends State<_DirectorDecisionsPanel> {
         ],
       ],
     );
+  }
+
+  /// 可编辑的五维字段行（spec: 五维导演决策的用户可改性）。
+  ///
+  /// 失焦即保存——分镜卡没有「确定」按钮，逐字符回调会让每次击键都写一次
+  /// storyboard.json，那在快速输入时是明显的 IO 抖动。
+  Widget _buildDecisionEditor(
+    BuildContext context,
+    String label,
+    String value, {
+    required ValueChanged<String> onChanged,
+    String hint = '',
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 55,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: context.textTertiary,
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: _DecisionField(
+              initialValue: value,
+              hint: hint,
+              onCommit: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _saveDecisions(DirectorDecisions next) {
+    widget.onEdited(widget.shot.copyWith(directorDecisions: next));
   }
 
   Widget _buildDecisionRow(BuildContext context, String label, String value) {
@@ -4289,9 +4879,12 @@ class _QueueDrawerState extends State<_QueueDrawer> {
     // 而这里的每个按钮（刷新/取回）对它都不适用。
     setState(() {
       _cloudTasks = all
-          .where((e) =>
-              e.adapterId != NovelImportTaskService.adapterId &&
-              (e.status.isActive || e.status == VideoTaskLedgerStatus.completed))
+          .where(
+            (e) =>
+                e.adapterId != NovelImportTaskService.adapterId &&
+                (e.status.isActive ||
+                    e.status == VideoTaskLedgerStatus.completed),
+          )
           .toList();
     });
   }
@@ -4319,10 +4912,7 @@ class _QueueDrawerState extends State<_QueueDrawer> {
                 const SizedBox(width: 14),
                 Text(
                   '并发数:',
-                  style: TextStyle(
-                    color: context.textSecondary,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: context.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(width: 6),
                 SegmentedButton<int>(
@@ -4562,10 +5152,7 @@ class _CloudTaskTile extends StatelessWidget {
                 Expanded(
                   child: Text(
                     entry.label.isEmpty ? entry.model : entry.label,
-                    style: TextStyle(
-                      color: context.textPrimary,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: context.textPrimary, fontSize: 12),
                   ),
                 ),
                 // video_id 可复制：这是用户去控制台自查的唯一钥匙。
@@ -4574,9 +5161,7 @@ class _CloudTaskTile extends StatelessWidget {
                   tooltip: '复制 video_id',
                   icon: const Icon(Icons.copy, size: 14),
                   onPressed: () {
-                    Clipboard.setData(
-                      ClipboardData(text: entry.remoteTaskId),
-                    );
+                    Clipboard.setData(ClipboardData(text: entry.remoteTaskId));
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text('已复制 video_id：${entry.remoteTaskId}'),
@@ -4607,10 +5192,7 @@ class _CloudTaskTile extends StatelessWidget {
                   ].join(' · '),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: context.textTertiary,
-                    fontSize: 10,
-                  ),
+                  style: TextStyle(color: context.textTertiary, fontSize: 10),
                 ),
               ),
             if (entry.error != null && entry.error!.isNotEmpty)
@@ -4633,20 +5215,20 @@ class _CloudTaskTile extends StatelessWidget {
                   // 对停在「云端仍在处理」的任务，这是最常用的查看方式。
                   TextButton(
                     onPressed: () => _refreshStatus(context),
-                    child: const Text('刷新状态',
-                        style: TextStyle(fontSize: 11)),
+                    child: const Text('刷新状态', style: TextStyle(fontSize: 11)),
                   ),
                   if (isCompleted) ...[
                     // 重新取回：云端 URL 实测长期有效，本地丢了能捞回来。
                     TextButton(
                       onPressed: () => _refetch(context),
-                      child: const Text('重新取回',
-                          style: TextStyle(fontSize: 11)),
+                      child: const Text('重新取回', style: TextStyle(fontSize: 11)),
                     ),
                     TextButton(
                       onPressed: () => _collectToAssets(context),
-                      child: const Text('收进资产库',
-                          style: TextStyle(fontSize: 11)),
+                      child: const Text(
+                        '收进资产库',
+                        style: TextStyle(fontSize: 11),
+                      ),
                     ),
                   ] else
                     TextButton(
@@ -4657,24 +5239,20 @@ class _CloudTaskTile extends StatelessWidget {
                             .resumeManually(entry.localId);
                         if (!ok && context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('该任务已在等待中')),
+                            const SnackBar(content: Text('该任务已在等待中')),
                           );
                         }
                         await onChanged();
                       },
-                      child: const Text('继续等待',
-                          style: TextStyle(fontSize: 11)),
+                      child: const Text('继续等待', style: TextStyle(fontSize: 11)),
                     ),
                   TextButton(
                     onPressed: () => _showRawRequestDialog(context),
-                    child: const Text('查看请求体',
-                        style: TextStyle(fontSize: 11)),
+                    child: const Text('查看请求体', style: TextStyle(fontSize: 11)),
                   ),
                   TextButton(
                     onPressed: () => _debugInPlayground(context),
-                    child: const Text('在试炼场调试',
-                        style: TextStyle(fontSize: 11)),
+                    child: const Text('在试炼场调试', style: TextStyle(fontSize: 11)),
                   ),
                   TextButton(
                     onPressed: () async {
@@ -4746,9 +5324,9 @@ class _CloudTaskTile extends StatelessWidget {
     final adapter = await _adapterFor();
     if (adapter == null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('该任务的 API Key 已不可用，无法查询')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('该任务的 API Key 已不可用，无法查询')));
       }
       return;
     }
@@ -4764,9 +5342,7 @@ class _CloudTaskTile extends StatelessWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$e')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -4774,9 +5350,9 @@ class _CloudTaskTile extends StatelessWidget {
     final adapter = await _adapterFor();
     if (adapter == null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('该任务的 API Key 已不可用，无法取回')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('该任务的 API Key 已不可用，无法取回')));
       }
       return;
     }
@@ -4791,9 +5367,9 @@ class _CloudTaskTile extends StatelessWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('取回失败: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('取回失败: $e')));
     }
   }
 
@@ -4826,7 +5402,10 @@ class _CloudTaskTile extends StatelessWidget {
                     segments: const [
                       ButtonSegment(
                         value: true,
-                        label: Text('HTTP JSON', style: TextStyle(fontSize: 11)),
+                        label: Text(
+                          'HTTP JSON',
+                          style: TextStyle(fontSize: 11),
+                        ),
                       ),
                       ButtonSegment(
                         value: false,
@@ -4951,9 +5530,9 @@ class _CloudTaskTile extends StatelessWidget {
     final file = File(entry.targetPath);
     if (!file.existsSync()) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('本地产物不存在，请先「重新取回」')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('本地产物不存在，请先「重新取回」')));
       return;
     }
 
@@ -5008,17 +5587,18 @@ class _CloudTaskTile extends StatelessWidget {
         originPath: entry.targetPath,
       );
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已收进资产库「视频片段」分类')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已收进资产库「视频片段」分类')));
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('收进资产库失败: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('收进资产库失败: $e')));
     }
   }
 }
+
 ///
 /// 每档方案带「适用情绪」与「预估视觉评分」。AI 推荐高亮 = 分数最高的那个，
 /// 用户仍可自由改选。
@@ -5082,8 +5662,7 @@ class _CameraMoveSheet extends StatelessWidget {
   }
 
   ({String move, int score, String note})? get recommended {
-    final sorted = plans.toList()
-      ..sort((a, b) => b.score.compareTo(a.score));
+    final sorted = plans.toList()..sort((a, b) => b.score.compareTo(a.score));
     return sorted.isEmpty ? null : sorted.first;
   }
 
@@ -5118,9 +5697,7 @@ class _CameraMoveSheet extends StatelessWidget {
               Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: plan == best
-                      ? context.accentSubtle
-                      : context.bgInput,
+                  color: plan == best ? context.accentSubtle : context.bgInput,
                   borderRadius: AppTheme.borderRadiusSmall,
                   border: Border.all(
                     color: plan == best
@@ -5131,9 +5708,7 @@ class _CameraMoveSheet extends StatelessWidget {
                 child: ListTile(
                   dense: true,
                   leading: Icon(
-                    plan == best
-                        ? Icons.auto_awesome
-                        : Icons.videocam_outlined,
+                    plan == best ? Icons.auto_awesome : Icons.videocam_outlined,
                     size: 18,
                     color: plan == best
                         ? context.accentText
@@ -5149,10 +5724,7 @@ class _CameraMoveSheet extends StatelessWidget {
                   ),
                   subtitle: Text(
                     plan.note,
-                    style: TextStyle(
-                      color: context.textTertiary,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: context.textTertiary, fontSize: 11),
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -5262,9 +5834,9 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('AI 一键自愈失败: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('AI 一键自愈失败: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -5284,7 +5856,9 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
       title: Row(
         children: [
           Icon(
-            report.isValid ? Icons.verified_outlined : Icons.report_problem_outlined,
+            report.isValid
+                ? Icons.verified_outlined
+                : Icons.report_problem_outlined,
             color: report.isValid ? const Color(0xFF22C55E) : errorColor,
             size: 20,
           ),
@@ -5307,15 +5881,24 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
-                      color: (report.blockingCount > 0 ? errorColor : const Color(0xFF22C55E)).withAlpha(25),
+                      color:
+                          (report.blockingCount > 0
+                                  ? errorColor
+                                  : const Color(0xFF22C55E))
+                              .withAlpha(25),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       '阻断项: ${report.blockingCount}',
                       style: TextStyle(
-                        color: report.blockingCount > 0 ? errorColor : const Color(0xFF22C55E),
+                        color: report.blockingCount > 0
+                            ? errorColor
+                            : const Color(0xFF22C55E),
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -5323,15 +5906,24 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                   ),
                   const SizedBox(width: 12),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
-                      color: (report.warningCount > 0 ? warningColor : context.textTertiary).withAlpha(25),
+                      color:
+                          (report.warningCount > 0
+                                  ? warningColor
+                                  : context.textTertiary)
+                              .withAlpha(25),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       '建议项: ${report.warningCount}',
                       style: TextStyle(
-                        color: report.warningCount > 0 ? warningColor : context.textTertiary,
+                        color: report.warningCount > 0
+                            ? warningColor
+                            : context.textTertiary,
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -5343,7 +5935,9 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: report.passCount >= 8 ? const Color(0xFF22C55E) : errorColor,
+                      color: report.passCount >= 8
+                          ? const Color(0xFF22C55E)
+                          : errorColor,
                     ),
                   ),
                 ],
@@ -5361,7 +5955,8 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                 )
               else
                 ...report.issues.map((issue) {
-                  final isBlocking = issue.severity == ValidationSeverity.blocking;
+                  final isBlocking =
+                      issue.severity == ValidationSeverity.blocking;
                   final color = isBlocking ? errorColor : warningColor;
                   return Container(
                     margin: const EdgeInsets.only(bottom: 8),
@@ -5377,31 +5972,57 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: color.withAlpha(40),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
                                 '${issue.ruleId} · ${issue.ruleName}',
-                                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                             if (issue.shotNumber != null) ...[
                               const SizedBox(width: 8),
-                              Text('镜 #${issue.shotNumber}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                              Text(
+                                '镜 #${issue.shotNumber}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
                             ],
                             const Spacer(),
                             Text(
                               issue.severity.label,
-                              style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 6),
-                        Text(issue.message, style: const TextStyle(fontSize: 12)),
+                        Text(
+                          issue.message,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         const SizedBox(height: 4),
-                        Text('建议: ${issue.suggestion}', style: TextStyle(fontSize: 11, color: context.textSecondary)),
+                        Text(
+                          '建议: ${issue.suggestion}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: context.textSecondary,
+                          ),
+                        ),
                       ],
                     ),
                   );
@@ -5466,7 +6087,9 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
             shot: widget.shot,
             episode: widget.episode,
             characters: widget.characters,
-            scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+            scene: widget.scenes
+                .where((s) => s.id == widget.shot.sceneId)
+                .firstOrNull,
           );
     _controller = TextEditingController(text: initialText);
   }
@@ -5487,10 +6110,13 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
         shot: widget.shot,
         episode: widget.episode,
         characters: widget.characters,
-        scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+        scene: widget.scenes
+            .where((s) => s.id == widget.shot.sceneId)
+            .firstOrNull,
       );
 
-      final rewritten = (result.data['rewritten_prompt'] as String?)?.trim() ?? '';
+      final rewritten =
+          (result.data['rewritten_prompt'] as String?)?.trim() ?? '';
       if (rewritten.isEmpty) {
         throw Exception('AI 返回重写结果为空');
       }
@@ -5499,14 +6125,14 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
       setState(() {
         _controller.text = rewritten;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI 提示词消解重写完成！')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('AI 提示词消解重写完成！')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('AI 提示词重写失败: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('AI 提示词重写失败: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -5521,9 +6147,9 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
     setState(() {
       _controller.text = cleaned;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已应用视听与机位规则清洗！')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已应用视听与机位规则清洗！')));
   }
 
   void _handleResetDefault() {
@@ -5531,14 +6157,16 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
       shot: widget.shot.copyWith(videoPrompt: ''),
       episode: widget.episode,
       characters: widget.characters,
-      scene: widget.scenes.where((s) => s.id == widget.shot.sceneId).firstOrNull,
+      scene: widget.scenes
+          .where((s) => s.id == widget.shot.sceneId)
+          .firstOrNull,
     );
     setState(() {
       _controller.text = defaultPrompt;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已重置为默认装配提示词')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('已重置为默认装配提示词')));
   }
 
   void _handleSave() {
@@ -5553,9 +6181,13 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final hasFrame = (widget.shot.firstFramePath != null && widget.shot.firstFramePath!.isNotEmpty) ||
+    final hasFrame =
+        (widget.shot.firstFramePath != null &&
+            widget.shot.firstFramePath!.isNotEmpty) ||
         (widget.shot.framePath != null && widget.shot.framePath!.isNotEmpty);
-    final hasRef = widget.shot.characterIds.isNotEmpty || widget.shot.sceneId.trim().isNotEmpty;
+    final hasRef =
+        widget.shot.characterIds.isNotEmpty ||
+        widget.shot.sceneId.trim().isNotEmpty;
     final effectiveMode = widget.shot.resolveEffectiveVideoMode(
       hasKeyframe: hasFrame,
       hasCharacterOrSceneRef: hasRef,
@@ -5612,8 +6244,8 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
                 helperText: effectiveMode == AgnesVideoMode.text
                     ? '纯文本(text)模式：模型完全依据本段提示词生成画面，不传递图像。'
                     : (effectiveMode == AgnesVideoMode.reference
-                        ? '参考图(reference)模式：已自动分离角色与场景图，提示词仅描述动态。'
-                        : '首尾帧(keyframe)模式：首尾画面已由关键帧锁定，提示词聚焦动作与光影。'),
+                          ? '参考图(reference)模式：已自动分离角色与场景图，提示词仅描述动态。'
+                          : '首尾帧(keyframe)模式：首尾画面已由关键帧锁定，提示词聚焦动作与光影。'),
               ),
             ),
             const SizedBox(height: 12),
@@ -5657,11 +6289,74 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        ElevatedButton(
-          onPressed: _handleSave,
-          child: const Text('保存修改'),
-        ),
+        ElevatedButton(onPressed: _handleSave, child: const Text('保存修改')),
       ],
+    );
+  }
+}
+
+/// 五维字段的编辑框（spec: 五维导演决策的用户可改性）。
+///
+/// 自己持有 controller 而不是每次 build 新建——后者会在父组件重绘时重置光标，
+/// 输入体验直接崩掉。提交时机取「失焦 + 回车」两个：分镜卡没有确定按钮，
+/// 逐字符回调会让每次击键都写一次 storyboard.json。
+class _DecisionField extends StatefulWidget {
+  const _DecisionField({
+    required this.initialValue,
+    required this.onCommit,
+    this.hint = '',
+  });
+
+  final String initialValue;
+  final ValueChanged<String> onCommit;
+  final String hint;
+
+  @override
+  State<_DecisionField> createState() => _DecisionFieldState();
+}
+
+class _DecisionFieldState extends State<_DecisionField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialValue,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final text = _controller.text.trim();
+    if (text != widget.initialValue.trim()) {
+      widget.onCommit(text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) _commit();
+      },
+      child: TextField(
+        controller: _controller,
+        minLines: 1,
+        maxLines: 3,
+        style: TextStyle(
+          color: context.textPrimary,
+          fontSize: 10,
+          height: 1.25,
+        ),
+        decoration: InputDecoration(
+          hintText: widget.hint,
+          hintStyle: TextStyle(color: context.textTertiary, fontSize: 10),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 4),
+          border: InputBorder.none,
+        ),
+        onSubmitted: (_) => _commit(),
+      ),
     );
   }
 }
