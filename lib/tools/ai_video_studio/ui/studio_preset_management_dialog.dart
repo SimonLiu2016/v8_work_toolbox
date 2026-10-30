@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_theme.dart';
@@ -379,6 +382,50 @@ class _StudioPresetManagementDialogState
       _selectTemplate(initial);
     }
     _showToast('全部系统提示词已恢复出厂默认');
+  }
+
+  Future<void> _exportTemplates() async {
+    try {
+      final jsonStr = _store.exportTemplatesJson();
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: '导出提示词预设包',
+        fileName: 'prompt_templates_export_${DateTime.now().millisecondsSinceEpoch}.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (savePath != null) {
+        final file = File(savePath);
+        await file.writeAsString(jsonStr);
+        _showToast('提示词预设包已导出至: $savePath');
+      }
+    } catch (e) {
+      _showToast('导出失败: $e');
+    }
+  }
+
+  Future<void> _importTemplates() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        dialogTitle: '选择要导入的提示词预设包',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final file = File(path);
+        if (file.existsSync()) {
+          final content = await file.readAsString();
+          final count = await _store.importTemplatesJson(content);
+          final templates = _store.templates;
+          if (templates.isNotEmpty) {
+            _selectTemplate(templates.first);
+          }
+          _showToast('成功导入 $count 个提示词模板并已即时生效');
+        }
+      }
+    } catch (e) {
+      _showToast('导入失败: $e');
+    }
   }
 
   Future<bool?> _showConfirmDialog({
@@ -1125,7 +1172,14 @@ class _StudioPresetManagementDialogState
   // ==========================================
   Widget _buildTemplatesTab(BuildContext context) {
     final allTemplates = _store.templates;
-    const categories = ['全部', '资产生成规范', '导演调度规范'];
+    const categories = [
+      '全部',
+      'AI编剧与改编规范',
+      '导演调度规范',
+      '资产生成规范',
+      '视觉渲染规范',
+      'AI视频生成规范',
+    ];
 
     final filteredTemplates = allTemplates.where((t) {
       if (_templateCategoryFilter != '全部' &&
@@ -1280,23 +1334,57 @@ class _StudioPresetManagementDialogState
                 ),
               ),
               const Divider(height: 1),
-              // 底部恢复全部出厂按钮
+              // 底部恢复与导入导出操作栏
               Container(
                 padding: const EdgeInsets.all(12),
                 color: context.bgCard,
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: context.textSecondary,
-                      side: BorderSide(color: context.borderSubtle),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: context.textSecondary,
+                              side: BorderSide(color: context.borderSubtle),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            icon: const Icon(Icons.download, size: 14),
+                            label: const Text('导入', style: TextStyle(fontSize: 11)),
+                            onPressed: _importTemplates,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: context.textSecondary,
+                              side: BorderSide(color: context.borderSubtle),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            icon: const Icon(Icons.upload, size: 14),
+                            label: const Text('导出', style: TextStyle(fontSize: 11)),
+                            onPressed: _exportTemplates,
+                          ),
+                        ),
+                      ],
                     ),
-                    icon: const Icon(Icons.restore, size: 16),
-                    label: const Text('恢复全部提示词出厂默认',
-                        style: TextStyle(fontSize: 12)),
-                    onPressed: _resetAllTemplates,
-                  ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: context.textSecondary,
+                          side: BorderSide(color: context.borderSubtle),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                        ),
+                        icon: const Icon(Icons.restore, size: 14),
+                        label: const Text('恢复全部出厂默认',
+                            style: TextStyle(fontSize: 11)),
+                        onPressed: _resetAllTemplates,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1475,6 +1563,62 @@ class _StudioPresetManagementDialogState
                                 ],
                               ),
                               const SizedBox(height: 6),
+                              // 动态插槽变量提示条
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '可插入变量插槽:',
+                                    style: TextStyle(
+                                      color: context.textTertiary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  for (final tag in [
+                                    '{{series_name}}',
+                                    '{{worldview}}',
+                                    '{{character_names}}',
+                                    '{{scene_names}}',
+                                    '{{production_type}}',
+                                    '{{episode_index}}',
+                                    '{{plausibility_rules}}',
+                                    '{{beat_pacing_rules}}',
+                                    '{{style_prefix}}',
+                                  ])
+                                    ActionChip(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      labelPadding:
+                                          const EdgeInsets.symmetric(horizontal: 6),
+                                      label: Text(
+                                        tag,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                      onPressed: () {
+                                        final text = _templateContentCtrl.text;
+                                        final sel = _templateContentCtrl.selection;
+                                        if (sel.isValid && sel.start >= 0) {
+                                          final newText =
+                                              text.replaceRange(sel.start, sel.end, tag);
+                                          _templateContentCtrl.value = TextEditingValue(
+                                            text: newText,
+                                            selection: TextSelection.collapsed(
+                                              offset: sel.start + tag.length,
+                                            ),
+                                          );
+                                        } else {
+                                          _templateContentCtrl.text = '$text$tag';
+                                        }
+                                      },
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
                               TextField(
                                 controller: _templateContentCtrl,
                                 maxLines: null,

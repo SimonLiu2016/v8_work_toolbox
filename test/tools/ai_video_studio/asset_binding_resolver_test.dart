@@ -235,7 +235,7 @@ void main() {
       );
 
       expect(prompt.contains('【素材指代】'), isTrue);
-      expect(prompt.contains('<Picture 1> = 姜七夜（主体）'), isTrue);
+      expect(prompt.contains('<Picture 1> = 姜七夜（对峙）'), isTrue);
       expect(prompt.contains('<Picture 2> = 老王（主体）'), isTrue);
     });
 

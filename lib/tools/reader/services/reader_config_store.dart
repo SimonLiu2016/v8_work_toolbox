@@ -54,6 +54,10 @@ class ReaderConfigStore {
           customModel: model,
           customVoiceId: isMiMo ? 'mimo_default' : null,
           voiceId: isMiMo ? 'mimo_default' : 'zh-CN-XiaoxiaoNeural',
+          // MiMo 没有 speed/pitch 数值参数，全靠 user 消息自然语言指令表达。
+          // 给一个保守默认，避免开箱即平淡。用户可在朗读设置里修改。
+          styleInstruction:
+              isMiMo ? '自然、清晰、语速适中、略带情感' : '',
         );
       }
     }
@@ -73,6 +77,8 @@ class ReaderConfigStore {
         customModel: model,
         customVoiceId: isMiMo ? 'mimo_default' : null,
         voiceId: isMiMo ? 'mimo_default' : 'zh-CN-XiaoxiaoNeural',
+        styleInstruction:
+            isMiMo ? '自然、清晰、语速适中、略带情感' : '',
       );
     }
 

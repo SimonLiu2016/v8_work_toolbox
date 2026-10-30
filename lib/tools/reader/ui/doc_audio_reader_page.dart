@@ -955,6 +955,7 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
   late TextEditingController _endpointController;
   late TextEditingController _apiKeyController;
   late TextEditingController _modelController;
+  late TextEditingController _styleController;
 
   @override
   void initState() {
@@ -967,6 +968,8 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
     _endpointController = TextEditingController(text: widget.initialConfig.customEndpoint ?? '');
     _apiKeyController = TextEditingController(text: widget.initialConfig.customApiKey ?? '');
     _modelController = TextEditingController(text: widget.initialConfig.customModel ?? 'tts-1');
+    _styleController =
+        TextEditingController(text: widget.initialConfig.styleInstruction);
   }
 
   @override
@@ -975,6 +978,7 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
     _endpointController.dispose();
     _apiKeyController.dispose();
     _modelController.dispose();
+    _styleController.dispose();
     super.dispose();
   }
 
@@ -988,6 +992,7 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
       customEndpoint: _endpointController.text.trim().isEmpty ? null : _endpointController.text.trim(),
       customApiKey: _apiKeyController.text.trim().isEmpty ? null : _apiKeyController.text.trim(),
       customModel: _modelController.text.trim().isEmpty ? 'tts-1' : _modelController.text.trim(),
+      styleInstruction: _styleController.text.trim(),
     );
     widget.onConfigChanged(newConfig);
     Navigator.of(context).pop();
@@ -1084,6 +1089,18 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
       provider: activeProvider,
       configuredModel: _modelController.text.trim(),
       store: store,
+    );
+
+    // 当前是否为小米 MiMo（决定「朗读风格」输入框是否显示）。
+    // 系统 AI 模式下按供应商/模型判断；手动模式下按 endpoint/model 判断。
+    final settingsIsMimo = OpenAiTtsEngine.isMimoModel(
+      _useSystemAiConfig
+          ? activeModel
+          : _modelController.text.trim(),
+      baseUrl: _useSystemAiConfig
+          ? (activeProvider?.baseUrl ?? '')
+          : _endpointController.text.trim(),
+      providerName: _useSystemAiConfig ? activeProvider?.name : null,
     );
 
     final voices = _getVoicesForMode(
@@ -1331,6 +1348,19 @@ class _SettingsModalContentState extends State<_SettingsModalContent> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              if (settingsIsMimo) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _styleController,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: '朗读风格 (MiMo)',
+                    hintText: '自然、清晰、语速适中、略带情感',
+                    helperText: 'MiMo 无 speed/pitch 参数，此指令以自然语言调节语速、语调与情绪，留空则用默认',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
             ],
             const SizedBox(height: 20),
             SizedBox(

@@ -70,6 +70,13 @@ class StudioSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 就地更新当前选中的分集对象（如修改分集名称、大纲等）。
+  void updateEpisode(StudioEpisode next) {
+    episode = next;
+    _publishActiveProject();
+    notifyListeners();
+  }
+
   void selectEpisode(StudioEpisode? next) {
     if (episode?.id == next?.id) return;
     episode = next;
@@ -120,6 +127,7 @@ class _StudioShellPageState extends State<StudioShellPage> with WindowListener {
   bool _loading = true;
   String? _loadError;
   bool _isLocalDemoMode = true;
+  bool _isClosing = false;
 
   /// 进行中的导入任务数。用 ValueNotifier 而不是整页 setState：任务每秒都在
   /// 推进，整页重建会让侧导航与顶栏一起重排。
@@ -154,6 +162,7 @@ class _StudioShellPageState extends State<StudioShellPage> with WindowListener {
 
   @override
   void onWindowClose() async {
+    if (_isClosing) return;
     final running = NovelImportTaskService.instance.runningCount;
     if (running > 0 && mounted) {
       final shouldClose = await showDialog<bool>(
@@ -181,8 +190,12 @@ class _StudioShellPageState extends State<StudioShellPage> with WindowListener {
       );
       if (shouldClose != true) return;
     }
+    if (_isClosing) return;
+    _isClosing = true;
     try {
-      // 必须先解除拦截，再关闭当前子窗口；严禁调用 windowManager.destroy()（其在 macOS 下是 NSApp.terminate）
+      // 必须先解除监听并解除拦截，再关闭当前窗口。
+      // 严禁未解除监听前调 close()，否则 AppKit 的 performClose 会向 Dart 再次广播 "close" 事件造成 100% CPU 无限递归。
+      windowManager.removeListener(this);
       await windowManager.setPreventClose(false);
       await windowManager.close();
     } catch (_) {}

@@ -30,6 +30,13 @@ enum StageStatus {
   running,
   success,
   failed,
+
+  /// 本次导入范围内未执行（spec: 导入流水线阶段状态如实反映执行情况）。
+  ///
+  /// 与 [pending] 的区别是终态性：全季导入只跑到分集大纲，后续的契约锁定、
+  /// 五维拆镜与门禁质检对它是 [skipped] 而不是 [pending]——否则任务卡会
+  /// 永远显示"未完成"。
+  skipped,
 }
 
 /// 小说导入任务的执行阶段（大粗粒度兼容层）。
@@ -132,8 +139,12 @@ class NovelImportTask {
   /// 规划的镜头数
   int plannedShotCount = 0;
 
-  /// C01~C09 质检通过率 (0.0~1.0)
-  double auditPassRate = 1.0;
+  /// C01~C09 质检通过率 (0.0~100.0)；null 表示无可检对象。
+  ///
+  /// 可空是刻意的（spec: 导入流水线阶段状态如实反映执行情况）：目标集没有
+  /// 分镜时，任何数值都是编造——1.0 会被读成满分，0.0 会被读成全挂。空
+  /// 分镜下系统报告"无可检对象"，UI 不出数。
+  double? auditPassRate;
 
   /// 追加实时执行日志
   void addLog(String message) {
@@ -147,11 +158,17 @@ class NovelImportTask {
   }
 
   /// 推进流水线阶段
+  ///
+  /// 回填循环把先前阶段一并标为 success，但 [StageStatus.skipped] 与
+  /// [StageStatus.failed] 除外——否则一次全季导入末尾的 `_finish` 会把前面
+  /// 刻意标记为"未执行"的阶段又刷成"已就绪"（spec: 未执行的阶段呈现为未执行）。
   void advancePipelineStage(PipelineStage stage, StageStatus status) {
     currentStage = stage;
     stageStatuses[stage] = status;
     for (final s in PipelineStage.values) {
-      if (s.index < stage.index && stageStatuses[s] != StageStatus.failed) {
+      if (s.index < stage.index &&
+          stageStatuses[s] != StageStatus.failed &&
+          stageStatuses[s] != StageStatus.skipped) {
         stageStatuses[s] = StageStatus.success;
       }
     }
@@ -378,9 +395,22 @@ class NovelImportTaskService extends ChangeNotifier {
       task.addLog('提取世界观、角色卡库与场景库 (AI Pass 1)...');
       notifyListeners();
 
+      final existingChars = await _manager.listCharacters(task.seriesId);
+      final existingCharNames = existingChars
+          .map((c) => c.name.trim())
+          .where((n) => n.isNotEmpty)
+          .toList();
+      final existingScenes = await _manager.listScenes(task.seriesId);
+      final existingSceneNames = existingScenes
+          .map((s) => s.name.trim())
+          .where((n) => n.isNotEmpty)
+          .toList();
+
       final masterResult = await AiConstraintEngine.extractNovelMaster(
         novelText: novelText,
         productionType: productionTypeId,
+        existingCharacterNames: existingCharNames,
+        existingSceneNames: existingSceneNames,
       );
 
       final charList = (masterResult.data['characters'] as List?) ?? const [];
@@ -422,7 +452,7 @@ class NovelImportTaskService extends ChangeNotifier {
         final segmentResult = await AiConstraintEngine.segmentNovelEpisodes(
           novelText: novelText,
           worldview: masterResult.data['worldview'] as String? ?? '',
-          characterNames: charNames,
+          characterNames: <String>{...existingCharNames, ...charNames}.toList(),
           productionType: productionTypeId,
         );
 
@@ -430,10 +460,16 @@ class NovelImportTaskService extends ChangeNotifier {
         task.plannedSceneCount = episodesList.length;
         task.addLog('完成全季大纲规划，共设计 ${episodesList.length} 集剧集大纲');
         task.advancePipelineStage(PipelineStage.beats, StageStatus.success);
-        task.advancePipelineStage(PipelineStage.contract, StageStatus.success);
 
-        // ---- Stage 5: 写入工程 (Storyboard / Writing) ----
-        task.advancePipelineStage(PipelineStage.storyboard, StageStatus.running);
+        // 全季导入只产出世界观资产与分集粗大纲：契约锁定、五维拆镜与门禁质检
+        // 本次均未执行，直接标记为 skipped（绝不能先把 storyboard 置为 running，
+        // 否则写入期间或异常中断时 UI 会误报「正在拆解分镜 / 拆镜失败」）。
+        task.advancePipelineStage(PipelineStage.contract, StageStatus.skipped);
+        task.advancePipelineStage(PipelineStage.storyboard, StageStatus.skipped);
+        task.advancePipelineStage(PipelineStage.audit, StageStatus.skipped);
+        task.addLog('契约锁定与分镜拆解需在单章提炼后执行，本次全季导入跳过');
+
+        // ---- 写入工程 (Writing) ----
         _advance(task, ImportPhase.writing);
         task.addLog('写入剧集主库与大纲结构...');
         notifyListeners();
@@ -458,10 +494,7 @@ class NovelImportTaskService extends ChangeNotifier {
           task.addLog('场景空间全息档案推演完成 ($deconstructedCount 处场景)');
         }
 
-        task.advancePipelineStage(PipelineStage.storyboard, StageStatus.success);
-        task.advancePipelineStage(PipelineStage.audit, StageStatus.success);
-        task.auditPassRate = 100.0;
-        task.addLog('全季架构导入完成，已同步入库');
+        task.addLog('全季架构导入完成，已同步入库（剧本与分镜请在单章提炼后生成）');
         await _finish(task, updated);
         return;
       }
@@ -473,13 +506,19 @@ class NovelImportTaskService extends ChangeNotifier {
       notifyListeners();
 
       final series = _manager.readSeries(task.seriesId);
+      final existingProps = await _manager.listProps(task.seriesId);
+      final knownPropNames = <String>{
+        ...propNames,
+        ...existingProps.map((p) => p.name.trim()).where((n) => n.isNotEmpty),
+      }.toList();
       final adaptResult = await AiConstraintEngine.adaptNovelDramaChapter(
         novelText: novelText,
         seriesName: series?.name ?? '',
         worldview:
             (masterResult.data['worldview'] as String? ?? series?.worldview ?? '')
                 .trim(),
-        characterNames: charNames,
+        characterNames: <String>{...existingCharNames, ...charNames}.toList(),
+        propNames: knownPropNames,
         productionType: productionTypeId,
         episodeIndex: task.targetEpisodeIndex ?? 1,
         memoryContext: series == null ? '' : _manager.buildMemoryContext(series),
@@ -583,6 +622,21 @@ class NovelImportTaskService extends ChangeNotifier {
 
       // ---- Stage 6: 导演门禁自动化质检 (Audit) ----
       task.advancePipelineStage(PipelineStage.audit, StageStatus.running);
+
+      // 单章导入后 shots 被刻意置空（分镜必须由打磨后的剧本生成），此时对空
+      // 列表跑 validate 会让 C01~C09 的循环一次都不进、passCount 恒为 10，
+      // 算出 100% 的假满分。空列表时报告"无可检对象"（spec: 无分镜可检时
+      // 不显示通过率）。
+      if (currentEp.shots.isEmpty) {
+        task.auditPassRate = null;
+        task.addLog('门禁质检跳过：本集尚无分镜，无可检对象（请在剧本工作台生成分镜后再检）');
+        task.advancePipelineStage(PipelineStage.audit, StageStatus.skipped);
+        notifyListeners();
+        await _finish(task, updated);
+        task.addLog('漫剧解构流水线全部执行完毕！');
+        return;
+      }
+
       task.addLog('执行 C01~C09 导演规则自动化审计...');
       notifyListeners();
 
@@ -595,8 +649,11 @@ class NovelImportTaskService extends ChangeNotifier {
         scenes: scns,
       );
       final totalRules = report.passCount + report.warningCount + report.blockingCount;
-      task.auditPassRate = totalRules > 0 ? (report.passCount / totalRules * 100) : 100.0;
-      task.addLog('门禁自动化审计完成: 质检通过率 ${task.auditPassRate.toStringAsFixed(1)}% (${report.issues.isEmpty ? "全项合规" : "${report.issues.length} 条待优化项"})');
+      task.auditPassRate = totalRules > 0 ? (report.passCount / totalRules * 100) : null;
+      final rateLabel = task.auditPassRate == null
+          ? '无可检对象'
+          : '${task.auditPassRate!.toStringAsFixed(1)}%';
+      task.addLog('门禁自动化审计完成: 质检通过率 $rateLabel (${report.issues.isEmpty ? "全项合规" : "${report.issues.length} 条待优化项"})');
       task.advancePipelineStage(PipelineStage.audit, StageStatus.success);
       notifyListeners();
 

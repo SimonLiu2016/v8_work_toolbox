@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -24,6 +25,7 @@ import '../../ai_video_studio/services/studio_project_manager.dart';
 import '../../ai_video_studio/services/video_task_ledger.dart';
 import '../services/asset_library.dart';
 import 'asset_picker_dialog.dart';
+import 'asset_prompt_preview_dialog.dart';
 import 'face_crop_dialog.dart';
 import 'image_dimension_selector.dart';
 import 'panorama_3d_viewer_dialog.dart';
@@ -32,6 +34,7 @@ import '../services/studio_preset_store.dart';
 import '../../reader/models/reader_models.dart';
 import '../../reader/services/tts_engine.dart';
 import 'studio_shell.dart';
+import 'writers_room_dialog.dart';
 
 class SeriesPage extends StatefulWidget {
   const SeriesPage({super.key, required this.session});
@@ -44,19 +47,119 @@ class SeriesPage extends StatefulWidget {
 
 class _SeriesPageState extends State<SeriesPage> {
   int _tab = 0;
+  final _manager = StudioProjectManager.instance;
+  List<StudioSeries> _availableIps = const [];
+  bool _loadingIps = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailableIps();
+  }
+
+  Future<void> _loadAvailableIps() async {
+    setState(() => _loadingIps = true);
+    final list = await _manager.listAvailableIps();
+    if (!mounted) return;
+    setState(() {
+      _availableIps = list;
+      _loadingIps = false;
+    });
+    if (widget.session.series == null && list.isNotEmpty) {
+      widget.session.select(list.first);
+    }
+  }
+
+  Future<void> _createNewIp() async {
+    final nameController = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.bgCard,
+        title: Text('新建 IP 企划', style: TextStyle(color: ctx.textPrimary)),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          style: TextStyle(color: ctx.textPrimary),
+          decoration: const InputDecoration(
+            labelText: 'IP 名称（如《凡人修仙传》）',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              final trimmed = nameController.text.trim();
+              if (trimmed.isNotEmpty) Navigator.pop(ctx, trimmed);
+            },
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final now = DateTime.now();
+    final newIp = StudioSeries(
+      id: 'ip_${now.millisecondsSinceEpoch}',
+      name: name,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final ipDir = _manager.ipDir(newIp.id);
+    await _manager.ensureBaseStructure();
+    if (!ipDir.existsSync()) {
+      await ipDir.create(recursive: true);
+    }
+    final ipProfile = File(p.join(ipDir.path, 'ip_profile.json'));
+    await _manager.saveSeries(newIp);
+    await _writeJsonFile(ipProfile, newIp.toJson());
+    widget.session.select(newIp);
+    await _loadAvailableIps();
+  }
+
+  static Future<void> _writeJsonFile(File file, Map<String, dynamic> data) async {
+    await file.parent.create(recursive: true);
+    await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.session,
       builder: (context, _) {
-        final series = widget.session.series;
+        var series = widget.session.series;
+        if (series == null && _availableIps.isNotEmpty) {
+          series = _availableIps.first;
+        }
+
         if (series == null) {
-          return const Center(child: Text('未选择剧集'));
+          if (_loadingIps) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.people_outline, size: 48, color: context.textTertiary),
+                const SizedBox(height: 12),
+                Text(
+                  '暂无 IP 主库资产。您可以在创意孵化中由小说提炼，或直接新建企划。',
+                  style: TextStyle(color: context.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _createNewIp,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('新建 IP 企划'),
+                ),
+              ],
+            ),
+          );
         }
         return Column(
           children: [
-            _buildTabs(context),
+            _buildTabs(context, series),
             const Divider(height: 1),
             Expanded(
               child: switch (_tab) {
@@ -73,8 +176,9 @@ class _SeriesPageState extends State<SeriesPage> {
     );
   }
 
-  Widget _buildTabs(BuildContext context) {
+  Widget _buildTabs(BuildContext context, StudioSeries series) {
     const labels = ['角色卡', '场景库', '道具', '世界观', '集数与前情'];
+    final currentIpId = series.resolvedIpId;
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -90,6 +194,33 @@ class _SeriesPageState extends State<SeriesPage> {
                 onTap: () => setState(() => _tab = i),
               ),
             ),
+          if (_availableIps.length > 1) ...[
+            const Spacer(),
+            Icon(Icons.bookmark_outline, size: 14, color: context.textTertiary),
+            const SizedBox(width: 4),
+            Text('切换 IP:', style: TextStyle(color: context.textTertiary, fontSize: 11)),
+            const SizedBox(width: 6),
+            DropdownButton<String>(
+              value: _availableIps.any((ip) => ip.id == currentIpId || ip.id == series.id)
+                  ? (_availableIps.firstWhere((ip) => ip.id == currentIpId || ip.id == series.id).id)
+                  : _availableIps.first.id,
+              underline: const SizedBox(),
+              dropdownColor: context.bgCard,
+              style: TextStyle(color: context.accentText, fontSize: 12, fontWeight: FontWeight.w500),
+              items: [
+                for (final ip in _availableIps)
+                  DropdownMenuItem(
+                    value: ip.id,
+                    child: Text(ip.name, style: TextStyle(color: context.textPrimary, fontSize: 12)),
+                  ),
+              ],
+              onChanged: (id) {
+                if (id == null) return;
+                final selected = _availableIps.firstWhere((ip) => ip.id == id);
+                widget.session.select(selected);
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -138,6 +269,15 @@ class _CharactersTabState extends State<_CharactersTab> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(_CharactersTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.series.id != oldWidget.series.id ||
+        widget.series.updatedAt != oldWidget.series.updatedAt) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -388,6 +528,138 @@ class _CharacterCardState extends State<_CharacterCard> {
     }
   }
 
+  /// 预览角色三视图 Prompt。
+  Future<void> _previewTurnaroundPrompt([
+    CharacterTurnaroundProportion proportion = CharacterTurnaroundProportion.standard,
+  ]) async {
+    final facial = _facialZh.text.trim();
+    final attire = _attireZh.text.trim();
+    final desc = _descZh.text.trim();
+    final name = _name.text.trim();
+
+    final parts = [
+      if (name.isNotEmpty) name,
+      if (facial.isNotEmpty) facial,
+      if (attire.isNotEmpty) attire,
+    ];
+    final effectivePositive = parts.isNotEmpty
+        ? parts.join('，')
+        : (desc.isNotEmpty ? desc : name);
+
+    if (effectivePositive.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先填写角色容貌体态或服装描述')),
+      );
+      return;
+    }
+
+    final era = VisualEraGenre.fromId(widget.series.eraGenre);
+    final initialPos = CharacterTurnaroundPrompt.build(
+      effectivePositive,
+      styleTokens: widget.series.styleTokens,
+      eraGenre: era,
+      proportion: proportion,
+      descriptionZh: facial.isNotEmpty ? facial : desc,
+      fullDescriptionZh: desc,
+      systemPromptOverride: widget.character.systemPromptOverride,
+    );
+    final initialNeg = CharacterTurnaroundPrompt.buildNegative(
+      eraGenre: era,
+      proportion: proportion,
+      descriptionZh: facial.isNotEmpty ? facial : desc,
+      positiveText: effectivePositive,
+      styleNegativeBan: widget.series.negativeStyleTokens,
+    );
+
+    final result = await AssetPromptPreviewDialog.show(
+      context,
+      title: '角色【$name】三视图 Prompt 预览与微调 (${proportion.labelZh})',
+      assetName: '$name · 三视图',
+      initialPositivePrompt: initialPos,
+      initialNegativePrompt: initialNeg,
+      componentLayers: [
+        PromptComponentLayer(
+          label: '三视图骨架排版规范',
+          content: widget.character.systemPromptOverride?.trim().isNotEmpty == true
+              ? widget.character.systemPromptOverride!
+              : 'three-view turnaround character sheet, front view, side view, back view, same character',
+          color: Colors.purpleAccent,
+        ),
+        if (era != null && era.costumeAnchor.isNotEmpty)
+          PromptComponentLayer(
+            label: '时代服装锚点 (${era.labelZh})',
+            content: era.costumeAnchor,
+            color: Colors.blueAccent,
+          ),
+        PromptComponentLayer(
+          label: '容貌与体态',
+          content: facial.isNotEmpty ? facial : desc,
+          color: Colors.green,
+        ),
+        if (attire.isNotEmpty)
+          PromptComponentLayer(
+            label: '默认装束',
+            content: attire,
+            color: Colors.orangeAccent,
+          ),
+      ],
+    );
+
+    if (result != null) {
+      await _generateTurnaroundWithCustomPrompt(proportion, result.positivePrompt, result.negativePrompt);
+    }
+  }
+
+  Future<void> _generateTurnaroundWithCustomPrompt(
+    CharacterTurnaroundProportion proportion,
+    String customPrompt,
+    String customNeg,
+  ) async {
+    setState(() {
+      _generatingTurnaround = true;
+      _turnaroundError = null;
+    });
+    try {
+      final dir = _manager.characterDir(_seriesId, widget.character.id);
+      final filename = proportion.filename;
+      final out = File(p.join(dir.path, filename));
+      await dir.create(recursive: true);
+      await SystemAiImageAdapter().generate(ImageGenRequest(
+        prompt: customPrompt,
+        negativePrompt: customNeg,
+        shotNumber: 0,
+        outputFile: out,
+        width: _turnaroundDimension.width,
+        height: _turnaroundDimension.height,
+        referenceImages: const [],
+      ));
+      try {
+        await FileImage(out).evict();
+      } catch (_) {}
+
+      final nextRefs = widget.character.referenceImages.contains(filename)
+          ? widget.character.referenceImages
+          : [...widget.character.referenceImages, filename];
+      final updated = widget.character.copyWith(referenceImages: nextRefs);
+      await _manager.saveCharacter(_seriesId, updated);
+      widget.onChanged();
+      if (!mounted) return;
+      setState(() {
+        _generatingTurnaround = false;
+        _turnaroundError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已以此 Prompt 生成${proportion.labelZh}角色三视图')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _generatingTurnaround = false;
+        _turnaroundError = e.toString();
+      });
+    }
+  }
+
   /// 从当前角色的已有三视图打开交互式面部特写裁切弹窗。
   Future<void> _cropFaceAnchorFromTurnaround() async {
     final dir = _manager.characterDir(_seriesId, widget.character.id);
@@ -628,6 +900,84 @@ class _CharacterCardState extends State<_CharacterCard> {
     widget.onChanged();
   }
 
+  /// 从外部导入角色基准三视图（本地文件或资产库）。
+  Future<void> _importTurnaround() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.file_upload_outlined),
+              title: const Text('从本地文件导入三视图'),
+              subtitle: const Text('支持 PNG / JPG / WEBP 等格式的高清三视图设计图'),
+              onTap: () => Navigator.pop(ctx, 'local'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从全局资产库选择'),
+              subtitle: const Text('从以往沉淀的角色资产中直接复用'),
+              onTap: () => Navigator.pop(ctx, 'asset'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null) return;
+
+    File? sourceFile;
+    if (action == 'local') {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
+      );
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        sourceFile = File(result.files.first.path!);
+      }
+    } else if (action == 'asset') {
+      if (!mounted) return;
+      final asset = await AssetPickerDialog.show(
+        context,
+        kind: AssetKind.image,
+        title: '选择角色三视图',
+      );
+      if (asset != null && await asset.file.exists()) {
+        sourceFile = asset.file;
+      }
+    }
+
+    if (sourceFile == null || !await sourceFile.exists()) return;
+
+    try {
+      final dir = _manager.characterDir(_seriesId, widget.character.id);
+      await dir.create(recursive: true);
+      final turnaroundTarget = File(p.join(dir.path, 'turnaround.png'));
+      await sourceFile.copy(turnaroundTarget.path);
+
+      final anchorName = widget.character.faceAnchorPath ?? 'face_anchor.png';
+      final hasAnchor = File(p.join(dir.path, anchorName)).existsSync();
+
+      if (mounted) {
+        setState(() {});
+        widget.onChanged();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('角色三视图已成功导入')),
+        );
+      }
+
+      // 若尚未生成面部特写锚点，智能引导用户截取面部脸模
+      if (!hasAnchor && mounted) {
+        await _cropFaceAnchorFromTurnaroundFile(turnaroundTarget);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导入三视图失败: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -712,11 +1062,21 @@ class _CharacterCardState extends State<_CharacterCard> {
                         icon: const Icon(Icons.photo_library_outlined, size: 16),
                         label: const Text('从资产库选择'),
                       ),
+                      OutlinedButton.icon(
+                        onPressed: _generatingTurnaround ? null : _importTurnaround,
+                        icon: const Icon(Icons.file_download_outlined, size: 16),
+                        label: const Text('导入三视图'),
+                      ),
                       ImageDimensionSelector(
                         selectedPreset: _turnaroundDimension,
                         compact: true,
                         enabled: !_generatingTurnaround,
                         onChanged: (p) => setState(() => _turnaroundDimension = p),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _generatingTurnaround ? null : () => _previewTurnaroundPrompt(),
+                        icon: const Icon(Icons.visibility_outlined, size: 16),
+                        label: const Text('预览 Prompt'),
                       ),
                       PopupMenuButton<CharacterTurnaroundProportion>(
                         tooltip: '选择三视图体态比例',
@@ -1352,6 +1712,208 @@ class _VariationEditorState extends State<_VariationEditor> {
     }
   }
 
+  /// 预览形态三视图 Prompt。
+  Future<void> _previewVariationTurnaroundPrompt([
+    CharacterTurnaroundProportion proportion = CharacterTurnaroundProportion.standard,
+  ]) async {
+    final era = VisualEraGenre.fromId(widget.series.eraGenre);
+    final initialPos = CharacterTurnaroundPrompt.buildForVariation(
+      character: widget.character,
+      variation: widget.variation,
+      styleTokens: widget.series.styleTokens,
+      eraGenre: era,
+      proportion: proportion,
+      inheritBaseFace: _inheritBaseFace,
+      systemPromptOverride: widget.variation.systemPromptOverride,
+    );
+    final initialNeg = CharacterTurnaroundPrompt.buildNegativeForVariation(
+      character: widget.character,
+      variation: widget.variation,
+      eraGenre: era,
+      proportion: proportion,
+      styleNegativeBan: widget.series.negativeStyleTokens,
+    );
+
+    final result = await AssetPromptPreviewDialog.show(
+      context,
+      title: '形态【${widget.variation.name}】三视图 Prompt 预览与微调 (${proportion.labelZh})',
+      assetName: '${widget.character.name} · ${widget.variation.name}',
+      initialPositivePrompt: initialPos,
+      initialNegativePrompt: initialNeg,
+      componentLayers: [
+        PromptComponentLayer(
+          label: '三视图骨架排版规范',
+          content: widget.variation.systemPromptOverride?.trim().isNotEmpty == true
+              ? widget.variation.systemPromptOverride!
+              : (widget.character.systemPromptOverride?.trim().isNotEmpty == true
+                  ? widget.character.systemPromptOverride!
+                  : 'three-view turnaround character sheet, front view, side view, back view, same character'),
+          color: Colors.purpleAccent,
+        ),
+        if (era != null && era.costumeAnchor.isNotEmpty)
+          PromptComponentLayer(
+            label: '时代服装锚点 (${era.labelZh})',
+            content: era.costumeAnchor,
+            color: Colors.blueAccent,
+          ),
+        PromptComponentLayer(
+          label: '形态装束与正向差异词',
+          content: widget.variation.effectiveAttirePrompt,
+          color: Colors.orangeAccent,
+        ),
+      ],
+    );
+
+    if (result != null) {
+      await _generateVariationTurnaroundWithCustomPrompt(proportion, result.positivePrompt, result.negativePrompt);
+    }
+  }
+
+  Future<void> _generateVariationTurnaroundWithCustomPrompt(
+    CharacterTurnaroundProportion proportion,
+    String customPrompt,
+    String customNeg,
+  ) async {
+    setState(() {
+      _generating = true;
+      _error = null;
+    });
+
+    try {
+      final manager = StudioProjectManager.instance;
+      final charDir = manager.characterDir(widget.seriesId, widget.character.id);
+      final filename = 'turnaround_var_${widget.variation.id}_${proportion.name}.png';
+      final outFile = File(p.join(charDir.path, filename));
+      await charDir.create(recursive: true);
+
+      final refImages = <String>[];
+      if (_inheritBaseFace) {
+        final anchorName = widget.character.faceAnchorPath ?? 'face_anchor.png';
+        final anchorFile = File(p.join(charDir.path, anchorName));
+        if (await anchorFile.exists()) {
+          refImages.add(anchorFile.path);
+        } else {
+          final baseTurnaround = File(p.join(charDir.path, 'turnaround.png'));
+          if (await baseTurnaround.exists()) {
+            refImages.add(baseTurnaround.path);
+          } else if (widget.character.referenceImages.isNotEmpty) {
+            final firstRef = File(p.join(charDir.path, widget.character.referenceImages.first));
+            if (await firstRef.exists()) {
+              refImages.add(firstRef.path);
+            }
+          }
+        }
+      }
+
+      await SystemAiImageAdapter().generate(ImageGenRequest(
+        prompt: customPrompt,
+        negativePrompt: customNeg,
+        shotNumber: 0,
+        outputFile: outFile,
+        width: _variationDimension.width,
+        height: _variationDimension.height,
+        referenceImages: refImages,
+      ));
+
+      try {
+        await FileImage(outFile).evict();
+      } catch (_) {}
+
+      final updated = widget.variation.copyWith(turnaroundPath: filename);
+      widget.onChanged(updated);
+
+      if (!mounted) return;
+      setState(() {
+        _generating = false;
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已以此 Prompt 生成「${widget.variation.name}」三视图')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _generating = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  /// 从外部导入当前角色形态的三视图（本地文件或资产库）。
+  Future<void> _importVariationTurnaround() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.file_upload_outlined),
+              title: const Text('从本地文件导入形态三视图'),
+              subtitle: const Text('支持 PNG / JPG / WEBP 等格式的高清设计图'),
+              onTap: () => Navigator.pop(ctx, 'local'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从全局资产库选择'),
+              subtitle: const Text('从资产库中选用已有三视图'),
+              onTap: () => Navigator.pop(ctx, 'asset'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null) return;
+
+    File? sourceFile;
+    if (action == 'local') {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
+      );
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        sourceFile = File(result.files.first.path!);
+      }
+    } else if (action == 'asset') {
+      if (!mounted) return;
+      final asset = await AssetPickerDialog.show(
+        context,
+        kind: AssetKind.image,
+        title: '选择形态三视图',
+      );
+      if (asset != null && await asset.file.exists()) {
+        sourceFile = asset.file;
+      }
+    }
+
+    if (sourceFile == null || !await sourceFile.exists()) return;
+
+    try {
+      final charDir = StudioProjectManager.instance
+          .characterDir(widget.seriesId, widget.character.id);
+      await charDir.create(recursive: true);
+      final filename = 'turnaround_var_${widget.variation.id}.png';
+      final target = File(p.join(charDir.path, filename));
+      await sourceFile.copy(target.path);
+
+      widget.onChanged(widget.variation.copyWith(
+        turnaroundPath: filename,
+      ));
+
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('形态「${widget.variation.name}」三视图已成功导入')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导入形态三视图失败: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _collectToAssets(File file) async {
     try {
       final call = await VideoTaskLedger.instance.findByTargetPath(file.path);
@@ -1659,11 +2221,30 @@ class _VariationEditorState extends State<_VariationEditor> {
                                       horizontal: 8, vertical: 0),
                                 ),
                               ),
+                              OutlinedButton.icon(
+                                onPressed: _generating ? null : _importVariationTurnaround,
+                                icon: const Icon(Icons.file_download_outlined, size: 13),
+                                label: const Text('导入替换', style: TextStyle(fontSize: 11)),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 0),
+                                ),
+                              ),
                               ImageDimensionSelector(
                                 selectedPreset: _variationDimension,
                                 compact: true,
                                 enabled: !_generating,
                                 onChanged: (p) => setState(() => _variationDimension = p),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _generating ? null : () => _previewVariationTurnaroundPrompt(),
+                                icon: const Icon(Icons.visibility_outlined, size: 13),
+                                label: const Text('预览 Prompt', style: TextStyle(fontSize: 11)),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                                ),
                               ),
                               PopupMenuButton<CharacterTurnaroundProportion>(
                                 tooltip: '重新生成该形态三视图',
@@ -1774,6 +2355,15 @@ class _VariationEditorState extends State<_VariationEditor> {
                   onChanged: (p) => setState(() => _variationDimension = p),
                 ),
                 const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _generating ? null : () => _previewVariationTurnaroundPrompt(),
+                  icon: const Icon(Icons.visibility_outlined, size: 14),
+                  label: const Text('预览 Prompt', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 PopupMenuButton<CharacterTurnaroundProportion>(
                   tooltip: '选择体态比例并生成该形态三视图',
                   enabled: !_generating,
@@ -1827,6 +2417,15 @@ class _VariationEditorState extends State<_VariationEditor> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _generating ? null : _importVariationTurnaround,
+                  icon: const Icon(Icons.file_download_outlined, size: 14),
+                  label: const Text('导入三视图', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
               ],
             );
           }),
@@ -1863,6 +2462,15 @@ class _ScenesTabState extends State<_ScenesTab> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(_ScenesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.series.id != oldWidget.series.id ||
+        widget.series.updatedAt != oldWidget.series.updatedAt) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -2201,6 +2809,8 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
   final _manager = StudioProjectManager.instance;
   late final TextEditingController _name;
   late final TextEditingController _descZh;
+  late final TextEditingController _systemPromptOverride;
+  late final TextEditingController _panoramaSystemPromptOverride;
   late List<String> _refs;
   late Map<String, SceneDirectionalView> _spatialViews;
   SceneDirection _activeDirection = SceneDirection.front;
@@ -2287,6 +2897,16 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
       panoramaYawOffset: _panoramaYawOffset,
       panoramaFov: _panoramaFov,
       panoramaPitchOffset: _panoramaPitchOffset,
+      systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+          ? _systemPromptOverride.text.trim()
+          : null,
+      clearSystemPromptOverride: _systemPromptOverride.text.trim().isEmpty,
+      panoramaSystemPromptOverride:
+          _panoramaSystemPromptOverride.text.trim().isNotEmpty
+              ? _panoramaSystemPromptOverride.text.trim()
+              : null,
+      clearPanoramaSystemPromptOverride:
+          _panoramaSystemPromptOverride.text.trim().isEmpty,
       updatedAt: DateTime.now(),
     );
   }
@@ -2335,6 +2955,12 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
     super.initState();
     _name = TextEditingController(text: widget.scene.name);
     _descZh = TextEditingController(text: widget.scene.descriptionZh);
+    _systemPromptOverride = TextEditingController(
+      text: widget.scene.systemPromptOverride ?? '',
+    );
+    _panoramaSystemPromptOverride = TextEditingController(
+      text: widget.scene.panoramaSystemPromptOverride ?? '',
+    );
     _refs = widget.scene.referenceImages
         .where((r) => !p.basename(r).startsWith('spatial_'))
         .toList();
@@ -2354,6 +2980,8 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
   void dispose() {
     _name.dispose();
     _descZh.dispose();
+    _systemPromptOverride.dispose();
+    _panoramaSystemPromptOverride.dispose();
     for (final c in _directionDescControllers.values) {
       c.dispose();
     }
@@ -2436,6 +3064,9 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
         basePrompt: directionalPrompt,
         styleTokens: widget.series.styleTokens,
         eraGenreId: widget.series.eraGenre,
+        systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+            ? _systemPromptOverride.text.trim()
+            : null,
       );
       final negativePrompt = ScenePromptBuilder.buildNegativePrompt(
         eraGenreId: widget.series.eraGenre,
@@ -2467,6 +3098,124 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
         setState(() => _generating = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('已生成【${dir.labelZh}】视角图（纯净空镜）')),
+        );
+      }
+    } catch (e) {
+      _failedDirections.add(dir);
+      if (mounted) {
+        setState(() => _generating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('生成【${dir.labelZh}】视角图失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 预览指定方位的生图 Prompt。
+  Future<void> _previewDirectionPrompt(SceneDirection dir) async {
+    final desc = _directionDescControllers[dir]?.text.trim() ?? '';
+    final basePrompt = desc.isNotEmpty ? desc : _descZh.text.trim();
+    if (basePrompt.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请先为【${dir.labelZh}】填写空间描述或场景总览描述')),
+      );
+      return;
+    }
+
+    final directionalPrompt = dir.formatPrompt(basePrompt);
+    final era = VisualEraGenre.fromId(widget.series.eraGenre);
+    final initialPos = ScenePromptBuilder.buildPositivePrompt(
+      basePrompt: directionalPrompt,
+      styleTokens: widget.series.styleTokens,
+      eraGenreId: widget.series.eraGenre,
+      systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+          ? _systemPromptOverride.text.trim()
+          : null,
+    );
+    final initialNeg = ScenePromptBuilder.buildNegativePrompt(
+      eraGenreId: widget.series.eraGenre,
+      styleNegativeBan: widget.series.negativeStyleTokens,
+    );
+
+    final result = await AssetPromptPreviewDialog.show(
+      context,
+      title: '场景【${dir.labelZh}】视角 Prompt 预览与微调',
+      assetName: '${_name.text.trim().isNotEmpty ? _name.text.trim() : widget.scene.name} · ${dir.labelZh}',
+      initialPositivePrompt: initialPos,
+      initialNegativePrompt: initialNeg,
+      componentLayers: [
+        PromptComponentLayer(
+          label: '系统空镜规范',
+          content: _systemPromptOverride.text.trim().isNotEmpty
+              ? _systemPromptOverride.text.trim()
+              : '纯净物理空间空镜头背景板，完全空无一人，空旷建筑场景，无人物',
+          color: Colors.purpleAccent,
+        ),
+        if (era != null && era.environmentAnchor.isNotEmpty)
+          PromptComponentLayer(
+            label: '时代环境锚点 (${era.labelZh})',
+            content: era.environmentAnchor,
+            color: Colors.blueAccent,
+          ),
+        if (widget.series.styleTokens.isNotEmpty)
+          PromptComponentLayer(
+            label: '全局风格正向锁',
+            content: widget.series.styleTokens,
+            color: Colors.tealAccent,
+          ),
+        PromptComponentLayer(
+          label: '方位空间描述 (${dir.labelZh})',
+          content: directionalPrompt,
+          color: Colors.green,
+        ),
+      ],
+    );
+
+    if (result != null) {
+      await _generateDirectionImageWithCustomPrompt(dir, result.positivePrompt, result.negativePrompt);
+    }
+  }
+
+  Future<void> _generateDirectionImageWithCustomPrompt(SceneDirection dir, String customPrompt, String customNeg) async {
+    setState(() => _generating = true);
+    try {
+      final adapter = SystemAiImageAdapter();
+      final sceneDir = _manager.sceneDir(widget.series.id, widget.scene.id);
+      final out = File(p.join(
+        sceneDir.path,
+        'references',
+        'spatial_${dir.key}_${DateTime.now().microsecondsSinceEpoch}.png',
+      ));
+      await out.parent.create(recursive: true);
+      _lastGeneratedPath = out.path;
+
+      final resolvedRefs = _resolveRefsForDirection(dir, sceneDir.path);
+
+      await adapter.generate(ImageGenRequest(
+        prompt: customPrompt,
+        negativePrompt: customNeg,
+        shotNumber: 0,
+        outputFile: out,
+        width: _sceneDimension.width,
+        height: _sceneDimension.height,
+        referenceImages: resolvedRefs,
+      ));
+
+      final rel = p.relative(out.path, from: sceneDir.path);
+      final currentView = _spatialViews[dir.name] ?? SceneDirectionalView(direction: dir);
+      _spatialViews[dir.name] = currentView.copyWith(
+        descriptionZh: _directionDescControllers[dir]?.text.trim(),
+        imagePath: rel,
+      );
+      _failedDirections.remove(dir);
+
+      final currentScene = _buildCurrentScene();
+      await _manager.saveScene(widget.series.id, currentScene);
+
+      if (mounted) {
+        setState(() => _generating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已以此 Prompt 生成【${dir.labelZh}】视角图')),
         );
       }
     } catch (e) {
@@ -2512,6 +3261,9 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
         basePrompt: baseDesc,
         styleTokens: widget.series.styleTokens,
         eraGenreId: widget.series.eraGenre,
+        panoramaSystemPromptOverride: _panoramaSystemPromptOverride.text.trim().isNotEmpty
+            ? _panoramaSystemPromptOverride.text.trim()
+            : null,
       );
 
       final negativePrompt = ScenePromptBuilder.buildNegativePrompt(
@@ -2546,6 +3298,130 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('360° 全景母图已就绪，已自动提取四向透视机位！')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('生成 360° 全景母图失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _generatingPanorama = false;
+          _panoramaProgress = '';
+        });
+      }
+    }
+  }
+
+  /// 预览全景母图 Prompt。
+  Future<void> _previewPanoramaPrompt() async {
+    final baseDesc = _descZh.text.trim().isNotEmpty
+        ? _descZh.text.trim()
+        : widget.scene.name;
+    if (baseDesc.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先填写场景总览描述或场景名称')),
+      );
+      return;
+    }
+
+    final era = VisualEraGenre.fromId(widget.series.eraGenre);
+    final initialPos = ScenePromptBuilder.buildPanoramaPrompt(
+      basePrompt: baseDesc,
+      styleTokens: widget.series.styleTokens,
+      eraGenreId: widget.series.eraGenre,
+      panoramaSystemPromptOverride: _panoramaSystemPromptOverride.text.trim().isNotEmpty
+          ? _panoramaSystemPromptOverride.text.trim()
+          : null,
+    );
+    final initialNeg = ScenePromptBuilder.buildNegativePrompt(
+      eraGenreId: widget.series.eraGenre,
+      styleNegativeBan: widget.series.negativeStyleTokens,
+    );
+
+    final result = await AssetPromptPreviewDialog.show(
+      context,
+      title: '360° 全景空间母图 Prompt 预览与微调',
+      assetName: '${_name.text.trim().isNotEmpty ? _name.text.trim() : widget.scene.name} (360° 母图)',
+      initialPositivePrompt: initialPos,
+      initialNegativePrompt: initialNeg,
+      componentLayers: [
+        PromptComponentLayer(
+          label: '360° 全景投影前导',
+          content: _panoramaSystemPromptOverride.text.trim().isNotEmpty
+              ? _panoramaSystemPromptOverride.text.trim()
+              : '360 degree equirectangular panorama projection, VR 360 panorama view, spherical 360 photo',
+          color: Colors.purpleAccent,
+        ),
+        if (era != null && era.environmentAnchor.isNotEmpty)
+          PromptComponentLayer(
+            label: '时代环境锚点 (${era.labelZh})',
+            content: era.environmentAnchor,
+            color: Colors.blueAccent,
+          ),
+        if (widget.series.styleTokens.isNotEmpty)
+          PromptComponentLayer(
+            label: '全局风格正向锁',
+            content: widget.series.styleTokens,
+            color: Colors.tealAccent,
+          ),
+        PromptComponentLayer(
+          label: '场景核心环境描述',
+          content: baseDesc,
+          color: Colors.green,
+        ),
+      ],
+    );
+
+    if (result != null) {
+      await _generatePanoramaMasterWithCustomPrompt(result.positivePrompt, result.negativePrompt);
+    }
+  }
+
+  Future<void> _generatePanoramaMasterWithCustomPrompt(String customPrompt, String customNeg) async {
+    setState(() {
+      _generatingPanorama = true;
+      _panoramaProgress = '正在向 AI 模型请求 360° 等矩空间全景图…';
+    });
+
+    try {
+      final adapter = SystemAiImageAdapter();
+      final sceneDir = _manager.sceneDir(widget.series.id, widget.scene.id);
+      final panoDir = _manager.scenePanoramasDir(widget.series.id, widget.scene.id);
+      await panoDir.create(recursive: true);
+
+      final out = File(p.join(
+        panoDir.path,
+        'pano_master_${DateTime.now().microsecondsSinceEpoch}.png',
+      ));
+
+      await adapter.generate(ImageGenRequest(
+        prompt: customPrompt,
+        negativePrompt: customNeg,
+        shotNumber: 0,
+        outputFile: out,
+        width: 6272,
+        height: 2688,
+        referenceImages: const [],
+      ));
+
+      final relPath = p.relative(out.path, from: sceneDir.path);
+      setState(() {
+        _panoramaMasterPath = relPath;
+        _panoramaProgress = '全景图生成完毕，正在进行秒级切片…';
+      });
+
+      final updatedScene = _buildCurrentScene(panoramaPath: relPath);
+      await _manager.saveScene(widget.series.id, updatedScene);
+
+      await _sliceAllFromPanorama();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已以此 Prompt 生成 360° 全景母图并完成机位切片！')),
         );
       }
     } catch (e) {
@@ -3490,6 +4366,14 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
                             style: TextStyle(color: context.textTertiary, fontSize: 11),
                           ),
                           const Spacer(),
+                          OutlinedButton.icon(
+                            onPressed: (_generatingPanorama || _slicingPanorama || _generating)
+                                ? null
+                                : _previewPanoramaPrompt,
+                            icon: const Icon(Icons.visibility_outlined, size: 14),
+                            label: const Text('预览 Prompt'),
+                          ),
+                          const SizedBox(width: 8),
                           FilledButton.icon(
                             onPressed: (_generatingPanorama || _slicingPanorama || _generating)
                                 ? null
@@ -3822,6 +4706,14 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
                           ),
                           const Spacer(),
                           if (_panoramaFile?.existsSync() == true) ...[
+                            OutlinedButton.icon(
+                              onPressed: (_generating || _multiGenerating || _slicingPanorama)
+                                  ? null
+                                  : () => _previewDirectionPrompt(_activeDirection),
+                              icon: const Icon(Icons.visibility_outlined, size: 14),
+                              label: const Text('预览 Prompt'),
+                            ),
+                            const SizedBox(width: 8),
                             FilledButton.tonalIcon(
                               onPressed: (_slicingPanorama || _generating)
                                   ? null
@@ -3842,6 +4734,14 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
                               label: Text(_generating ? '生成中…' : '独立重绘'),
                             ),
                           ] else ...[
+                            OutlinedButton.icon(
+                              onPressed: (_generating || _multiGenerating)
+                                  ? null
+                                  : () => _previewDirectionPrompt(_activeDirection),
+                              icon: const Icon(Icons.visibility_outlined, size: 14),
+                              label: const Text('预览 Prompt'),
+                            ),
+                            const SizedBox(width: 8),
                             FilledButton.tonalIcon(
                               onPressed: (_generating || _multiGenerating)
                                   ? null
@@ -4099,10 +4999,76 @@ class _SceneEditorSheetState extends State<_SceneEditorSheet> {
                         }),
                     ],
                   ),
+                const SizedBox(height: 16),
+                _buildSystemPromptOverrideCard(),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSystemPromptOverrideCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+          title: Row(
+            children: [
+              Icon(Icons.tune, size: 16, color: context.accentText),
+              const SizedBox(width: 8),
+              Text(
+                '系统提示词组件与覆盖 (高级)',
+                style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '覆盖场景方向或全景生图时注入的默认系统词与守卫约束',
+                style: TextStyle(color: context.textTertiary, fontSize: 11),
+              ),
+            ],
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _systemPromptOverride,
+                    maxLines: 3,
+                    style: TextStyle(color: context.textPrimary, fontSize: 12),
+                    decoration: const InputDecoration(
+                      labelText: '切片方位视角系统提示词覆盖 (默认: 纯净空镜物理陈设守卫)',
+                      hintText: '留空则采用内置的方位机位空间守卫（绝对空镜、无人物、材质物理一致性等）',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _panoramaSystemPromptOverride,
+                    maxLines: 3,
+                    style: TextStyle(color: context.textPrimary, fontSize: 12),
+                    decoration: const InputDecoration(
+                      labelText: '360° 全景母核系统提示词覆盖 (默认: 等距柱状投影全景母核守卫)',
+                      hintText: '留空则采用内置的 360 equirectangular 2:1 母图生成规范约束',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4128,6 +5094,16 @@ class _PropsTabState extends State<_PropsTab> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(_PropsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.series.id != oldWidget.series.id ||
+        widget.series.updatedAt != oldWidget.series.updatedAt ||
+        widget.series.props != oldWidget.series.props) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
     final list = await _manager.listProps(widget.series.id);
     if (!mounted) return;
@@ -4138,6 +5114,10 @@ class _PropsTabState extends State<_PropsTab> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(
+        maxWidth: math.min(1200.0, MediaQuery.of(context).size.width * 0.94),
+      ),
       backgroundColor: context.bgCard,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
@@ -4160,6 +5140,82 @@ class _PropsTabState extends State<_PropsTab> {
     );
     await _load();
     if (mounted) _openEditor(created);
+  }
+
+  /// 从外部导入单张道具图片并自动设为该道具的首选封面主图。
+  Future<void> _importPropImage(PropCard prop) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.file_upload_outlined),
+              title: const Text('从本地文件导入道具图'),
+              subtitle: const Text('选取图片作为该道具的封面主图'),
+              onTap: () => Navigator.pop(ctx, 'local'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从全局资产库选择'),
+              subtitle: const Text('从已有道具/素材库中复用'),
+              onTap: () => Navigator.pop(ctx, 'asset'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null) return;
+
+    File? sourceFile;
+    if (action == 'local') {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
+      );
+      if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+        sourceFile = File(result.files.first.path!);
+      }
+    } else if (action == 'asset') {
+      if (!mounted) return;
+      final asset = await AssetPickerDialog.show(
+        context,
+        kind: AssetKind.image,
+        title: '选择道具图片',
+      );
+      if (asset != null && await asset.file.exists()) {
+        sourceFile = asset.file;
+      }
+    }
+
+    if (sourceFile == null || !await sourceFile.exists()) return;
+
+    try {
+      final rel = await _manager.addPropReference(
+        seriesId: widget.series.id,
+        propId: prop.id,
+        sourceFilePath: sourceFile.path,
+      );
+      // 插入到首位作为首选封面主图
+      final updatedRefs = [rel, ...prop.referenceImages.where((r) => r != rel)];
+      final updatedProp = prop.copyWith(
+        referenceImages: updatedRefs,
+        updatedAt: DateTime.now(),
+      );
+      await _manager.saveProp(widget.series.id, updatedProp);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已为道具「${prop.name}」导入新图片并设为封面主图')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导入道具图片失败: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -4261,17 +5317,42 @@ class _PropsTabState extends State<_PropsTab> {
                                       ),
                                     ),
                                   )
-                                : Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      color: context.accentSubtle,
+                                : Tooltip(
+                                    message: '点击从外部导入图片',
+                                    child: InkWell(
+                                      onTap: () => _importPropImage(prop),
                                       borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Icon(
-                                      Icons.category_outlined,
-                                      color: context.accentText,
-                                      size: 20,
+                                      child: Container(
+                                        width: 44,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          color: context.accentSubtle,
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color: context.accentText.withAlpha(80),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.add_photo_alternate_outlined,
+                                              color: context.accentText,
+                                              size: 18,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              '导入',
+                                              style: TextStyle(
+                                                color: context.accentText,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
                             const SizedBox(width: 12),
@@ -4323,6 +5404,19 @@ class _PropsTabState extends State<_PropsTab> {
                                 ],
                               ),
                             ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: () => _importPropImage(prop),
+                              icon: const Icon(Icons.file_download_outlined, size: 13),
+                              label: Text(
+                                prop.referenceImages.isEmpty ? '导入图片' : '追加图片',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -4358,6 +5452,7 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
   late final TextEditingController _name;
   late final TextEditingController _descZh;
   late final TextEditingController _promptEn;
+  late final TextEditingController _systemPromptOverride;
   late List<String> _refs;
   late bool _isKeyProp;
   bool _translating = false;
@@ -4377,6 +5472,8 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
     _name = TextEditingController(text: widget.prop.name);
     _descZh = TextEditingController(text: widget.prop.descriptionZh);
     _promptEn = TextEditingController(text: widget.prop.promptEn);
+    _systemPromptOverride =
+        TextEditingController(text: widget.prop.systemPromptOverride ?? '');
     _refs = List.from(widget.prop.referenceImages);
     _isKeyProp = widget.prop.isKeyProp;
   }
@@ -4386,6 +5483,7 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
     _name.dispose();
     _descZh.dispose();
     _promptEn.dispose();
+    _systemPromptOverride.dispose();
     super.dispose();
   }
 
@@ -4483,6 +5581,9 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
         prompt: prompt,
         styleTokens: widget.series.styleTokens,
         eraGenreId: widget.series.eraGenre,
+        systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+            ? _systemPromptOverride.text.trim()
+            : null,
       );
       final finalNeg = PropPromptBuilder.buildNegativePrompt(
         eraGenreId: widget.series.eraGenre,
@@ -4512,6 +5613,118 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
         setState(() => _generating = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('道具图已生成')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _generating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('生成道具图失败: $e')),
+        );
+      }
+    }
+  }
+
+  /// 预览道具生图 Prompt。
+  Future<void> _previewPrompt() async {
+    final prompt = _promptEn.text.trim().isNotEmpty
+        ? _promptEn.text.trim()
+        : _descZh.text.trim();
+    if (prompt.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先填写道具描述或英文生图 Prompt')),
+      );
+      return;
+    }
+
+    final era = VisualEraGenre.fromId(widget.series.eraGenre);
+    final initialPos = PropPromptBuilder.buildPositivePrompt(
+      prompt: prompt,
+      styleTokens: widget.series.styleTokens,
+      eraGenreId: widget.series.eraGenre,
+      systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+          ? _systemPromptOverride.text.trim()
+          : null,
+    );
+    final initialNeg = PropPromptBuilder.buildNegativePrompt(
+      eraGenreId: widget.series.eraGenre,
+      styleNegativeBan: widget.series.negativeStyleTokens,
+    );
+
+    final result = await AssetPromptPreviewDialog.show(
+      context,
+      title: '道具【${_name.text.trim().isNotEmpty ? _name.text.trim() : widget.prop.name}】Prompt 预览与微调',
+      assetName: _name.text.trim().isNotEmpty ? _name.text.trim() : widget.prop.name,
+      initialPositivePrompt: initialPos,
+      initialNegativePrompt: initialNeg,
+      componentLayers: [
+        PromptComponentLayer(
+          label: '单品资产规范',
+          content: _systemPromptOverride.text.trim().isNotEmpty
+              ? _systemPromptOverride.text.trim()
+              : PropPromptBuilder.propAssetRequirement,
+          color: Colors.purpleAccent,
+        ),
+        if (era != null && era.propMaterialAnchor.isNotEmpty)
+          PromptComponentLayer(
+            label: '时代材质风格 (${era.labelZh})',
+            content: era.propMaterialAnchor,
+            color: Colors.blueAccent,
+          ),
+        if (widget.series.styleTokens.isNotEmpty)
+          PromptComponentLayer(
+            label: '全局风格正向锁',
+            content: widget.series.styleTokens,
+            color: Colors.tealAccent,
+          ),
+        PromptComponentLayer(
+          label: '道具外观描述',
+          content: prompt,
+          color: Colors.green,
+        ),
+      ],
+    );
+
+    if (result != null) {
+      await _generateImageWithCustomPrompt(result.positivePrompt, result.negativePrompt);
+    }
+  }
+
+  Future<void> _generateImageWithCustomPrompt(String customPrompt, String customNeg) async {
+    setState(() => _generating = true);
+    try {
+      final adapter = SystemAiImageAdapter();
+      final out = File(p.join(
+        _manager.propDir(widget.series.id, widget.prop.id).path,
+        'references',
+        'gen_${DateTime.now().microsecondsSinceEpoch}.png',
+      ));
+      await out.parent.create(recursive: true);
+      _lastGeneratedPath = out.path;
+
+      await adapter.generate(ImageGenRequest(
+        prompt: customPrompt,
+        negativePrompt: customNeg,
+        shotNumber: 0,
+        outputFile: out,
+        width: _propDimension.width,
+        height: _propDimension.height,
+        referenceImages: _refs
+            .map((r) => p.join(
+                  _manager.propDir(widget.series.id, widget.prop.id).path,
+                  r,
+                ))
+            .toList(),
+      ));
+      _refs.add(await _manager.addPropReference(
+        seriesId: widget.series.id,
+        propId: widget.prop.id,
+        sourceFilePath: out.path,
+      ));
+      if (mounted) {
+        setState(() => _generating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已以此 Prompt 生成道具图')),
         );
       }
     } catch (e) {
@@ -4584,6 +5797,10 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
       promptEn: _promptEn.text.trim(),
       referenceImages: _refs,
       isKeyProp: _isKeyProp,
+      systemPromptOverride: _systemPromptOverride.text.trim().isNotEmpty
+          ? _systemPromptOverride.text.trim()
+          : null,
+      clearSystemPromptOverride: _systemPromptOverride.text.trim().isEmpty,
     );
     await _manager.saveProp(widget.series.id, updated);
     widget.onSaved();
@@ -4598,17 +5815,20 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                '编辑道具资产',
-                style: TextStyle(color: context.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+    final screenHeight = MediaQuery.of(context).size.height;
+    return SafeArea(
+      top: true,
+      child: Container(
+        height: math.min(screenHeight * 0.85, screenHeight - 64),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '编辑道具资产',
+                  style: TextStyle(color: context.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               TextButton.icon(
@@ -4685,42 +5905,72 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
                 ),
                 const SizedBox(height: 16),
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('参考图/道具图 (${_refs.length})', style: TextStyle(color: context.textPrimary, fontSize: 13)),
-                    const Spacer(),
+                    Row(
+                      children: [
+                        Text(
+                          '道具图片 (${_refs.length})',
+                          style: TextStyle(
+                            color: context.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (_refs.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '首张为分镜默认封面主图',
+                            style: TextStyle(color: context.textTertiary, fontSize: 11),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (_refs.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: _collectToAssets,
+                        icon: const Icon(Icons.bookmark_add_outlined, size: 14),
+                        label: const Text('收进资产库'),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _pickRefImage,
+                      icon: const Icon(Icons.file_upload_outlined, size: 15),
+                      label: const Text('导入外部图片'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _pickRefImageFromAssets,
+                      icon: const Icon(Icons.photo_library_outlined, size: 15),
+                      label: const Text('从资产库选择'),
+                    ),
                     ImageDimensionSelector(
                       selectedPreset: _propDimension,
                       compact: true,
                       enabled: !_generating,
                       onChanged: (p) => setState(() => _propDimension = p),
                     ),
-                    const SizedBox(width: 8),
                     OutlinedButton.icon(
+                      onPressed: _generating ? null : _previewPrompt,
+                      icon: const Icon(Icons.visibility_outlined, size: 14),
+                      label: const Text('预览 Prompt'),
+                    ),
+                    FilledButton.icon(
                       onPressed: _generating ? null : _generateImage,
                       icon: const Icon(Icons.auto_awesome, size: 15),
                       label: Text(_generating ? '生成中…' : '生成道具图'),
                     ),
-                    const SizedBox(width: 6),
-                    OutlinedButton.icon(
-                      onPressed: _pickRefImageFromAssets,
-                      icon: const Icon(Icons.photo_library_outlined, size: 15),
-                      label: const Text('从资产库'),
-                    ),
-                    const SizedBox(width: 6),
-                    OutlinedButton.icon(
-                      onPressed: _pickRefImage,
-                      icon: const Icon(Icons.add_photo_alternate_outlined, size: 15),
-                      label: const Text('添加参考图'),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                if (_refs.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: _collectToAssets,
-                    icon: const Icon(Icons.bookmark_add_outlined, size: 15),
-                    label: const Text('收进资产库'),
-                  ),
                 const SizedBox(height: 8),
                 if (_refs.isNotEmpty)
                   Wrap(
@@ -4778,14 +6028,92 @@ class _PropEditorSheetState extends State<_PropEditorSheet> {
                                 ),
                               ),
                             ),
+                            if (i == 0)
+                              Positioned(
+                                bottom: 2,
+                                left: 2,
+                                right: 2,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: context.accentText.withAlpha(220),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                  child: const Text(
+                                    '封面主图',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                     ],
                   ),
+                const SizedBox(height: 16),
+                _buildSystemPromptOverrideCard(),
               ],
             ),
           ),
         ],
+      ),
+    ));
+  }
+
+  Widget _buildSystemPromptOverrideCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+          title: Row(
+            children: [
+              Icon(Icons.tune, size: 16, color: context.accentText),
+              const SizedBox(width: 8),
+              Text(
+                '系统提示词组件与覆盖 (高级)',
+                style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '覆盖道具生图时注入的默认单品规范前导词',
+                style: TextStyle(color: context.textTertiary, fontSize: 11),
+              ),
+            ],
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _systemPromptOverride,
+                    maxLines: 3,
+                    style: TextStyle(color: context.textPrimary, fontSize: 12),
+                    decoration: InputDecoration(
+                      labelText: '单品资产规范前导词覆盖',
+                      hintText: '留空则使用默认规范：${PropPromptBuilder.propAssetRequirement}',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -5299,11 +6627,21 @@ class _EpisodesTabState extends State<_EpisodesTab> {
   final _manager = StudioProjectManager.instance;
   List<StudioEpisode> _episodes = const [];
   bool _creating = false;
+  bool _deleting = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(_EpisodesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.series.id != oldWidget.series.id ||
+        widget.series.updatedAt != oldWidget.series.updatedAt) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -5352,6 +6690,164 @@ class _EpisodesTabState extends State<_EpisodesTab> {
       widget.session.selectEpisode(null);
     }
     await _load();
+  }
+
+  Future<void> _confirmDeleteLastEpisode() async {
+    if (_episodes.isEmpty) return;
+    final lastEp = _episodes.last;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.bgCard,
+        title: Text('删除最后一集（第 ${lastEp.index} 集）', style: TextStyle(color: ctx.textPrimary, fontSize: 16)),
+        content: Text(
+          '确定删除最后一集《${lastEp.title}》吗？\n\n'
+          '该集的分镜、剧本及音视频素材将被彻底清理，剧情记忆库同步移除。此操作不可撤销。',
+          style: TextStyle(color: ctx.textSecondary, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: ctx.errorText),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    setState(() => _deleting = true);
+    try {
+      await _manager.deleteLastEpisode(widget.series.id);
+      if (widget.session.episode?.id == lastEp.id) {
+        widget.session.selectEpisode(null);
+      }
+      final refreshed = _manager.readSeries(widget.series.id);
+      if (refreshed != null) widget.session.updateSeries(refreshed);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已删除第 ${lastEp.index} 集: ${lastEp.title}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _confirmClearAllEpisodes() async {
+    if (_episodes.isEmpty) return;
+    final count = _episodes.length;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.bgCard,
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: ctx.errorText, size: 20),
+            const SizedBox(width: 8),
+            Text('一键清空全部分集', style: TextStyle(color: ctx.textPrimary, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          '确定清空当前剧集的全部 $count 个分集吗？\n\n'
+          '• 将同步清理所有分集对应的剧本、场次、分镜、生成素材及跨集记忆；\n'
+          '• IP 主库与角色资产库将完整保留，不受任何影响。\n\n'
+          '此操作不可撤销！',
+          style: TextStyle(color: ctx.textSecondary, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: ctx.errorText),
+            child: const Text('确认全部清空'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    setState(() => _deleting = true);
+    try {
+      await _manager.clearAllEpisodes(widget.series.id);
+      widget.session.selectEpisode(null);
+      final refreshed = _manager.readSeries(widget.series.id);
+      if (refreshed != null) widget.session.updateSeries(refreshed);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已清空全部分集（共清理 $count 集）')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _renameEpisode(StudioEpisode ep) async {
+    final controller = TextEditingController(text: ep.title);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.bgCard,
+        title: Text('修改分集名称', style: TextStyle(color: ctx.textPrimary, fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: TextStyle(color: ctx.textPrimary),
+          decoration: InputDecoration(
+            labelText: '分集名称',
+            labelStyle: TextStyle(color: ctx.textSecondary),
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (val) {
+            final trimmed = val.trim();
+            if (trimmed.isNotEmpty) Navigator.pop(ctx, trimmed);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isNotEmpty) Navigator.pop(ctx, trimmed);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+
+    if (newTitle != null && newTitle.trim().isNotEmpty && newTitle.trim() != ep.title) {
+      final updated = ep.copyWith(title: newTitle.trim());
+      await _manager.saveEpisode(updated);
+      await _manager.upsertEpisodeMemory(
+        seriesId: widget.series.id,
+        episodeId: ep.id,
+        title: newTitle.trim(),
+      );
+      if (widget.session.episode?.id == ep.id) {
+        widget.session.updateEpisode(updated);
+      }
+      final refreshed = _manager.readSeries(widget.series.id);
+      if (refreshed != null) {
+        widget.session.updateSeries(refreshed);
+      }
+      await _load();
+    }
   }
 
   Future<void> _extractAiSummary(StudioEpisode ep) async {
@@ -5412,11 +6908,50 @@ class _EpisodesTabState extends State<_EpisodesTab> {
             ),
             const Spacer(),
             OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.amber.shade800,
+                side: BorderSide(color: Colors.amber.shade600),
+              ),
+              icon: const Icon(Icons.psychology_outlined, size: 16, color: Colors.amber),
+              label: const Text('编剧研讨室 (全季共创)'),
+              onPressed: () {
+                WritersRoomDialog.show(
+                  context,
+                  series: widget.series,
+                  onSeriesUpdated: (s) {
+                    widget.session.updateSeries(s);
+                    _load();
+                  },
+                );
+              },
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
               onPressed: _creating ? null : _createEpisode,
               icon: _creating
                   ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.add, size: 16),
               label: Text(_creating ? '新建中…' : '新建第 ${_episodes.length + 1} 集'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: (_episodes.isEmpty || _creating || _deleting) ? null : _confirmDeleteLastEpisode,
+              icon: const Icon(Icons.undo, size: 14),
+              label: const Text('删除最后一集', style: TextStyle(fontSize: 12)),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: (_episodes.isEmpty || _creating || _deleting) ? null : context.errorText,
+                side: BorderSide(
+                  color: (_episodes.isEmpty || _creating || _deleting)
+                      ? context.borderSubtle
+                      : context.errorText.withAlpha(140),
+                ),
+              ),
+              onPressed: (_episodes.isEmpty || _creating || _deleting) ? null : _confirmClearAllEpisodes,
+              icon: const Icon(Icons.delete_sweep_outlined, size: 14),
+              label: const Text('一键清空', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -5439,9 +6974,24 @@ class _EpisodesTabState extends State<_EpisodesTab> {
             child: ListTile(
               dense: true,
               selected: widget.session.episode?.id == ep.id,
-              title: Text(
-                '第 ${ep.index} 集: ${ep.title}',
-                style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '第 ${ep.index} 集: ${ep.title}',
+                      style: TextStyle(color: context.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: Icon(Icons.edit_outlined, size: 14, color: context.textTertiary),
+                    tooltip: '修改分集名称',
+                    constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => _renameEpisode(ep),
+                  ),
+                ],
               ),
               subtitle: Text(
                 '${ep.shots.length} 个分镜 ${ep.synopsis.isNotEmpty ? '· ${ep.synopsis}' : ''}',
@@ -5492,7 +7042,11 @@ class _EpisodesTabState extends State<_EpisodesTab> {
 
   Widget _buildEpisodeMemoryItem(StudioEpisode ep, EpisodeMemory? memory) {
     if (memory != null) {
-      return _MemoryEditor(seriesId: widget.series.id, memory: memory);
+      return _MemoryEditor(
+        key: ValueKey('${memory.episodeId}_${memory.title}'),
+        seriesId: widget.series.id,
+        memory: memory,
+      );
     }
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -5526,7 +7080,7 @@ class _EpisodesTabState extends State<_EpisodesTab> {
 }
 
 class _MemoryEditor extends StatefulWidget {
-  const _MemoryEditor({required this.seriesId, required this.memory});
+  const _MemoryEditor({super.key, required this.seriesId, required this.memory});
 
   final String seriesId;
   final EpisodeMemory memory;

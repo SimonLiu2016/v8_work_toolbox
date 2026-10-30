@@ -15,6 +15,7 @@ import 'package:path/path.dart' as p;
 import '../../reader/models/reader_models.dart';
 import '../../reader/services/tts_engine.dart';
 import '../models/studio_models.dart';
+import 'prompt_assembler.dart';
 import 'studio_project_manager.dart';
 
 /// 一句台词的合成结果。
@@ -67,9 +68,9 @@ class StudioTtsService {
     // 同一个音色可能被多句台词复用；合成器每次调用都是独立网络请求，
     // 但保持请求顺序稳定能让云端限流时的失败模式可预测。
     for (final shot in episode.shots) {
-      final text = shot.dialogue.trim();
-      if (text.isEmpty) {
-        // 没有台词的分镜不出音频，但要在返回列表里占位——SRT 生成按
+      final cleanText = PromptAssembler.cleanDialogueForSpeech(shot.dialogue);
+      if (cleanText.isEmpty) {
+        // 没有台词或剥离元数据后为空的分镜不出音频，但要在返回列表里占位——SRT 生成按
         // episode.shots 的顺序推进，缺项会让后面的镜号全部错位。
         lines.add(SynthesizedLine(
           shotNumber: shot.number,
@@ -89,7 +90,7 @@ class StudioTtsService {
                 : fallbackVoiceId);
 
       final bytes = await _effective.synthesize(
-        text,
+        cleanText,
         TtsSynthesisConfig(mode: TtsMode.edge, voiceId: voice),
       );
       // 文件名带镜号与角色标识（spec：包含镜号和角色标识）。

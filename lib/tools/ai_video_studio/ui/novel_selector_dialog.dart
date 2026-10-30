@@ -19,6 +19,31 @@ class NovelSelectionResult {
   });
 
   bool get isFullBook => selectedChapterIndices.isEmpty;
+
+  /// 异步读取所选章节并合并为正文（若 combinedText 已有则直接返回，否则向 NovelRepository 批量提取）
+  Future<String> loadCombinedText() async {
+    if (combinedText.trim().isNotEmpty) return combinedText;
+    if (novel.id.isEmpty) return '';
+
+    final repo = NovelRepository.instance;
+    var indices = selectedChapterIndices;
+    if (indices.isEmpty) {
+      final chs = await repo.getChapterIndices(novel.id);
+      indices = chs.map((c) => c.chapterIndex).toList();
+    }
+
+    final sortedIndices = indices.toList()..sort();
+    final sb = StringBuffer();
+    for (final idx in sortedIndices) {
+      final ch = await repo.getChapter(novel.id, idx);
+      if (ch != null && ch.content.trim().isNotEmpty) {
+        sb.writeln('=== ${ch.title} ===');
+        sb.writeln(ch.content.trim());
+        sb.writeln();
+      }
+    }
+    return sb.toString().trim();
+  }
 }
 
 /// 供“AI短视频工坊”引用的“从小说库选择”弹窗

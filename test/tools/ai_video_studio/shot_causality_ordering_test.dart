@@ -256,13 +256,14 @@ void main() {
     });
 
     test('用户定制 videoPrompt 优先，不追加时间轴', () {
-      final shot = StudioShot(
+      final base = StudioShot(
         number: 1,
         durationSec: 5.0,
         actionZh: '姜七夜拱手一拜',
         dialogue: '老王：你站住！（预估2.0秒）',
         videoPrompt: '自定义提示词',
       );
+      final shot = base.copyWith(videoPromptSourceKey: base.videoPromptSourceKeyOf);
 
       final prompt = PromptAssembler.buildVideoGenPrompt(
         shot: shot,

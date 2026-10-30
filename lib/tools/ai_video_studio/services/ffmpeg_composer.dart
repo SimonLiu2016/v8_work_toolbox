@@ -68,6 +68,13 @@ class ComposeRequest {
   /// 目标总时长（秒），用于进度百分比计算。
   final double durationSec;
 
+  /// 每段台词音频对应的分镜时长（秒），与 [dialogueAudios] 一一对应。
+  ///
+  /// 空列表表示不归一化（旧行为）。传入后每段台词会被 `apad` + `atrim` 到
+  /// 对应分镜时长——TTS 念白往往短于分镜时长，不补齐的话后续片段一拼，
+  /// 台词全会往前挪，字幕与口型全错位（spec: 台词音频按分镜游标落位）。
+  final List<double> dialogueTargetDurations;
+
   const ComposeRequest({
     required this.clips,
     this.dialogueAudios = const [],
@@ -77,6 +84,7 @@ class ComposeRequest {
     this.duckingDb = 10,
     required this.outputFile,
     required this.durationSec,
+    this.dialogueTargetDurations = const [],
   });
 }
 
@@ -436,11 +444,13 @@ abstract final class FfmpegComposer {
         outputFile: File('${request.outputFile.path}.mixed.m4a'),
         duckingRanges: duckingRanges,
         duckingDb: request.duckingDb,
+        targetDurations: request.dialogueTargetDurations,
       );
     } else if (hasDialogue) {
       mixedAudio = await _concatAudio(
         audios: request.dialogueAudios,
         outputFile: File('${request.outputFile.path}.dialogue.m4a'),
+        targetDurations: request.dialogueTargetDurations,
       );
     }
 
@@ -610,10 +620,12 @@ abstract final class FfmpegComposer {
     required File outputFile,
     required List<List<double>> duckingRanges,
     required double duckingDb,
+    List<double> targetDurations = const [],
   }) async {
     final dialogueTrack = await _concatAudio(
       audios: dialogues,
       outputFile: File('${outputFile.path}.dialogue.m4a'),
+      targetDurations: targetDurations,
     );
     if (!await dialogueTrack.exists()) {
       return dialogueTrack;
@@ -657,20 +669,31 @@ abstract final class FfmpegComposer {
   ///
   /// 每段台词都 `apad` + `atrim` 到该分镜的目标时长——TTS 实际念白往往短于
   /// 分镜时长，不补齐的话后续片段一拼，台词全会往前挪，字幕与口型全错位。
+  ///
+  /// 有 [targetDurations] 时走滤镜路径：concat demuxer 的 `duration` 指令只写
+  /// 元数据、不改实际采样，长度归一必须在滤镜层做。没有则退回 demuxer 流拷贝
+  /// （旧行为，也更快）。
   static Future<File> _concatAudio({
     required List<File> audios,
     required File outputFile,
     List<double>? targetDurations,
   }) async {
+    final hasTargets = targetDurations != null &&
+        targetDurations.length == audios.length &&
+        audios.length > 1;
+
+    if (hasTargets) {
+      return _concatAudioNormalized(
+        audios: audios,
+        outputFile: outputFile,
+        targetDurations: targetDurations,
+      );
+    }
+
     final listFile = File('${outputFile.path}.txt');
     final buffer = StringBuffer();
     for (var i = 0; i < audios.length; i++) {
-      var path = audios[i].path.replaceAll("'", "'\\''");
-      if (targetDurations != null && i < targetDurations.length) {
-        // concat demuxer 的 duration 指令只写元数据，不改实际采样；真正改变
-        // 输出长度要靠 apad/atrim，所以这条在滤镜里做，这里只登记文件。
-        path = path;
-      }
+      final path = audios[i].path.replaceAll("'", "'\\''");
       buffer.writeln("file '$path'");
     }
     await listFile.writeAsString(buffer.toString(), flush: true);
@@ -691,6 +714,56 @@ abstract final class FfmpegComposer {
       if (audios.isNotEmpty && await audios.first.exists()) {
         return audios.first;
       }
+    }
+    return outputFile;
+  }
+
+  /// 滤镜路径：逐段 `apad` 补静音 + `atrim` 裁到目标时长，再 `concatn` 拼接。
+  ///
+  /// 与 [StudioSrtWriter] 的游标模型（`cursorMs += holdMs`）天然对齐：每段
+  /// 自包含到目标长度，concat 后第 N 段的起点就是前 N-1 段时长之和。用
+  /// `adelay` 反而要手算每段的绝对偏移，段数一变全部重算。
+  static Future<File> _concatAudioNormalized({
+    required List<File> audios,
+    required File outputFile,
+    required List<double> targetDurations,
+  }) async {
+    final inputs = <String>[];
+    final filters = <String>[];
+    final labels = <String>[];
+    for (var i = 0; i < audios.length; i++) {
+      inputs.addAll(['-i', audios[i].path]);
+      final target = targetDurations[i] > 0 ? targetDurations[i] : 0.0;
+      final label = 'a$i';
+      labels.add('[$label]');
+      // apad 把短于目标的段补上静音；atrim 再把超过目标的段裁掉。
+      // whole_dur 参数直接给目标秒数，不必先探测原时长。
+      filters.add(
+        '[$i:a]apad=whole_dur=$target,atrim=0:$target,asetpts=N/SR/TB[$label]',
+      );
+    }
+    filters.add('${labels.join('')}concat=n=${audios.length}:v=0:a=1[out]');
+
+    final result = await runRaw(
+      args: [
+        '-y',
+        ...inputs,
+        '-filter_complex', filters.join(';'),
+        '-map', '[out]',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        outputFile.path,
+      ],
+    );
+    if (!result.success) {
+      // 滤镜拼接失败不该让整集白合成：退回 demuxer 直拼（旧行为），
+      // 最坏情况是音频前移，但至少有声音。
+      final fallback = await _concatAudio(
+        audios: audios,
+        outputFile: outputFile,
+        targetDurations: null,
+      );
+      return fallback;
     }
     return outputFile;
   }

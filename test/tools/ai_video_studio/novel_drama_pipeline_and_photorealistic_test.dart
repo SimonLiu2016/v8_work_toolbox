@@ -229,7 +229,10 @@ void main() {
       expect(task.stageStatuses[PipelineStage.beats], equals(StageStatus.success));
       expect(task.stageStatuses[PipelineStage.contract], equals(StageStatus.success));
       expect(task.stageStatuses[PipelineStage.storyboard], equals(StageStatus.success));
-      expect(task.stageStatuses[PipelineStage.audit], equals(StageStatus.success));
+      // 单章导入后 shots 被重置为空（分镜必须由打磨后的剧本生成），此时对空
+      // 列表跑 validate 会算出假满分——门禁质检应为 skipped 且不出数。
+      expect(task.stageStatuses[PipelineStage.audit], equals(StageStatus.skipped));
+      expect(task.auditPassRate, isNull);
 
       // 验证实时资产发现
       expect(task.discoveredCharacters, contains('沈长青'));
@@ -237,13 +240,95 @@ void main() {
       expect(task.discoveredProps, contains('斩妖刀'));
       expect(task.protectedUtteranceCount, equals(1));
       expect(task.protectedFactCount, equals(1));
-      expect(task.auditPassRate, greaterThan(0));
 
       // 验证实时终端日志
       expect(task.liveLogs.isNotEmpty, isTrue);
       expect(task.liveLogs.any((l) => l.contains('原著切片与解析流水线')), isTrue);
       expect(task.liveLogs.any((l) => l.contains('沈长青')), isTrue);
-      expect(task.liveLogs.any((l) => l.contains('质检')), isTrue);
+      expect(task.liveLogs.any((l) => l.contains('无可检对象')), isTrue);
+    });
+
+    test('全季导入未执行的后继阶段标记为 skipped，不伪造质检通过率', () async {
+      final series = await manager.createSeries(name: '全季阶段状态测试剧');
+      var callCount = 0;
+      AiConstraintEngine.chatFn = ({
+        slot = 'text',
+        explicitProviderId,
+        explicitModel,
+        required messages,
+        timeout,
+        ignoreCooldown = false,
+      }) async {
+        callCount++;
+        if (callCount == 1) {
+          return ChatResult(
+            text: '''
+{"worldview": "大夏王朝，妖魔横行。",
+ "style_tokens": "oriental dark fantasy",
+ "characters": [{"name": "沈长青", "description_zh": "青年除魔使"}],
+ "scenes": [{"name": "镇魔司大殿", "description_zh": "庄严肃穆"}],
+ "props": []}
+''',
+            usedProviderId: 'mock',
+            usedModel: 'mock',
+            routingTrace: const [],
+          );
+        }
+        return ChatResult(
+          text: '''
+{"episodes": [
+ {"index": 1, "title": "初入镇魔司", "synopsis": "沈长青加入镇魔司。", "summary": "入职。", "hook": "临安城黑风起。"},
+ {"index": 2, "title": "临安妖祸", "synopsis": "沈长青前往临安城。", "summary": "出征。", "hook": "妖魔现身。"}
+]}
+''',
+          usedProviderId: 'mock',
+          usedModel: 'mock',
+          routingTrace: const [],
+        );
+      };
+
+      final localId = await NovelImportTaskService.instance.submit(
+        seriesId: series.id,
+        novelText: '镇魔司大殿之上，晨光破晓。沈长青立于殿前。',
+        isFullSeason: true,
+        targetEpisodeIndex: 1,
+        novelTitle: '人族镇魔司',
+      );
+
+      final task = NovelImportTaskService.instance.taskOf(localId);
+      for (var i = 0; i < 200; i++) {
+        if (!task!.isRunning) break;
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(task!.phase, equals(ImportPhase.done));
+      expect(task.plannedSceneCount, equals(2));
+      // 全季导入只跑到分集大纲：契约锁定、五维拆镜与门禁质检本次均未执行。
+      expect(task.stageStatuses[PipelineStage.beats], equals(StageStatus.success));
+      expect(task.stageStatuses[PipelineStage.contract], equals(StageStatus.skipped));
+      expect(task.stageStatuses[PipelineStage.storyboard], equals(StageStatus.skipped));
+      expect(task.stageStatuses[PipelineStage.audit], equals(StageStatus.skipped));
+      expect(task.auditPassRate, isNull);
+    });
+
+    test('advancePipelineStage 不把已 skipped 的阶段回填为 success', () {
+      final task = NovelImportTask(
+        localId: 'local-backfill',
+        seriesId: 'series-backfill',
+        novelTitle: '回填测试',
+        isFullSeason: true,
+        startedAt: DateTime.now(),
+      );
+
+      task.advancePipelineStage(PipelineStage.contract, StageStatus.skipped);
+      task.advancePipelineStage(PipelineStage.audit, StageStatus.skipped);
+      // 推进到另一分支时，先前的 skipped 必须保留。
+      task.advancePipelineStage(PipelineStage.storyboard, StageStatus.success);
+
+      expect(task.stageStatuses[PipelineStage.contract], equals(StageStatus.skipped));
+      expect(task.stageStatuses[PipelineStage.audit], equals(StageStatus.skipped));
+      expect(task.stageStatuses[PipelineStage.storyboard], equals(StageStatus.success));
     });
   });
 }

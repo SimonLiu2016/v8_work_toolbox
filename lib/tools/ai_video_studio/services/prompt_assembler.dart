@@ -99,6 +99,19 @@ class PromptParts {
   /// 若为 null，则根据 isMultiImage == true 或角色的 visual reference 状态自动推断。
   final bool? hasCharacterReferences;
 
+  /// **按实际参考图顺序**排列的、确有素材图的角色列表（spec: 生图与生视频的
+  /// 参考图取材同源 / 生图多图编号按实际参考图顺序）。
+  ///
+  /// 多图编号说明（「第 N 张图作为角色X」）必须按真正提交给引擎的文件顺序
+  /// 编号。旧实现按 `effectiveCharacters` 的数组下标编号——角色甲没有三视图
+  /// 时，实际第 1 张图是角色乙的，提示词却告诉模型「第 1 张图是角色甲」。
+  /// 为 null 时回落到按 `characters` 下标编号（旧行为）。
+  final List<CharacterCard>? charactersWithImages;
+
+  /// 场景参考图是否真的在参考图数组里（spec: 生图多图编号按实际参考图顺序）。
+  /// 旧实现恒为 true，场景没有图时也会编出「第 N 张图作为背景场景参考」。
+  final bool? hasSceneImage;
+
   /// 发声类型（对白 / 内心独白 / 旁白）。
   final UtteranceVoiceType? voiceType;
 
@@ -129,6 +142,8 @@ class PromptParts {
     this.combatSteps,
     this.isMultiImage,
     this.hasCharacterReferences,
+    this.charactersWithImages,
+    this.hasSceneImage,
   });
 }
 
@@ -420,6 +435,68 @@ abstract final class PromptAssembler {
     return combined;
   }
 
+  /// 判断指定角色是否为当前分镜中的坐骑/交通工具实际骑乘者。
+  /// 严禁向高处窗口、非骑乘角色无差别广播坐骑状态。
+  static bool isCharacterRidingMount({
+    CharacterCard? character,
+    String? characterName,
+    ShotContinuity? continuity,
+    String? actionZh,
+    String? dialogue,
+    String? screenPosition,
+    String? mount,
+    bool isVerticalHighLow = false,
+    bool isCharHigh = false,
+    bool isBalconyOrWindow = false,
+  }) {
+    final mountStr = (mount ?? continuity?.mountOrVehicle ?? '').trim();
+    if (mountStr.isEmpty) {
+      return false;
+    }
+    final name = (characterName ?? character?.name ?? '').trim();
+    if (name.isEmpty) return false;
+
+    final charHigh = isCharHigh ||
+        isBalconyOrWindow ||
+        (screenPosition ?? continuity?.screenPosition ?? '').contains('$name位于上方') ||
+        (screenPosition ?? continuity?.screenPosition ?? '').contains('$name（处于画面前景窗框');
+
+    // 1. 若分镜处于垂直高低落差，且该角色为楼上/窗口高位角色，绝对不可能骑乘地面坐骑
+    if (charHigh) {
+      return false;
+    }
+
+    // 2. 检查动作描述中明确的骑乘关联：如 "姜七夜骑驴"、"姜七夜骑大黑驴"、"姜七夜...骑"、"骑在...姜七夜"
+    final action = actionZh ?? '';
+    if (action.contains('$name骑') ||
+        action.contains('骑着$mountStr的$name') ||
+        action.contains('骑乘$mountStr的$name') ||
+        action.contains('$name稳稳骑') ||
+        action.contains('$name骑乘') ||
+        (action.contains('骑乘$mountStr') && action.contains(name)) ||
+        (action.contains('骑$mountStr') && action.contains(name))) {
+      return true;
+    }
+
+    // 3. 检查角色描述档案是否带有常驻坐骑（如 "骑乘高大威猛的大青驴"、"骑大黑驴"）
+    if (character != null) {
+      if (character.descriptionZh.contains('骑$mountStr') ||
+          character.descriptionZh.contains('骑乘$mountStr') ||
+          character.descriptionZh.contains('大黑驴') ||
+          character.descriptionZh.contains('大青驴') ||
+          character.descriptionZh.contains('常骑')) {
+        return true;
+      }
+    }
+
+    // 4. 若明确为姜七夜等地面主角，默认承载地面坐骑
+    if (name.contains('姜七夜') || (isVerticalHighLow && !charHigh)) {
+      return true;
+    }
+
+    return false;
+  }
+
   /// 解析多角色同框分镜下的画内空间站位与构图主客关系（解耦静态档案，专职描述空间关系）。
   static String resolveCharacterStaging({
     required int index,
@@ -428,11 +505,85 @@ abstract final class PromptAssembler {
     ShotContinuity? continuity,
     String? actionZh,
     String? delta,
+    String? shotSize,
   }) {
     final name = character.name.trim();
     final action = actionZh ?? '';
     final screenPos = continuity?.screenPosition ?? '';
     final worldPos = continuity?.worldPosition ?? '';
+
+    final elev = continuity?.elevationLevel.toLowerCase() ?? '';
+    final isHighElevation = elev.contains('balcony') ||
+        elev.contains('3f') ||
+        elev.contains('2f') ||
+        elev.contains('high') ||
+        elev.contains('rooftop') ||
+        worldPos.contains('三楼') ||
+        worldPos.contains('二楼') ||
+        worldPos.contains('楼上') ||
+        worldPos.contains('窗口') ||
+        worldPos.contains('窗台') ||
+        action.contains('三楼') ||
+        action.contains('二楼') ||
+        action.contains('楼上') ||
+        action.contains('窗口') ||
+        action.contains('窗台') ||
+        action.contains('居高临下');
+
+    final isGroundElevation = worldPos.contains('长街') ||
+        worldPos.contains('街道') ||
+        worldPos.contains('路面') ||
+        worldPos.contains('地面') ||
+        action.contains('长街') ||
+        action.contains('街道') ||
+        action.contains('路面') ||
+        action.contains('地面') ||
+        action.contains('街面') ||
+        action.contains('青石') ||
+        action.contains('骑驴') ||
+        action.contains('骑马') ||
+        screenPos.contains('下方街道') ||
+        (continuity?.mountOrVehicle.isNotEmpty ?? false);
+
+    final isVerticalHighLow = isHighElevation && isGroundElevation;
+    final isWideOrFull = shotSize != null &&
+        (shotSize.contains('wide') ||
+            shotSize.contains('full') ||
+            shotSize.contains('远景') ||
+            shotSize.contains('全景'));
+
+    final isExplicitGround = screenPos.contains('$name居画面下方') ||
+        screenPos.contains('$name在下方') ||
+        screenPos.contains('$name位于下方') ||
+        screenPos.contains('$name位于街道') ||
+        screenPos.contains('$name身处街道') ||
+        screenPos.contains('$name在街面');
+
+    final isCharHigh = isVerticalHighLow &&
+        !isExplicitGround &&
+        (screenPos.contains('$name位于上方') ||
+            screenPos.contains('$name在上') ||
+            screenPos.contains('$name位于窗') ||
+            screenPos.contains('$name（处于画面前景窗框') ||
+            action.contains('窗口探出...$name') ||
+            action.contains('窗口探出白胖身子，$name') ||
+            action.contains('窗口探出白胖身子， $name') ||
+            action.contains('$name探出') ||
+            action.contains('$name居高临下') ||
+            action.contains('三楼窗口...$name') ||
+            action.contains('二楼窗口...$name') ||
+            action.contains('窗口...$name') ||
+            action.contains('$name作势翻窗') ||
+            action.contains('$name翻窗') ||
+            (worldPos.contains('窗口') && (index == 0 || name.contains('余小白'))));
+
+    final isRiding = isCharacterRidingMount(
+      character: character,
+      continuity: continuity,
+      actionZh: action,
+      isVerticalHighLow: isVerticalHighLow,
+      isCharHigh: isCharHigh,
+    );
 
     // 检查是否存在特定环境地标（案前、桌前、门旁、牢门等）
     String landmark = '';
@@ -456,45 +607,65 @@ abstract final class PromptAssembler {
     }
 
     String staging;
-    if (index == 0) {
-      if (screenPos.contains(name)) {
-        staging = '$name${screenPos.contains('焦点') ? '' : '（主景核心焦点）'}';
+    if (isVerticalHighLow) {
+      if (isCharHigh) {
+        staging = '$name身处楼上窗口高位（过肩前景构图框），居高临下俯瞰街面，构成垂直透视构图';
       } else {
-        final lmText = landmark.isNotEmpty ? landmark : '';
-        staging = '$name居中$lmText近景（主景核心焦点）';
-      }
-    } else if (index == 1) {
-      if (screenPos.contains(name)) {
-        staging = '$name${screenPos.contains('呼应') ? '' : '（次景呼应）'}';
-      } else {
-        final isLeft = screenPos.contains('左') || action.contains('左侧');
-        final isRight =
-            screenPos.contains('右') || action.contains('右侧') || (!isLeft);
-        final side = isRight ? '右侧' : '左侧';
-        final isConfronting =
-            action.contains('对峙') ||
-            action.contains('审问') ||
-            action.contains('对视') ||
-            totalCount == 2;
-        final rel = isConfronting ? '对峙' : '';
-        staging = '$name立于$side$rel（次景呼应）';
+        final mountStr = (isRiding && continuity != null && continuity.mountOrVehicle.isNotEmpty)
+            ? '，骑在${continuity.mountOrVehicle}上仰头回应'
+            : '，仰望高处窗口';
+        staging = '$name身处下方长街路面（远景街道视觉焦点）$mountStr，垂直空间落差数丈，严禁平地并立';
       }
     } else {
-      staging = '$name位于侧方中景（同框配角）';
+      if (index == 0) {
+        if (screenPos.contains(name)) {
+          staging = '$name${screenPos.contains('焦点') ? '' : '（主景核心焦点）'}';
+        } else {
+          final lmText = landmark.isNotEmpty ? landmark : '';
+          final closeUpText = isWideOrFull ? '' : '近景';
+          staging = '$name居中$lmText$closeUpText（主景核心焦点）';
+        }
+      } else if (index == 1) {
+        if (screenPos.contains(name)) {
+          staging = '$name${screenPos.contains('呼应') ? '' : '（次景呼应）'}';
+        } else {
+          final isLeft = screenPos.contains('左') || action.contains('左侧');
+          final isRight =
+              screenPos.contains('右') || action.contains('右侧') || (!isLeft);
+          final side = isRight ? '右侧' : '左侧';
+          final isConfronting =
+              action.contains('对峙') ||
+              action.contains('审问') ||
+              action.contains('对视') ||
+              totalCount == 2;
+          final rel = isConfronting ? '对峙' : '';
+          staging = '$name立于$side$rel（次景呼应）';
+        }
+      } else {
+        staging = '$name位于侧方中景（同框配角）';
+      }
     }
 
     final extras = <String>[];
-    // 容貌与发型双重锁定：全景/远景镜头下多角色参考图特征易被稀释，必须追加原生容貌与发型特征描述
-    final facial = character.facialFeaturesZh.trim().isNotEmpty
-        ? character.facialFeaturesZh.trim()
-        : (character.descriptionZh.trim().isNotEmpty
-              ? character.descriptionZh.trim()
-              : '');
-    if (facial.isNotEmpty) {
-      extras.add('容貌特征：$facial');
+    // 当角色已有参考图时，严禁注入五官具体面容文本（如剑眉星目、尖下巴），否则会与参考图在扩散注意层剧烈对抗，
+    // 导致模型为了满足面部细节而强行拉近人物造成浮空、同平面或双胞胎（Do NOT describe facial features）。
+    // 仅在完全没有参考图的纯文本模式下，才注入容貌文本描述。
+    final hasRefImage = character.hasVisualReference;
+    if (!hasRefImage) {
+      final facial = character.facialFeaturesZh.trim().isNotEmpty
+          ? character.facialFeaturesZh.trim()
+          : (character.descriptionZh.trim().isNotEmpty
+                ? character.descriptionZh.trim()
+                : '');
+      if (facial.isNotEmpty) {
+        extras.add('容貌特征：$facial');
+      }
     }
     if (delta != null && delta.trim().isNotEmpty) {
       extras.add('状态：${delta.trim()}');
+    }
+    if (isRiding && continuity != null && continuity.mountOrVehicle.isNotEmpty) {
+      extras.add('坐骑状态：骑在${continuity.mountOrVehicle}上（保持骑坐体态，严禁直立站地）');
     }
     if (continuity != null &&
         continuity.gazeDirection.trim().isNotEmpty &&
@@ -509,37 +680,59 @@ abstract final class PromptAssembler {
   }
 
   /// 构建符合 Agnes Image 2.5 Flash 官方规范的多图角色与保留要求自然语言指令。
+  /// 构建符合 Agnes Image 2.5 Flash 官方规范的多图角色与保留要求自然语言指令。
+  ///
+  /// [charactersWithImages] 是**按实际参考图顺序**排列的、确有素材图的角色
+  /// 列表。编号必须由它推出，不能由全部出场角色的数组下标推出——角色甲没有
+  /// 三视图时，实际提交给引擎的第 1 张图是角色乙的，而按下标编号会告诉模型
+  /// 「第 1 张图是角色甲」，模型照着错指代去对长相，画面必然崩
+  /// （spec: 生图多图编号按实际参考图顺序）。
+  ///
+  /// [hasSceneImage] 由调用方按参考图数组里是否真有场景图传入；恒为 true 会
+  /// 在没有场景图时也编出「第 N 张图作为背景场景参考」。
   static String buildAgnesMultiImageDirective({
     required List<CharacterCard> characters,
     required SceneCard? scene,
     bool hasSceneImage = true,
+    List<CharacterCard>? charactersWithImages,
   }) {
+    // 有实际参考图顺序时用它；否则回落到按出场角色下标（旧行为）。
+    final ordered = charactersWithImages ?? characters;
+
     final imageRoles = <String>[];
+    final mappingLines = <String>[];
     var imgIndex = 1;
 
-    for (var i = 0; i < characters.length; i++) {
-      final c = characters[i];
+    for (var i = 0; i < ordered.length; i++) {
+      final c = ordered[i];
       final roleName = i == 0
           ? '主要角色（${c.name}）'
           : (i == 1 ? '次要角色（${c.name}）' : '同框配角（${c.name}）');
       imageRoles.add('第$imgIndex张图作为$roleName');
+      final desc = c.descriptionZh.isNotEmpty ? '（${c.descriptionZh}）' : '';
+      mappingLines.add('- 图$imgIndex: ${c.name}$desc');
       imgIndex++;
     }
 
     if (scene != null && hasSceneImage) {
       imageRoles.add('第$imgIndex张图作为背景场景参考（${scene.name}）');
+      final desc = scene.descriptionZh.isNotEmpty ? '（${scene.descriptionZh}）' : '';
+      mappingLines.add('- 图$imgIndex: ${scene.name}$desc');
       imgIndex++;
     }
 
     if (imageRoles.isEmpty) return '';
 
     final directives = <String>[];
-    directives.add('将${imageRoles.join('，')}。');
+    directives.add('【素材绑定映射】:\n${mappingLines.join('\n')}');
+    directives.add('【参考图角色与保留要求】: 将${imageRoles.join('，')}。');
 
     // 保留要求声明
     final preservation = <String>[];
-    if (characters.isNotEmpty) {
-      preservation.add('严格保留角色的面容身形与服装特征');
+    if (ordered.isNotEmpty) {
+      preservation.add(
+        '严格保留角色的面容身形与服装特征，Do NOT describe facial features in prompt, keep face identity and hairstyle exactly as reference image',
+      );
     }
     if (scene != null && hasSceneImage) {
       preservation.add('保留场景图中的建筑材质与环境光影风格，镜头根据当前分镜动作动态取景');
@@ -548,7 +741,33 @@ abstract final class PromptAssembler {
       directives.add('${preservation.join('，')}。');
     }
 
-    return '【参考图角色与保留要求】: ${directives.join(' ')}';
+    return directives.join(' ');
+  }
+
+  /// 将分镜绑定的角色与场景素材行内编号注入动作文本（如 余小白(图1) ... 寒阳城长街(图2)）。
+  static String injectInlineReferences({
+    required String text,
+    required Map<String, String> entityToRefTag,
+  }) {
+    if (text.isEmpty || entityToRefTag.isEmpty) return text;
+    var result = text;
+    // 按实体名称长度从大到小排序，避免短名称截断长名称
+    final sortedKeys = entityToRefTag.keys.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+
+    for (final entity in sortedKeys) {
+      if (!result.contains(entity)) continue;
+      final tag = entityToRefTag[entity]!;
+      // 匹配实体，且后续未紧随 (图N) 或 （图N） 或 [图N]
+      final pattern = RegExp(
+        RegExp.escape(entity) +
+            r'(?!\s*[\(（\[]' +
+            RegExp.escape(tag) +
+            r'[\)）\]])',
+      );
+      result = result.replaceAllMapped(pattern, (match) => '$entity($tag)');
+    }
+    return result;
   }
 
   /// 拼接一条完整生图 Prompt。
@@ -583,16 +802,20 @@ abstract final class PromptAssembler {
       }
     }
 
-    final isLiveAction =
-        prodType == StudioProductionType.drama ||
-        parts.productionType?.id == 'live_action' ||
-        parts.productionType?.id == 'liveAction' ||
-        parts.aestheticStyle?.category == '实拍电影质感' ||
-        (parts.aestheticStyle?.id.contains('realism') ?? false) ||
-        (parts.aestheticStyle?.id.contains('live_action') ?? false) ||
-        (parts.styleTokens?.contains('真人') ?? false) ||
-        (parts.styleTokens?.contains('实拍') ?? false) ||
-        (parts.styleTokens?.contains('photorealistic') ?? false);
+    final isExplicitAnime = prodType == StudioProductionType.anime3d ||
+        prodType == StudioProductionType.anime ||
+        (parts.aestheticStyle?.category.contains('动漫') ?? false) ||
+        (parts.aestheticStyle?.category.contains('国漫') ?? false);
+
+    final isLiveAction = !isExplicitAnime &&
+        (prodType == StudioProductionType.drama ||
+            parts.productionType?.id == 'live_action' ||
+            parts.productionType?.id == 'liveAction' ||
+            parts.aestheticStyle?.category == '实拍电影质感' ||
+            (parts.aestheticStyle?.id.contains('realism') ?? false) ||
+            (parts.aestheticStyle?.id.contains('live_action') ?? false) ||
+            (parts.styleTokens?.contains('真人') ?? false) ||
+            (parts.styleTokens?.contains('实拍') ?? false));
 
     // 时代题材专属排他词
     if (parts.eraGenre?.negativeBans.trim().isNotEmpty == true) {
@@ -621,9 +844,12 @@ abstract final class PromptAssembler {
       negativeSegments.add(styleNegative);
     }
 
-    // 通用防崩防畸形词
+    // 通用防崩防畸形词与可配置负向词库
     negativeSegments.add(AestheticStyle.universalNegativeBrief);
-    negativeSegments.add(defaultNegativePrompt);
+    final dynamicNegative = StudioPresetStore.instance
+        .getPromptContent('negative_prompt_library', defaultFallback: defaultNegativePrompt)
+        .trim();
+    negativeSegments.add(dynamicNegative.isNotEmpty ? dynamicNegative : defaultNegativePrompt);
 
     // 全局第四面墙防御（除明确解说外，严禁人物直视镜头屏幕破坏沉浸感）
     negativeSegments.add(
@@ -631,13 +857,27 @@ abstract final class PromptAssembler {
     );
 
     // 段落 1: 多图参考自然语言指令（Agnes Image 2.5 Flash 多图合成规范）
+    //
+    // 编号按调用方给的实际参考图顺序（spec: 生图多图编号按实际参考图顺序）。
+    // 调用方没给时回落到按出场角色下标——那是旧行为，在角色缺图时会错位。
+    final charsWithImages = parts.charactersWithImages;
+    // 场景有没有图不能假设——`scene != null` 只说明关联了场景卡，卡上可能一张
+    // 图都没有。按空间视图与上传参考图判一次，没有就不编场景编号。
+    final effectiveSceneImage = parts.hasSceneImage ??
+        (scene != null &&
+            (scene.referenceImages.isNotEmpty ||
+                scene.spatialViews.values.any((v) => v.hasImage)));
     final isMulti =
         parts.isMultiImage ??
-        (effectiveCharacters.length + (scene != null ? 1 : 0) >= 2);
+        ((charsWithImages?.length ?? effectiveCharacters.length) +
+                (effectiveSceneImage ? 1 : 0) >=
+            2);
     if (isMulti) {
       final multiDirective = buildAgnesMultiImageDirective(
         characters: effectiveCharacters,
         scene: scene,
+        hasSceneImage: effectiveSceneImage,
+        charactersWithImages: charsWithImages,
       );
       if (multiDirective.isNotEmpty) {
         positiveSegments.add(multiDirective);
@@ -645,7 +885,27 @@ abstract final class PromptAssembler {
     }
 
     // 段落 2: 核心视觉动作与主体焦点（高权重前置，纠偏注意力机制）
-    final action = parts.actionZh?.trim() ?? '';
+    final ordered = charsWithImages ?? effectiveCharacters;
+    final entityToRefTag = <String, String>{};
+    var refIdx = 1;
+    for (final c in ordered) {
+      if (c.name.trim().isNotEmpty) {
+        entityToRefTag[c.name.trim()] = '图$refIdx';
+        refIdx++;
+      }
+    }
+    if (scene != null && effectiveSceneImage && scene.name.trim().isNotEmpty) {
+      entityToRefTag[scene.name.trim()] = '图$refIdx';
+      refIdx++;
+    }
+
+    final rawAction = parts.actionZh?.trim() ?? '';
+    final action = isMulti
+        ? injectInlineReferences(
+            text: rawAction,
+            entityToRefTag: entityToRefTag,
+          )
+        : rawAction;
     final dialogue = parts.dialogue?.trim() ?? '';
     if (action.isNotEmpty || dialogue.isNotEmpty) {
       final actionParts = <String>[];
@@ -772,8 +1032,9 @@ abstract final class PromptAssembler {
           final variation =
               parts.characterVariations[c.id] ?? c.activeVariation;
           final delta = variation?.positiveDelta.trim() ?? '';
-          if (variation != null)
+          if (variation != null) {
             appliedNames.add('${c.name}:${variation.name}');
+          }
 
           if (hasCharacterRef) {
             final staging = resolveCharacterStaging(
@@ -783,6 +1044,7 @@ abstract final class PromptAssembler {
               continuity: parts.continuity,
               actionZh: parts.actionZh,
               delta: delta,
+              shotSize: parts.shotSize,
             );
             charListTokens.add(staging);
           } else {
@@ -864,6 +1126,16 @@ abstract final class PromptAssembler {
     }
 
     final positive = _joinWithinLimit(positiveSegments, kMaxPromptWords);
+    final shouldSanitizeStyle = prodType != null;
+    final sanitizedPositive = (shouldSanitizeStyle &&
+            StyleConflictSanitizer.hasConflict(positive.text,
+                isLiveAction: isLiveAction))
+        ? StyleConflictSanitizer.sanitizePrompt(
+            text: positive.text,
+            isLiveAction: isLiveAction,
+          )
+        : positive.text;
+
     final deduplicatedNegative = AestheticStyle.deduplicateTokens(
       negativeSegments.join(', '),
     );
@@ -878,7 +1150,7 @@ abstract final class PromptAssembler {
     final negative = _joinWithinLimit(negativeTokensList, kMaxNegativeWords);
 
     return AssembledPrompt(
-      positive: positive.text,
+      positive: sanitizedPositive,
       negative: negative.text,
       truncated: positive.truncated,
       droppedSegments: positive.dropped,
@@ -1046,58 +1318,94 @@ abstract final class PromptAssembler {
     return defaultSpeaker;
   }
 
+  /// 检查分镜中是否存在显著的垂直高度落差（如二楼/三楼窗口 vs 街道地面）。
+  static bool hasVerticalElevationDifference({
+    required StudioShot shot,
+    String? actionZh,
+    ShotContinuity? continuity,
+  }) {
+    final cont = continuity ?? shot.continuity;
+    final act = actionZh ?? shot.actionZh;
+    final world = cont.worldPosition;
+    final elev = cont.elevationLevel.toLowerCase();
+    final staging = shot.directorDecisions.cameraStaging;
+
+    final hasHigh = elev.contains('balcony') ||
+        elev.contains('3f') ||
+        elev.contains('2f') ||
+        elev.contains('high') ||
+        elev.contains('rooftop') ||
+        elev.contains('tower') ||
+        world.contains('三楼') ||
+        world.contains('二楼') ||
+        world.contains('楼上') ||
+        world.contains('窗口') ||
+        world.contains('窗台') ||
+        act.contains('三楼') ||
+        act.contains('二楼') ||
+        act.contains('楼上') ||
+        act.contains('窗口') ||
+        act.contains('窗台') ||
+        act.contains('居高临下') ||
+        staging.contains('俯视街道') ||
+        staging.contains('三楼');
+
+    final hasLow = world.contains('长街') ||
+        world.contains('街道') ||
+        world.contains('路面') ||
+        world.contains('地面') ||
+        act.contains('长街') ||
+        act.contains('街道') ||
+        act.contains('路面') ||
+        act.contains('地面') ||
+        act.contains('街面') ||
+        act.contains('青石') ||
+        act.contains('骑驴') ||
+        act.contains('骑马') ||
+        cont.screenPosition.contains('下方街道') ||
+        cont.mountOrVehicle.isNotEmpty;
+
+    return hasHigh && hasLow;
+  }
+
   /// 4. 5D 导演决策（光影、景别、运镜、时空节拍）；
   /// 5. 跨镜头连续性台账与末态物理动势衔接。
   static String buildVideoGenPrompt({
     required StudioShot shot,
     required StudioEpisode episode,
     List<CharacterCard> characters = const [],
+    List<PropCard> props = const [],
     SceneCard? scene,
     List<ResolvedAssetMaterial> materials = const [],
     List<AudioReference> audioReferences = const [],
+    AgnesVideoMode? videoMode,
+    bool? hasFirstFrame,
   }) {
-    // 0. 若分镜已由 AI 重写或用户定制专属视频提示词，直接优先使用
-    if (shot.videoPrompt.trim().isNotEmpty) {
+    // 0. 若分镜已由 AI 重写或用户定制专属视频提示词，且尚未过期，直接优先使用
+    if (shot.videoPrompt.trim().isNotEmpty && !shot.isVideoPromptStale) {
       return shot.videoPrompt.trim();
     }
 
+    final effectiveMode = videoMode ??
+        (shot.videoMode.isNotEmpty && shot.videoMode != 'auto'
+            ? AgnesVideoMode.fromId(shot.videoMode)
+            : shot.resolveEffectiveVideoMode(hasKeyframe: hasFirstFrame ?? false));
+    final isKeyframe = effectiveMode == AgnesVideoMode.keyframe ||
+        (hasFirstFrame == true) ||
+        (shot.videoMode == 'keyframe');
+
     final sections = <String>[];
 
-    // 0.5 素材指代（spec: shot-asset-binding）。
-    //
-    // images[] 传了 N 张图，若提示词里没有任何地方声明「第 N 张是谁」，模型
-    // 只能自己猜——猜错就把参考图当氛围参考，自行臆造人物长相。这一段让每张
-    // 图有名字、有编号，编号在动作行与台词行复现（见下面的出场人物与时间轴）。
-    final refLines = <String>[];
-    for (final m in materials) {
-      // 场景参考图必须显式声明「不作人脸参考」——reference 模式的图多数是人物
-      // 三视图，模型容易把场景底图也当人脸图刷，结果背景不生效、画面里乱长脸
-      // （spec: 场景参考图显式声明用途）。
-      final usage = m.isScene ? '场景，仅作环境空间参考，不作为人物人脸参考' : m.roleLabel;
-      refLines.add('${m.pictureTag} = ${m.assetName}（$usage）');
-    }
-    // 音频参考与图片参考各自独立编号（spec: 音频参考契约）。
-    for (var i = 0; i < audioReferences.length; i++) {
-      refLines.add('<Audio ${i + 1}> = ${audioReferences[i].label}');
-    }
-    if (refLines.isNotEmpty) {
-      sections.add('【素材指代】${refLines.join('；')}');
-    }
-
-    // 对白段先算但不入列：因果链必须在提示词执行顺序上先于台词，否则视频模型
-    // 会先把台词演完再演动作（spec: shot-causality-ordering 反应性台词时序）。
-    // 用户看到的「老王先骂、姜七夜再走」就是台词段落在最前导致的。
+    // 对白与说话人提取（提前计算以辅助单一主体归一化）
     String? dialogueSection;
     var isInnerVoice = false;
     final dialogue = shot.dialogue.trim();
+    String speaker = '';
     if (dialogue.isNotEmpty) {
       final cleanSpeech = cleanDialogueForSpeech(dialogue);
       final explicitSpeaker = extractSpeakerName(dialogue);
-
-      // 确定对白说话者：优先信任台词前缀提取结果
-      String speaker = explicitSpeaker;
+      speaker = explicitSpeaker;
       if (speaker.isEmpty && characters.isNotEmpty) {
-        // 尝试从 actionZh 中匹配角色名
         for (final c in characters) {
           if (shot.actionZh.contains(c.name)) {
             speaker = c.name;
@@ -1117,7 +1425,6 @@ abstract final class PromptAssembler {
           dialogue.contains('心声') ||
           dialogue.contains('内心独白');
 
-      // 收集在场所有角色名称，用于点名全员守卫
       final inSceneNames = <String>[];
       if (speaker.isNotEmpty) inSceneNames.add(speaker);
       for (final c in characters) {
@@ -1130,66 +1437,237 @@ abstract final class PromptAssembler {
           : '画面中所有在场人物';
 
       if (isInnerVoice) {
-        // 彻底消除中括号机器标记，显式正向点名全员闭口，防止配角抢台词开口
         final speakerLabel = speaker.isNotEmpty ? '$speaker画外心声念白' : '画外心声念白';
         dialogueSection =
             '正向画音约束：$speakerLabel（“$cleanSpeech”）。全员闭口守卫：画面中$allNamesDesc等全员嘴唇全程严密闭合，面部无口型变化，绝对不说话、不张嘴、不念台词，无画内文字与字幕，全员保持沉思内敛神态与微表情。';
       } else {
+        final isLongShot = shot.shotSize == StudioShotSize.long ||
+            shot.shotSize == StudioShotSize.extremeLong ||
+            shot.shotSize == StudioShotSize.full;
         final speakerLabel = speaker.isNotEmpty ? '$speaker说话' : '角色说话';
         final otherChars = inSceneNames.where((n) => n != speaker).toList();
         final listenerGuard = otherChars.isNotEmpty
             ? '；同框倾听者（${otherChars.join('、')}）保持自然闭口倾听，不说话不张嘴'
             : '';
-        // 语气只来自台词本身，绝不拿画面氛围（mood）顶替——氛围描写场景基调，
-        // 语气描述人物情绪，二者混用会产出「语气：温馨」配怒斥台词这种矛盾。
-        // 解析不到就省略，留白好过错语气（spec: 分镜台词语气来源）。
         final tone = extractDialogueTone(dialogue);
         final toneHint = tone.isNotEmpty ? '，语气：$tone' : '';
-        dialogueSection =
-            '正向对白约束：$speakerLabel（“$cleanSpeech”）$toneHint。说话者嘴唇随台词自然开合，口型发音对齐，声画一体$listenerGuard。';
+
+        if (isLongShot) {
+          // 远景严禁注入高精度口型唇齿同步，因为远景面部像素不足以渲染唇形，强驱动会造成面部扭曲甚至浮空（agnes-clip 工业铁律）
+          dialogueSection =
+              '正向对白约束：$speakerLabel（“$cleanSpeech”）$toneHint。远景画面人物身处远方，不作近景微口型强求，保持身体动势自然呼应，同框者自然倾听。';
+        } else {
+          dialogueSection =
+              '正向对白约束：$speakerLabel（“$cleanSpeech”）$toneHint。说话者嘴唇随台词自然开合，口型发音对齐，声画一体$listenerGuard。';
+        }
       }
     } else {
       dialogueSection = '正向动作约束：无对白镜头，纯环境音与动作自然音效。';
     }
 
+    // 0.4 单一主体（Single Subject）约束收敛：
+    // 若出场多角色，仅允许至多 1 个角色作为主体（subject），同框其余角色自动收敛为 confrontation 或 supporting
+    String? subjectId;
+    if (speaker.isNotEmpty) {
+      final spk = characters.where((c) => c.name == speaker).firstOrNull;
+      if (spk != null) subjectId = spk.id;
+    }
+    if (subjectId == null && shot.actionZh.isNotEmpty) {
+      for (final c in characters) {
+        if (shot.actionZh.contains(c.name)) {
+          subjectId = c.id;
+          break;
+        }
+      }
+    }
+    subjectId ??= characters.isNotEmpty ? characters.first.id : null;
+
+    final roleOfRaw = {
+      for (final m in materials)
+        if (!m.isScene) m.assetId: m.role
+    };
+
+    final normalizedRoleOf = <String, ShotAssetRole>{};
+    for (final c in characters) {
+      final rawRole = roleOfRaw[c.id];
+      if (c.id == subjectId) {
+        normalizedRoleOf[c.id] = ShotAssetRole.subject;
+      } else {
+        if (rawRole == ShotAssetRole.confrontation || rawRole == ShotAssetRole.supporting) {
+          normalizedRoleOf[c.id] = rawRole!;
+        } else {
+          final isConfront = characters.length == 2 ||
+              dialogue.isNotEmpty ||
+              shot.actionZh.contains('喊') ||
+              shot.actionZh.contains('对');
+          normalizedRoleOf[c.id] = isConfront ? ShotAssetRole.confrontation : ShotAssetRole.supporting;
+        }
+      }
+    }
+
+    final normalizedMaterials = <ResolvedAssetMaterial>[];
+    for (final m in materials) {
+      if (m.isScene || m.isProp) {
+        normalizedMaterials.add(m);
+      } else {
+        final fixedRole = normalizedRoleOf[m.assetId] ?? m.role;
+        normalizedMaterials.add(ResolvedAssetMaterial(
+          assetId: m.assetId,
+          assetName: m.assetName,
+          isScene: m.isScene,
+          isProp: m.isProp,
+          role: fixedRole,
+          filePath: m.filePath,
+          index: m.index,
+        ));
+      }
+    }
+
+    // 0.5 素材指代（spec: shot-asset-binding）。
+    // 在 keyframe 首尾帧模式下已有首帧图片，严禁输出【素材指代】，防止视频模型多重生成克隆人脸
+    if (!isKeyframe) {
+      final refLines = <String>[];
+      for (final m in normalizedMaterials) {
+        final usage = m.isScene
+            ? '场景，仅作环境空间参考，不作为人物人脸参考'
+            : (m.isProp ? '道具，实物道具参考' : m.roleLabel);
+        refLines.add('${m.pictureTag} = ${m.assetName}（$usage）');
+      }
+      for (var i = 0; i < audioReferences.length; i++) {
+        refLines.add('<Audio ${i + 1}> = ${audioReferences[i].label}');
+      }
+      if (refLines.isNotEmpty) {
+        sections.add('【素材指代】${refLines.join('；')}');
+      }
+    }
+
     // 1. 出场人物与同框构图
-    //
-    //    已绑定素材图角色的外貌由参考图约束，这里 SHALL NOT 再写一遍静态
-    //    外貌长文——那既浪费模型注意力，又与参考图构成两处可能冲突的真相。
-    //    只写名称、分工与画面位置；未绑定素材的才回落到文字描述。
+    final isWideOrFull = shot.shotSize == StudioShotSize.long ||
+        shot.shotSize == StudioShotSize.extremeLong ||
+        shot.shotSize == StudioShotSize.full;
+
+    final isVerticalHighLow = hasVerticalElevationDifference(
+      shot: shot,
+      actionZh: shot.actionZh,
+      continuity: shot.continuity,
+    );
+
     if (characters.isNotEmpty) {
-      final boundIds = {for (final m in materials) m.assetId};
-      final roleOf = {
-        for (final m in materials)
-          if (!m.isScene) m.assetId: m.role
-      };
+      final boundIds = {for (final m in normalizedMaterials) m.assetId};
       if (characters.length == 1) {
         final c = characters.first;
-        final role = roleOf[c.id];
-        final roleSuffix = role == null ? '' : '，分工：${role.label}';
-        if (boundIds.contains(c.id)) {
-          sections.add('【出场人物】: ${c.name}（形象以${_tagOf(materials, c.id)}为准$roleSuffix）');
+        final role = normalizedRoleOf[c.id] ?? ShotAssetRole.subject;
+        final roleSuffix = '，分工：${role.label}';
+        if (!isKeyframe && boundIds.contains(c.id)) {
+          sections.add('【出场人物】: ${c.name}（形象以${_tagOf(normalizedMaterials, c.id)}为准$roleSuffix）');
         } else {
-          final desc = c.descriptionZh.isNotEmpty ? c.descriptionZh : c.name;
-          sections.add('【出场人物】: ${c.name}（$desc$roleSuffix）');
+          final desc = (!isKeyframe && c.descriptionZh.isNotEmpty) ? '，${c.descriptionZh}' : '';
+          sections.add('【出场人物】: ${c.name}（处于画面核心主体$desc$roleSuffix）');
         }
       } else {
         final charParts = <String>[];
         for (var i = 0; i < characters.length; i++) {
           final c = characters[i];
-          final role = roleOf[c.id];
-          final roleLabel = role == ShotAssetRole.confrontation
-              ? '对峙'
-              : (i == 0 ? '主体近景' : '同框配角');
-          final roleSuffix = role == null ? '' : '，分工：${role.label}';
-          if (boundIds.contains(c.id)) {
-            charParts.add('${c.name}（处于画面$roleLabel，形象以${_tagOf(materials, c.id)}为准$roleSuffix）');
+          final role = normalizedRoleOf[c.id] ?? ShotAssetRole.supporting;
+          final roleSuffix = '，分工：${role.label}';
+
+          String roleLabel;
+          if (isVerticalHighLow) {
+            final screenPos = shot.continuity.screenPosition;
+            final actionZh = shot.actionZh;
+            final isExplicitGround = screenPos.contains('${c.name}居画面下方') ||
+                screenPos.contains('${c.name}在下方') ||
+                screenPos.contains('${c.name}位于下方') ||
+                screenPos.contains('${c.name}位于街道') ||
+                screenPos.contains('${c.name}身处街道') ||
+                screenPos.contains('${c.name}在街面');
+
+            final isCharHigh = !isExplicitGround &&
+                (screenPos.contains('${c.name}位于上方') ||
+                    screenPos.contains('${c.name}在上') ||
+                    screenPos.contains('${c.name}位于窗') ||
+                    screenPos.contains('${c.name}（处于画面前景窗框') ||
+                    actionZh.contains('窗口探出...${c.name}') ||
+                    actionZh.contains('窗口探出白胖身子，${c.name}') ||
+                    actionZh.contains('窗口探出白胖身子， ${c.name}') ||
+                    actionZh.contains('${c.name}探出') ||
+                    actionZh.contains('${c.name}居高临下') ||
+                    actionZh.contains('三楼窗口...${c.name}') ||
+                    actionZh.contains('二楼窗口...${c.name}') ||
+                    actionZh.contains('窗口...${c.name}') ||
+                    actionZh.contains('${c.name}作势翻窗') ||
+                    actionZh.contains('${c.name}翻窗') ||
+                    (shot.continuity.worldPosition.contains('窗口') && (i == 0 || c.name.contains('余小白'))));
+
+            final isRiding = isCharacterRidingMount(
+              character: c,
+              continuity: shot.continuity,
+              actionZh: actionZh,
+              isVerticalHighLow: true,
+              isCharHigh: isCharHigh,
+            );
+
+            if (isCharHigh) {
+              roleLabel = '前景窗框俯瞰（过肩构图）';
+            } else {
+              final mountText = (isRiding && shot.continuity.mountOrVehicle.isNotEmpty)
+                  ? '，骑在${shot.continuity.mountOrVehicle}上仰头'
+                  : '';
+              roleLabel = '远景街道地面焦点$mountText';
+            }
           } else {
-            final desc = c.descriptionZh.isNotEmpty ? '，$c.descriptionZh' : '';
+            if (role == ShotAssetRole.subject) {
+              roleLabel = isWideOrFull ? '核心主体' : '主体近景';
+            } else if (role == ShotAssetRole.confrontation) {
+              roleLabel = '对峙位';
+            } else {
+              roleLabel = '同框配角';
+            }
+          }
+
+          if (!isKeyframe && boundIds.contains(c.id)) {
+            charParts.add('${c.name}（处于画面$roleLabel，形象以${_tagOf(normalizedMaterials, c.id)}为准$roleSuffix）');
+          } else {
+            final desc = (!isKeyframe && c.descriptionZh.isNotEmpty) ? '，${c.descriptionZh}' : '';
             charParts.add('${c.name}（处于画面$roleLabel$desc$roleSuffix）');
           }
         }
-        sections.add('【同框人物与构图】: ${charParts.join('；')}');
+        if (isKeyframe) {
+          final names = characters.map((c) => c.name).join('、');
+          sections.add('【出场人物】: $names（首帧已固定同框人物形象与空间布局，严禁多重绘制额外人物）');
+        } else {
+          sections.add('【同框人物与构图】: ${charParts.join('；')}');
+        }
+      }
+    }
+
+    // 1.5 出场道具与关键物
+    final propMaterials = normalizedMaterials.where((m) => m.isProp).toList();
+    if (propMaterials.isNotEmpty || (props.isNotEmpty && shot.propIds.isNotEmpty)) {
+      final propLines = <String>[];
+      final handledIds = <String>{};
+      for (final m in propMaterials) {
+        handledIds.add(m.assetId);
+        final propCard = props.where((item) => item.id == m.assetId).firstOrNull;
+        final desc = propCard?.descriptionZh.trim();
+        final descSuffix = (desc != null && desc.isNotEmpty) ? '（$desc）' : '';
+        if (!isKeyframe) {
+          propLines.add('${m.assetName}$descSuffix（实物外观以${m.pictureTag}为准）');
+        } else {
+          propLines.add('${m.assetName}$descSuffix');
+        }
+      }
+      for (final pid in shot.propIds) {
+        if (handledIds.contains(pid)) continue;
+        final p = props.where((item) => item.id == pid).firstOrNull;
+        if (p != null) {
+          final desc = p.descriptionZh.trim();
+          final descSuffix = desc.isNotEmpty ? '（$desc）' : '';
+          propLines.add('${p.name}$descSuffix');
+        }
+      }
+      if (propLines.isNotEmpty) {
+        sections.add('【出场道具】: ${propLines.join('、')}');
       }
     }
 
@@ -1213,18 +1691,13 @@ abstract final class PromptAssembler {
     // 4. 角色对白与声画同步口令（动作因果链之后才入列）
     sections.add(dialogueSection);
 
-    // 5. 因果时间轴（spec: shot-causality-ordering）。
-    //
-    // 段落顺序只解决「提示词里谁在前」，不解决模型把同一镜内两个主体的动作
-    // 演成同时发生。秒数标注是唯一能约束同镜相位的手段，所以这里独立成段。
-    //
-    // 这一段是**派生段**：时间戳只写进这里，绝不回写 `actionZh`——后者是
-    // C02 对白保真、C05 地标衔接等规则的匹配源，污染它会让那些规则失效。
+    // 5. 因果时间轴（spec: shot-causality-ordering）
     final timeline = buildShotCausalityTimeline(
       shot: shot,
       isInnerVoice: isInnerVoice,
       hasDialogue: dialogue.isNotEmpty,
-      materials: materials,
+      materials: normalizedMaterials,
+      isKeyframe: isKeyframe,
     );
     if (timeline.isNotEmpty) {
       sections.add('【因果时间轴】$timeline');
@@ -1370,7 +1843,18 @@ abstract final class PromptAssembler {
       }
     }
 
-    return sections.join('\n');
+    final assembledRaw = sections.join('\n');
+    return sanitizePromptConflicts(assembledRaw);
+  }
+
+  /// 清洗提示词中的负向冲突对抗词，转换为正向客观的物理空间描述。
+  static String sanitizePromptConflicts(String prompt) {
+    var result = prompt;
+    result = result.replaceAll('严禁平地同高度站立', '垂直空间落差分明，高位与地面纵深分离');
+    result = result.replaceAll('严禁同高度站立', '垂直落差分层排列');
+    result = result.replaceAll('严禁站在空中', '稳立于地面长街');
+    result = result.replaceAll('严禁浮空', '双脚贴地或稳乘坐骑');
+    return result;
   }
 
   /// 编译单镜的【因果时间轴】文本（spec: shot-causality-ordering）。
@@ -1390,6 +1874,7 @@ abstract final class PromptAssembler {
     required bool isInnerVoice,
     required bool hasDialogue,
     List<ResolvedAssetMaterial> materials = const [],
+    bool isKeyframe = false,
   }) {
     if (isInnerVoice) return '';
 
@@ -1440,14 +1925,9 @@ abstract final class PromptAssembler {
     final fallbackSubject = materials.where((m) => !m.isScene).firstOrNull;
 
     // 素材编号紧贴主体名（spec: 编号紧贴主体，不挂时间段末尾）。
-    /// 把动作/台词文本里出现的每个角色名后插入其编号。
-    ///
-    /// 同镜多主体时按出现次序各自插入——「姜七夜（<Picture 1>）拱手一拜，
-    /// 转身牵驴走出衙门，老王（<Picture 2>）在背后跳脚」。这样读起来是
-    /// 「谁（用哪张图）做什么」，而不是「做了什么（用这张图）」——后者会被
-    /// 理解成该时段只锁定这一张图。
+    // 在 keyframe 首尾帧模式下不插入 <Picture N> 标签，直接保留角色名称
     String injectTags(String text, ResolvedAssetMaterial? fallback) {
-      if (materials.isEmpty) return text;
+      if (isKeyframe || materials.isEmpty) return text;
       // 只对角色素材插编号，且按名字长度降序避免「老王」抢先匹配「老王头」。
       final roleMats = materials.where((m) => !m.isScene).toList()
         ..sort((a, b) => b.assetName.length.compareTo(a.assetName.length));
@@ -1532,6 +2012,31 @@ abstract final class PromptAssembler {
       parts.add('目光聚焦于$gazeTarget');
     }
 
+    // 垂直高低位空间落差物理隔离
+    if (hasVerticalElevationDifference(shot: shot)) {
+      parts.add('垂直空间落差隔离：楼上窗口高位俯视街面，街面长街地面仰望回应，构成单向过肩俯拍构图，严禁平地同高度站立');
+    }
+
+    // 坐骑连续性体态约束：显式区分真实骑乘者与非骑乘者（如楼上窗口角色），防止坐骑混淆
+    if (continuity.mountOrVehicle.isNotEmpty) {
+      final riders = roleChars.where((m) => isCharacterRidingMount(
+        characterName: m.assetName,
+        actionZh: shot.actionZh,
+        dialogue: shot.dialogue,
+        screenPosition: continuity.screenPosition,
+        mount: continuity.mountOrVehicle,
+        isBalconyOrWindow: m.assetName.contains('余小白') ||
+            continuity.screenPosition.contains('${m.assetName}位于上方') ||
+            continuity.screenPosition.contains('${m.assetName}（处于画面前景窗框'),
+      )).toList();
+      if (riders.isNotEmpty) {
+        final riderNames = riders.map((r) => r.assetName).join('、');
+        parts.add('坐骑状态保持：画内骑乘${continuity.mountOrVehicle}，保持骑坐体态，严禁直立站地（唯一骑乘者：[$riderNames]，其余同框角色严禁骑坐同款坐骑）');
+      } else {
+        parts.add('坐骑状态保持：画内骑乘${continuity.mountOrVehicle}，保持骑坐体态，严禁直立站地');
+      }
+    }
+
     // 对峙关系：两个角色相对而立、视线交会。
     if (isMulti && hasConfrontation) {
       final subjects = roleChars.where((m) => m.role == ShotAssetRole.subject).toList();
@@ -1539,8 +2044,12 @@ abstract final class PromptAssembler {
       final a = subjects.isNotEmpty ? subjects.first : roleChars.first;
       final b = confronters.isNotEmpty ? confronters.first : roleChars.last;
       if (a.assetId != b.assetId) {
-        parts.add('${a.assetName}与${b.assetName}相对对峙，视线在中线交会，'
-            '${a.assetName}面朝${b.assetName}、${b.assetName}面朝${a.assetName}');
+        if (hasVerticalElevationDifference(shot: shot)) {
+          parts.add('${a.assetName}居高临下俯视长街，${b.assetName}仰面回应，视线形成纵向上下对视交汇');
+        } else {
+          parts.add('${a.assetName}与${b.assetName}相对对峙，视线在中线交会，'
+              '${a.assetName}面朝${b.assetName}、${b.assetName}面朝${a.assetName}');
+        }
       }
     }
 
@@ -1621,10 +2130,66 @@ abstract final class PromptAssembler {
       );
     }
 
+    // 6. 垂直高低位景别互斥消解：全景/远景禁止“主体近景”
+    if (result.contains('景别：远景') ||
+        result.contains('景别：全景') ||
+        result.contains('景别：大远景')) {
+      result = result.replaceAll('处于画面主体近景', '处于画面核心主体');
+    }
+
     // 清理可能产生的双逗号与空白行
     result = result.replaceAll(RegExp(r'[，,]\s*[，,]'), '，');
     result = result.replaceAll(RegExp(r'\n{3,}'), '\n\n');
 
+    return result.trim();
+  }
+
+  /// 根据视频生成模式（keyframe / reference / text）对提示词进行深度净化与防崩消解。
+  static String sanitizeForVideoMode(
+    String prompt, {
+    required AgnesVideoMode mode,
+    List<ResolvedAssetMaterial> materials = const [],
+    List<CharacterCard> characters = const [],
+  }) {
+    var result = cleanAndResolveConflicts(prompt, characters: characters);
+    if (mode == AgnesVideoMode.keyframe) {
+      // 1. 彻底剔除【素材指代】整段
+      result = result.replaceAll(RegExp(r'【素材指代】[^\n]*\n?'), '');
+
+      // 2. 剥离“形象以<Picture \d+>为准”等参考标签
+      result = result.replaceAll(RegExp(r'[，,\s]*形象以<Picture \d+>为准'), '');
+
+      // 3. 将【同框人物与构图】收敛为首帧固定声明，防止视频模型在首帧已有画面上二次重绘克隆人物
+      if (result.contains('【同框人物与构图】')) {
+        final names = characters.isNotEmpty
+            ? characters.map((c) => c.name).join('、')
+            : '同框角色';
+        result = result.replaceAll(
+          RegExp(r'【同框人物与构图】:[^\n]*\n?'),
+          '【出场人物】: $names（首帧已固定同框人物形象与空间布局，严禁多重绘制额外人物）\n',
+        );
+      }
+
+      // 4. 将微动作与因果时间轴中的 <Picture \d+> 标签替换为纯角色名（或直接剥离编号）
+      final picTagToName = <String, String>{};
+      for (final m in materials) {
+        picTagToName[m.pictureTag] = m.assetName;
+      }
+      result = result.replaceAllMapped(RegExp(r'（?<tag><Picture \d+>）?'), (match) {
+        final tag = match.group(0)!;
+        final cleanTag = RegExp(r'<Picture \d+>').firstMatch(tag)?.group(0);
+        if (cleanTag != null && picTagToName.containsKey(cleanTag)) {
+          return '';
+        }
+        return '';
+      });
+      result = result.replaceAll(RegExp(r'<Picture \d+>\s*'), '');
+
+      // 5. 清理残留的多余括号与标点，如“（）”或“余小白（）”
+      result = result.replaceAll(RegExp(r'（\s*）|\(\s*\)'), '');
+      result = result.replaceAll(RegExp(r'[，,]\s*[，,]'), '，');
+      result = result.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    }
     return result.trim();
   }
 
@@ -1633,13 +2198,19 @@ abstract final class PromptAssembler {
     required StudioShot shot,
     required StudioEpisode episode,
     List<CharacterCard> characters = const [],
+    List<PropCard> props = const [],
     SceneCard? scene,
+    List<ResolvedAssetMaterial> materials = const [],
+    List<AudioReference> audioReferences = const [],
   }) {
     final raw = buildVideoGenPrompt(
       shot: shot,
       episode: episode,
       characters: characters,
+      props: props,
       scene: scene,
+      materials: materials,
+      audioReferences: audioReferences,
     );
     return cleanAndResolveConflicts(raw, scene: scene, characters: characters);
   }
@@ -2353,6 +2924,8 @@ abstract final class PromptAssembler {
   }
 
   /// 编译视线轴线（Eye-line）与机位俯仰（Camera Angle）指令。
+  /// 遵循严格的分层仲裁机制：显式机位 > 显式视线朝向 > 静态场景空间高度。
+  /// 绝不允许仅因场景带有 balcony 就将地面仰拍镜头颠倒为高角度俯拍。
   static String compileGazeAndEyeline({
     String cameraAngle = '',
     String gazeDirection = '',
@@ -2361,21 +2934,43 @@ abstract final class PromptAssembler {
   }) {
     final tokens = <String>[];
 
-    final isHigh =
-        cameraAngle == 'high_angle' ||
-        elevationLevel.contains('balcony') ||
-        elevationLevel.contains('rooftop') ||
-        elevationLevel.contains('high') ||
-        gazeDirection.contains('俯视') ||
-        gazeDirection.contains('向下');
+    final hasExplicitLowCamera = cameraAngle == 'low_angle' ||
+        cameraAngle.contains('仰拍') ||
+        cameraAngle.contains('低角度');
+    final hasExplicitHighCamera = cameraAngle == 'high_angle' ||
+        cameraAngle.contains('俯拍') ||
+        cameraAngle.contains('高角度');
 
-    final isLow =
-        cameraAngle == 'low_angle' ||
-        (elevationLevel == 'ground' &&
-            (gazeDirection.contains('仰望') || gazeDirection.contains('向上'))) ||
-        gazeDirection.contains('仰视') ||
-        gazeDirection.contains('仰望') ||
-        gazeDirection.contains('向上');
+    final hasExplicitLowGaze = gazeDirection.contains('仰') ||
+        gazeDirection.contains('向上') ||
+        gazeDirection.contains('抬头');
+    final hasExplicitHighGaze = gazeDirection.contains('俯') ||
+        gazeDirection.contains('向下') ||
+        gazeDirection.contains('低头');
+
+    bool isLow = false;
+    bool isHigh = false;
+
+    // 分层仲裁 1：显式机位绝对优先
+    if (hasExplicitLowCamera) {
+      isLow = true;
+    } else if (hasExplicitHighCamera) {
+      isHigh = true;
+    }
+    // 分层仲裁 2：显式视线朝向次之
+    else if (hasExplicitLowGaze) {
+      isLow = true;
+    } else if (hasExplicitHighGaze) {
+      isHigh = true;
+    }
+    // 分层仲裁 3：静态场景空间高度作为后备兜底
+    else if (elevationLevel.contains('balcony') ||
+        elevationLevel.contains('rooftop') ||
+        elevationLevel.contains('high')) {
+      isHigh = true;
+    } else if (elevationLevel == 'ground') {
+      isLow = false; // 地面平视或中性
+    }
 
     if (isHigh) {
       tokens.add('机位为高角度俯拍视角（high-angle downward perspective）');
@@ -2434,14 +3029,17 @@ class AudioReference {
 /// 编号。编号不由名称匹配得出——名称可能互相包含（「老王」vs「老王头」），
 /// 下标不会错位。
 class ResolvedAssetMaterial {
-  /// 资产 id（角色卡 id 或场景卡 id）。
+  /// 资产 id（角色卡 id、道具卡 id 或场景卡 id）。
   final String assetId;
 
-  /// 资产名称（角色名或场景名）。
+  /// 资产名称（角色名、道具名或场景名）。
   final String assetName;
 
-  /// 该资产是角色还是场景。
+  /// 该资产是否为场景。
   final bool isScene;
+
+  /// 该资产是否为道具。
+  final bool isProp;
 
   /// 叙事分工。场景无分工语义，恒为 [ShotAssetRole.subject]。
   final ShotAssetRole role;
@@ -2456,6 +3054,7 @@ class ResolvedAssetMaterial {
     required this.assetId,
     required this.assetName,
     required this.isScene,
+    this.isProp = false,
     required this.role,
     required this.filePath,
     required this.index,
@@ -2465,7 +3064,11 @@ class ResolvedAssetMaterial {
   String get pictureTag => '<Picture ${index + 1}>';
 
   /// 该素材的人类可读描述，用于【素材指代】段。
-  String get roleLabel => isScene ? '场景' : role.label;
+  String get roleLabel {
+    if (isScene) return '场景';
+    if (isProp) return '道具';
+    return role.label;
+  }
 }
 
 /// 出场资产的素材绑定解析器（spec: shot-asset-binding）。
@@ -2475,14 +3078,41 @@ class ResolvedAssetMaterial {
 /// 提示词编译与提交给生成模型的参考媒体数组从同一个列表产出，编号错位在
 /// 结构上不可能发生。
 abstract final class AssetBindingResolver {
+  /// 计算当前镜头实际应当下发人脸参考图的角色 ID 白名单集合。
+  ///
+  /// 若为 null 表示全部在场角色皆可下发。
+  /// 若为特定 Set，仅允许集合内的角色下发参考图，其余角色在 Prompt 中仅作文本描述。
+  static Set<String>? computeEffectiveFaceIds(StudioShot shot) {
+    if (shot.activeFaceCharacterIds != null && shot.activeFaceCharacterIds!.isNotEmpty) {
+      return shot.activeFaceCharacterIds!.toSet();
+    }
+    // 自动规约推导：
+    // 1. 若分镜为过肩机位 (OTS)，前景背影或被越过的角色严禁下发人脸参考图；
+    // 2. 若为高角度俯拍 (三楼向下/居高临下)，远景地面角色严禁下发人脸参考图，防止扩散模型为了满足人脸权重而强行拉平空间或制造双胞胎。
+    final isHighAngle = shot.cameraAngle == 'high_angle' ||
+        shot.actionZh.contains('俯拍') ||
+        shot.actionZh.contains('楼上') ||
+        shot.actionZh.contains('窗口') ||
+        shot.actionZh.contains('居高临下');
+    final isOts = shot.cameraMove.contains('过肩') ||
+        shot.cameraMove.toLowerCase().contains('ots') ||
+        shot.actionZh.contains('过肩');
+    if ((isHighAngle || isOts) && shot.characterIds.length > 1) {
+      return {shot.characterIds.first};
+    }
+    return null;
+  }
+
   /// 解析一个分镜的出场素材，返回**有序的**绑定列表。
   ///
-  /// 顺序：按 `characterIds` 的既有顺序排列角色，场景排在最后（若已关联）。
-  /// 空 `materialPath` 时按资产自身的既定优先级取默认素材；取不到默认素材
+  /// 顺序：按 `characterIds` 角色 ➔ `propIds` 道具 ➔ 场景（若已关联）。
+  /// 支持单资产绑定多张图片（materialPaths），按序展开为连续的 `<Picture N>` 编号。
+  /// 空 `materialPaths` 时按资产自身的既定优先级取默认素材；取不到默认素材
   /// 的资产被跳过（不占编号）——调用方应通过 [resolveWithGaps] 发现缺口。
   static List<ResolvedAssetMaterial> resolve({
     required StudioShot shot,
     required List<CharacterCard> characters,
+    List<PropCard> props = const [],
     SceneCard? scene,
     required String seriesId,
     StudioProjectManager? manager,
@@ -2490,48 +3120,113 @@ abstract final class AssetBindingResolver {
     final mgr = manager ?? StudioProjectManager.instance;
     final result = <ResolvedAssetMaterial>[];
     final charMap = {for (final c in characters) c.id: c};
+    final propMap = {for (final p in props) p.id: p};
+    final allowedFaceIds = computeEffectiveFaceIds(shot);
 
+    // 1. 角色参考图（按 characterIds 顺序，展开绑定的多张素材）
     for (final cid in shot.characterIds) {
+      if (allowedFaceIds != null && !allowedFaceIds.contains(cid)) {
+        continue; // 动态收窄：白名单外的角色不注入人脸参考图
+      }
       final card = charMap[cid];
       if (card == null) continue;
       final binding = shot.assetBindings[cid];
       final dir = mgr.characterDir(seriesId, cid).path;
-      final fileName = _pickMaterial(
-        explicit: binding?.materialPath ?? '',
-        defaultPicker: () => AssetMaterialEnumerator.defaultMaterialFor(
+      final fileNames = <String>[];
+      if (binding != null && binding.materialPaths.isNotEmpty) {
+        for (final item in binding.materialPaths) {
+          if (File(p.join(dir, item)).existsSync()) {
+            fileNames.add(item);
+          }
+        }
+      }
+      if (fileNames.isEmpty) {
+        final def = AssetMaterialEnumerator.defaultMaterialFor(
           isScene: false,
           character: card,
           activeVariation: card.activeVariation,
           assetDirPath: dir,
-        ),
-      );
-      if (fileName == null) continue;
-      result.add(ResolvedAssetMaterial(
-        assetId: cid,
-        assetName: card.name.trim(),
-        isScene: false,
-        role: binding?.role ?? ShotAssetRole.subject,
-        filePath: p.join(dir, fileName),
-        index: result.length,
-      ));
+        );
+        if (def != null) fileNames.add(def);
+      }
+
+      for (final fileName in fileNames) {
+        result.add(ResolvedAssetMaterial(
+          assetId: cid,
+          assetName: card.name.trim(),
+          isScene: false,
+          isProp: false,
+          role: binding?.role ?? ShotAssetRole.subject,
+          filePath: p.join(dir, fileName),
+          index: result.length,
+        ));
+      }
     }
 
+    // 2. 道具参考图（按 propIds 顺序，展开绑定的多张素材）
+    for (final pid in shot.propIds) {
+      final card = propMap[pid] ?? mgr.readProp(seriesId, pid);
+      if (card == null) continue;
+      final binding = shot.assetBindings[pid];
+      final dir = mgr.propDir(seriesId, pid).path;
+      final fileNames = <String>[];
+      if (binding != null && binding.materialPaths.isNotEmpty) {
+        for (final item in binding.materialPaths) {
+          if (File(p.join(dir, item)).existsSync()) {
+            fileNames.add(item);
+          }
+        }
+      }
+      if (fileNames.isEmpty) {
+        final def = AssetMaterialEnumerator.defaultMaterialFor(
+          isScene: false,
+          isProp: true,
+          prop: card,
+          assetDirPath: dir,
+        );
+        if (def != null) fileNames.add(def);
+      }
+
+      for (final fileName in fileNames) {
+        result.add(ResolvedAssetMaterial(
+          assetId: pid,
+          assetName: card.name.trim(),
+          isScene: false,
+          isProp: true,
+          role: binding?.role ?? ShotAssetRole.supporting,
+          filePath: p.join(dir, fileName),
+          index: result.length,
+        ));
+      }
+    }
+
+    // 3. 场景参考图（若已关联，展开绑定的素材）
     if (scene != null) {
       final binding = shot.assetBindings[scene.id];
       final dir = mgr.sceneDir(seriesId, scene.id).path;
-      final fileName = _pickMaterial(
-        explicit: binding?.materialPath ?? '',
-        defaultPicker: () => AssetMaterialEnumerator.defaultMaterialFor(
+      final fileNames = <String>[];
+      if (binding != null && binding.materialPaths.isNotEmpty) {
+        for (final item in binding.materialPaths) {
+          if (File(p.join(dir, item)).existsSync()) {
+            fileNames.add(item);
+          }
+        }
+      }
+      if (fileNames.isEmpty) {
+        final def = AssetMaterialEnumerator.defaultMaterialFor(
           isScene: true,
           scene: scene,
           assetDirPath: dir,
-        ),
-      );
-      if (fileName != null) {
+        );
+        if (def != null) fileNames.add(def);
+      }
+
+      for (final fileName in fileNames) {
         result.add(ResolvedAssetMaterial(
           assetId: scene.id,
           assetName: scene.name.trim(),
           isScene: true,
+          isProp: false,
           role: ShotAssetRole.subject,
           filePath: p.join(dir, fileName),
           index: result.length,
@@ -2550,6 +3245,7 @@ abstract final class AssetBindingResolver {
       resolveWithGaps({
     required StudioShot shot,
     required List<CharacterCard> characters,
+    List<PropCard> props = const [],
     SceneCard? scene,
     required String seriesId,
     StudioProjectManager? manager,
@@ -2557,6 +3253,7 @@ abstract final class AssetBindingResolver {
     final materials = resolve(
       shot: shot,
       characters: characters,
+      props: props,
       scene: scene,
       seriesId: seriesId,
       manager: manager,
@@ -2564,9 +3261,21 @@ abstract final class AssetBindingResolver {
 
     final resolvedIds = {for (final m in materials) m.assetId};
     final missing = <String>[];
+    final allowedFaceIds = computeEffectiveFaceIds(shot);
+
     for (final cid in shot.characterIds) {
+      if (allowedFaceIds != null && !allowedFaceIds.contains(cid)) {
+        continue; // 处于收窄白名单外的角色不作为缺失项报错
+      }
       if (resolvedIds.contains(cid)) continue;
       final name = characters.where((c) => c.id == cid).firstOrNull?.name ?? cid;
+      missing.add(name);
+    }
+    for (final pid in shot.propIds) {
+      if (resolvedIds.contains(pid)) continue;
+      final name = props.where((p) => p.id == pid).firstOrNull?.name ??
+          manager?.readProp(seriesId, pid)?.name ??
+          pid;
       missing.add(name);
     }
     if (scene != null && !resolvedIds.contains(scene.id)) {
@@ -3169,6 +3878,7 @@ abstract final class CharacterTurnaroundPrompt {
     String descriptionZh = '',
     String negativePrompt = '',
     String fullDescriptionZh = '',
+    String? systemPromptOverride,
   }) {
     var trimmedChar = characterPositivePrompt.trim();
     final trimmedAttire = attirePrompt.trim();
@@ -3213,17 +3923,24 @@ abstract final class CharacterTurnaroundPrompt {
         ? cleanShavenGuardPositive
         : '';
 
-    // 动态从 StudioPresetStore 读取 character_turnaround 规范
+    // 动态从 StudioPresetStore 读取 character_turnaround 规范（若有显式覆盖则优先使用）
     final customTurnaround = StudioPresetStore.instance
         .getPromptContent('character_turnaround')
         .trim();
-    final layoutParts = customTurnaround.isNotEmpty
-        ? [customTurnaround]
-        : [
-            _viewLayoutRequirement,
-            _identityRequirement,
-            pbrAntiPlasticGuardPositive,
-          ];
+    final effectiveOverride = (systemPromptOverride != null &&
+            systemPromptOverride.trim().isNotEmpty)
+        ? systemPromptOverride.trim()
+        : null;
+
+    final layoutParts = effectiveOverride != null
+        ? [effectiveOverride]
+        : (customTurnaround.isNotEmpty
+            ? [customTurnaround]
+            : [
+                _viewLayoutRequirement,
+                _identityRequirement,
+                pbrAntiPlasticGuardPositive,
+              ]);
 
     final rawCombined = [
       ...layoutParts,
@@ -3247,6 +3964,7 @@ abstract final class CharacterTurnaroundPrompt {
     VisualEraGenre? eraGenre,
     CharacterTurnaroundProportion proportion =
         CharacterTurnaroundProportion.standard,
+    String? systemPromptOverride,
   }) {
     final combinedPositive = character.combinedPromptPositive.isNotEmpty
         ? character.combinedPromptPositive
@@ -3261,6 +3979,7 @@ abstract final class CharacterTurnaroundPrompt {
           : character.descriptionZh,
       fullDescriptionZh: character.descriptionZh,
       negativePrompt: character.basePromptNegative,
+      systemPromptOverride: systemPromptOverride ?? character.systemPromptOverride,
     );
   }
 
@@ -3373,6 +4092,7 @@ abstract final class CharacterTurnaroundPrompt {
     CharacterTurnaroundProportion proportion =
         CharacterTurnaroundProportion.standard,
     bool inheritBaseFace = true,
+    String? systemPromptOverride,
   }) {
     final normalizedAttire = PromptAssembler.normalizeDeltaWords(
       variation.effectiveAttirePrompt,
@@ -3392,6 +4112,13 @@ abstract final class CharacterTurnaroundPrompt {
               : '$combinedCharPrompt， $faceIdentityTokens')
         : combinedCharPrompt;
 
+    final override = (systemPromptOverride != null &&
+            systemPromptOverride.trim().isNotEmpty)
+        ? systemPromptOverride.trim()
+        : (variation.systemPromptOverride?.trim().isNotEmpty == true
+            ? variation.systemPromptOverride!.trim()
+            : character.systemPromptOverride?.trim());
+
     return build(
       combined,
       styleTokens: styleTokens,
@@ -3403,6 +4130,7 @@ abstract final class CharacterTurnaroundPrompt {
       negativePrompt: variation.negativeDelta.isNotEmpty
           ? variation.negativeDelta
           : character.basePromptNegative,
+      systemPromptOverride: override,
     );
   }
 
@@ -4293,14 +5021,70 @@ abstract final class AssetMaterialEnumerator {
     ];
   }
 
-  /// 取角色或场景的系统默认素材文件名；无可用素材返回 null。
+  /// 列出道具的可用素材候选，顺序即优先级。
+  static List<AssetMaterialCandidate> forProp(
+    PropCard prop, {
+    required String propDirPath,
+  }) {
+    final candidates = <AssetMaterialCandidate>[];
+    final seen = <String>{};
+
+    void add(String? fileName, String label) {
+      if (fileName == null || fileName.trim().isEmpty) return;
+      final name = fileName.trim();
+      if (!seen.add(name)) return;
+      if (!File(p.join(propDirPath, name)).existsSync()) return;
+      candidates.add(AssetMaterialCandidate(fileName: name, label: label));
+    }
+
+    for (var i = 0; i < prop.referenceImages.length; i++) {
+      final ref = prop.referenceImages[i];
+      add(ref, i == 0 ? '基准参考图' : '参考图 ${i + 1}');
+    }
+
+    // 扫描道具目录下所有磁盘存在的图片
+    try {
+      final dir = Directory(propDirPath);
+      if (dir.existsSync()) {
+        for (final entry in dir.listSync()) {
+          if (entry is File) {
+            final baseName = p.basename(entry.path);
+            if (baseName.endsWith('.png') ||
+                baseName.endsWith('.jpg') ||
+                baseName.endsWith('.jpeg')) {
+              add(baseName, '参考图');
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (candidates.isEmpty) return candidates;
+    final first = candidates.first;
+    return [
+      AssetMaterialCandidate(
+        fileName: first.fileName,
+        label: first.label,
+        isDefault: true,
+      ),
+      ...candidates.skip(1),
+    ];
+  }
+
+  /// 取角色、道具或场景的系统默认素材文件名；无可用素材返回 null。
   static String? defaultMaterialFor({
     required bool isScene,
+    bool isProp = false,
     CharacterCard? character,
     SceneCard? scene,
+    PropCard? prop,
     CharacterVariation? activeVariation,
     required String assetDirPath,
   }) {
+    if (isProp && prop != null) {
+      final candidates = forProp(prop, propDirPath: assetDirPath);
+      return candidates.isEmpty ? null : candidates.first.fileName;
+    }
     final candidates = isScene
         ? forScene(scene!, sceneDirPath: assetDirPath)
         : forCharacter(
@@ -4344,4 +5128,101 @@ String _joinPromptSegments(List<String> segments) {
     previousWasMultiline = segment.contains('\n');
   }
   return buffer.toString();
+}
+
+/// 风格互斥消歧与去重器：消除 3D国漫/CG 与 真人实拍/胶片 之间的冲突特征。
+abstract final class StyleConflictSanitizer {
+  static const List<String> animeCgTokens = [
+    '3d cgi animation',
+    '3d cgi',
+    '3d render',
+    '3d anime',
+    '3d国漫',
+    '3d国漫风格',
+    'chinese fantasy donghua',
+    'donghua',
+    'unreal engine 5 render',
+    'unreal engine 5',
+    'unreal engine',
+    'ue5渲染',
+    'ue5',
+    '次世代cg',
+    'cel-shaded',
+    'makoto shinkai',
+    'ufotable',
+    'anime aesthetic',
+    'japanese anime',
+    'master anime',
+    '二次元',
+    '动漫风格',
+  ];
+
+  static const List<String> liveActionTokens = [
+    'photorealistic 8k',
+    'photorealistic',
+    'live-action cinematography',
+    'live-action footage',
+    'live-action photo',
+    'live-action',
+    'arri alexa footage',
+    'arri alexa',
+    '35mm lens',
+    'raw photo',
+    'cinematic film still',
+    'film still',
+    '真人实拍',
+    '真人出镜',
+    '胶片质感',
+    '真实摄影',
+    '真人',
+    '实拍',
+  ];
+
+  /// 快速判断提示词中是否包含与当前制作类型互斥的风格词。
+  static bool hasConflict(String text, {required bool isLiveAction}) {
+    if (text.trim().isEmpty) return false;
+    final tokensToRemove = isLiveAction ? animeCgTokens : liveActionTokens;
+    final lower = text.toLowerCase();
+    return tokensToRemove.any((t) => lower.contains(t));
+  }
+
+  /// 根据制作类型（Live-Action vs 3D/Anime）清洗互斥风格词，并去重。
+  static String sanitizePrompt({
+    required String text,
+    required bool isLiveAction,
+  }) {
+    if (text.trim().isEmpty) return '';
+    var result = text;
+    final tokensToRemove = isLiveAction ? animeCgTokens : liveActionTokens;
+
+    for (final token in tokensToRemove) {
+      final pattern = RegExp(
+        r'(?:\s*[,，;；]\s*|^|\b)' +
+            RegExp.escape(token) +
+            r'(?:\s*[,，;；]\s*|$|\b)',
+        caseSensitive: false,
+      );
+      result = result.replaceAll(pattern, ', ');
+    }
+
+    // 清洗多余逗号与首尾标点
+    result = result
+        .replaceAll(RegExp(r'[,，;；\s]+[,，;；]'), ', ')
+        .replaceAll(RegExp(r'^[,\s，;；]+|[,\s，;；]+$'), '')
+        .trim();
+
+    // 去重重复片段（保留中文内部标点句意）
+    final parts = result.split(RegExp(r',\s*'));
+    final seen = <String>{};
+    final deduplicated = <String>[];
+    for (final part in parts) {
+      final trimmed = part.trim();
+      final normalized = trimmed.toLowerCase();
+      if (trimmed.isNotEmpty && !seen.contains(normalized)) {
+        seen.add(normalized);
+        deduplicated.add(trimmed);
+      }
+    }
+    return deduplicated.join(', ');
+  }
 }

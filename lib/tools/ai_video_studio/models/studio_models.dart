@@ -176,6 +176,9 @@ class CharacterVariation {
   /// 该形态专属参考图相对路径列表。
   final List<String> referenceImages;
 
+  /// 系统三视图提示词组件覆盖（若非空则优先使用，替换默认三视图骨架/排版约束）。
+  final String? systemPromptOverride;
+
   final bool active;
 
   const CharacterVariation({
@@ -186,6 +189,7 @@ class CharacterVariation {
     this.attirePrompt = '',
     this.turnaroundPath,
     this.referenceImages = const [],
+    this.systemPromptOverride,
     this.active = false,
   });
 
@@ -202,6 +206,8 @@ class CharacterVariation {
     String? turnaroundPath,
     bool clearTurnaroundPath = false,
     List<String>? referenceImages,
+    String? systemPromptOverride,
+    bool clearSystemPromptOverride = false,
     bool? active,
   }) {
     return CharacterVariation(
@@ -212,6 +218,9 @@ class CharacterVariation {
       attirePrompt: attirePrompt ?? this.attirePrompt,
       turnaroundPath: clearTurnaroundPath ? null : (turnaroundPath ?? this.turnaroundPath),
       referenceImages: referenceImages ?? this.referenceImages,
+      systemPromptOverride: clearSystemPromptOverride
+          ? null
+          : (systemPromptOverride ?? this.systemPromptOverride),
       active: active ?? this.active,
     );
   }
@@ -224,6 +233,8 @@ class CharacterVariation {
     if (attirePrompt.isNotEmpty) 'attire_prompt': attirePrompt,
     if (turnaroundPath != null) 'turnaround_path': turnaroundPath,
     'reference_images': referenceImages,
+    if (systemPromptOverride != null && systemPromptOverride!.isNotEmpty)
+      'system_prompt_override': systemPromptOverride,
     'active': active,
   };
 
@@ -237,6 +248,8 @@ class CharacterVariation {
       turnaroundPath: json['turnaround_path'] as String?,
       referenceImages:
           (json['reference_images'] as List?)?.cast<String>() ?? const [],
+      systemPromptOverride: json['system_prompt_override'] as String? ??
+          json['systemPromptOverride'] as String?,
       active: json['active'] as bool? ?? false,
     );
   }
@@ -283,6 +296,9 @@ class CharacterCard {
   /// 角色别名/代称列表（如原著中"姜七少"、"七少"、"少东家"等）。
   final List<String> aliases;
 
+  /// 系统三视图提示词组件覆盖（若非空则优先使用，替换默认三视图骨架/排版约束）。
+  final String? systemPromptOverride;
+
   final DateTime updatedAt;
 
   const CharacterCard({
@@ -300,6 +316,7 @@ class CharacterCard {
     this.ttsVoiceId = '',
     this.variations = const [],
     this.aliases = const [],
+    this.systemPromptOverride,
     required this.updatedAt,
   });
 
@@ -361,6 +378,8 @@ class CharacterCard {
     String? ttsVoiceId,
     List<CharacterVariation>? variations,
     List<String>? aliases,
+    String? systemPromptOverride,
+    bool clearSystemPromptOverride = false,
     DateTime? updatedAt,
   }) {
     return CharacterCard(
@@ -378,6 +397,9 @@ class CharacterCard {
       ttsVoiceId: ttsVoiceId ?? this.ttsVoiceId,
       variations: variations ?? this.variations,
       aliases: aliases ?? this.aliases,
+      systemPromptOverride: clearSystemPromptOverride
+          ? null
+          : (systemPromptOverride ?? this.systemPromptOverride),
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -398,6 +420,8 @@ class CharacterCard {
     'tts_voice_id': ttsVoiceId,
     'variations': variations.map((v) => v.toJson()).toList(),
     if (aliases.isNotEmpty) 'aliases': aliases,
+    if (systemPromptOverride != null && systemPromptOverride!.isNotEmpty)
+      'system_prompt_override': systemPromptOverride,
     'updated_at': updatedAt.toIso8601String(),
   };
 
@@ -432,6 +456,8 @@ class CharacterCard {
           const [],
       aliases:
           (json['aliases'] as List?)?.cast<String>() ?? const [],
+      systemPromptOverride: json['system_prompt_override'] as String? ??
+          json['systemPromptOverride'] as String?,
       updatedAt:
           DateTime.tryParse(json['updated_at'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -636,6 +662,12 @@ class SceneCard {
   /// 360° 全景切片俯仰偏移量（单位：度，默认为 0.0）。
   final double panoramaPitchOffset;
 
+  /// 方位视角生图的系统空镜环境前导词覆盖（非空时优先使用，替换默认空镜底板锁与环境规范）。
+  final String? systemPromptOverride;
+
+  /// 360° 等矩全景母图专属系统头尾透视锚点覆盖（非空时优先使用，替换默认 panoHead/panoTail 建筑透视约束）。
+  final String? panoramaSystemPromptOverride;
+
   final DateTime updatedAt;
 
   const SceneCard({
@@ -650,6 +682,8 @@ class SceneCard {
     this.panoramaYawOffset = 0.0,
     this.panoramaFov = 105.0,
     this.panoramaPitchOffset = 0.0,
+    this.systemPromptOverride,
+    this.panoramaSystemPromptOverride,
     required this.updatedAt,
   });
 
@@ -724,6 +758,10 @@ class SceneCard {
     double? panoramaYawOffset,
     double? panoramaFov,
     double? panoramaPitchOffset,
+    String? systemPromptOverride,
+    bool clearSystemPromptOverride = false,
+    String? panoramaSystemPromptOverride,
+    bool clearPanoramaSystemPromptOverride = false,
     bool clearPanorama = false,
     DateTime? updatedAt,
   }) {
@@ -739,6 +777,12 @@ class SceneCard {
       panoramaYawOffset: panoramaYawOffset ?? this.panoramaYawOffset,
       panoramaFov: panoramaFov ?? this.panoramaFov,
       panoramaPitchOffset: panoramaPitchOffset ?? this.panoramaPitchOffset,
+      systemPromptOverride: clearSystemPromptOverride
+          ? null
+          : (systemPromptOverride ?? this.systemPromptOverride),
+      panoramaSystemPromptOverride: clearPanoramaSystemPromptOverride
+          ? null
+          : (panoramaSystemPromptOverride ?? this.panoramaSystemPromptOverride),
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -760,6 +804,11 @@ class SceneCard {
       'panorama_fov': panoramaFov,
     if (panoramaPitchOffset != 0.0)
       'panorama_pitch_offset': panoramaPitchOffset,
+    if (systemPromptOverride != null && systemPromptOverride!.isNotEmpty)
+      'system_prompt_override': systemPromptOverride,
+    if (panoramaSystemPromptOverride != null &&
+        panoramaSystemPromptOverride!.isNotEmpty)
+      'panorama_system_prompt_override': panoramaSystemPromptOverride,
     'updated_at': updatedAt.toIso8601String(),
   };
 
@@ -812,6 +861,11 @@ class SceneCard {
       panoramaYawOffset: (json['panorama_yaw_offset'] as num? ?? json['panoramaYawOffset'] as num? ?? 0.0).toDouble(),
       panoramaFov: (json['panorama_fov'] as num? ?? json['panoramaFov'] as num? ?? 105.0).toDouble(),
       panoramaPitchOffset: (json['panorama_pitch_offset'] as num? ?? json['panoramaPitchOffset'] as num? ?? 0.0).toDouble(),
+      systemPromptOverride: json['system_prompt_override'] as String? ??
+          json['systemPromptOverride'] as String?,
+      panoramaSystemPromptOverride:
+          json['panorama_system_prompt_override'] as String? ??
+              json['panoramaSystemPromptOverride'] as String?,
       updatedAt:
           DateTime.tryParse(json['updated_at'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -984,6 +1038,7 @@ class ScenePromptBuilder {
     SceneCameraAngle? angle,
     bool sanitize = true,
     String? sceneEnvironmentOverride,
+    String? systemPromptOverride,
   }) {
     final era = VisualEraGenre.fromId(eraGenreId);
     final cleaned = sanitize ? sanitizeBasePrompt(basePrompt) : basePrompt.trim();
@@ -1002,8 +1057,11 @@ class ScenePromptBuilder {
       }
     }
 
-    final envSpec = (sceneEnvironmentOverride != null && sceneEnvironmentOverride.trim().isNotEmpty)
-        ? sceneEnvironmentOverride.trim()
+    final effectiveOverride = (systemPromptOverride != null && systemPromptOverride.trim().isNotEmpty)
+        ? systemPromptOverride.trim()
+        : sceneEnvironmentOverride;
+    final envSpec = (effectiveOverride != null && effectiveOverride.trim().isNotEmpty)
+        ? effectiveOverride.trim()
         : sceneEnvironmentRequirement;
 
     final middleParts = <String>[
@@ -1013,6 +1071,17 @@ class ScenePromptBuilder {
       if (angle != null) angle.promptToken,
       if (cleaned.isNotEmpty) cleaned,
     ];
+
+    // 若有显式环境覆盖，则优先使用覆盖词充当底板，替换硬编码的 emptyHeadLock/emptyTailLock 以及时代题材环境锚点
+    if (sceneEnvironmentOverride != null && sceneEnvironmentOverride.trim().isNotEmpty) {
+      final parts = <String>[
+        sceneEnvironmentOverride.trim(),
+        if (style != null && style.isNotEmpty) style,
+        if (angle != null) angle.promptToken,
+        if (cleaned.isNotEmpty) cleaned,
+      ];
+      return parts.where((p) => p.trim().isNotEmpty).join('， ');
+    }
 
     final parts = <String>[
       emptyHeadLock,
@@ -1048,6 +1117,8 @@ class ScenePromptBuilder {
     String? styleTokens,
     String? eraGenreId,
     bool sanitize = true,
+    String? panoramaSystemPromptOverride,
+    String? systemPromptOverride,
   }) {
     final era = VisualEraGenre.fromId(eraGenreId);
     final cleaned = sanitize ? sanitizeBasePrompt(basePrompt) : basePrompt.trim();
@@ -1072,15 +1143,34 @@ class ScenePromptBuilder {
     const String panoTail =
         'full 360 degrees panoramic vista, spherical panorama texture, vast unobstructed architectural space with high ceiling and deep corridor depth, high visual density, 8k resolution, 开阔宏大空间空镜头，机位开阔后撤，完整挑高房顶与通透地面，完全无人纯净空间空镜头';
 
+    final String panoHeadText;
+    final String panoTailText;
+    if (panoramaSystemPromptOverride != null && panoramaSystemPromptOverride.trim().isNotEmpty) {
+      panoHeadText = panoramaSystemPromptOverride.trim();
+      panoTailText = '';
+    } else {
+      panoHeadText = panoHead;
+      panoTailText = panoTail;
+    }
+
+    final hasSystemOverride = systemPromptOverride != null && systemPromptOverride.trim().isNotEmpty;
+    final headLock = hasSystemOverride ? systemPromptOverride.trim() : emptyHeadLock;
+
     final middleParts = <String>[
-      emptyHeadLock,
-      if (envAnchor != null && envAnchor.isNotEmpty) envAnchor,
+      headLock,
+      if (!hasSystemOverride && envAnchor != null && envAnchor.isNotEmpty) envAnchor,
       if (style != null && style.isNotEmpty) style,
       if (cleaned.isNotEmpty) cleaned,
-      emptyTailLock,
+      if (!hasSystemOverride) emptyTailLock,
     ];
 
-    return [panoHead, middleParts.join('， '), panoTail].join('， ');
+    final resultParts = <String>[
+      panoHeadText,
+      middleParts.where((s) => s.trim().isNotEmpty).join('， '),
+      if (panoTailText.isNotEmpty) panoTailText,
+    ];
+
+    return resultParts.where((s) => s.trim().isNotEmpty).join('， ');
   }
 }
 
@@ -1101,10 +1191,14 @@ abstract final class PropPromptBuilder {
     required String prompt,
     String? styleTokens,
     String? eraGenreId,
+    String? systemPromptOverride,
   }) {
     final era = VisualEraGenre.fromId(eraGenreId);
+    final req = (systemPromptOverride != null && systemPromptOverride.trim().isNotEmpty)
+        ? systemPromptOverride.trim()
+        : propAssetRequirement;
     final parts = [
-      propAssetRequirement,
+      req,
       if (era != null && era.propMaterialAnchor.isNotEmpty) era.propMaterialAnchor,
       if (styleTokens != null && styleTokens.trim().isNotEmpty) styleTokens.trim(),
       prompt.trim(),
@@ -1155,6 +1249,9 @@ class PropCard {
   /// 是否为关键道具。
   final bool isKeyProp;
 
+  /// 道具资产规范前导词覆盖（非空时优先使用，替换默认单品规范模板）。
+  final String? systemPromptOverride;
+
   final DateTime updatedAt;
 
   const PropCard({
@@ -1164,6 +1261,7 @@ class PropCard {
     this.promptEn = '',
     this.referenceImages = const [],
     this.isKeyProp = false,
+    this.systemPromptOverride,
     required this.updatedAt,
   });
 
@@ -1174,6 +1272,8 @@ class PropCard {
     String? promptEn,
     List<String>? referenceImages,
     bool? isKeyProp,
+    String? systemPromptOverride,
+    bool clearSystemPromptOverride = false,
     DateTime? updatedAt,
   }) {
     return PropCard(
@@ -1183,6 +1283,9 @@ class PropCard {
       promptEn: promptEn ?? this.promptEn,
       referenceImages: referenceImages ?? this.referenceImages,
       isKeyProp: isKeyProp ?? this.isKeyProp,
+      systemPromptOverride: clearSystemPromptOverride
+          ? null
+          : (systemPromptOverride ?? this.systemPromptOverride),
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -1194,6 +1297,8 @@ class PropCard {
     'prompt_en': promptEn,
     'reference_images': referenceImages,
     'is_key_prop': isKeyProp,
+    if (systemPromptOverride != null && systemPromptOverride!.isNotEmpty)
+      'system_prompt_override': systemPromptOverride,
     'updated_at': updatedAt.toIso8601String(),
   };
 
@@ -1206,6 +1311,8 @@ class PropCard {
       referenceImages:
           (json['reference_images'] as List?)?.cast<String>() ?? const [],
       isKeyProp: json['is_key_prop'] as bool? ?? false,
+      systemPromptOverride: json['system_prompt_override'] as String? ??
+          json['systemPromptOverride'] as String?,
       updatedAt:
           DateTime.tryParse(json['updated_at'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -2108,6 +2215,14 @@ class StudioSeries {
   /// 旧 `series_profile.json` 无此字段，[fromJson] 按空列表加载，无需迁移。
   final List<PropCard> props;
 
+  /// 关联的本地小说 ID（用于剧本工作台章节适配与正文定位）。
+  final String? novelId;
+
+  /// 关联的独立 IP 主库 ID（若为空则默认指向自身 id）。
+  final String ipId;
+
+  String get resolvedIpId => ipId.isNotEmpty ? ipId : id;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -2125,6 +2240,8 @@ class StudioSeries {
     this.defaultResolution = '2K',
     this.memories = const [],
     this.props = const [],
+    this.novelId,
+    this.ipId = '',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -2143,6 +2260,9 @@ class StudioSeries {
     String? defaultResolution,
     List<EpisodeMemory>? memories,
     List<PropCard>? props,
+    String? novelId,
+    bool clearNovelId = false,
+    String? ipId,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -2160,6 +2280,8 @@ class StudioSeries {
       defaultResolution: defaultResolution ?? this.defaultResolution,
       memories: memories ?? this.memories,
       props: props ?? this.props,
+      novelId: clearNovelId ? null : (novelId ?? this.novelId),
+      ipId: ipId ?? this.ipId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -2179,6 +2301,8 @@ class StudioSeries {
     'default_resolution': defaultResolution,
     'memories': memories.map((m) => m.toJson()).toList(),
     'props': props.map((e) => e.toJson()).toList(),
+    if (novelId != null && novelId!.isNotEmpty) 'novel_id': novelId,
+    if (ipId.isNotEmpty) 'ip_id': ipId,
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
   };
@@ -2212,6 +2336,8 @@ class StudioSeries {
                   e.map((k, v) => MapEntry(k as String, v))))
               .toList() ??
           const [],
+      novelId: json['novel_id'] as String?,
+      ipId: json['ip_id'] as String? ?? '',
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ?? now,
@@ -2295,6 +2421,12 @@ class StudioEpisode {
   /// 剧本事实与对白保护清单（防止 AI 拆镜时丢失核心原著台词与剧情因果）。
   final ProtectedContract protectedContract;
 
+  /// 该集取材的原著小说章节范围（如 "1-3"、"22-25"）。
+  final String novelChapterRange;
+
+  /// 该集取材的原著小说章节序号列表（如 [1, 2, 3]）。
+  final List<int> novelChapterIndices;
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -2311,6 +2443,8 @@ class StudioEpisode {
     this.scenes = const [],
     this.screenplayText = '',
     this.protectedContract = ProtectedContract.empty,
+    this.novelChapterRange = '',
+    this.novelChapterIndices = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -2328,6 +2462,8 @@ class StudioEpisode {
     List<DramaScene>? scenes,
     String? screenplayText,
     ProtectedContract? protectedContract,
+    String? novelChapterRange,
+    List<int>? novelChapterIndices,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -2344,6 +2480,8 @@ class StudioEpisode {
       scenes: scenes ?? this.scenes,
       screenplayText: screenplayText ?? this.screenplayText,
       protectedContract: protectedContract ?? this.protectedContract,
+      novelChapterRange: novelChapterRange ?? this.novelChapterRange,
+      novelChapterIndices: novelChapterIndices ?? this.novelChapterIndices,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -2362,6 +2500,8 @@ class StudioEpisode {
     if (scenes.isNotEmpty) 'scenes': scenes.map((s) => s.toJson()).toList(),
     if (screenplayText.isNotEmpty) 'screenplay_text': screenplayText,
     if (protectedContract.isNotEmpty) 'protected_contract': protectedContract.toJson(),
+    if (novelChapterRange.isNotEmpty) 'novel_chapter_range': novelChapterRange,
+    if (novelChapterIndices.isNotEmpty) 'novel_chapter_indices': novelChapterIndices,
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
   };
@@ -2411,6 +2551,12 @@ class StudioEpisode {
           ? ProtectedContract.fromJson(
               (json['protected_contract'] as Map).map((k, v) => MapEntry(k as String, v)))
           : ProtectedContract.empty,
+      novelChapterRange: json['novel_chapter_range'] as String? ?? '',
+      novelChapterIndices: (json['novel_chapter_indices'] as List?)
+              ?.whereType<num>()
+              .map((n) => n.toInt())
+              .toList() ??
+          const [],
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ?? now,
       updatedAt:
@@ -2669,6 +2815,30 @@ enum ShotGenerationStatus {
   }
 }
 
+/// 分镜视频首帧的来源（spec: 分镜首帧来源的可信判据）。
+///
+/// 区分「本镜关键帧」与「接力自上一镜尾帧」是必要的：后者意味着本镜没有
+/// 用自己的首帧，事后审计、重导与时间轴对齐读到的文件不属于本镜。
+enum FirstFrameSource {
+  /// 本镜自己生成的关键帧。默认值——旧数据没有这个字段，视为本镜关键帧。
+  keyframe('keyframe', '本镜关键帧'),
+
+  /// 接力自上一镜视频尾帧。
+  relay('relay', '上一镜尾帧接力'),
+
+  /// 未使用首帧（纯文本 / 纯参考图模式）。
+  none('none', '无首帧');
+
+  final String id;
+  final String label;
+
+  const FirstFrameSource(this.id, this.label);
+
+  static FirstFrameSource fromId(String? value) {
+    return values.firstWhere((s) => s.id == value, orElse: () => keyframe);
+  }
+}
+
 /// 视频生成模式（直通 Agnes API mode）。
 enum AgnesVideoMode {
   auto('auto', '自动适配'),
@@ -2730,44 +2900,173 @@ enum ShotAssetRole {
 /// key 用资产 id（角色卡 id 或场景卡 id）而不是名称：名称可能互相包含
 /// （「老王」vs「老王头」），id 不会。
 class ShotAssetBinding {
-  /// 该资产使用的素材文件（相对资产目录的文件名）。空串 = 系统默认。
-  final String materialPath;
+  final String _materialPath;
+  final List<String> _materialPaths;
+
+  /// 该资产使用的首张素材文件（向前兼容 getter）。
+  String get materialPath {
+    if (_materialPaths.isNotEmpty) return _materialPaths.first;
+    return _materialPath;
+  }
+
+  /// 该资产使用的全部素材文件列表。
+  List<String> get materialPaths {
+    if (_materialPaths.isNotEmpty) return _materialPaths;
+    if (_materialPath.trim().isNotEmpty) return [_materialPath.trim()];
+    return const [];
+  }
 
   /// 该资产在本镜的叙事分工。场景无分工语义，固定为 [ShotAssetRole.subject]。
   final ShotAssetRole role;
 
   const ShotAssetBinding({
-    this.materialPath = '',
+    String materialPath = '',
+    List<String> materialPaths = const [],
     this.role = ShotAssetRole.subject,
-  });
+  })  : _materialPath = materialPath,
+        _materialPaths = materialPaths;
 
   /// 是否显式指定了素材文件。
-  bool get hasExplicitMaterial => materialPath.trim().isNotEmpty;
+  bool get hasExplicitMaterial =>
+      _materialPaths.isNotEmpty || _materialPath.trim().isNotEmpty;
 
   ShotAssetBinding copyWith({
     String? materialPath,
+    List<String>? materialPaths,
     ShotAssetRole? role,
   }) {
     return ShotAssetBinding(
-      materialPath: materialPath ?? this.materialPath,
+      materialPath: materialPath ?? (materialPaths == null ? _materialPath : ''),
+      materialPaths: materialPaths ?? _materialPaths,
       role: role ?? this.role,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'material_path': materialPath,
+    'material_paths': materialPaths,
     'role': role.id,
   };
 
   static ShotAssetBinding fromJson(Map<String, dynamic> json) {
+    final list = (json['material_paths'] as List?)?.cast<String>();
+    final single = json['material_path'] as String?;
+    final paths = list != null
+        ? list.where((p) => p.trim().isNotEmpty).toList()
+        : (single != null && single.trim().isNotEmpty ? [single.trim()] : const <String>[]);
     return ShotAssetBinding(
-      materialPath: (json['material_path'] as String?) ?? '',
+      materialPath: single ?? '',
+      materialPaths: paths,
       role: ShotAssetRole.fromId(json['role'] as String?),
     );
   }
 }
 
 /// 单个分镜（`storyboard.json` 的 shots 数组元素）。
+enum StudioClipStatus {
+  none('none', '未生成'),
+  valid('valid', '有效'),
+  stale('stale', '需重构');
+
+  final String id;
+  final String label;
+  const StudioClipStatus(this.id, this.label);
+
+  static StudioClipStatus fromId(String? id) {
+    if (id == null) return StudioClipStatus.none;
+    return StudioClipStatus.values.firstWhere(
+      (e) => e.id == id,
+      orElse: () => StudioClipStatus.none,
+    );
+  }
+}
+
+/// VLM 关键帧实拍场记自动审图报告（spec: VLM Keyframe Visual Critic）。
+@immutable
+class VlmFrameCriticReport {
+  /// 综合审图评分（0-100）。
+  final int score;
+
+  /// 是否通过实拍场记验收。
+  final bool passed;
+
+  /// 画面人数是否与剧本设定一致。
+  final bool characterCountOk;
+
+  /// 是否无克隆双胞胎/重影伪影。
+  final bool noCloneArtifact;
+
+  /// 空间高低落差与透视关系是否合理（无悬空平地并立）。
+  final bool spatialElevationOk;
+
+  /// 坐骑与核心手持道具是否存续且姿态正确。
+  final bool mountPropOk;
+
+  /// 实际成图景别是否匹配分镜设定。
+  final bool shotScaleOk;
+
+  /// 检出的具体问题列表。
+  final List<String> issues;
+
+  /// 针对生图提示词的修正补充建议。
+  final String promptFixSuggestion;
+
+  /// 验收时间戳（ISO-8601）。
+  final String evaluatedAt;
+
+  /// 是否经过真实 AI 多模态视觉模型审查（false 表示仅经过本地确定性规则预审）。
+  final bool isAiEvaluated;
+
+  const VlmFrameCriticReport({
+    required this.score,
+    required this.passed,
+    this.characterCountOk = true,
+    this.noCloneArtifact = true,
+    this.spatialElevationOk = true,
+    this.mountPropOk = true,
+    this.shotScaleOk = true,
+    this.issues = const [],
+    this.promptFixSuggestion = '',
+    this.evaluatedAt = '',
+    this.isAiEvaluated = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'score': score,
+    'passed': passed,
+    'character_count_ok': characterCountOk,
+    'no_clone_artifact': noCloneArtifact,
+    'spatial_elevation_ok': spatialElevationOk,
+    'mount_prop_ok': mountPropOk,
+    'shot_scale_ok': shotScaleOk,
+    'issues': issues,
+    if (promptFixSuggestion.isNotEmpty)
+      'prompt_fix_suggestion': promptFixSuggestion,
+    if (evaluatedAt.isNotEmpty) 'evaluated_at': evaluatedAt,
+    'is_ai_evaluated': isAiEvaluated,
+  };
+
+  static VlmFrameCriticReport fromJson(Map<String, dynamic> json) {
+    final score = (json['score'] as num?)?.toInt() ?? 80;
+    final issues =
+        (json['issues'] as List?)?.map((e) => e.toString()).toList() ??
+        const [];
+    return VlmFrameCriticReport(
+      score: score.clamp(0, 100),
+      passed: json['passed'] as bool? ?? (score >= 70 && issues.isEmpty),
+      characterCountOk: json['character_count_ok'] as bool? ?? true,
+      noCloneArtifact: json['no_clone_artifact'] as bool? ?? true,
+      spatialElevationOk: json['spatial_elevation_ok'] as bool? ?? true,
+      mountPropOk: json['mount_prop_ok'] as bool? ?? true,
+      shotScaleOk: json['shot_scale_ok'] as bool? ?? true,
+      issues: issues,
+      promptFixSuggestion: json['prompt_fix_suggestion'] as String? ?? '',
+      evaluatedAt: json['evaluated_at'] as String? ?? '',
+      isAiEvaluated: json['is_ai_evaluated'] as bool? ?? false,
+    );
+  }
+}
+
 class StudioShot {
   /// 镜号，1 起连续。
   final int number;
@@ -2793,6 +3092,9 @@ class StudioShot {
 
   /// 出场角色卡 id 列表。
   final List<String> characterIds;
+
+  /// 出场道具卡 id 列表。
+  final List<String> propIds;
 
   /// 出场角色在当前镜头的具体形态映射（key: characterId, value: variationId）。
   ///
@@ -2820,6 +3122,13 @@ class StudioShot {
 
   /// 本镜生成视频使用的首帧图片路径（接力自前镜末帧或自定义首帧）。
   final String? firstFramePath;
+
+  /// [firstFramePath] 指向的文件是本镜关键帧还是上一镜尾帧接力
+  /// （spec: 分镜首帧来源的可信判据）。
+  ///
+  /// 缺失时视为 [FirstFrameSource.keyframe]——旧数据里这个路径通常就是本镜
+  /// 关键帧，且那是唯一安全的默认（不假设发生过接力）。
+  final FirstFrameSource firstFrameSource;
 
   /// 本镜已生成视频抽取的尾帧图片路径（供下一镜接力使用）。
   final String? lastFramePath;
@@ -2862,11 +3171,36 @@ class StudioShot {
   /// AI 消解冲突或用户定制的视频生成专用提示词（为空时使用动态组装的 buildVideoGenPrompt）。
   final String videoPrompt;
 
+  /// 写入 [videoPrompt] 时，决定该提示词的五个字段的快照
+  /// （spec: 分镜字段变更作废缓存的视频提示词）。
+  ///
+  /// 定制提示词是**一次性快照**：用户存下它之后若又改了动作、台词、出场角色、
+  /// 场景或素材绑定，那份快照就不再反映最新字段——而 `buildVideoGenPrompt`
+  /// 开头会原样返回它，于是新绑定的 `<Picture N>` 与最新因果时间轴永远进不去
+  /// 最终的生成请求。
+  ///
+  /// 生成前比对当前键与记录键，不一致即视为失效，走动态组装（不删除字段本身，
+  /// 用户改回字段或手动重存都能恢复）。为空串表示从未记录——旧数据与从未定制
+  /// 过的分镜都是这个值，此时任何非空 videoPrompt 都先按失效处理。
+  final String videoPromptSourceKey;
+
   /// 本镜独立画幅比例覆盖（为空时继承剧集默认值）。
   final String? aspectRatio;
 
   /// 本镜独立分辨率档位覆盖（为空时继承剧集默认值）。
   final String? resolution;
+
+  /// 视频片段有效性状态（none: 未生成, valid: 有效, stale: 关键帧更新后失效需重构）。
+  final StudioClipStatus clipStatus;
+
+  /// 最近一次 1 选 4 候选抽卡生成的缩略图文件名列表（相对 `frames/`）。
+  final List<String> candidateFramePaths;
+
+  /// 人脸参考图白名单（若指定，向生成 API 仅提交该列表内的角色参考图，其余角色降级为背景文本）。
+  final List<String>? activeFaceCharacterIds;
+
+  /// VLM 关键帧实拍场记自动审图报告。
+  final VlmFrameCriticReport? vlmCriticReport;
 
   const StudioShot({
     required this.number,
@@ -2878,6 +3212,7 @@ class StudioShot {
     this.dialogue = '',
     this.voiceType = UtteranceVoiceType.dialogue,
     this.characterIds = const [],
+    this.propIds = const [],
     this.characterVariations = const {},
     this.assetBindings = const {},
     this.sceneId = '',
@@ -2886,6 +3221,7 @@ class StudioShot {
     this.assembledPrompt = '',
     this.framePath,
     this.firstFramePath,
+    this.firstFrameSource = FirstFrameSource.keyframe,
     this.lastFramePath,
     this.clipPath,
     this.audioPath,
@@ -2898,9 +3234,17 @@ class StudioShot {
     this.status = ShotGenerationStatus.pending,
     this.videoMode = 'auto',
     this.videoPrompt = '',
+    this.videoPromptSourceKey = '',
     this.aspectRatio,
     this.resolution,
+    this.clipStatus = StudioClipStatus.none,
+    this.candidateFramePaths = const [],
+    this.activeFaceCharacterIds,
+    this.vlmCriticReport,
   });
+
+  /// 视频是否因关键帧重新生成等原因已失效需重构。
+  bool get isClipStale => clipStatus == StudioClipStatus.stale;
 
   /// 是否为角色内心独白（心声/内心 OS）。
   bool get isInnerVoice =>
@@ -2911,6 +3255,41 @@ class StudioShot {
       dialogue.contains('(OS)') ||
       dialogue.contains('心声') ||
       dialogue.contains('内心独白');
+
+  /// 决定视频提示词内容的五个字段的稳定快照（spec: 分镜字段变更作废缓存的视频提示词）。
+  ///
+  /// 只收这五个：它们的变化会改变提示词的实质内容。时长/画幅/分辨率/情绪等
+  /// 字段不在内——用户调个时长不该丢掉定制的视频提示词。
+  ///
+  /// Map 类字段按 key 排序后序列化，否则 Dart Map 的遍历顺序会让同一次比对
+  /// 因插入次序不同而误判失效。
+  String get videoPromptSourceKeyOf {
+    final ids = [...characterIds]..sort();
+    final props = [...propIds]..sort();
+    final bindings = assetBindings.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final bindingDesc = bindings
+        .map((e) => '${e.key}:${e.value.materialPaths.join(';')}:${e.value.role.id}')
+        .join(',');
+    return [
+      'a=$actionZh',
+      'd=$dialogue',
+      'c=${ids.join(',')}',
+      'p=${props.join(',')}',
+      's=$sceneId',
+      'b=$bindingDesc',
+    ].join('|');
+  }
+
+  /// 已缓存的定制视频提示词是否仍然有效（spec: 分镜字段变更作废缓存的视频提示词）。
+  ///
+  /// 空 videoPrompt 视为无需缓存；空 sourceKey 视为从未记录——旧数据与从未
+  /// 定制过的分镜都是这个值，此时任何非空 videoPrompt 都先按失效处理，让它
+  /// 至少按当前字段重新校验一次。
+  bool get isVideoPromptStale =>
+      videoPrompt.trim().isNotEmpty &&
+      (videoPromptSourceKey.isEmpty ||
+          videoPromptSourceKey != videoPromptSourceKeyOf);
 
   /// 台词字数上限：建议时长(秒) × 5 字/秒（spec: 台词字数自动校验）。
   int get dialogueCharLimit => (durationSec * 5).floor();
@@ -2969,6 +3348,7 @@ class StudioShot {
     }
     final refAvailable = hasCharacterOrSceneRef ||
         characterIds.isNotEmpty ||
+        propIds.isNotEmpty ||
         sceneId.trim().isNotEmpty;
     if (refAvailable) {
       return AgnesVideoMode.reference;
@@ -2986,6 +3366,7 @@ class StudioShot {
     String? dialogue,
     UtteranceVoiceType? voiceType,
     List<String>? characterIds,
+    List<String>? propIds,
     Map<String, String>? characterVariations,
 Map<String, ShotAssetBinding>? assetBindings,
     String? sceneId,
@@ -2994,6 +3375,7 @@ Map<String, ShotAssetBinding>? assetBindings,
     String? assembledPrompt,
     String? framePath,
     String? firstFramePath,
+    FirstFrameSource? firstFrameSource,
     String? lastFramePath,
     String? clipPath,
     String? audioPath,
@@ -3006,8 +3388,14 @@ Map<String, ShotAssetBinding>? assetBindings,
     ShotGenerationStatus? status,
     String? videoMode,
     String? videoPrompt,
+    String? videoPromptSourceKey,
     String? aspectRatio,
     String? resolution,
+    StudioClipStatus? clipStatus,
+    List<String>? candidateFramePaths,
+    List<String>? activeFaceCharacterIds,
+    VlmFrameCriticReport? vlmCriticReport,
+    bool clearVlmCriticReport = false,
   }) {
     return StudioShot(
       number: number ?? this.number,
@@ -3019,6 +3407,7 @@ Map<String, ShotAssetBinding>? assetBindings,
       dialogue: dialogue ?? this.dialogue,
       voiceType: voiceType ?? this.voiceType,
       characterIds: characterIds ?? this.characterIds,
+      propIds: propIds ?? this.propIds,
       characterVariations: characterVariations ?? this.characterVariations,
       assetBindings: assetBindings ?? this.assetBindings,
       sceneId: sceneId ?? this.sceneId,
@@ -3027,6 +3416,7 @@ Map<String, ShotAssetBinding>? assetBindings,
       assembledPrompt: assembledPrompt ?? this.assembledPrompt,
       framePath: framePath ?? this.framePath,
       firstFramePath: firstFramePath ?? this.firstFramePath,
+      firstFrameSource: firstFrameSource ?? this.firstFrameSource,
       lastFramePath: lastFramePath ?? this.lastFramePath,
       clipPath: clipPath ?? this.clipPath,
       audioPath: audioPath ?? this.audioPath,
@@ -3039,8 +3429,17 @@ Map<String, ShotAssetBinding>? assetBindings,
       status: status ?? this.status,
       videoMode: videoMode ?? this.videoMode,
       videoPrompt: videoPrompt ?? this.videoPrompt,
+      videoPromptSourceKey:
+          videoPromptSourceKey ?? this.videoPromptSourceKey,
       aspectRatio: aspectRatio ?? this.aspectRatio,
       resolution: resolution ?? this.resolution,
+      clipStatus: clipStatus ?? this.clipStatus,
+      candidateFramePaths: candidateFramePaths ?? this.candidateFramePaths,
+      activeFaceCharacterIds:
+          activeFaceCharacterIds ?? this.activeFaceCharacterIds,
+      vlmCriticReport: clearVlmCriticReport
+          ? null
+          : (vlmCriticReport ?? this.vlmCriticReport),
     );
   }
 
@@ -3054,6 +3453,7 @@ Map<String, ShotAssetBinding>? assetBindings,
     'dialogue': dialogue,
     if (voiceType != UtteranceVoiceType.dialogue) 'voice_type': voiceType.id,
     'character_ids': characterIds,
+    'prop_ids': propIds,
     'character_variations': characterVariations,
     // 空绑定不写盘：让 JSON 保持干净，也让「未声明」与「声明了但全默认」
     // 在磁盘上可区分。
@@ -3065,6 +3465,7 @@ Map<String, ShotAssetBinding>? assetBindings,
     'assembled_prompt': assembledPrompt,
     'frame_path': framePath,
     if (firstFramePath != null) 'first_frame_path': firstFramePath,
+    'first_frame_source': firstFrameSource.id,
     if (lastFramePath != null) 'last_frame_path': lastFramePath,
     'clip_path': clipPath,
     'audio_path': audioPath,
@@ -3078,8 +3479,16 @@ Map<String, ShotAssetBinding>? assetBindings,
     'status': status.id,
     'video_mode': videoMode,
     if (videoPrompt.isNotEmpty) 'video_prompt': videoPrompt,
+    if (videoPromptSourceKey.isNotEmpty)
+      'video_prompt_source_key': videoPromptSourceKey,
     if (aspectRatio != null && aspectRatio!.isNotEmpty) 'aspect_ratio': aspectRatio,
     if (resolution != null && resolution!.isNotEmpty) 'resolution': resolution,
+    if (clipStatus != StudioClipStatus.none) 'clip_status': clipStatus.id,
+    if (candidateFramePaths.isNotEmpty) 'candidate_frame_paths': candidateFramePaths,
+    if (activeFaceCharacterIds != null && activeFaceCharacterIds!.isNotEmpty)
+      'active_face_character_ids': activeFaceCharacterIds,
+    if (vlmCriticReport != null)
+      'vlm_critic_report': vlmCriticReport!.toJson(),
   };
 
   static StudioShot fromJson(Map<String, dynamic> json) {
@@ -3097,6 +3506,7 @@ Map<String, ShotAssetBinding>? assetBindings,
       ),
       characterIds:
           (json['character_ids'] as List?)?.cast<String>() ?? const [],
+      propIds: (json['prop_ids'] as List?)?.cast<String>() ?? const [],
       characterVariations: (json['character_variations'] as Map?)?.map(
             (k, v) => MapEntry(k as String, v as String),
           ) ??
@@ -3118,6 +3528,9 @@ Map<String, ShotAssetBinding>? assetBindings,
       assembledPrompt: json['assembled_prompt'] as String? ?? '',
       framePath: json['frame_path'] as String?,
       firstFramePath: json['first_frame_path'] as String?,
+      firstFrameSource: FirstFrameSource.fromId(
+        json['first_frame_source'] as String?,
+      ),
       lastFramePath: json['last_frame_path'] as String?,
       clipPath: json['clip_path'] as String?,
       audioPath: json['audio_path'] as String?,
@@ -3140,8 +3553,26 @@ Map<String, ShotAssetBinding>? assetBindings,
       status: ShotGenerationStatus.fromId(json['status'] as String?),
       videoMode: json['video_mode'] as String? ?? 'auto',
       videoPrompt: json['video_prompt'] as String? ?? '',
+      videoPromptSourceKey: json['video_prompt_source_key'] as String? ?? '',
       aspectRatio: json['aspect_ratio'] as String?,
       resolution: json['resolution'] as String?,
+      clipStatus: json['clip_status'] != null
+          ? StudioClipStatus.fromId(json['clip_status'] as String?)
+          : ((json['clip_path'] as String?)?.isNotEmpty == true
+              ? StudioClipStatus.valid
+              : StudioClipStatus.none),
+      candidateFramePaths:
+          (json['candidate_frame_paths'] as List?)?.cast<String>() ??
+          const [],
+      activeFaceCharacterIds:
+          (json['active_face_character_ids'] as List?)?.cast<String>(),
+      vlmCriticReport: json['vlm_critic_report'] is Map
+          ? VlmFrameCriticReport.fromJson(
+              (json['vlm_critic_report'] as Map).map(
+                (k, v) => MapEntry(k as String, v),
+              ),
+            )
+          : null,
     );
   }
 }
@@ -3190,6 +3621,9 @@ class ShotContinuity {
   /// 视线目标对象或地标描述（如 Jiang Qiye on street below）。
   final String gazeTarget;
 
+  /// 坐骑或载具伴随状态（例如：大黑驴、白马、马车，空串表示无坐骑或徒步）。
+  final String mountOrVehicle;
+
   /// 动态末态（支撑脚平衡、速度矢量、未完成动作相位）。
   final DynamicExitState dynamicExitState;
 
@@ -3205,6 +3639,7 @@ class ShotContinuity {
     this.cameraAngle = '',
     this.elevationLevel = '',
     this.gazeTarget = '',
+    this.mountOrVehicle = '',
     this.dynamicExitState = DynamicExitState.empty,
   });
 
@@ -3228,6 +3663,7 @@ class ShotContinuity {
       cameraAngle.isEmpty &&
       elevationLevel.isEmpty &&
       gazeTarget.isEmpty &&
+      mountOrVehicle.isEmpty &&
       dynamicExitState.isEmpty;
 
   ShotContinuity copyWith({
@@ -3242,6 +3678,7 @@ class ShotContinuity {
     String? cameraAngle,
     String? elevationLevel,
     String? gazeTarget,
+    String? mountOrVehicle,
     DynamicExitState? dynamicExitState,
   }) {
     return ShotContinuity(
@@ -3256,6 +3693,7 @@ class ShotContinuity {
       cameraAngle: cameraAngle ?? this.cameraAngle,
       elevationLevel: elevationLevel ?? this.elevationLevel,
       gazeTarget: gazeTarget ?? this.gazeTarget,
+      mountOrVehicle: mountOrVehicle ?? this.mountOrVehicle,
       dynamicExitState: dynamicExitState ?? this.dynamicExitState,
     );
   }
@@ -3272,6 +3710,7 @@ class ShotContinuity {
     if (cameraAngle.isNotEmpty) 'camera_angle': cameraAngle,
     if (elevationLevel.isNotEmpty) 'elevation_level': elevationLevel,
     if (gazeTarget.isNotEmpty) 'gaze_target': gazeTarget,
+    if (mountOrVehicle.isNotEmpty) 'mount_or_vehicle': mountOrVehicle,
     if (dynamicExitState.isNotEmpty)
       'dynamic_exit_state': dynamicExitState.toJson(),
   };
@@ -3290,6 +3729,7 @@ class ShotContinuity {
       cameraAngle: json['camera_angle'] as String? ?? '',
       elevationLevel: json['elevation_level'] as String? ?? '',
       gazeTarget: json['gaze_target'] as String? ?? '',
+      mountOrVehicle: json['mount_or_vehicle'] as String? ?? '',
       dynamicExitState: json['dynamic_exit_state'] is Map
           ? DynamicExitState.fromJson(
               (json['dynamic_exit_state'] as Map).map((k, v) => MapEntry(k as String, v)))
@@ -3886,6 +4326,131 @@ class StudioPromptTemplate {
           '5. 心声导致配角抢开口时：补全全员闭口守卫指令。\n'
           '6. 输出修补后的分镜完整字段，直接替换问题分镜。',
       updatedAt: DateTime(2026, 10, 21),
+    ),
+    StudioPromptTemplate(
+      id: 'screenplay_plausibility_rules',
+      name: '环境生态与社会常识推演规范',
+      category: 'AI编剧与改编规范',
+      description: '约束公共开放空间（街市/酒肆/广场）异常事件强制生成路人NPC围观与生态反应；隐秘事件自动修正至死胡同/暗角/深夜，杜绝横尸闹市无人理等穿帮逻辑。',
+      defaultContent:
+          '【环境生态与社会常识推演铁律（严防常识穿帮）】\n'
+          '1. 公共开放空间社会闭环法则：\n'
+          '   凡在街道、集市、酒肆大堂、衙门外、广场、演武场等公共开放空间，发生异常事件（如横死尸体、当街截杀、剧烈打斗、重伤吐血、奇异光效）时，摄像机视野范围内严禁出现空旷死寂、旁若无人的孤立荒诞场面！\n'
+          '   - 必须显式描写背景群众生态：周围路人行商驻足围观、指指点点、低声交头接耳、惊呼退避、挑夫驻足观望、或巡街衙役捕快推开人群拉起封锁线；\n'
+          '   - 视听调度必须给出周围人对主角与异常事件的真实生理应激反应，严禁只画主角与死者两人而忽视整个市井世界。\n'
+          '2. 隐秘事件时空合理置换法则：\n'
+          '   若小说原著剧情或戏剧目标要求事件“绝对隐秘、无人知晓、不留痕迹”（例如无声刺杀、秘密弃尸、私下交易）：\n'
+          '   - 严禁将事发地点设置在白天繁华大道或人流密集处！\n'
+          '   - 编剧与导演引擎必须将场景合理限定或迁移至【具有物理遮蔽的封闭或僻静空间】（如：阴暗死胡同拐角、断壁残垣后的柴房破庙、荒郊坟地乱葬岗、视线死角、或设定在暴雨倾盆的漆黑子夜），并着重描写环境的逼仄幽暗与视线遮挡，使“无人发觉”具备充分的物理合理性。\n'
+          '3. 物理与生理因果守恒：\n'
+          '   伤势受创必须伴随物理失衡、血迹喷溅轨迹或踉跄后退；兵刃出鞘与回鞘必须有明确物理支点；道具的出现与隐藏必须符合空间收纳逻辑。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'screenplay_beat_pacing_rules',
+      name: '竖屏短剧高能节拍与动作化规范',
+      category: 'AI编剧与改编规范',
+      description: '落实黄金3秒高压切入（Cold Open）、15-20秒情绪阶梯递进、心理描写具象动作化（微表情/道具交互/微动作）、片尾极限断章卡点钩子。',
+      defaultContent:
+          '【竖屏短剧高能节拍与微动作化法则】\n'
+          '1. 黄金 3 秒高压切入法则（Cold Open）：\n'
+          '   单集开场第 1 镜（前 3 秒内）必须迅速建立高反差视觉奇观、生死危机或强烈戏剧悬念！严禁使用平缓长镜头散步、纯看风景空镜或冗长生活琐事开篇。必须“开门见山”，直接切入正在发生的核心动作或高能现场。\n'
+          '2. 15 秒情绪波澜与节拍递进：\n'
+          '   单集 90 秒内规划 4 到 6 个紧密戏剧节拍（Beats），每 15~20 秒必须出现一次微型转折、障碍升级、情绪反转或信息增量，拒绝流水账平铺直叙。\n'
+          '3. 心理描写具象动作化（拒绝空洞旁白）：\n'
+          '   原著小说中大段的主角算计、内心冷笑、境界领悟与心理战，严禁全部转为枯燥的画外独白！\n'
+          '   - 必须强制转化为可拍摄的【下意识微动作与道具交互】：例如将“心中杀机暴涨”外化为“大拇指将刀镡无声顶出一道冷冽缝隙，指节因用力泛白”；将“心中轻蔑冷笑”外化为“垂眸端起青花茶盏轻吹热气，眼角划过一丝讥诮微弧”；\n'
+          '   - 仅在推动因果动机且确实无法外化时，才使用 voice_type: "inner_voice"（并确保全员闭口）。\n'
+          '4. 片尾高压断章卡点（Cliffhanger）：\n'
+          '   单集剧本的最后一个镜头，严禁收尾在双方握手言和、各自回房睡觉或风平浪静的平淡节点！\n'
+          '   - 必须精准截断在【冲突最顶峰、杀机爆发前一秒、致命真相即将被拆穿的极限瞬间】（例如：利刃已逼近主角咽喉半寸 / 密信刚撕开蜡封的一角 / 门外突然响起重重叩击声），以此产生强烈的追剧惯性。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'storyboard_vertical_5d',
+      name: '竖屏 9:16 视听语法与拆镜工业规范',
+      category: '导演调度规范',
+      description: '针对 9:16 竖屏短剧画面：中近景特写偏好（≥70%）、单镜肉身在场角色 ≤ 3 人、四人以上群像拆解为连续正反打、画面底部 1/5 字幕安全区留白保护、平缓运镜防畸变。',
+      defaultContent:
+          '【竖屏 9:16 短剧视听工业铁律】\n'
+          '1. 景别偏好分布（突出面部与情绪）：\n'
+          '   竖屏 9:16 构图画幅狭长，全景与远景会导致人物脸部过小、AI 生图极易五官变形融化。\n'
+          '   - 特写（close_up）、中近景（medium_close_up）与半身中景（medium）占比必须 ≥ 70%；\n'
+          '   - 全景（full）与远景（long）仅用于场次开端 1~2 镜建立空间地理环境，随后必须迅速切入中近景聚焦。\n'
+          '2. 单镜头肉身在场人数严格约束（≤ 3 人）：\n'
+          '   单镜头画面内肉身在场角色 STRICTLY ≤ 3 人！\n'
+          '   - 严禁 4 人以上同框并排站立（竖屏无法容纳，会导致人物挤压变形与脸部崩坏）；\n'
+          '   - 4 人以上的复杂群戏必须拆解为标准影视剪辑语法：[环境建立全景交代阵营] -> [发言者单人中景] -> [对手听者反应特写] -> [双人正反打过肩镜头]，通过切镜完成群像交锋。\n'
+          '3. 底部 1/5 字幕安全区留白保护：\n'
+          '   画面底部 20% 区域为平台字幕、进度条与操作按钮遮挡区，严禁将人物脸部、核心动作交互点、关键道具放在画面底部，核心视觉兴趣点必须定位于画面上部 40%~70% 的黄金分割区域。\n'
+          '4. 摄影运镜平稳性：\n'
+          '   优先使用定机位（static）、平缓推进（slow_push_in）、轻微平移跟随（pan_tracking）；严禁使用 360 度剧烈旋转变焦等复杂多轴运镜，防止 AI 视频生成时画面拉伸撕裂。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'visual_prompt_assembly',
+      name: '分镜生图与视频提示词装配规范',
+      category: '视觉渲染规范',
+      description: '定义模块化装配模板：统一美学前缀 + 角色视觉锚点 + 场景七方位光影 + 镜头微动作描述。',
+      defaultContent:
+          '【工业级正向视觉提示词装配模板】\n'
+          '{{style_prefix}}, {{scene_spatial_anchors}}, {{character_visual_anchors}}, {{shot_action_zh}}, 8K resolution, masterpiece, cinematic lighting, vertical 9:16 composition.\n\n'
+          '装配要素顺序：\n'
+          '1. style_prefix: 统一美学风格基调与媒介渲染词（如 UE5渲染, 3D国漫, 电影级光影）；\n'
+          '2. scene_spatial_anchors: 当前场次七方位地标与主光源方位（如 西向夕阳金光照亮青石长街）；\n'
+          '3. character_visual_anchors: 出场角色的固定面部容貌、发型发色与专属装束锚点；\n'
+          '4. shot_action_zh: 当前分镜具象化微动作与微表情描述。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'negative_prompt_library',
+      name: '全局工业级负向规避词库',
+      category: '视觉渲染规范',
+      description: '统一防止画面崩坏、人脸畸变、多肢体、画面文字水印与低画质的全局负向规避词。',
+      defaultContent:
+          'nsfw, low quality, worst quality, deformed, bad anatomy, bad hands, missing fingers, extra limbs, mutated, disfigured, blurry, duplicate, cloned face, poorly drawn face, poorly drawn hands, watermark, signature, text, subtitles, logo, cropped, out of frame, distortion, plastic skin, doll-like, ugly, mutilated, extra legs, extra arms, bad eyes, fused fingers.',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'writers_room_master_extract',
+      name: '编剧研讨室主线与改编边界抽取规范',
+      category: 'AI编剧与改编规范',
+      description: '从原著全本或多章提炼故事主线脉络表，并划分必留情节（核心主线/名场面/伏笔）、可删情节（无推进心理/重复刷怪水文）与可改情节（合并配角/过渡精简）。',
+      defaultContent:
+          '你是一位资深网络文学影视化与爆款短剧总编审兼策划总监。你的任务是通读小说原著，将几十万字的原著内容解构为 AI 与主创团队稳定记忆的核心叙事骨架，并输出清晰的改编边界。\n\n'
+          '【核心输出要求】\n'
+          '1. master_plot: 全书主线脉络与核心人物叙事弧光（开端、发展、中段高潮、大结局阶段目标与核心生存对抗矛盾），500字以内；\n'
+          '2. must_keep: 【必留情节清单】（原著核心主线、不可替代的名场面、主角立身之本的核心高光、决定性反转伏笔）；\n'
+          '3. can_cut: 【可删情节清单】（与主线无关的漫长心理独白、重复枯燥的修炼刷怪打脸水文、无实质推进的过度铺垫）；\n'
+          '4. can_modify: 【可改情节清单】（允许合并的边缘功能性工具人配角、可精简重组的转场过渡场景）。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'writers_room_season_beats',
+      name: '全季短剧分集与悬念钩子规划规范',
+      category: 'AI编剧与改编规范',
+      description: '按短剧叙事节奏规划全季分集大纲（8~30集），每集锁定单一核心冲突（A vs B）与片尾高压断章钩子（Cliffhanger）。',
+      defaultContent:
+          '你是一位擅长把控全季节奏的爆款短剧剧作总监。你的任务是依据小说主线脉络与改编边界，将全书合理规划为 8 到 30 集单单元强冲突剧集大纲。\n\n'
+          '【分集规划铁律】\n'
+          '1. 篇章递进：按大篇章合理划分，每 5~10 集形成一个中型阶段性高潮大反转；\n'
+          '2. 一集一核心事件：每集只主攻一个核心对抗或危机（A vs B），不塞入多条发散支线；\n'
+          '3. 第 1 集黄金爆发：第 1 集开场 3 秒内直接抛出核心危机或反差，绝不拖泥带水；\n'
+          '4. 结尾极限留钩：每集末尾必须卡在最吊胃口、最引发好奇的瞬间（hook），确保看客主动点击下一集。',
+      updatedAt: DateTime(2026, 10, 28),
+    ),
+    StudioPromptTemplate(
+      id: 'writers_room_dialogue',
+      name: '编剧研讨室人机共创对话规范',
+      category: 'AI编剧与改编规范',
+      description: '作为AI联合编剧与制片人协同讨论大纲，根据用户的改编指令（加快节奏、合并情节、调换高潮）动态修订分集。',
+      defaultContent:
+          '你是一位经验丰富、善于倾听并精准执行制片人意图的短剧 AI 联合编剧。制片人正在与你讨论并修改全季分集大纲。\n\n'
+          '【交互原则】\n'
+          '1. 认真领会制片人的修改指令（如“把前三集节奏加快”、“第5集高潮提前到第2集”、“删除某个配角并合并到主角兄弟身上”）；\n'
+          '2. 给出专业的影视剧作反馈，分析修改对前后伏笔与因果链的影响；\n'
+          '3. 给出清晰具体的修订方案，并返回更新后的分集变动详情。',
+      updatedAt: DateTime(2026, 10, 28),
     ),
   ];
 }

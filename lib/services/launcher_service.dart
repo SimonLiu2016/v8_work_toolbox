@@ -70,6 +70,19 @@ class LauncherService {
   static const MethodChannel _channel =
       MethodChannel('v8_work_toolbox/launcher');
 
+  /// 初始化：接收原生侧从菜单栏发来的指令。
+  void init() {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'openListeningMini') {
+        onOpenListeningMini?.call();
+      }
+      return null;
+    });
+  }
+
+  /// 菜单栏请求打开 IT 会议听力的迷你播放窗时触发。
+  void Function()? onOpenListeningMini;
+
   /// 注册全局快捷键
   Future<bool> registerHotKey(HotKeyConfig config) async {
     try {

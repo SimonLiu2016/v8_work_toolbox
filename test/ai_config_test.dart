@@ -479,5 +479,70 @@ void main() {
       expect(renamed.mediaCapabilities.keys, ['m']);
     });
   });
+
+  group('AiConfigStore Decision Slot Tests', () {
+    test('标准槽位中包含 decision 且支持增删候选', () async {
+      final store = AiConfigStore.instance;
+      await store.init(customRootDir: tempDir);
+
+      expect(store.slotBindings.containsKey('decision'), isTrue);
+      expect(store.slotBindings['decision'], isEmpty);
+
+      await store.addSlotCandidate('decision', 'qwen_prov', 'qwq-32b');
+      expect(store.slotBindings['decision']!.length, 1);
+      expect(store.slotBindings['decision']!.first.model, 'qwq-32b');
+
+      await store.removeSlotCandidate('decision', 0);
+      expect(store.slotBindings['decision'], isEmpty);
+    });
+
+    test('旧版配置文件（缺少 decision 槽位）自动补齐且不破坏现有配置', () async {
+      final legacyDir = Directory(
+        '${tempDir.path}/legacy_test_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      await legacyDir.create(recursive: true);
+
+      final legacyConfigFile = File('${legacyDir.path}/ai_config.json');
+      await legacyConfigFile.writeAsString(jsonEncode({
+        'providers': [],
+        'defaultSlots': {
+          'text': [
+            {'providerId': 'p1', 'model': 'gpt-4o', 'priority': 0}
+          ],
+          'tts': [],
+          'stt': [],
+        },
+      }));
+
+      final store = AiConfigStore.instance;
+      await store.init(customRootDir: legacyDir);
+
+      expect(store.slotBindings.containsKey('decision'), isTrue);
+      expect(store.slotBindings['decision'], isEmpty);
+      expect(store.slotBindings['text']!.length, 1);
+      expect(store.slotBindings['text']!.first.model, 'gpt-4o');
+    });
+
+    test('AiService 调用未配置候选的 decision 槽位时抛出 SlotUnavailableException', () async {
+      final store = AiConfigStore.instance;
+      await store.init(customRootDir: tempDir);
+
+      expect(
+        () => AiService.instance.chat(
+          slot: 'decision',
+          messages: [
+            {'role': 'user', 'content': 'hello'},
+          ],
+        ),
+        throwsA(
+          isA<SlotUnavailableException>().having(
+            (e) => e.slotName,
+            'slotName',
+            equals('decision'),
+          ),
+        ),
+      );
+    });
+  });
 }
 

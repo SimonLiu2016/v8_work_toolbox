@@ -18,6 +18,7 @@ import '../services/studio_project_manager.dart';
 import '../../../tools/novel_manager/models/novel_models.dart';
 import 'novel_selector_dialog.dart';
 import 'studio_shell.dart';
+import 'writers_room_dialog.dart';
 
 
 enum IncubationMode {
@@ -183,6 +184,18 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
       return;
     }
 
+    // 全季导入会删除该剧集下全部既有剧集（含分镜与物理媒体）后重建，属破坏性
+    // 操作——先算出待删规模让用户确认（spec: 全季重导入前显式确认破坏性删除）。
+    // 没有既有剧集时（首次导入）不弹窗，直接执行。
+    if (isFullSeason) {
+      final impact = await _manager.previewFullSeasonImportImpact(series.id);
+      if (!mounted) return;
+      if (impact.episodeCount > 0) {
+        final confirmed = await _confirmFullSeasonOverwrite(context, impact);
+        if (!confirmed || !mounted) return;
+      }
+    }
+
     try {
       final localId = await NovelImportTaskService.instance.submit(
         seriesId: series.id,
@@ -210,6 +223,84 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
         SnackBar(content: Text('导入提交失败: $e')),
       );
     }
+  }
+
+  /// 全季重导入的破坏性删除确认（spec: 全季重导入前显式确认破坏性删除）。
+  ///
+  /// 列明待删集数、分镜数与媒体文件数——用户有权在点下确认前知道这一下会
+  /// 抹掉多少已付费的算力成果。取消返回 false，调用方据此中止导入。
+  Future<bool> _confirmFullSeasonOverwrite(
+    BuildContext context,
+    ({int episodeCount, int shotCount, int mediaFileCount}) impact,
+  ) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 20),
+            SizedBox(width: 8),
+            Text('全季导入将覆盖既有剧集'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('本次全季导入会先删除该剧集下所有既有剧集，再按新的分集规划重建。以下数据将被删除且无法恢复：'),
+            const SizedBox(height: 12),
+            _buildImpactRow(ctx, Icons.movie_filter_outlined, '剧集', '${impact.episodeCount} 集'),
+            _buildImpactRow(ctx, Icons.video_collection_outlined, '分镜', '${impact.shotCount} 个'),
+            _buildImpactRow(ctx, Icons.perm_media_outlined, '已生成媒体文件', '${impact.mediaFileCount} 个'),
+            const SizedBox(height: 12),
+            Text(
+              '如需保留现有成果，请改用「单章扩写」模式导入新章节。',
+              style: TextStyle(fontSize: 12, color: ctx.textSecondary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: ctx.errorText),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确认删除并导入'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Widget _buildImpactRow(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: context.textSecondary),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontSize: 13)),
+          const Spacer(),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: context.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<_NovelImportScope?> _showImportScopeDialog(String novelContent) async {
@@ -854,6 +945,28 @@ class _IdeaIncubatorPanelState extends State<IdeaIncubatorPanel> {
                     : const Icon(Icons.file_upload_outlined, size: 18),
                 label: Text(_importBusy ? '解构入库中…' : '导入文本文件 (.txt/.md)'),
               ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.amber.shade800,
+                  side: BorderSide(color: Colors.amber.shade600),
+                ),
+                onPressed: _running || _importBusy
+                    ? null
+                    : () {
+                        if (series != null) {
+                          WritersRoomDialog.show(
+                            context,
+                            series: series,
+                            onSeriesUpdated: (s) {
+                              widget.session.updateSeries(s);
+                              setState(() {});
+                            },
+                          );
+                        }
+                      },
+                icon: const Icon(Icons.psychology_outlined, size: 18, color: Colors.amber),
+                label: const Text('编剧研讨室 (全书共创大纲)'),
+              ),
             ],
           ),
           if (_activeTask != null) ...[
@@ -1210,6 +1323,13 @@ class _ImportProgressCardState extends State<_ImportProgressCard> {
         statusIcon = Icon(Icons.check_circle_rounded, size: 16, color: iconColor);
         textColor = context.textPrimary;
         break;
+      case StageStatus.skipped:
+        // 本次导入范围内未执行（spec: 未执行的阶段呈现为未执行）。用虚线圆圈
+        // 与「未执行」区别于 success 的实心勾——否则用户会以为这一阶段跑过了。
+        iconColor = context.textSecondary.withAlpha(90);
+        statusIcon = Icon(Icons.remove_circle_outline, size: 16, color: iconColor);
+        textColor = context.textSecondary;
+        break;
       case StageStatus.running:
         iconColor = context.accentText;
         statusIcon = SizedBox(
@@ -1281,6 +1401,8 @@ class _ImportProgressCardState extends State<_ImportProgressCard> {
         return '执行中…';
       case StageStatus.success:
         return '已就绪';
+      case StageStatus.skipped:
+        return '未执行';
       case StageStatus.failed:
         return '异常';
     }
@@ -1315,11 +1437,11 @@ class _ImportProgressCardState extends State<_ImportProgressCard> {
                 _buildMetricChip(context, '戏剧场次', '${task.plannedSceneCount} 幕'),
               if (task.protectedUtteranceCount > 0)
                 _buildMetricChip(context, '锁定金句', '${task.protectedUtteranceCount} 条'),
-              if (task.auditPassRate > 0)
+              if (task.auditPassRate != null)
                 _buildMetricChip(
                   context,
                   '门禁质检',
-                  '${task.auditPassRate.toStringAsFixed(0)}分',
+                  '${task.auditPassRate!.toStringAsFixed(0)}分',
                   color: context.successText,
                 ),
             ],
@@ -1639,8 +1761,8 @@ class _ImportSummaryCardState extends State<_ImportSummaryCard> {
                   _buildStatBadge(context, Icons.shield_outlined, '${widget.series!.props.length} 个关键道具'),
                 if (task.protectedUtteranceCount > 0)
                   _buildStatBadge(context, Icons.format_quote_rounded, '${task.protectedUtteranceCount} 条锁定金句'),
-                if (task.auditPassRate > 0)
-                  _buildStatBadge(context, Icons.verified_outlined, '门禁质检 ${task.auditPassRate.toStringAsFixed(0)}分'),
+                if (task.auditPassRate != null)
+                  _buildStatBadge(context, Icons.verified_outlined, '门禁质检 ${task.auditPassRate!.toStringAsFixed(0)}分'),
               ],
             ),
           ],

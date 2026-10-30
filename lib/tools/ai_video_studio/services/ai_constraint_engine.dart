@@ -17,6 +17,8 @@ import 'dart:convert';
 
 import '../../../services/ai_service.dart';
 import '../models/studio_models.dart';
+import 'director_validation_engine.dart' show ValidationReport;
+import 'prompt_assembler.dart';
 import 'studio_preset_store.dart';
 
 /// 工坊的 AI 任务类型。
@@ -67,7 +69,25 @@ enum StudioAiTask {
   screenplayGeneration('screenplay_generation', '影视分场剧本生成'),
 
   /// 场景七方位空间全息解构（前、后、左、右、上、下、俯视全景）。
-  sceneSpatialDeconstruction('scene_spatial_deconstruction', '场景空间全息解构');
+  sceneSpatialDeconstruction('scene_spatial_deconstruction', '场景空间全息解构'),
+
+  /// AI 视频提示词精炼与冲突消解。
+  videoPromptRewrite('video_prompt_rewrite', 'AI 视频提示词重写'),
+
+  /// 导演质检问题一键 AI 自动修复。
+  directorAuditAutoFix('director_audit_auto_fix', '导演质检 AI 自愈'),
+
+  /// 编剧研讨室全书主线与改编边界抽取。
+  writersRoomMasterExtract('writers_room_master_extract', '编剧研讨主线分析'),
+
+  /// 编剧研讨室全季宏观大篇章大幕规划。
+  writersRoomMacroArcs('writers_room_macro_arcs', '全季宏观大幕规划'),
+
+  /// 编剧研讨室全季短剧分集大纲与悬念规划。
+  writersRoomSeasonBeats('writers_room_season_beats', '全季分集规划'),
+
+  /// 编剧研讨室人机共创对话。
+  writersRoomDialogue('writers_room_dialogue', '编剧研讨共创对话');
 
   final String id;
   final String label;
@@ -157,6 +177,11 @@ class ScriptContext {
   /// 参战角色 Combat DNA（打斗与动作场景动作风格指导）。
   final List<CombatDNA> combatDnaList;
 
+  /// 当用户在剧本工作台的全文模式下独立修改了文学剧本全文，导致 `screenplayText`
+  /// 与结构化 `scenes` 导出的 Markdown 不一致时，设为 `true`，使拆镜提示词将文学剧本
+  /// 全文标为最高优先级剧情依据，避免旧场次节拍与新全文自相矛盾。
+  final bool preferSynopsisOverScenes;
+
   const ScriptContext({
     this.seriesName = '',
     this.productionType = 'drama',
@@ -169,6 +194,7 @@ class ScriptContext {
     this.scenes = const [],
     this.protectedContract = ProtectedContract.empty,
     this.combatDnaList = const [],
+    this.preferSynopsisOverScenes = false,
   });
 }
 
@@ -222,6 +248,10 @@ abstract final class AiConstraintEngine {
       case StudioAiTask.screenplayGeneration:
       case StudioAiTask.scriptBreakdown5D:
       case StudioAiTask.actionCombatBreakdown:
+      case StudioAiTask.writersRoomMasterExtract:
+      case StudioAiTask.writersRoomMacroArcs:
+      case StudioAiTask.writersRoomSeasonBeats:
+      case StudioAiTask.writersRoomDialogue:
         return const Duration(seconds: 240);
       case StudioAiTask.sceneSpatialDeconstruction:
         return const Duration(seconds: 180);
@@ -242,9 +272,12 @@ abstract final class AiConstraintEngine {
     String slot = 'text',
     Duration? timeout,
     int maxAttempts = maxAttempts,
+    Map<String, String>? promptSlots,
+    String? systemPromptOverride,
   }) async {
     final effectiveTimeout = timeout ?? defaultTimeoutFor(task);
-    final systemPrompt = systemPromptFor(task);
+    final systemPrompt = systemPromptOverride ??
+        resolveSystemPrompt(task, slots: promptSlots);
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': systemPrompt},
       {'role': 'user', 'content': userPrompt},
@@ -255,12 +288,17 @@ abstract final class AiConstraintEngine {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       ChatResult result;
       try {
-        // 前几次失败时把原始输出回给模型，让它知道错在哪——盲目重发同样的
-        // 提示词，第二次往往拿到同一份坏 JSON。
-        final retryHint = attempt > 1 && lastRaw.isNotEmpty
-            ? '\n\n【上一次你的输出无法解析】\n$lastRaw\n\n'
-                '请严格按上述 JSON Schema 重新输出，不要输出任何解释文字。'
-            : '';
+        // 前几次失败时把精简错误片段回给模型，避免塞入数千 Token 的截断残片导致再次爆表。
+        final String retryHint;
+        if (attempt > 1 && lastRaw.isNotEmpty) {
+          final trimmedRaw = lastRaw.length > 500
+              ? '...${lastRaw.substring(lastRaw.length - 500)}'
+              : lastRaw;
+          retryHint = '\n\n【上一次你的输出格式不完整或无法解析】\n$trimmedRaw\n\n'
+              '请注意精炼表述并严格按上述 JSON Schema 完整闭合输出，不要输出任何解释文字。';
+        } else {
+          retryHint = '';
+        }
         result = await chatFn(
           slot: slot,
           messages: [
@@ -399,11 +437,51 @@ abstract final class AiConstraintEngine {
       buffer.writeln('【可用场景】${context.sceneNames.join('、')}');
     }
     if (context.scenes.isNotEmpty) {
-      buffer.writeln('【场次规划与节拍（Scenes & Beats）】');
+      if (context.preferSynopsisOverScenes) {
+        buffer.writeln(
+          '【场次规划与节拍（Scenes & Beats，仅作空间地标与机位参考，剧情与对白冲突时以文学剧本全文为准）】',
+        );
+      } else {
+        buffer.writeln('【场次规划与节拍（Scenes & Beats）】');
+      }
       for (final s in context.scenes) {
         buffer.writeln('- 场次 ${s.id} (${s.title}): ${s.location}, 主光=${s.primaryLightWorldDirection}, 地标=${s.landmarks.join("/")}');
         for (final b in s.beats) {
-          buffer.writeln('  * 节拍 ${b.id}: [${b.dramaticFunction}] ${b.name} - ${b.action}');
+          // 节拍行必须带上用户在剧本工作台精心编写的台词与导演预设
+          // （spec: 拆镜上下文包含节拍级导演字段）。旧实现只传 name/action，
+          // 台词唯一能进上下文的通道是 protectedContract 里那几句金句——用户
+          // 写的其余对白、机位、景别在拆镜时全部蒸发，AI 只能靠粗大纲自己编。
+          final beatParts = <String>[
+            '[${b.dramaticFunction}] ${b.name}',
+            b.action,
+          ];
+          if (b.dialogue.trim().isNotEmpty) {
+            final speaker = b.dialogueSpeaker.trim();
+            final prefix = speaker.isNotEmpty ? '$speaker：' : '';
+            beatParts.add('台词=$prefix${b.dialogue.trim()}');
+          }
+          if (b.voiceType != UtteranceVoiceType.dialogue) {
+            beatParts.add('发声类型=${b.voiceType.label}');
+          }
+          if (b.subtext.trim().isNotEmpty) {
+            beatParts.add('潜台词=${b.subtext.trim()}');
+          }
+          if (b.shotSize.trim().isNotEmpty) {
+            beatParts.add('景别=${b.shotSize.trim()}');
+          }
+          if (b.cameraStaging.trim().isNotEmpty) {
+            beatParts.add('机位=${b.cameraStaging.trim()}');
+          }
+          if (b.cameraMove.trim().isNotEmpty) {
+            beatParts.add('运镜=${b.cameraMove.trim()}');
+          }
+          if (b.screenPosition.trim().isNotEmpty) {
+            beatParts.add('画面位置=${b.screenPosition.trim()}');
+          }
+          if (b.gazeDirection.trim().isNotEmpty) {
+            beatParts.add('视线=${b.gazeDirection.trim()}');
+          }
+          buffer.writeln('  * 节拍 ${b.id}: ${beatParts.join(' | ')}');
         }
       }
     }
@@ -422,7 +500,13 @@ abstract final class AiConstraintEngine {
         }
       }
     }
-    buffer.writeln('【本集剧情大纲】\n$synopsis');
+    if (context.preferSynopsisOverScenes) {
+      buffer.writeln(
+        '【本集文学剧本全文（最高优先级剧情依据，若与上方场次节拍不一致请以本剧本全文为准）】\n$synopsis',
+      );
+    } else {
+      buffer.writeln('【本集剧情大纲】\n$synopsis');
+    }
     return run(
       task: StudioAiTask.scriptBreakdown5D,
       userPrompt: buffer.toString(),
@@ -562,17 +646,111 @@ abstract final class AiConstraintEngine {
     );
   }
 
+  /// 对超长小说原著进行「首部 + 中部多窗口均匀采样 + 尾部」代表性切片，
+  /// 避免旧逻辑在 >35,000 字时将全书中部直接硬截断丢弃。
+  ///
+  /// 默认预算 35,000 字：
+  /// - 首部：10,000 字（开篇世界观与初始人物登场）
+  /// - 中部：5 个均匀分布的采样窗口，合计 17,000 字（每窗口约 3,400 字，自动贴合段落换行边界）
+  /// - 尾部：8,000 字（高潮与结局收束）
+  static String sampleNovelTextForContext(
+    String novelText, {
+    int maxChars = 35000,
+  }) {
+    if (novelText.length <= maxChars) return novelText;
+
+    final int headBudget = (maxChars * 10000 / 35000).round();
+    final int tailBudget = (maxChars * 8000 / 35000).round();
+    final int midTotalBudget = maxChars - headBudget - tailBudget;
+    const int windowCount = 5;
+    final int perWindowBudget = midTotalBudget ~/ windowCount;
+
+    // 尝试在紧邻位置寻找换行符，避免把句子劈成两半
+    int snapToNewline(int pos, {required bool forward, int tolerance = 200}) {
+      final clamped = pos.clamp(0, novelText.length);
+      if (forward) {
+        final limit = (clamped + tolerance).clamp(0, novelText.length);
+        final idx = novelText.indexOf('\n', clamped);
+        if (idx != -1 && idx <= limit) return idx + 1;
+      } else {
+        final limit = (clamped - tolerance).clamp(0, novelText.length);
+        final idx = novelText.lastIndexOf('\n', clamped);
+        if (idx != -1 && idx >= limit) return idx;
+      }
+      return clamped;
+    }
+
+    final int headEnd = snapToNewline(headBudget, forward: false);
+    final int tailStart = snapToNewline(
+      novelText.length - tailBudget,
+      forward: true,
+    );
+
+    if (tailStart <= headEnd) {
+      return novelText.substring(0, maxChars);
+    }
+
+    final buffer = StringBuffer()
+      ..write(novelText.substring(0, headEnd).trimRight());
+
+    final int midRange = tailStart - headEnd;
+    if (midRange <= midTotalBudget) {
+      buffer
+        ..write('\n\n[...全书中部章节采样...]\n\n')
+        ..write(novelText.substring(headEnd, tailStart).trim());
+    } else {
+      final int availableSpan = midRange - perWindowBudget;
+      for (int i = 0; i < windowCount; i++) {
+        final int rawStart =
+            headEnd + ((availableSpan * (i + 0.5)) / windowCount).round();
+        final int winStart = snapToNewline(rawStart, forward: true);
+        final int winEnd = snapToNewline(
+          (winStart + perWindowBudget).clamp(winStart, tailStart),
+          forward: false,
+        );
+        if (winEnd > winStart) {
+          final int pct = (((winStart + winEnd) / 2 / novelText.length) * 100)
+              .round();
+          buffer
+            ..write('\n\n[...全书中部采样片段 ${i + 1}/$windowCount (约 $pct% 进度)...]\n\n')
+            ..write(novelText.substring(winStart, winEnd).trim());
+        }
+      }
+    }
+
+    buffer
+      ..write('\n\n[...全书收尾章节采样...]\n\n')
+      ..write(novelText.substring(tailStart).trimLeft());
+
+    return buffer.toString();
+  }
+
   /// 小说全案第一阶段：提取世界观、风格词、角色卡库与场景库。
   static Future<ConstraintResult> extractNovelMaster({
     required String novelText,
     String productionType = 'drama',
+    List<String> existingCharacterNames = const [],
+    List<String> existingSceneNames = const [],
   }) {
-    final cleanText = novelText.length > 35000
-        ? '${novelText.substring(0, 20000)}\n\n[...中间精彩章节省略...]\n\n${novelText.substring(novelText.length - 15000)}'
-        : novelText;
+    final cleanText = sampleNovelTextForContext(novelText);
+    final buffer = StringBuffer()
+      ..writeln('【制作类型】$productionType');
+    if (existingCharacterNames.isNotEmpty) {
+      buffer.writeln(
+        '【本剧资产库已有角色（同人不同称谓须优先复用这些标准名，严禁自造同人异名新卡；若已有角色在本章出现新造型/新服饰或更丰富外貌细节，请继续使用原名输出新造型以便系统增量合并）】\n'
+        '${existingCharacterNames.join('、')}',
+      );
+    }
+    if (existingSceneNames.isNotEmpty) {
+      buffer.writeln(
+        '【本剧资产库已有场景（同地不同名须优先复用这些标准场景名，严禁自造同义新场景名）】\n'
+        '${existingSceneNames.join('、')}',
+      );
+    }
+    buffer.write('【小说原著内容】\n$cleanText');
     return run(
       task: StudioAiTask.novelMasterExtraction,
-      userPrompt: '【制作类型】$productionType\n【小说原著内容】\n$cleanText',
+      userPrompt: buffer.toString(),
       schemaValidator: _SchemaValidators.novelMasterExtraction,
     );
   }
@@ -584,9 +762,7 @@ abstract final class AiConstraintEngine {
     required List<String> characterNames,
     String productionType = 'drama',
   }) {
-    final cleanText = novelText.length > 35000
-        ? '${novelText.substring(0, 20000)}\n\n[...中间精彩章节省略...]\n\n${novelText.substring(novelText.length - 15000)}'
-        : novelText;
+    final cleanText = sampleNovelTextForContext(novelText);
     final buffer = StringBuffer()
       ..writeln('【制作类型】$productionType')
       ..writeln('【已提炼世界观】\n$worldview');
@@ -639,6 +815,7 @@ abstract final class AiConstraintEngine {
     required String seriesName,
     String worldview = '',
     List<String> characterNames = const [],
+    List<String> propNames = const [],
     String productionType = 'drama',
     int episodeIndex = 1,
     String memoryContext = '',
@@ -653,22 +830,470 @@ abstract final class AiConstraintEngine {
     if (characterNames.isNotEmpty) {
       buffer.writeln('【核心可用角色】${characterNames.join('、')}');
     }
+    if (propNames.isNotEmpty) {
+      buffer.writeln('【核心已知道具库】${propNames.join('、')}（若涉及请优先复用上述道具名称）');
+    }
     if (memoryContext.isNotEmpty) {
       buffer.writeln('【前情记忆】\n$memoryContext');
     }
     buffer.writeln('【小说本章完整文本】\n$novelText');
 
+    final promptSlots = <String, String>{
+      'series_name': seriesName,
+      'production_type': productionType,
+      'episode_index': episodeIndex.toString(),
+      'worldview': worldview,
+      'character_names': characterNames.join('、'),
+      'prop_names': propNames.join('、'),
+      'memory_context': memoryContext,
+    };
+
     return run(
       task: StudioAiTask.novelDramaChapterAdaptation,
       userPrompt: buffer.toString(),
       schemaValidator: _SchemaValidators.novelChapterAdaptation,
+      promptSlots: promptSlots,
+    );
+  }
+
+  /// 编剧研讨室：小说全案宏观主线提取与改编边界清单界定（必留/可删/可改）。
+  static Future<ConstraintResult> extractWritersRoomMaster({
+    required String novelText,
+    required String seriesName,
+    String theme = '',
+  }) {
+    final cleanText = sampleNovelTextForContext(novelText);
+    final buffer = StringBuffer()
+      ..writeln('【剧集名称】$seriesName');
+    if (theme.isNotEmpty) {
+      buffer.writeln('【核心主题/定位】$theme');
+    }
+    buffer.writeln('【小说全景/多章节原著文本】\n$cleanText');
+
+    return run(
+      task: StudioAiTask.writersRoomMasterExtract,
+      userPrompt: buffer.toString(),
+      schemaValidator: _SchemaValidators.writersRoomMasterExtract,
+      promptSlots: {
+        'series_name': seriesName,
+        'theme': theme,
+      },
+    );
+  }
+
+  /// 编剧研讨室：全季宏观大篇章大幕规划（仅划分 3~6 幕，极低 Token 极速产出）。
+  static Future<ConstraintResult> planWritersRoomMacroArcs({
+    required String masterPlot,
+    required String seriesName,
+    int episodeCount = 80,
+    int targetDurationSec = 90,
+    int seasonNumber = 1,
+    String seasonTitle = '',
+    String adaptedChaptersRange = '',
+    String seasonTheme = '',
+    String seasonClimax = '',
+    List<Map<String, dynamic>> mustKeep = const [],
+    List<Map<String, dynamic>> canCut = const [],
+    List<Map<String, dynamic>> canModify = const [],
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('【剧集名称】$seriesName')
+      ..writeln('【本季总集数规模】期望全季共规划 $episodeCount 集')
+      ..writeln('【单集预估时长】每集约 $targetDurationSec 秒');
+    if (seasonNumber > 0 || seasonTitle.isNotEmpty) {
+      buffer.writeln('【当前规划季】第 $seasonNumber 季 · ${seasonTitle.isNotEmpty ? seasonTitle : "第$seasonNumber季"}');
+    }
+    if (adaptedChaptersRange.isNotEmpty) {
+      buffer.writeln('【对应原著章节跨度】$adaptedChaptersRange');
+    }
+    if (seasonTheme.isNotEmpty) {
+      buffer.writeln('【本季核心叙事主题】$seasonTheme');
+    }
+    if (seasonClimax.isNotEmpty) {
+      buffer.writeln('【本季终极大高潮】$seasonClimax');
+    }
+    buffer.writeln('【全书主线脉络】\n$masterPlot');
+
+    if (mustKeep.isNotEmpty) {
+      buffer.writeln('【必留名场面与核心主线】');
+      for (final m in mustKeep) {
+        buffer.writeln('- ${m["title"]}: ${m["description"]}');
+      }
+    }
+
+    return run(
+      task: StudioAiTask.writersRoomMacroArcs,
+      userPrompt: buffer.toString(),
+      schemaValidator: (data) => _SchemaValidators.writersRoomMacroArcs(
+        data,
+        targetEpisodeCount: episodeCount,
+        targetDurationSec: targetDurationSec,
+      ),
+      promptSlots: {
+        'series_name': seriesName,
+        'episode_count': episodeCount.toString(),
+      },
+    );
+  }
+
+  /// 编剧研讨室：单批次分集大纲推演（适用于集数 <= 20 或测试环境）。
+  static Future<ConstraintResult> _planSingleBatchSeasonBeats({
+    required String masterPlot,
+    required String seriesName,
+    int episodeCount = 80,
+    int targetDurationSec = 90,
+    int seasonNumber = 1,
+    String seasonTitle = '',
+    String adaptedChaptersRange = '',
+    String seasonTheme = '',
+    String seasonClimax = '',
+    List<Map<String, dynamic>> mustKeep = const [],
+    List<Map<String, dynamic>> canCut = const [],
+    List<Map<String, dynamic>> canModify = const [],
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('【剧集名称】$seriesName');
+
+    if (episodeCount > 0) {
+      buffer.writeln('【参考集数规模】本季期望规模约为 $episodeCount 集（请根据原著小说实际剧情密度、矛盾起伏与高潮自然推演最为合理的分集大纲，各集剧情必须独立递进，绝不重复！）；');
+    } else {
+      buffer.writeln('【分集推演规则】请依据原著小说的实际情节密度与矛盾起伏，自然规划出最合理、最饱满的完整分集大纲；');
+    }
+    buffer.writeln('【剧情独立性硬约束】episodes 数组输出的每一集必须具备独一无二的核心对抗事件与不同断章钩子，严禁在多集之间复制相同剧情，严禁添加任何类似 "(节拍 X)" 的机械化后缀！');
+    buffer.writeln('【单集预估时长】每集约 $targetDurationSec 秒（约 ${(targetDurationSec / 60).toStringAsFixed(1)} 分钟）');
+
+    if (seasonNumber > 0 || seasonTitle.isNotEmpty) {
+      buffer.writeln('【当前规划季】第 $seasonNumber 季 · ${seasonTitle.isNotEmpty ? seasonTitle : "第$seasonNumber季"}');
+    }
+    if (adaptedChaptersRange.isNotEmpty) {
+      buffer.writeln('【对应原著章节跨度】$adaptedChaptersRange');
+      buffer.writeln('【分集章节硬约束】输出的每一集必须给出取材的原著章节范围 chapter_range（如 "1-3"），基于原著情节推进合理分配，绝非机械 1:1！');
+    }
+    if (seasonTheme.isNotEmpty) {
+      buffer.writeln('【本季核心叙事主题】$seasonTheme');
+    }
+    if (seasonClimax.isNotEmpty) {
+      buffer.writeln('【本季终极大高潮】$seasonClimax');
+    }
+
+    buffer.writeln('【全书主线脉络】\n$masterPlot');
+
+    if (mustKeep.isNotEmpty) {
+      buffer.writeln('【必留名场面与核心主线】');
+      for (final m in mustKeep) {
+        buffer.writeln('- ${m["title"]}: ${m["description"]}');
+      }
+    }
+    if (canCut.isNotEmpty) {
+      buffer.writeln('【建议大刀阔斧删除的情节】');
+      for (final c in canCut) {
+        buffer.writeln('- ${c["title"]}: ${c["description"]}');
+      }
+    }
+    if (canModify.isNotEmpty) {
+      buffer.writeln('【允许合并的配角与精简过渡】');
+      for (final m in canModify) {
+        buffer.writeln('- ${m["title"]}: ${m["suggestion"] ?? m["description"]}');
+      }
+    }
+
+    return run(
+      task: StudioAiTask.writersRoomSeasonBeats,
+      userPrompt: buffer.toString(),
+      schemaValidator: (data) => _SchemaValidators.writersRoomSeasonBeats(
+        data,
+        targetEpisodeCount: episodeCount,
+        targetDurationSec: targetDurationSec,
+        seasonChaptersRange: adaptedChaptersRange,
+      ),
+      promptSlots: {
+        'series_name': seriesName,
+        'episode_count': episodeCount.toString(),
+        'target_duration_sec': targetDurationSec.toString(),
+      },
+    );
+  }
+
+  /// 编剧研讨室：单幕分批次推演具体分集（每批约 12~16 集，彻底规避 4096 Token 物理截断）。
+  static Future<ConstraintResult> _planChunkSeasonBeats({
+    required String masterPlot,
+    required String seriesName,
+    required int seasonNumber,
+    required String seasonTitle,
+    required int startEpisode,
+    required int endEpisode,
+    required Map<String, dynamic> arc,
+    required int targetDurationSec,
+    required String prevContext,
+    String adaptedChaptersRange = '',
+    int totalSeasonEpisodes = 80,
+    List<Map<String, dynamic>> mustKeep = const [],
+    List<Map<String, dynamic>> canCut = const [],
+    List<Map<String, dynamic>> canModify = const [],
+  }) {
+    final arcTitle = arc['title'] as String? ?? '大幕篇章';
+    final arcConflict = arc['core_conflict'] as String? ?? '';
+    final arcTurning = arc['turning_point'] as String? ?? '';
+    final arcChapterRange = (arc['chapter_range'] as String? ?? '').trim();
+    final expectedCount = endEpisode - startEpisode + 1;
+
+    final buffer = StringBuffer()
+      ..writeln('【剧集名称】$seriesName')
+      ..writeln('【当前规划季】第 $seasonNumber 季 · ${seasonTitle.isNotEmpty ? seasonTitle : "第$seasonNumber季"}')
+      ..writeln('【所属篇章大幕】$arcTitle（集数跨度：第 $startEpisode ~ $endEpisode 集）');
+
+    if (arcChapterRange.isNotEmpty) {
+      buffer.writeln('【本幕对应原著章节】$arcChapterRange');
+    } else if (adaptedChaptersRange.isNotEmpty) {
+      buffer.writeln('【全季对应原著章节】$adaptedChaptersRange');
+    }
+
+    buffer
+      ..writeln('【本幕核心对抗矛盾】$arcConflict')
+      ..writeln('【本幕转折高潮爆点】$arcTurning')
+      ..writeln('【本次规划目标】精准输出第 $startEpisode 到第 $endEpisode 集（共 $expectedCount 集），每集约 $targetDurationSec 秒')
+      ..writeln('【剧情独立性硬约束】每一集必须具备独一无二的核心对抗事件与不同断章钩子，按原著剧情递进，绝不重复，严禁添加任何类似 "(节拍 X)" 的机械化后缀！')
+      ..writeln('【分集章节硬约束】输出的每一集必须给出取材的原著章节范围 chapter_range（如 "1-3"），基于原著情节推进合理分配，绝非机械 1:1！');
+
+    if (prevContext.isNotEmpty) {
+      buffer.writeln('【前情剧情承接】$prevContext。本批次第 $startEpisode 集必须紧密承接上一集结尾悬念！');
+    }
+
+    buffer.writeln('【全书主线脉络】\n$masterPlot');
+
+    if (mustKeep.isNotEmpty) {
+      buffer.writeln('【相关必留情节】');
+      for (final m in mustKeep) {
+        buffer.writeln('- ${m["title"]}: ${m["description"]}');
+      }
+    }
+
+    return run(
+      task: StudioAiTask.writersRoomSeasonBeats,
+      userPrompt: buffer.toString(),
+      schemaValidator: (data) => _SchemaValidators.writersRoomArcBeats(
+        data,
+        startEpisode: startEpisode,
+        endEpisode: endEpisode,
+        arcName: arcTitle,
+        targetDurationSec: targetDurationSec,
+        arcChapterRange: arcChapterRange,
+        totalEpisodes: totalSeasonEpisodes,
+        seasonChaptersRange: adaptedChaptersRange,
+      ),
+      promptSlots: {
+        'series_name': seriesName,
+        'episode_count': expectedCount.toString(),
+        'target_duration_sec': targetDurationSec.toString(),
+      },
+    );
+  }
+
+  /// 编剧研讨室：全季分集强冲突大纲、大篇章规划与断章悬念钩子规划。
+  ///
+  /// 当集数规模较小 (<= 20 集) 时走单批快速通道；
+  /// 当集数规模较大 (> 20 集) 时自动启动两阶段按大幕分批推演管线，彻底消除 4096 Token 物理截断崩溃。
+  static Future<ConstraintResult> planWritersRoomSeasonBeats({
+    required String masterPlot,
+    required String seriesName,
+    int episodeCount = 80,
+    int targetDurationSec = 90,
+    int seasonNumber = 1,
+    String seasonTitle = '',
+    String adaptedChaptersRange = '',
+    String seasonTheme = '',
+    String seasonClimax = '',
+    List<Map<String, dynamic>> mustKeep = const [],
+    List<Map<String, dynamic>> canCut = const [],
+    List<Map<String, dynamic>> canModify = const [],
+    void Function(String message, double progress)? onProgress,
+  }) async {
+    if (episodeCount <= 20) {
+      onProgress?.call('正在规划第 $seasonNumber 季高能分集大纲...', 0.5);
+      final res = await _planSingleBatchSeasonBeats(
+        masterPlot: masterPlot,
+        seriesName: seriesName,
+        episodeCount: episodeCount,
+        targetDurationSec: targetDurationSec,
+        seasonNumber: seasonNumber,
+        seasonTitle: seasonTitle,
+        adaptedChaptersRange: adaptedChaptersRange,
+        seasonTheme: seasonTheme,
+        seasonClimax: seasonClimax,
+        mustKeep: mustKeep,
+        canCut: canCut,
+        canModify: canModify,
+      );
+      onProgress?.call('分集大纲规划完成！', 1.0);
+      return res;
+    }
+
+    // 两阶段按大幕分批推演管线 (规避 4096 Token 物理截断)
+    onProgress?.call('正在构建全季宏观大篇章结构...', 0.1);
+
+    ConstraintResult macroRes;
+    try {
+      macroRes = await planWritersRoomMacroArcs(
+        masterPlot: masterPlot,
+        seriesName: seriesName,
+        episodeCount: episodeCount,
+        targetDurationSec: targetDurationSec,
+        seasonNumber: seasonNumber,
+        seasonTitle: seasonTitle,
+        adaptedChaptersRange: adaptedChaptersRange,
+        seasonTheme: seasonTheme,
+        seasonClimax: seasonClimax,
+        mustKeep: mustKeep,
+        canCut: canCut,
+        canModify: canModify,
+      );
+    } catch (_) {
+      macroRes = ConstraintResult(
+        data: _SchemaValidators.writersRoomMacroArcs(
+          const {},
+          targetEpisodeCount: episodeCount,
+          targetDurationSec: targetDurationSec,
+        )!,
+        rawText: '',
+        providerId: 'fallback',
+        model: 'fallback',
+        attempt: 1,
+      );
+    }
+
+    final seasonOverallTitle =
+        (macroRes.data['season_title'] as String? ?? seriesName).trim();
+    final cleanArcs = (macroRes.data['macro_arcs'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    final chunks = <({int startEp, int endEp, Map<String, dynamic> arc})>[];
+    for (final arc in cleanArcs) {
+      final range = arc['episode_range'] as String? ?? '';
+      final parts = range.split('-');
+      int start = int.tryParse(parts.first.trim()) ?? 1;
+      int end = (parts.length > 1 ? int.tryParse(parts.last.trim()) : null) ?? start;
+      if (end < start) end = start;
+
+      // 如果单幕集数跨度较大 (> 18 集)，拆分为更小的批次以确保每批不超过 16 集
+      while (end - start + 1 > 18) {
+        final subEnd = start + 14;
+        chunks.add((startEp: start, endEp: subEnd, arc: arc));
+        start = subEnd + 1;
+      }
+      chunks.add((startEp: start, endEp: end, arc: arc));
+    }
+
+    if (chunks.isEmpty) {
+      int curr = 1;
+      while (curr <= episodeCount) {
+        final next = (curr + 13 > episodeCount) ? episodeCount : curr + 13;
+        chunks.add((
+          startEp: curr,
+          endEp: next,
+          arc: cleanArcs.firstWhere(
+            (a) => true,
+            orElse: () => {'title': '核心篇章', 'core_conflict': seasonTheme},
+          ),
+        ));
+        curr = next + 1;
+      }
+    }
+
+    final allEpisodes = <Map<String, dynamic>>[];
+    String prevContext = '';
+
+    for (int i = 0; i < chunks.length; i++) {
+      final chunk = chunks[i];
+      final arcTitle = chunk.arc['title'] as String? ?? '大幕篇章';
+      final stepProgress = 0.15 + (0.80 * (i / chunks.length));
+
+      onProgress?.call(
+        '正在推演【$arcTitle】高能分集 (第 ${chunk.startEp} ~ ${chunk.endEp} 集)...',
+        stepProgress,
+      );
+
+      final chunkRes = await _planChunkSeasonBeats(
+        masterPlot: masterPlot,
+        seriesName: seriesName,
+        seasonNumber: seasonNumber,
+        seasonTitle: seasonTitle,
+        startEpisode: chunk.startEp,
+        endEpisode: chunk.endEp,
+        arc: chunk.arc,
+        targetDurationSec: targetDurationSec,
+        prevContext: prevContext,
+        adaptedChaptersRange: adaptedChaptersRange,
+        totalSeasonEpisodes: episodeCount,
+        mustKeep: mustKeep,
+        canCut: canCut,
+        canModify: canModify,
+      );
+
+      final chunkEps = (chunkRes.data['episodes'] as List? ?? [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+      if (chunkEps.isNotEmpty) {
+        allEpisodes.addAll(chunkEps);
+        final lastEp = chunkEps.last;
+        prevContext = '上一批末尾为第 ${lastEp["episode_number"]} 集《${lastEp["title"]}》，'
+            '核心事件：${lastEp["conflict"]}，末尾断章钩子：${lastEp["hook"]}';
+      }
+    }
+
+    onProgress?.call('全季分集大纲规划完成！', 1.0);
+
+    return ConstraintResult(
+      data: {
+        'season_title': seasonOverallTitle,
+        'target_duration_sec': targetDurationSec,
+        'macro_arcs': cleanArcs,
+        'episodes': allEpisodes,
+      },
+      rawText: '',
+      providerId: macroRes.providerId,
+      model: macroRes.model,
+      attempt: 1,
+    );
+  }
+
+  /// 编剧研讨室：人机交互多轮协商讨论与分集大纲动态更新。
+  static Future<ConstraintResult> dialogueWritersRoom({
+    required String instruction,
+    required String currentBeatsContext,
+    required String seriesName,
+  }) {
+    final buffer = StringBuffer()
+      ..writeln('【剧集名称】$seriesName')
+      ..writeln('【当前分集大纲】\n$currentBeatsContext')
+      ..writeln('【制片人/导演改编指令】\n$instruction');
+
+    return run(
+      task: StudioAiTask.writersRoomDialogue,
+      userPrompt: buffer.toString(),
+      schemaValidator: _SchemaValidators.writersRoomDialogue,
+      promptSlots: {
+        'series_name': seriesName,
+      },
     );
   }
 
   /// 故事大纲/小说章节 → 影视分场文学剧本（场次、日夜、内外景、角色对白与微动作节拍）。
+  /// AI 分场剧本生成。
+  ///
+  /// [characterProfiles] 是预先格式化好的角色设定行（姓名 + 容貌 + 服装），
+  /// [sceneNames] 是资产库已有的场景卡名，[protectedContract] 是本集的受保护
+  /// 契约。三者都是可选的，但传入后 AI 生成的地点与角色才有锚点——否则它会
+  /// 自造场景名，下游 `_ensureScenesForDramaScenes` 只能另建新卡，场景库迅速
+  /// 膨胀出一堆重复卡（spec: 剧本生成注入资产上下文）。
   static Future<ConstraintResult> screenplayGeneration({
     required String synopsis,
     List<String> characterNames = const [],
+    List<String> characterProfiles = const [],
+    List<String> sceneNames = const [],
+    List<String> propNames = const [],
+    ProtectedContract protectedContract = ProtectedContract.empty,
     String seriesName = '',
     String productionType = 'drama',
   }) {
@@ -678,12 +1303,51 @@ abstract final class AiConstraintEngine {
     if (characterNames.isNotEmpty) {
       buffer.writeln('【出场角色】${characterNames.join('、')}');
     }
+    if (characterProfiles.isNotEmpty) {
+      buffer.writeln('【角色设定】');
+      for (final profile in characterProfiles) {
+        buffer.writeln('- $profile');
+      }
+    }
+    if (propNames.isNotEmpty) {
+      buffer.writeln('【核心已知道具库（若涉及请优先复用这些名称）】');
+      buffer.writeln(propNames.join('、'));
+    }
+    if (sceneNames.isNotEmpty) {
+      // 已有场景卡名必须显式给出：AI 不知道资产库里有什么，就会自造同义不同
+      // 名的地点，而场景卡是按名字去重的。
+      buffer.writeln('【资产库已有场景（地点名须优先复用这些，严禁自造同义新名）】');
+      buffer.writeln(sceneNames.join('、'));
+    }
+    if (protectedContract.isNotEmpty) {
+      if (protectedContract.facts.isNotEmpty) {
+        buffer.writeln('【必须遵守的核心事实】');
+        for (final f in protectedContract.facts) {
+          buffer.writeln('- ${f.content}');
+        }
+      }
+      if (protectedContract.utterances.isNotEmpty) {
+        buffer.writeln('【必须逐字保留的高光台词】');
+        for (final u in protectedContract.utterances) {
+          buffer.writeln('- ${u.speaker}对${u.listener.isEmpty ? "众人" : u.listener}说: "${u.text}"');
+        }
+      }
+    }
     buffer.writeln('【剧情大纲】\n$synopsis');
+
+    final promptSlots = <String, String>{
+      'series_name': seriesName,
+      'production_type': productionType,
+      'character_names': characterNames.join('、'),
+      'prop_names': propNames.join('、'),
+      'scene_names': sceneNames.join('、'),
+    };
 
     return run(
       task: StudioAiTask.screenplayGeneration,
       userPrompt: buffer.toString(),
       schemaValidator: _SchemaValidators.screenplayGeneration,
+      promptSlots: promptSlots,
     );
   }
 
@@ -710,6 +1374,78 @@ abstract final class AiConstraintEngine {
       task: StudioAiTask.sceneSpatialDeconstruction,
       userPrompt: buffer.toString(),
       schemaValidator: _SchemaValidators.sceneSpatialDeconstruction,
+    );
+  }
+
+  /// AI 视频提示词精炼与冲突消解。
+  static Future<ConstraintResult> rewriteVideoPrompt({
+    required StudioShot shot,
+    required StudioEpisode episode,
+    List<CharacterCard> characters = const [],
+    List<PropCard> props = const [],
+    SceneCard? scene,
+    List<ResolvedAssetMaterial> materials = const [],
+  }) {
+    final basePrompt = PromptAssembler.buildVideoGenPrompt(
+      shot: shot,
+      episode: episode,
+      characters: characters,
+      props: props,
+      scene: scene,
+      materials: materials,
+    );
+
+    final buffer = StringBuffer()
+      ..writeln('请对以下原始视频生成提示词进行精炼与冲突消解重写：')
+      ..writeln('【镜号】: 第 ${shot.number} 镜')
+      ..writeln('【建议时长】: ${shot.durationSec} 秒')
+      ..writeln('【景别】: ${shot.shotSize.label}')
+      ..writeln('【原始组装提示词】:')
+      ..writeln(basePrompt);
+
+    return run(
+      task: StudioAiTask.videoPromptRewrite,
+      userPrompt: buffer.toString(),
+      schemaValidator: _SchemaValidators.videoPromptRewrite,
+    );
+  }
+
+  /// 依据质检违规项对分镜执行 AI 自动修复自愈。
+  static Future<ConstraintResult> autoFixAuditIssues({
+    required List<StudioShot> shots,
+    required ValidationReport report,
+    List<CharacterCard> characters = const [],
+    List<SceneCard> scenes = const [],
+  }) {
+    final issuesDesc = report.issues.map((i) =>
+        '• 规则 ${i.ruleId} (${i.ruleName}) [镜号 ${i.shotNumber ?? "全局"}]: ${i.message} -> 建议: ${i.suggestion}'
+    ).join('\n');
+
+    final shotsJson = shots.map((s) => {
+      'number': s.number,
+      'duration_sec': s.durationSec,
+      'shot_size': s.shotSize.id,
+      'mood': s.mood,
+      'action_zh': s.actionZh,
+      'dialogue': s.dialogue,
+      'camera_move': s.cameraMove,
+      'character_ids': s.characterIds,
+      'scene_id': s.sceneId,
+      'camera_staging': s.directorDecisions.cameraStaging,
+      'lighting_staging': s.directorDecisions.lightingStaging,
+    }).toList();
+
+    final buffer = StringBuffer()
+      ..writeln('【导演质检诊断报告】:')
+      ..writeln(issuesDesc)
+      ..writeln('\n【当前全集分镜数据】:')
+      ..writeln(jsonEncode(shotsJson))
+      ..writeln('\n请针对上述违规项执行精准修补，修复有问题的分镜，并返回修正后的 fixed_shots 数组。');
+
+    return run(
+      task: StudioAiTask.directorAuditAutoFix,
+      userPrompt: buffer.toString(),
+      schemaValidator: _SchemaValidators.directorAuditAutoFix,
     );
   }
 
@@ -905,9 +1641,14 @@ abstract final class AiConstraintEngine {
     List<DramaScene> scenes, {
     List<CharacterCard> characters = const [],
     List<SceneCard> sceneCards = const [],
+    List<PropCard> props = const [],
   }) {
     final newShots = <StudioShot>[];
     int shotNumber = 1;
+    final mountRegex = RegExp(r'骑[着乘]?(?:一头|一只|一匹)?(大黑驴|黑驴|毛驴|驴子|驴|白马|骏马|烈马|黑马|红马|战马|宝马|马|青牛|神兽|灵兽|坐骑)');
+    final dismountRegex = RegExp(r'(下驴|下马|跳下|翻身下|下车|弃马|弃驴|落地|跃下)');
+    String currentMount = '';
+    String mountOwnerName = '';
 
     for (int sceneIdx = 0; sceneIdx < scenes.length; sceneIdx++) {
       final scene = scenes[sceneIdx];
@@ -919,17 +1660,34 @@ abstract final class AiConstraintEngine {
       for (int beatIdx = 0; beatIdx < scene.beats.length; beatIdx++) {
         final beat = scene.beats[beatIdx];
 
+        // 识别内心独白（inner_voice）或者台词本身标有 OS
+        final isInnerVoice = beat.voiceType == UtteranceVoiceType.innerVoice ||
+            beat.dialogue.contains('内心 OS') ||
+            beat.dialogue.contains('内心OS') ||
+            beat.dialogue.contains('（OS）') ||
+            beat.dialogue.contains('(OS)') ||
+            beat.dialogue.contains('心声') ||
+            beat.dialogue.contains('内心独白');
+
+        final extractedSpeaker = PromptAssembler.extractSpeakerName(beat.dialogue);
+        final effectiveSpeaker = beat.dialogueSpeaker.trim().isNotEmpty
+            ? beat.dialogueSpeaker.trim()
+            : extractedSpeaker;
+
         // 解析出场角色（多层智能匹配：名字全称、说话人、别名列表、中文昵称启发式）
+        // 关键防护：当台词为内心独白时，出场角色匹配范围剔除台词正文，防止非在场第三人被误加入 characterIds
         final charIds = <String>{...beat.characterIds};
-        final textScope = '${beat.dialogueSpeaker} ${beat.action} ${beat.dialogue}';
+        final textScope = isInnerVoice
+            ? '$effectiveSpeaker ${beat.action}'
+            : '$effectiveSpeaker ${beat.action} ${beat.dialogue}';
 
         for (final c in characters) {
           bool matched = false;
           if (c.name.isNotEmpty && textScope.contains(c.name)) {
             matched = true;
           }
-          if (!matched && beat.dialogueSpeaker.isNotEmpty) {
-            if (c.name.contains(beat.dialogueSpeaker) || beat.dialogueSpeaker.contains(c.name)) {
+          if (!matched && effectiveSpeaker.isNotEmpty) {
+            if (c.name.contains(effectiveSpeaker) || effectiveSpeaker.contains(c.name)) {
               matched = true;
             }
           }
@@ -1002,13 +1760,6 @@ abstract final class AiConstraintEngine {
         }
 
         // 规范化台词：如果是内心独白（inner_voice）或者台词本身标有 OS，统一格式化为“角色（内心 OS）：内容”
-        final isInnerVoice = beat.voiceType == UtteranceVoiceType.innerVoice ||
-            beat.dialogue.contains('内心 OS') ||
-            beat.dialogue.contains('内心OS') ||
-            beat.dialogue.contains('（OS）') ||
-            beat.dialogue.contains('(OS)') ||
-            beat.dialogue.contains('心声');
-
         final UtteranceVoiceType resolvedVoiceType;
         if (isInnerVoice) {
           resolvedVoiceType = UtteranceVoiceType.innerVoice;
@@ -1020,20 +1771,19 @@ abstract final class AiConstraintEngine {
 
         final String dialogueFormatted;
         if (beat.dialogue.trim().isNotEmpty) {
-          final cleanD = beat.dialogue.trim();
-          if (isInnerVoice) {
-            // 剥离可能已存在的重复 OS 标记，保持统一格式
-            final stripped = cleanD
-                .replaceAll(RegExp(r'^[（\(]?内心\s*OS[）\)]?[：:]?'), '')
-                .replaceAll(RegExp(r'^[（\(]?OS[）\)]?[：:]?'), '')
-                .trim();
-            dialogueFormatted = beat.dialogueSpeaker.isNotEmpty
-                ? '${beat.dialogueSpeaker}（内心 OS）：$stripped'
-                : '（内心 OS）：$stripped';
+          final cleanSpeech = PromptAssembler.cleanDialogueForSpeech(beat.dialogue);
+          if (cleanSpeech.isNotEmpty) {
+            if (isInnerVoice) {
+              dialogueFormatted = effectiveSpeaker.isNotEmpty
+                  ? '$effectiveSpeaker（内心 OS）：$cleanSpeech'
+                  : '（内心 OS）：$cleanSpeech';
+            } else {
+              dialogueFormatted = effectiveSpeaker.isNotEmpty
+                  ? '$effectiveSpeaker：“$cleanSpeech”'
+                  : '“$cleanSpeech”';
+            }
           } else {
-            dialogueFormatted = beat.dialogueSpeaker.isNotEmpty
-                ? '${beat.dialogueSpeaker}：“$cleanD”'
-                : cleanD;
+            dialogueFormatted = '';
           }
         } else {
           dialogueFormatted = '';
@@ -1049,6 +1799,53 @@ abstract final class AiConstraintEngine {
                     : (shotSize == StudioShotSize.long || shotSize == StudioShotSize.extremeLong
                         ? 'slow_pull_out'
                         : 'slow_pan')));
+
+        // 坐骑连续性状态机流转
+        if (beat.mountOrVehicle.trim().isNotEmpty) {
+          currentMount = beat.mountOrVehicle.trim();
+        } else if (mountRegex.hasMatch(beat.action)) {
+          final m = mountRegex.firstMatch(beat.action);
+          currentMount = m?.group(1) ?? '坐骑';
+          for (final c in characters) {
+            if (beat.action.contains(c.name)) {
+              mountOwnerName = c.name;
+              break;
+            }
+          }
+        } else if (dismountRegex.hasMatch(beat.action)) {
+          currentMount = '';
+          mountOwnerName = '';
+        }
+
+        // 垂直空间落差与俯仰机位推导
+        final bool isMountOwnerInBeat = currentMount.isNotEmpty &&
+            (mountOwnerName.isEmpty ||
+                beat.action.contains(mountOwnerName) ||
+                charIds.any((id) => characters.any((c) => c.id == id && c.name == mountOwnerName)));
+        final String effectiveMount = isMountOwnerInBeat ? currentMount : '';
+
+        final bool isHighStaging = beat.action.contains('三楼') ||
+            beat.action.contains('二楼') ||
+            beat.action.contains('楼上') ||
+            beat.action.contains('窗') ||
+            beat.cameraStaging.contains('三楼') ||
+            beat.cameraStaging.contains('俯视') ||
+            beat.cameraStaging.contains('俯拍');
+        final bool isGroundStaging = beat.action.contains('长街') ||
+            beat.action.contains('街道') ||
+            beat.action.contains('地面') ||
+            beat.action.contains('路面') ||
+            beat.action.contains('街面') ||
+            effectiveMount.isNotEmpty;
+        final String resolvedElevationLevel = (isHighStaging && isGroundStaging)
+            ? (beat.action.contains('三楼') ? 'balcony_3f' : 'balcony_2f')
+            : (isHighStaging ? 'balcony_3f' : 'ground');
+
+        final String resolvedCameraAngle = beat.cameraStaging.contains('俯') || beat.action.contains('俯')
+            ? 'high_angle'
+            : (beat.cameraStaging.contains('仰') || beat.action.contains('仰')
+                ? 'low_angle'
+                : 'eye_level');
 
         final resolvedCameraStaging = beat.cameraStaging.trim().isNotEmpty
             ? beat.cameraStaging.trim()
@@ -1070,6 +1867,43 @@ abstract final class AiConstraintEngine {
                 ? '低头俯视'
                 : (beat.action.contains('仰') || beat.action.contains('向上') ? '抬头仰视' : '平视正前'));
 
+        // 道具模糊匹配（按名称、别名、包含关系）并填充 propIds
+        final matchedPropIds = <String>{};
+        final candidatePropNames = <String>[
+          ...beat.props,
+          if (beat.holdingItem.trim().isNotEmpty) beat.holdingItem.trim(),
+        ];
+        for (final pName in candidatePropNames) {
+          final trimmed = pName.trim();
+          if (trimmed.isEmpty) continue;
+          for (final p in props) {
+            if (p.name == trimmed ||
+                (trimmed.length >= 2 && p.name.contains(trimmed)) ||
+                (p.name.length >= 2 && trimmed.contains(p.name))) {
+              matchedPropIds.add(p.id);
+              break;
+            }
+          }
+        }
+
+        // 手持物品与左右手姿态映射
+        String holdingLeft = '';
+        String holdingRight = '';
+        if (beat.holdingItem.trim().isNotEmpty) {
+          final hand = beat.holdingHand.trim().toLowerCase();
+          final item = beat.holdingItem.trim();
+          if (hand == 'left' || hand == '左手' || hand == '左') {
+            holdingLeft = item;
+          } else if (hand == 'right' || hand == '右手' || hand == '右') {
+            holdingRight = item;
+          } else if (hand == 'both' || hand == '双手' || hand == '双') {
+            holdingLeft = item;
+            holdingRight = item;
+          } else {
+            holdingRight = item;
+          }
+        }
+
         newShots.add(StudioShot(
           number: shotNumber++,
           durationSec: dynamicDuration,
@@ -1080,29 +1914,31 @@ abstract final class AiConstraintEngine {
           dialogue: dialogueFormatted,
           voiceType: resolvedVoiceType,
           characterIds: charIds.toList(),
+          propIds: matchedPropIds.toList(),
           sceneId: resolvedSceneId,
           beatId: beat.id,
           segmentId: segId,
           cameraMove: resolvedCameraMove,
           directorDecisions: DirectorDecisions(
-            physicalMomentum: beat.subtext.isNotEmpty
-                ? beat.subtext
-                : '重心平稳，肢体随动作自然舒展',
+            physicalMomentum: beat.subtext,
             lightingStaging: '${scene.timeOfDay.isNotEmpty ? scene.timeOfDay : '日景'}，${scene.atmosphere.isNotEmpty ? scene.atmosphere : '自然光漫射'}',
             cameraStaging: resolvedCameraStaging,
-            temporalEvolution: '动作处于启动及推进相位',
-            aestheticTexture: '电影级画质质感，细节丰富细腻，光影自然，主体聚焦',
+            temporalEvolution: '',
+            aestheticTexture: '',
             cutReason: '',
             visualTask: '',
           ),
           continuity: ShotContinuity(
             worldPosition: scene.location.isNotEmpty ? scene.location : scene.title,
             screenPosition: resolvedScreenPosition,
-            holdingLeft: '',
-            holdingRight: '',
+            holdingLeft: holdingLeft,
+            holdingRight: holdingRight,
             lightingState: scene.timeOfDay.isNotEmpty ? scene.timeOfDay : '日景',
             gazeDirection: resolvedGazeDirection,
-            cameraAxis: '机位处于180度轴线右侧，与前镜保持同轴关系',
+            cameraAxis: '',
+            cameraAngle: resolvedCameraAngle,
+            elevationLevel: resolvedElevationLevel,
+            mountOrVehicle: effectiveMount,
             stateChanges: const [],
           ),
         ));
@@ -1110,6 +1946,20 @@ abstract final class AiConstraintEngine {
     }
     return newShots;
   }
+
+  /// 将分场剧本节拍提炼转换为分镜列表（别名，兼容规约契约命名）。
+  static List<StudioShot> extractDramaBeatsToShots(
+    List<DramaScene> scenes, {
+    List<CharacterCard> characters = const [],
+    List<SceneCard> sceneCards = const [],
+    List<PropCard> props = const [],
+  }) =>
+      convertScenesToShots(
+        scenes,
+        characters: characters,
+        sceneCards: sceneCards,
+        props: props,
+      );
 
   /// 校验结构化 JSON 是否满足指定任务的 Schema 约束（供单元测试与静态验证直接调用）。
   static Map<String, dynamic>? validateSchema(
@@ -1132,17 +1982,104 @@ abstract final class AiConstraintEngine {
       StudioAiTask.novelDramaChapterAdaptation => _SchemaValidators.novelChapterAdaptation(data),
       StudioAiTask.screenplayGeneration => _SchemaValidators.screenplayGeneration(data),
       StudioAiTask.sceneSpatialDeconstruction => _SchemaValidators.sceneSpatialDeconstruction(data),
+      StudioAiTask.videoPromptRewrite => _SchemaValidators.videoPromptRewrite(data),
+      StudioAiTask.directorAuditAutoFix => _SchemaValidators.directorAuditAutoFix(data),
+      StudioAiTask.writersRoomMasterExtract => _SchemaValidators.writersRoomMasterExtract(data),
+      StudioAiTask.writersRoomMacroArcs => _SchemaValidators.writersRoomMacroArcs(data),
+      StudioAiTask.writersRoomSeasonBeats => _SchemaValidators.writersRoomSeasonBeats(data),
+      StudioAiTask.writersRoomDialogue => _SchemaValidators.writersRoomDialogue(data),
     };
   }
 
   // ---------------------------------------------------------------------------
-  // System Prompt 模板库
+  // System Prompt 模板库与动态解析引擎
   // ---------------------------------------------------------------------------
 
-  /// 取某个任务的 System Prompt。
-  ///
-  /// 模板是纯函数，测试直接断言内容（拼写、Schema 示例、约束数字），改动会被
-  /// 测试接住——这些数字（5 字/秒、8-12 个分镜）就是约束本身。
+  /// 根据任务类型映射到 StudioPromptTemplate 的对应模板 ID
+  static String? templateIdFor(StudioAiTask task) {
+    return switch (task) {
+      StudioAiTask.scriptBreakdown => 'script_breakdown',
+      StudioAiTask.scriptBreakdown5D => 'director_breakdown_5d',
+      StudioAiTask.actionCombatBreakdown => 'action_combat_breakdown',
+      StudioAiTask.promptTranslation => 'prompt_translation',
+      StudioAiTask.ideaIncubation => 'idea_incubation',
+      StudioAiTask.titleGeneration => 'title_generation',
+      StudioAiTask.bgmRecommend => 'bgm_recommend',
+      StudioAiTask.episodeSummary => 'episode_summary',
+      StudioAiTask.shotRegenerate => 'shot_regenerate',
+      StudioAiTask.novelMasterExtraction => 'novel_master_extraction',
+      StudioAiTask.novelEpisodeSegmentation => 'novel_episode_segmentation',
+      StudioAiTask.novelChapterAdaptation => 'novel_chapter_adaptation',
+      StudioAiTask.novelDramaChapterAdaptation => 'novel_chapter_adaptation',
+      StudioAiTask.screenplayGeneration => 'screenplay_generation',
+      StudioAiTask.sceneSpatialDeconstruction => 'scene_spatial_deconstruction',
+      StudioAiTask.videoPromptRewrite => 'video_prompt_rewrite',
+      StudioAiTask.directorAuditAutoFix => 'director_audit_auto_fix',
+      StudioAiTask.writersRoomMasterExtract => 'writers_room_master_extract',
+      StudioAiTask.writersRoomMacroArcs => 'writers_room_macro_arcs',
+      StudioAiTask.writersRoomSeasonBeats => 'writers_room_season_beats',
+      StudioAiTask.writersRoomDialogue => 'writers_room_dialogue',
+    };
+  }
+
+  /// 统一解析并装配系统提示词，支持用户自定义覆盖优先级与 Mustache 双花括号插槽替换。
+  static String resolveSystemPrompt(
+    StudioAiTask task, {
+    Map<String, String>? slots,
+  }) {
+    String basePrompt = systemPromptFor(task);
+
+    // 针对剧本生成与单章影视化深度改编，动态融入最新的常识与短剧节拍规则
+    if (task == StudioAiTask.novelDramaChapterAdaptation ||
+        task == StudioAiTask.screenplayGeneration) {
+      final plausibilityRules = StudioPresetStore.instance
+          .getPromptContent('screenplay_plausibility_rules')
+          .trim();
+      final pacingRules = StudioPresetStore.instance
+          .getPromptContent('screenplay_beat_pacing_rules')
+          .trim();
+
+      if (plausibilityRules.isNotEmpty &&
+          !basePrompt.contains('【环境生态与社会常识推演')) {
+        basePrompt = basePrompt.replaceFirst(
+          _commonOutputRules,
+          '\n$plausibilityRules\n\n$_commonOutputRules',
+        );
+      }
+      if (pacingRules.isNotEmpty &&
+          !basePrompt.contains('【竖屏短剧高能节拍与微动作化法则】')) {
+        basePrompt = basePrompt.replaceFirst(
+          _commonOutputRules,
+          '\n$pacingRules\n\n$_commonOutputRules',
+        );
+      }
+    }
+
+    // 针对五维拆镜，动态融入竖屏 9:16 视听工业铁律
+    if (task == StudioAiTask.scriptBreakdown5D) {
+      final verticalRules = StudioPresetStore.instance
+          .getPromptContent('storyboard_vertical_5d')
+          .trim();
+      if (verticalRules.isNotEmpty &&
+          !basePrompt.contains('【竖屏 9:16 短剧视听工业铁律】')) {
+        basePrompt = basePrompt.replaceFirst(
+          _commonOutputRules,
+          '\n$verticalRules\n\n$_commonOutputRules',
+        );
+      }
+    }
+
+    // 执行 Mustache 格式 {{slot_name}} 插槽变量替换
+    if (slots != null && slots.isNotEmpty) {
+      slots.forEach((key, value) {
+        basePrompt = basePrompt.replaceAll('{{$key}}', value);
+      });
+    }
+
+    return basePrompt;
+  }
+
+  /// 取某个任务的基础 System Prompt。
   static String systemPromptFor(StudioAiTask task) {
     switch (task) {
       case StudioAiTask.scriptBreakdown:
@@ -1175,6 +2112,18 @@ abstract final class AiConstraintEngine {
         return _promptScreenplayGeneration;
       case StudioAiTask.sceneSpatialDeconstruction:
         return _promptSceneSpatialDeconstruction;
+      case StudioAiTask.videoPromptRewrite:
+        return _promptVideoPromptRewrite;
+      case StudioAiTask.directorAuditAutoFix:
+        return _promptDirectorAuditAutoFix;
+      case StudioAiTask.writersRoomMasterExtract:
+        return _promptWritersRoomMasterExtract;
+      case StudioAiTask.writersRoomMacroArcs:
+        return _promptWritersRoomMacroArcs;
+      case StudioAiTask.writersRoomSeasonBeats:
+        return _promptWritersRoomSeasonBeats;
+      case StudioAiTask.writersRoomDialogue:
+        return _promptWritersRoomDialogue;
     }
   }
 
@@ -1216,11 +2165,12 @@ abstract final class AiConstraintEngine {
       '5. function 只能是：opening / advance / burst / ending。\n'
       '6. action_zh 必须是简体中文，字数严格控制在 20 到 60 字之间！遵循【主体 + 动作 + 环境】微动作具象化结构，且动作遵循单动词/微动作原则，严禁堆叠超过 2 个复合动作。情节复杂时必须分拆为景别递进或正反打的连续镜头！\n'
       '7. dialogue 用简体中文，为角色台词或旁白，末尾用括号明确标注预估秒数，例如“（预估2.5秒）”或“（预估3.0秒）”，并在需要时加入情绪语气提示（例如“（压低声音，咬牙）你找死！（预估2秒）”）。dialogue 可以为空字符串（纯动作镜头）。\n'
-      '8. character_ids 只能从【可用角色】中选，没有可用角色清单时填空数组。\n'
+      '8. character_ids 只能从【可用角色】中选，且必须且只能包含本镜头摄像机可视范围内肉身在场的角色！严禁将仅在内心独白（内心 OS）、回忆闪回或口头提及的第三人填入 character_ids（如姜七夜骑驴心想老王，出场角色只有姜七夜，严禁填入老王）！没有可用角色清单时填空数组。\n'
       '9. scene_id 只能从【可用场景】中选，没有可用场景清单时填空字符串。\n'
       '10. camera_move 用英文摄影术语短语，例如 "low angle push-in"、"slow pan right"、"handheld follow"。\n'
       '11. 如有【跨集记忆】，首个分镜的情绪基调必须与上集末尾情绪自然衔接。\n'
-      '12. 不要输出 assembled_prompt 字段，该字段由系统另行组装。\n'
+      '12. 视线与第四面墙防御：人物严禁直视镜头屏幕面对观众自言自语；高低位对峙必须输出俯仰对视（二楼俯拍视线向下，街面仰拍视线向上）。\n'
+      '13. 不要输出 assembled_prompt 字段，该字段由系统另行组装。\n'
       '\n'
       '【连续性台账】每个分镜必须带 continuity 对象：\n'
       '- world_position：相对门、桌、窗等固定地标的绝对位置（与机位无关）。\n'
@@ -1291,7 +2241,21 @@ abstract final class AiConstraintEngine {
 
   /// 五维导演拆镜模板（五维导演决策 + 切镜动机 + 动态末态）。
   static const String _promptScriptBreakdown5D =
-      '你是一位专精于影视视听语言与竖屏短剧工业化制作的资深导演。你的任务是将单集剧本大纲与场次规划拆解为具备专业导演调度与五维决策的结构化分镜列表。\n'
+      '你是一位专精于影视视听语言与竖屏短剧工业化制作的资深导演。你的任务是将单集剧本大纲与场次规划拆解为具备专业导演调度、空间视线对齐与五维决策的结构化分镜列表。\n'
+      '\n'
+      '【核心禁令与物理在场守卫（Physical In-Scene Guard）】\n'
+      '1. character_ids 必须且只能包含本镜头摄像机可视范围内肉身在场的角色！\n'
+      '2. 严禁幽灵角色：人物仅在内心独白（内心 OS）、回忆闪回、传音或对话口头提及的第三人，绝对严禁加入 character_ids！例如“姜七夜骑驴心想又被老王训了”，本镜出场角色只有姜七夜，绝对不得填入老王，违者判定为严重穿帮！\n'
+      '3. 全员防打破第四面墙：严禁人物直视摄像机屏幕对着观众自言自语（除特殊解说镜头外），所有对白必须有真实的视线投向对象。\n'
+      '\n'
+      '【不可违背的五大视听铁律（Cinematic Guardrails - 拆镜底线）】\n'
+      '1. 【单镜单动作原则】：一个镜头内严禁堆叠“奔跑、拔剑、转身、跳跃、落地”等多个复合动作！复杂情节必须拆解为景别递进或正反打的连续镜头（例如：镜头1奔跑停步 -> 镜头2拔剑蓄力 -> 镜头3破空出招），每个镜头只承载 1 个核心动词与清晰受力反馈！\n'
+      '2. 【画面主体绝对聚焦】：画面严禁多人、烟雾、复杂背景同时抢焦点抢戏。核心主体必须明确单一，背景适度简化虚化，动作有明确清晰的受力交互对象（如先拍递信中景，背景简化，信封作为明确受力对象）。\n'
+      '3. 【单一明确运镜调度】：单镜头只允许一种主要运镜轨迹（如缓慢推进 slow_push_in 或 定机位 static）。严禁同时堆砌斜向环绕、快速推进、横摇与变焦！若运镜调度为动态移动，摄影调度严禁标注“定机位”！需要机位变化时必须切镜另起新镜头。\n'
+      '4. 【影视视听节奏与长短交替】：严禁全片所有镜头采用固定相同景别与相同秒数！必须依据戏剧重音交替规划节奏（如：中景交代动作 -> 特写揭示信物/兵器 -> 近景拍人物反应），按台词与微动作完成点精准剪辑。\n'
+      '5. 【内心独白全员闭口与肉身在场守卫】：严禁幽灵角色；内心独白（inner_voice）为画外音心声，画面主体与同框在场全员嘴唇全程严密闭合，不张嘴、不说话、无口型变化，全员展现沉思或微表情神态。\n'
+      '6. 【反应性台词因果时序铁律】：当某角色的台词是对另一角色动作的反应（喝止、怒斥、惊呼、追问、讨饶）时，该台词 SHALL 优先分配到触发动作之后的独立分镜！确需同镜共处时，必须在 temporal_evolution 中显式声明“触发动作相位早于反应相位”的先后次序（例如：“前2.0秒姜七夜拱手转身牵驴向门口，后1.5秒老王在背后跳脚喝骂”）。严禁把反应台词排在触发动作之前，严禁把两个主体的动作写成同时发生！\n'
+      '7. 【竖屏 9:16 工业视听与同框人数铁律】：单镜头肉身在场角色 STRICTLY ≤ 3 人！竖屏 9:16 画幅狭窄，严禁 4 人以上同框并排站立（会导致人脸变形融化）；4 人以上群戏必须拆解为环境建立全景与连续中近景正反打；特写（close_up）、中近景（medium_close_up）与半身中景（medium）占比必须 ≥ 70%；画面底部 20% 为字幕安全区，人物主体五官与关键手持道具必须定位于画面中上部黄金分割区！\n'
       '\n'
       '【第一步：划片段边界】\n'
       '按叙事节拍将分镜归入若干片段（每个片段含 1 到 4 个分镜，target_duration_sec 为该片段分镜时长之和）。\n'
@@ -1300,12 +2264,27 @@ abstract final class AiConstraintEngine {
       '【第二步：五维导演决策（每个分镜必填 director_decisions）】\n'
       '1. physical_momentum（主体与物理动势）：明确画面核心视觉焦点、身体重心、力量释放与受力反馈（例如：“韩立重心后移三寸，右臂蓄力将反作用力卸入脚底”）。\n'
       '2. lighting_staging（环境与光影）：对照场次主光源世界方向，明确当前镜头主体受光面、阴影朝向与光影动态变化（例如：“主光源来自北侧窗外冷白闪电，韩立面部左侧受强侧光，右侧深沉暗影”）。\n'
-      '3. camera_staging（光学与机位四段式调度）：明确【起始运动 → 跟随对象 → 触发条件 → 结束落点】及视线与 180° 轴线关系（例如：“胸口高度中景平视，随韩立后撤缓慢后拉，在短刃刺入瞬间急推特写定格”）。当涉及空间高低落差（如楼上抛物、屋顶下跃、街面拔刀迎击）时，必须明确高角度俯拍（向下俯视）与低角度仰拍（向上迎击）视角，严禁机械平视！\n'
-      '4. temporal_evolution（时间与状态演变）：明确动作相位（起手/接触/余势）、真实读时负荷与情绪留白（例如：“前1.5秒屏息试探，后1.5秒暴起接触，动作处于刚出招中途”）。\n'
+      '3. camera_staging（光学与机位四段式调度）：明确【起始运动 → 跟随对象 → 触发条件 → 结束落点】及视线与 180° 轴线关系。高位（如二楼）水平平移（Pan）视域受限于二楼立柱与挑檐，禁止无过渡瞬移出地面街景；跨高度过渡必须显式使用下摇（Tilt Down）或剪辑硬切（Cut）！\n'
+      '4. temporal_evolution（时间与状态演变）：明确动作相位（起手/接触/余势）、真实读时负荷与情绪留白（例如：“前1.5秒屏息试探，后1.5秒暴起接触，动作处于刚出招中途”）。当本镜含反应性台词时，此处 SHALL 显式声明触发动作相位早于反应相位（例如：“前2.0秒姜七夜拱手转身牵驴向门口，后1.5秒老王在背后跳脚喝骂”），否则视频模型会把台词演在动作之前。\n'
       '5. aesthetic_texture（美学介质与风格质感）：明确质感与媒介风格细节（例如：“次世代3D国漫UE5渲染，空中弥漫药香微尘粒子，刀刃泛冷冽金属反光”）。\n'
       '\n'
-      '【第三步：分镜动作、台词与切镜动机】\n'
-      '- number 从 1 开始递增，duration_sec 严格在 4.0 到 12.0 秒之间（依据台词字数与微动作幅度动态规划，严禁固定短时长）。\n'
+      '【第三步：空间视线轴线与正反打三机位规则（Eye-line & Shot-Reverse-Shot 3-Camera Setup）】\n'
+      '- 高低位垂直空间落差对峙（如二/三楼窗口 vs 长街地面）：\n'
+      '  * 严禁单镜头同框硬塞两个平面的特写！此类垂直高差场景必须强制规划为正反打镜头对：\n'
+      '    - 镜头 A（楼上主体视角）：二楼窗口中景/近景（waist-up medium），高位角色探身向下喊话并带口型，camera_angle 为 high_angle，长街仅为远景虚化背景，严禁将地面配角设为主体；\n'
+      '    - 镜头 B（楼下主体反打）：街面中景（waist-up medium），地面角色在坐骑上或站立仰望，camera_angle 为 low_angle，二楼窗口仅为高位背景；\n'
+      '  * 正反打机位必须始终保持在 180° 轴线同侧（甲永远在画左，乙永远在画右），严禁同场换边越轴！\n'
+      '- 双人对话镜头排布：遵循 A 主镜头（双人全景建立空间）+ B（过肩看甲）+ C（过肩看乙）三机位法，双方视线与面部朝向左右互斥对齐，呈现真正的时空对话，杜绝背对倾听者面对观众汇报！\n'
+      '\n'
+      '【第四步：高光特效三联分镜展开与道具因果锁】\n'
+      '- 法宝/高光动作三联语法（Trinity Shot）：当剧情涉及法宝激活、神兵出鞘、法术轰击时，严禁单镜敷衍，必须自动拆解为连续三联视听：\n'
+      '  * 镜头 A（起手前摇 Setup）：中景手势掐诀、眼神凝重或蓄势拔刀；\n'
+      '  * 镜头 B（核心极特写 Insert Shot）：极特写（close_up/macro）聚焦法宝符文亮起、刀刃流光或机关异动；\n'
+      '  * 镜头 C（异象反馈 Payoff）：全景气流爆发震碎摊位、狂风呼啸或周围路人惊骇倒退。\n'
+      '- 道具微动作因果锁：当道具发生物理形态改变（如整只烤鸡变为撕下的鸡腿、宝剑出鞘）时，严禁单镜突变！动作描写必须交代“撕下/拔出”的微动作因果，并在 holding_left/holding_right 精确声明具体形态。\n'
+      '\n'
+      '【第五步：分镜动作、台词与连续性台账（continuity）】\n'
+      '- number 从 1 开始递增，duration_sec 严格在 4.0 到 12.0 秒之间。\n'
       '- shot_size：close_up / medium_close_up / medium / full / long / extreme_long。\n'
       '- mood：depressing / excited / warm / battle / suspense / relaxed / sad。\n'
       '- function：opening / advance / burst / ending。\n'
@@ -1313,14 +2292,20 @@ abstract final class AiConstraintEngine {
       '- dialogue：角色台词、内心独白（内心 OS）或旁白，优先复用【基准对白清单】原文；若为人物内心戏必须显式标注为“角色（内心 OS）：内容”，末尾括号标注预估秒数，如“（预估2.5秒）”。可为空。\n'
       '- cut_reason：说明为什么切到本镜，观众此刻获得什么新信息或视角转变。\n'
       '- visual_task：本镜的核心主要视觉任务。\n'
+      '- continuity 对象包含：\n'
+      '  * world_position：相对场次地标的世界坐标与朝向。\n'
+      '  * screen_position：画面左右与 180° 轴线侧。\n'
+      '  * elevation_level：空间垂直高度（ground / balcony_2f / rooftop / mid_air）。\n'
+      '  * camera_angle：机位俯仰（high_angle / low_angle / eye_level）。\n'
+      '  * gaze_direction：视线朝向向量描述（严禁直视镜头）。\n'
+      '  * holding_left / holding_right：左右手具体持有物形态。\n'
+      '  * lighting_state：主光方向与色温。\n'
+      '  * state_changes：本镜发生的状态增量变化。\n'
+      '  * dynamic_exit_state：动态末态参数。\n'
       '\n'
-      '【第四步：空间地标与连续性台账（continuity）】\n'
-      '- world_position：相对场次地标（门、桌、药柜）的绝对世界坐标与朝向。\n'
-      '- screen_position：画面左右与 180° 轴线侧。\n'
-      '- holding_left / holding_right：左右手持有物。\n'
-      '- lighting_state：主光方向与色温。\n'
-      '- state_changes：本镜发生的状态增量变化。\n'
-      '- dynamic_exit_state（动态末态）：support_foot（支撑脚平衡，如“右脚踏实”）、velocity_vector（速度矢量，如“向前冲刺2m/s”）、unfinished_phase（未完成动作相位，如“出剑中途尚未拔出”）。\n'
+      '【剧情保真锁】\n'
+      '- 只做拆分、合并与计时，不新增、删除、替换、改变归属或改变顺序任何剧情事件。\n'
+      '- 反应性台词的独立成镜拆分属于「拆分」范畴，SHALL NOT 改变该台词的内容、归属角色或相对顺序。\n'
       '\n'
       '$_commonOutputRules\n'
       '\n'
@@ -1328,10 +2313,10 @@ abstract final class AiConstraintEngine {
       '{"segments": [{"segment_id": 1, "target_duration_sec": 7, "boundary_reason": "切入特写打破双人僵局", "shot_numbers": [1, 2]}], '
       '"shots": [{"number": 1, "duration_sec": 3.5, "shot_size": "medium", "mood": "suspense", "function": "opening", '
       '"action_zh": "暴雨猛烈拍打窗棂，韩立背抵冰冷药架猛然侧身，右手在衣袖内紧扣毒粉包暗扣。（36字）", '
-      '"dialogue": "（压低呼吸）弟子确实不知。（预估2秒）", "character_ids": [], "scene_id": "SC001", "beat_id": "B01", '
+      '"dialogue": "（压低呼吸）弟子确实不知。（预估2秒）", "character_ids": ["c_hanli"], "scene_id": "SC001", "beat_id": "B01", '
       '"camera_move": "slow push-in", "cut_reason": "建立密室紧张对峙关系与空间方位", "visual_task": "揭示韩立暗扣毒粉的防备姿态", '
-      '"director_decisions": {"physical_momentum": "背部贴墙支撑，重心下沉，右手蓄势待发", "lighting_staging": "窗外冷白闪电主光，室内油灯微弱暖侧光", "camera_staging": "腰部高度平视中景，微幅推镜锁定人物防备视线", "temporal_evolution": "动作处于屏息试探相位，为后续爆发蓄力", "aesthetic_texture": "UE5次世代国漫风，空气中有飞扬药粉微尘与水汽"}, '
-      '"continuity": {"world_position": "药柜南侧死角，面向北门", "screen_position": "画面右侧面向左", "holding_left": "", "holding_right": "毒粉包", "lighting_state": "冷色闪电顶侧光", "state_changes": [], "dynamic_exit_state": {"support_foot": "双脚微屈踏地", "velocity_vector": "静止蓄势", "unfinished_phase": "指尖扣住毒粉包尚未甩出"}}}]}\n';
+      '"director_decisions": {"physical_momentum": "背部贴墙支撑，重心下沉，右手蓄势待发", "lighting_staging": "窗外冷白闪电主光，室内油灯微弱暖侧光", "camera_staging": "腰部高度平视中景，微幅推镜锁定人物防备视线", "temporal_evolution": "动作处于屏息试探相位，为后续爆发蓄力", "aesthetic_texture": "UE5次世代国漫风，空气中有飞扬药粉微尘与水汽", "camera_angle": "eye_level", "gaze_direction": "面向北门警惕注视"}, '
+      '"continuity": {"world_position": "药柜南侧死角，面向北门", "screen_position": "画面右侧面向左", "elevation_level": "ground", "camera_angle": "eye_level", "gaze_direction": "面向北门侧方注视", "holding_left": "", "holding_right": "毒粉包", "lighting_state": "冷色闪电顶侧光", "state_changes": [], "dynamic_exit_state": {"support_foot": "双脚微屈踏地", "velocity_vector": "静止蓄势", "unfinished_phase": "指尖扣住毒粉包尚未甩出"}}}]}\n';
 
   /// 动作与战斗编舞专项拆镜模板（Combat DNA + 六步攻防链 + 3~4招连续接力攻击组）。
   static const String _promptActionCombatBreakdown =
@@ -1466,6 +2451,13 @@ abstract final class AiConstraintEngine {
       '【核心原则：人设调性与因果保真】\n'
       '1. 忠实保留原著人物的性格内核（如主角的两世为人幽默、从容松弛、毒舌反击或谋略城府），严禁将主角掌控局面的戏谑反杀曲解为“受辱/憋屈”！\n'
       '2. 标题 title 必须契合原著风味（如“青驴载狱卒，天降九年修为”、“神手谷密室”，杜绝“长街受辱”等低俗流水线起名）。\n'
+      '3. 【环境生态与社会常识推演铁律（杜绝横尸闹市无人理等常识穿帮）】：\n'
+      '   - 公共开放空间（长街、集市、酒肆大堂、广场、演武场）发生异常（如横尸、行凶截杀、打斗重伤、剧毒异象）时，严禁摄像机视野空旷死寂！必须显式描写背景群众生态（路人围观惊呼、指指点点、商贩退避、捕快官兵封锁拉网）；\n'
+      '   - 若剧情要求“隐秘弃尸、无人发觉、悄无声息”，严禁设在白天繁华街道！必须合理迁移或限定在【具有物理遮蔽的阴暗角落】（如死胡同拐角、破庙柴房、深夜乱葬岗），使无人知晓符合物理真实！\n'
+      '4. 【竖屏短剧高能节拍与微动作化法则】：\n'
+      '   - 黄金 3 秒高压切入：开场前 3 秒迅速建立视觉危机或强烈悬念，严禁平缓散步或空镜开篇；\n'
+      '   - 心理描写动作化：大段内心算计与冷笑必须转化为可拍的微表情、下意识微动作与道具交互；\n'
+      '   - 片尾高压断章卡点：单集末尾必须截断在杀机爆发或真相揭晓前一秒的悬念巅峰瞬间（Cliffhanger）。\n'
       '\n'
       '【第一部分：单集大纲与结构】\n'
       '1. title: 贴合原著风味的单集标题（10字以内）。\n'
@@ -1510,6 +2502,9 @@ abstract final class AiConstraintEngine {
       '     * camera_move: 动态运镜轨迹英文术语（如："static", "slow_push_in", "dramatic_pull_out", "pan_down_follow", "low_angle_tracking", "handheld_shaky", "crane_down"）。根据戏剧冲突动态适配，严禁所有镜头都设为 static！\n'
       '     * screen_position: 画面主体构图与站位（如："主体居中", "画面左侧面向右", "画面右侧面向左", "前景遮挡对角线"）。\n'
       '     * gaze_direction: 人物视线朝向与视线正反打匹配（如："平视正前", "低头俯视街面", "抬头仰视斜上方", "斜睨右侧对手"）。\n'
+      '     * props: 节拍出场或交互的道具名称数组（如 ["玄铁短刃"]，若有请优先复用已给出的已知道具库名称，无道具可为空数组 []）。\n'
+      '     * holding_item: 角色手中当前握持的主要道具（如 "玄铁短刃"，无手持为空字符串 ""）。\n'
+      '     * holding_hand: 持握方位，只能严格从 "right"（右手）、"left"（左手）、"both"（双手）中选一，无手持为空字符串 ""。\n'
       '\n'
       '【第三部分：影视文学剧本全文（screenplay_text）】\n'
       '按影视工业规范输出 Markdown 格式的完整文学分场剧本，清晰标注场次、地点、时段、内外景、出场角色、动作神态与台词/内心独白（格式如：`姜七夜（内心 OS）：今天真晦气…` 或 `余小白：姜七少，上来喝一杯！`）。\n'
@@ -1540,7 +2535,7 @@ abstract final class AiConstraintEngine {
       '"atmosphere": "昏黄油灯斜照，狭窄压抑", "character_ids": ["墨大夫", "韩立"], '
       '"primary_light_world_direction": "北面窗棂外冷白闪电", "landmarks": ["青铜药鼎", "实木药架", "木门"], '
       '"dramatic_objective": "墨大夫逼问口诀并实施夺舍", "entry_state": "韩立推门而入，墨大夫静坐阴影中", "exit_state": "墨大夫肉身中毒瘫倒，残魂离体", '
-      '"beats": [{"id": "B01", "scene_id": "SC001", "order": 1, "name": "寒暄试探", "action": "墨大夫缓步逼近韩立，言语逼问长春功进展", "dialogue_speaker": "墨大夫", "dialogue": "好徒儿，长春功练到第几层了？（预估2.5秒）", "voice_type": "dialogue", "subtext": "试探虚实", "estimated_sec": 4.0, "dramatic_function": "threat_build", "shot_size": "medium", "camera_staging": "平视定机位", "camera_move": "slow_push_in", "screen_position": "主体居中", "gaze_direction": "平视正前"}]}], '
+      '"beats": [{"id": "B01", "scene_id": "SC001", "order": 1, "name": "寒暄试探", "action": "墨大夫缓步逼近韩立，言语逼问长春功进展", "dialogue_speaker": "墨大夫", "dialogue": "好徒儿，长春功练到第几层了？（预估2.5秒）", "voice_type": "dialogue", "subtext": "试探虚实", "estimated_sec": 4.0, "dramatic_function": "threat_build", "shot_size": "medium", "camera_staging": "平视定机位", "camera_move": "slow_push_in", "screen_position": "主体居中", "gaze_direction": "平视正前", "props": ["玄铁短刃"], "holding_item": "玄铁短刃", "holding_hand": "right"}]}], '
       '"protected_contract": {"facts": [{"id": "F01", "type": "FACT", "content": "墨大夫手持玄铁短刃淬有剧毒", "source_location": "原著第三段", "mandatory": true}], '
       '"utterances": [{"id": "U01", "speaker": "墨大夫", "listener": "韩立", "text": "好徒儿，你的长春功练到第几层了？", "voice_type": "dialogue", "estimated_sec": 3.0}], '
       '"protected_beats": ["B01"]}}\n';
@@ -1764,11 +2759,14 @@ abstract final class AiConstraintEngine {
       '     * camera_move: 动态运镜轨迹英文术语（如："static", "slow_push_in", "dramatic_pull_out", "pan_down_follow", "low_angle_tracking", "handheld_shaky", "crane_down"）。根据戏剧冲突动态适配，严禁所有镜头都设为 static！\n'
       '     * screen_position: 画面主体构图与站位（如："主体居中", "画面左侧面向右", "画面右侧面向左", "前景遮挡对角线"）。\n'
       '     * gaze_direction: 人物视线朝向与视线正反打匹配（如："平视正前", "低头俯视街面", "抬头仰视斜上方", "斜睨右侧对手"）。\n'
+      '     * props: 节拍出场或交互的道具名称数组（如 ["青驴缰绳"]、["酒杯"]，优先复用已给出的已知道具库名称，无道具可为空数组 []）。\n'
+      '     * holding_item: 角色手中当前握持的主要道具（如 "青驴缰绳"、"酒杯"，无手持为空字符串 ""）。\n'
+      '     * holding_hand: 持握方位，只能严格从 "right"（右手）、"left"（左手）、"both"（双手）中选一，无手持为空字符串 ""。\n'
       '\n'
       '$_commonOutputRules\n'
       '\n'
       '【Output JSON Schema】\n'
-      '{"scenes": [{"id": "SC001", "scene_number": 1, "title": "寒阳城长街", "location": "寒阳城天人居酒楼前长街", "setting": "外景", "time_of_day": "黄昏", "atmosphere": "黄昏斜阳穿透长街，酒肆红幌微扬", "character_ids": ["姜七夜", "余小白"], "beats": [{"id": "B01", "scene_id": "SC001", "order": 1, "name": "骑驴思忖", "action": "姜七夜骑着高大青驴沿长街缓行，俊美的脸上带着从容慵懒，随意扫视街景。", "dialogue_speaker": "姜七夜", "dialogue": "今天真晦气，又被老王训了一顿。（预估2.5秒）", "voice_type": "inner_voice", "subtext": "表面平静，暗中谋划反制", "estimated_sec": 4.0, "shot_size": "medium", "camera_staging": "平视定机位", "camera_move": "slow_push_in", "screen_position": "主体居中", "gaze_direction": "平视正前"}, {"id": "B02", "scene_id": "SC001", "order": 2, "name": "楼上挑衅", "action": "余小白自三楼窗口探出半个身子，举杯坏笑向下喊话。", "dialogue_speaker": "余小白", "dialogue": "姜七少，上来喝一杯啊！（预估2.0秒）", "voice_type": "dialogue", "subtext": "故意调侃寻开心", "estimated_sec": 3.0, "shot_size": "medium_close_up", "camera_staging": "高角度俯拍（三层楼窗口向下俯视街道）", "camera_move": "pan_down_follow", "screen_position": "画面上方窗口面向下方", "gaze_direction": "低头俯视街面"}]}]}\n';
+      '{"scenes": [{"id": "SC001", "scene_number": 1, "title": "寒阳城长街", "location": "寒阳城天人居酒楼前长街", "setting": "外景", "time_of_day": "黄昏", "atmosphere": "黄昏斜阳穿透长街，酒肆红幌微扬", "character_ids": ["姜七夜", "余小白"], "beats": [{"id": "B01", "scene_id": "SC001", "order": 1, "name": "骑驴思忖", "action": "姜七夜骑着高大青驴沿长街缓行，俊美的脸上带着从容慵懒，随意扫视街景。", "dialogue_speaker": "姜七夜", "dialogue": "今天真晦气，又被老王训了一顿。（预估2.5秒）", "voice_type": "inner_voice", "subtext": "表面平静，暗中谋划反制", "estimated_sec": 4.0, "shot_size": "medium", "camera_staging": "平视定机位", "camera_move": "slow_push_in", "screen_position": "主体居中", "gaze_direction": "平视正前", "props": ["青驴缰绳"], "holding_item": "青驴缰绳", "holding_hand": "both"}, {"id": "B02", "scene_id": "SC001", "order": 2, "name": "楼上挑衅", "action": "余小白自三楼窗口探出半个身子，举杯坏笑向下喊话。", "dialogue_speaker": "余小白", "dialogue": "姜七少，上来喝一杯啊！（预估2.0秒）", "voice_type": "dialogue", "subtext": "故意调侃寻开心", "estimated_sec": 3.0, "shot_size": "medium_close_up", "camera_staging": "高角度俯拍（三层楼窗口向下俯视街道）", "camera_move": "pan_down_follow", "screen_position": "画面上方窗口面向下方", "gaze_direction": "低头俯视街面", "props": ["酒杯"], "holding_item": "酒杯", "holding_hand": "right"}]}]}\n';
 
   /// 场景七方位空间全息解构模板。
   static const String _promptSceneSpatialDeconstruction =
@@ -1804,6 +2802,54 @@ abstract final class AiConstraintEngine {
       '  }\n'
       '}';
 
+  /// AI 视频提示词精炼与冲突消解模板。
+  static String get _promptVideoPromptRewrite {
+    final custom = StudioPresetStore.instance.getPromptContent('video_prompt_rewrite').trim();
+    if (custom.isNotEmpty) {
+      return '$custom\n\n$_commonOutputRules\n\n【Output JSON Schema】\n{"rewritten_prompt": "精炼消解后的纯中文视频提示词..."}';
+    }
+    return '你是一位资深 AI 视频生成 Prompt 调优专家。你的任务是将分镜的画面描述、微动作、摄影运镜与环境光影精炼为最适合主流视频大模型（如 Agnes Video 2.5 Flash / Sora / Kling）执行的高保真视频提示词。\n'
+        '\n'
+        '【四大致命冲突消解铁律】\n'
+        '1. 场景唯一性：彻底消除二选一冲突（例如地牢 vs 衙门口），统一到当前镜头摄像机所处的唯一起点物理空间。\n'
+        '2. 氛围与光照统一：彻底消除互斥光源与情绪（例如地牢火把 vs 黄昏残阳如血、温馨 vs 阴森压抑），确定单一主导光影与基调色温。\n'
+        '3. 运镜唯一性：单镜头只保留一种核心运镜轨迹！推镜（push in）严禁与定机位（static）同时出现，剔除矛盾镜头指令。\n'
+        '4. 剔除无效多镜剪辑指令：单镜头不需要 180° 轴线同轴关系说明，彻底剔除单镜无法执行的剪辑规则，节省模型注意力。\n'
+        '5. 因果时序唯一性：反应性台词（对另一角色动作的回应、喝止、怒斥）必须晚于其触发动作！严禁将台词前移至触发动作之前（例如“甲拱手离去，乙在背后喝骂”绝不可写成乙先骂、甲再走）。同一镜头内不同主体的动作必须保留先后次序，严禁合并为同时发生。若原始提示词含【因果时间轴】段，其秒数区间与先后顺序必须原样保留，不得改写为同时发生。\n'
+        '6. 素材编号绝对保真：若原始提示词含【素材指代】段或 `<Picture N>`、`<Audio N>` 等多图/多模态引用标签，重写结果必须完整保留【素材指代】段与每个角色/场景旁边的 `<Picture N>` 标签，严禁删改或重排编号！\n'
+        '\n'
+        '【角色发声与画外心声守卫】\n'
+        '1. 严禁使用中括号机器标记（如 `[角色内心独白/心声]`），大模型极易误识别为台词。\n'
+        '2. 若为内心独白（内心 OS / 心声 / 旁白）：直接采用正向画外音自然语言描述，并必须显式点名在场全员（例如：“画外音心声。画面中姜七夜、老王等全员嘴唇全程严密闭合，不张嘴，无口型变化，绝对不说话，无字幕，全员保持沉思微神态”），杜绝配角误张嘴开口抢话！\n'
+        '3. 若为普通对白：明确指出仅说话角色随台词自然开合嘴型，其余倾听者保持闭口倾听。\n'
+        '\n'
+        '$_commonOutputRules\n'
+        '\n'
+        '【Output JSON Schema】\n'
+        '{"rewritten_prompt": "精炼消解后的纯中文视频提示词..."}';
+  }
+
+  /// 导演质检问题一键 AI 自动修复模板。
+  static String get _promptDirectorAuditAutoFix {
+    final custom = StudioPresetStore.instance.getPromptContent('director_audit_auto_fix').trim();
+    if (custom.isNotEmpty) {
+      return '$custom\n\n$_commonOutputRules\n\n【Output JSON Schema】\n{"fixed_shots": [{"number": 1, "action_zh": "修正后的微动作描述（20~60字，单一动词）...", "camera_move": "slow_push_in", "dialogue": "修正后的台词...", "character_ids": ["c1"]}]}';
+    }
+    return '你是一位资深影视导演兼分镜监制。你的任务是根据分镜质检引擎给出的违规诊断清单（包含但不限于 C1 动作堆叠、C2 主体不清、C3 机位冲突、C4 角色漂移、C5 表演过满、C6 节奏单一、C7 台词超长、C8 幽灵角色在场、C9 视线穿帮、C10 运镜与动作超载等），对问题分镜实施精准修正。\n'
+        '\n'
+        '【修复原则】\n'
+        '1. 保持剧情骨干与核心事件 100% 保真，不擅自删减核心剧情。\n'
+        '2. 动作过载时：将复合动作精简为当前镜头最核心的主干微动作，剔除多余次生动作。\n'
+        '3. 运镜与机位冲突时：以动态运镜为准，剔除矛盾的定机位或多重移动。\n'
+        '4. 幽灵角色时：剔除仅在心声、旁白或对话中被提及的第三人，确保出场角色只有肉身在场者。\n'
+        '5. 心声导致配角抢开口时：补全全员闭口守卫指令。\n'
+        '\n'
+        '$_commonOutputRules\n'
+        '\n'
+        '【Output JSON Schema】\n'
+        '{"fixed_shots": [{"number": 1, "action_zh": "修正后的微动作描述（20~60字，单一动词）...", "camera_move": "slow_push_in", "dialogue": "修正后的台词...", "character_ids": ["c1"]}]}';
+  }
+
   // ---------------------------------------------------------------------------
   // JSON 提取
   // ---------------------------------------------------------------------------
@@ -1811,8 +2857,8 @@ abstract final class AiConstraintEngine {
   /// 从 AI 输出中提取 JSON 对象。
   ///
   /// 模型经常在 JSON 外面包 ```json 围栏或一句"好的，以下是..."。这里按顺序
-  /// 尝试：直接解析 → 剥围栏 → 截取第一个 `{` 到最后一个 `}`。三层都不成
-  /// 才返回 null 让上层重试。
+  /// 尝试：直接解析 → 剥围栏 → 截取第一个 `{` 到最后一个 `}` → 截断数组安全自愈。
+  /// 全部都不成才返回 null 让上层重试。
   static Map<String, dynamic>? parseJsonLoose(String raw) {
     if (raw.trim().isEmpty) return null;
     final direct = _tryDecode(raw.trim());
@@ -1830,7 +2876,96 @@ abstract final class AiConstraintEngine {
       final decoded = _tryDecode(raw.substring(start, end + 1));
       if (decoded != null) return decoded;
     }
+
+    // 第四层兜底：若因模型输出长度限制 (finish_reason = length) 导致在数组中途截断，
+    // 自动扫描截断前的最后一个完整对象，闭合未闭合容器并安全抢救已生成的数据。
+    final repaired = _tryRepairTruncated(raw);
+    if (repaired != null) return repaired;
+
     return null;
+  }
+
+  /// 修复因 Token 长度上限被强制切断的 JSON（例如在中途截断的数组）。
+  static Map<String, dynamic>? _tryRepairTruncated(String raw) {
+    var text = raw.trim();
+    if (text.startsWith('```')) {
+      final stripped = _stripCodeFence(text);
+      if (stripped != null) text = stripped;
+    }
+    final start = text.indexOf('{');
+    if (start < 0) return null;
+    text = text.substring(start);
+
+    // 从后向前寻找可能作为有效对象闭合点的 '}'
+    var searchEnd = text.length;
+    for (int attempt = 0; attempt < 15; attempt++) {
+      final lastBrace = text.lastIndexOf('}', searchEnd - 1);
+      if (lastBrace < 0) break;
+
+      final candidate = text.substring(0, lastBrace + 1);
+      final repaired = _closeOpenContainers(candidate);
+      if (repaired != null) {
+        final decoded = _tryDecode(repaired);
+        if (decoded != null && decoded.isNotEmpty) {
+          return decoded;
+        }
+      }
+      searchEnd = lastBrace;
+    }
+    return null;
+  }
+
+  /// 维护容器括号栈，为未闭合的 JSON 结构按序补齐闭合符。
+  static String? _closeOpenContainers(String text) {
+    final stack = <String>[];
+    bool inString = false;
+    bool escaped = false;
+
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char == '\\') {
+          escaped = true;
+        } else if (char == '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char == '"') {
+        inString = true;
+      } else if (char == '{') {
+        stack.add('}');
+      } else if (char == '[') {
+        stack.add(']');
+      } else if (char == '}' || char == ']') {
+        if (stack.isEmpty) return null;
+        final expected = stack.removeLast();
+        if (char != expected) return null;
+      }
+    }
+
+    if (inString) return null; // 截取点刚好在字符串内部，不是合法的闭合点
+    if (stack.isEmpty) return text; // 已经完全闭合
+
+    var buf = StringBuffer(text.trimRight());
+    // 如果末尾有多余的逗号，去掉它
+    while (buf.isNotEmpty) {
+      final str = buf.toString().trimRight();
+      if (str.endsWith(',')) {
+        buf = StringBuffer(str.substring(0, str.length - 1).trimRight());
+      } else {
+        break;
+      }
+    }
+
+    // 逆序压入闭合符
+    while (stack.isNotEmpty) {
+      buf.write(stack.removeLast());
+    }
+    return buf.toString();
   }
 
   static Map<String, dynamic>? _tryDecode(String text) {
@@ -1854,6 +2989,186 @@ abstract final class AiConstraintEngine {
     if (close < 0) return null;
     return body.substring(0, close).trim();
   }
+
+  /// 解析章节范围字符串（支持 "1-3"、"1~3"、"第1章~第3章"、"1, 2, 3"、"1、2、3" 等），
+  /// 返回格式化后的章节范围描述与章节序号列表。
+  /// 若未能解析且提供了 `seasonChaptersRange` 与 `fallbackEpisodeIndex`，
+  /// 则依据全季总集数按比例平滑插值，避免生硬回退。
+  static ({String rangeDesc, List<int> indices}) parseChapterRange(
+    dynamic rawRange, {
+    int fallbackEpisodeIndex = 1,
+    int totalEpisodes = 80,
+    String seasonChaptersRange = '',
+  }) {
+    if (rawRange is List) {
+      final list = rawRange.whereType<num>().map((n) => n.toInt()).toList();
+      if (list.isNotEmpty) {
+        list.sort();
+        final distinct = list.toSet().toList();
+        final desc = distinct.length == 1 ? '${distinct.first}' : '${distinct.first}-${distinct.last}';
+        return (rangeDesc: desc, indices: distinct);
+      }
+    }
+
+    final str = (rawRange as String? ?? '').trim();
+    if (str.isNotEmpty) {
+      final clean = str.replaceAll(RegExp(r'[第章节回\s]'), '');
+
+      // 1. 范围连接符：- 或 ~ 或 至 或 到
+      final rangeMatch = RegExp(r'^(\d+)[-~至到](\d+)$').firstMatch(clean);
+      if (rangeMatch != null) {
+        final start = int.tryParse(rangeMatch.group(1)!);
+        final end = int.tryParse(rangeMatch.group(2)!);
+        if (start != null && end != null) {
+          final s = start <= end ? start : end;
+          final e = start <= end ? end : start;
+          final indices = [for (int i = s; i <= e; i++) i];
+          final desc = s == e ? '$s' : '$s-$e';
+          return (rangeDesc: desc, indices: indices);
+        }
+      }
+
+      // 2. 离散逗号或顿号：1, 2, 3 或 1、2、3
+      if (clean.contains(',') || clean.contains('，') || clean.contains('、')) {
+        final parts = clean.split(RegExp(r'[,，、]'));
+        final indices = <int>{};
+        for (final p in parts) {
+          final n = int.tryParse(p.trim());
+          if (n != null) indices.add(n);
+        }
+        if (indices.isNotEmpty) {
+          final sorted = indices.toList()..sort();
+          final desc = sorted.length == 1 ? '${sorted.first}' : '${sorted.first}-${sorted.last}';
+          return (rangeDesc: desc, indices: sorted);
+        }
+      }
+
+      // 3. 纯单数字："5"
+      final singleNum = int.tryParse(clean);
+      if (singleNum != null) {
+        return (rangeDesc: '$singleNum', indices: [singleNum]);
+      }
+    }
+
+    // 4. 兜底平滑插值（根据全季章节跨度与当前集序号平滑映射）
+    if (seasonChaptersRange.isNotEmpty && totalEpisodes > 0) {
+      final seasonClean = seasonChaptersRange.replaceAll(RegExp(r'[第章节回\s]'), '');
+      final seasonMatch = RegExp(r'^(\d+)[-~至到](\d+)$').firstMatch(seasonClean);
+      if (seasonMatch != null) {
+        final sStart = int.tryParse(seasonMatch.group(1)!);
+        final sEnd = int.tryParse(seasonMatch.group(2)!);
+        if (sStart != null && sEnd != null && sEnd >= sStart) {
+          final totalCh = sEnd - sStart + 1;
+          final safeEp = fallbackEpisodeIndex.clamp(1, totalEpisodes);
+          final startRatio = (safeEp - 1) / totalEpisodes;
+          final endRatio = safeEp / totalEpisodes;
+          var chStart = sStart + (startRatio * totalCh).floor();
+          var chEnd = sStart + (endRatio * totalCh).ceil() - 1;
+          if (chEnd < chStart) chEnd = chStart;
+          if (chStart > sEnd) chStart = sEnd;
+          if (chEnd > sEnd) chEnd = sEnd;
+          final indices = [for (int i = chStart; i <= chEnd; i++) i];
+          final desc = chStart == chEnd ? '$chStart' : '$chStart-$chEnd';
+          return (rangeDesc: desc, indices: indices);
+        }
+      }
+    }
+
+    // 5. 极端兜底：单集对应序号
+    return (rangeDesc: '$fallbackEpisodeIndex', indices: [fallbackEpisodeIndex]);
+  }
+
+  static const String _promptWritersRoomMasterExtract =
+      '你是一位资深网络文学影视化与爆款短剧总编审兼策划总监。你的任务是通读小说原著，将原著内容解构为核心叙事骨架，并输出清晰的改编边界、人物关系与首季多季定位。\n\n'
+      '【核心输出要求】\n'
+      '1. recommended_episode_count: 智能测算推荐改编集数（整型数字，如 60, 80, 100 等）。依据原著篇幅、核心戏剧冲突密度和标准短剧（每集 1.5~2 分钟）节奏，给出最佳单季规划集数；\n'
+      '2. episode_count_reason: 推荐集数的依据与三幕戏剧弧光简析（50~100字）；\n'
+      '3. master_plot: 全书主线脉络与核心人物叙事弧光（开端、发展、中段高潮、阶段目标与核心生存对抗矛盾），500字以内；\n'
+      '4. must_keep: 【必留情节清单】（原著核心主线、不可替代的名场面、主角立身之本的核心高光、决定性反转伏笔），数组形式；\n'
+      '5. can_cut: 【可删情节清单】（与主线无关的漫长心理独白、重复枯燥的修炼刷怪打脸水文、无实质推进的过度铺垫），数组形式；\n'
+      '6. can_modify: 【可改情节清单】（允许合并的边缘功能性工具人配角、可精简重组的转场过渡场景），数组形式；\n'
+      '7. characters: 【核心角色画像清单】（主角、关键反派、核心配角），包含姓名 name、角色定位 role（如主角/宿敌反派/引路师长/盟友）、性格特征 personality（心理特征与行为风格）、外貌体态描述及生图 Prompt 关键词 appearance_features、核心行动动机 motivation；\n'
+      '8. character_relations: 【网状人物关系矩阵】，包含主体 from、客体 to、关系类型 relation_type（如师徒反目/生死宿敌/利益同盟/暗生情愫）、张力说明 description；\n'
+      '9. season_number: 当前规划季数（整型数字，默认 1）；\n'
+      '10. season_title: 本季独立季名（如《第1季：神手夺舍风云》）；\n'
+      '11. adapted_chapters_range: 本季建议覆盖的原著章节范围（如“原著第 1 ~ 80 章”）；\n'
+      '12. season_climax: 本季季终大高潮核心事件（如“韩立识破毒计绝境反杀墨大夫，夺取长春功秘本离开七玄门”）；\n'
+      '13. seasons_roadmap: 【全书多季宇宙规划路线图】（数组格式，建议 3~6 季，依据原著全书宏观脉络与境界演进划分，覆盖全书主要篇章）。每个季度条目包含：\n'
+      '    - season_number: 季序号（整型，1, 2, 3...）；\n'
+      '    - season_title: 季独立剧名（如“第1季：神手夺舍风云”）；\n'
+      '    - adapted_chapters_range: 原著章节跨度（如“第 1 ~ 80 章”）；\n'
+      '    - recommended_episode_count: 本季建议集数（整型，如 80）；\n'
+      '    - season_theme: 核心叙事主题与阶段目标（30~60字）；\n'
+      '    - core_antagonist: 本季主要对手/反派势力；\n'
+      '    - season_climax: 季终决胜大高潮；\n'
+      '14. key_props: 【核心关键道具清单】（贯穿全书或推动核心剧情的金手指、信物、核心武器兵器、宗门至宝、关键证物，3~8个），数组格式。每个条目包含：\n'
+      '    - name: 道具名称（如“掌天瓶”、“玄铁短刃”）；\n'
+      '    - category: 道具分类（如“核心金手指/标志性武器/师门信物/关键证物/通灵法宝”）；\n'
+      '    - significance: 核心戏剧功能与剧情重要性说明（如“韩立立身之本，能吸收月华催熟草药，引来杀身之祸”）；\n'
+      '    - appearance: 外观形制、材质反光与纹理生图提示词特征（如“绿色磨砂小玉瓶，表面雕刻古朴云雷花纹，暗光流转 (small green jade bottle, frosted texture, ancient cloud thunder patterns, subtle ethereal glow)”）。\n\n'
+      '$_commonOutputRules\n\n'
+      '【Output JSON Schema】\n'
+      '{"recommended_episode_count": 80, "episode_count_reason": "原著前段篇幅宏大，涵盖拜师入谷、暗藏灵药、识破夺舍三幕高潮，80集能充分展开悬念反转且不注水", '
+      '"season_number": 1, "season_title": "第1季：神手夺舍风云", "adapted_chapters_range": "原著第 1 ~ 80 章", "season_climax": "韩立识破毒计反杀墨大夫", '
+      '"seasons_roadmap": [{"season_number": 1, "season_title": "第1季：神手夺舍风云", "adapted_chapters_range": "第 1 ~ 80 章", "recommended_episode_count": 80, "season_theme": "凡躯逆袭修仙，暗藏掌天瓶，杀墨夺舍破局", "core_antagonist": "墨大夫 (余子童)", "season_climax": "神手谷密室绝境反杀墨大夫"}, {"season_number": 2, "season_title": "第2季：宗门试炼秘境", "adapted_chapters_range": "第 81 ~ 220 章", "recommended_episode_count": 80, "season_theme": "拜入黄枫谷，血色禁地生死夺宝，成功筑基", "core_antagonist": "封岳与六宗魔道修士", "season_climax": "血色试炼夺得灵药破境筑基"}], '
+      '"master_plot": "...", "must_keep": [{"title": "神手谷拜师", "description": "韩立拜入墨大夫门下并发现长春功秘密", "significance": "主线开端核心契约"}], '
+      '"can_cut": [{"title": "七玄门内部杂役弟子杂务争吵", "description": "无主线推动价值的重复琐事", "reason": "拖慢短剧节奏"}], '
+      '"can_modify": [{"title": "合并三位巡山师兄为一人", "description": "合并工具人台词", "suggestion": "减少角色资产数量，集中矛盾"}], '
+      '"characters": [{"name": "韩立", "role": "主角", "personality": "隐忍低调、心狠手辣但有底线、求生欲极强", "appearance_features": "肤色黝黑朴素，粗布麻衣，眼神沉稳坚毅 (dark skinned youth, plain cloth robe, determined eyes)", "motivation": "追求长生与在修仙残酷界保全性命"}], '
+      '"character_relations": [{"from": "韩立", "to": "墨大夫", "relation_type": "虚与委蛇的师徒死敌", "description": "表面恭顺学医采药，实则各自暗藏杀机，最终生死对决"}], '
+      '"key_props": [{"name": "掌天瓶", "category": "核心金手指", "significance": "韩立立身之本，能吸收月华催熟草药，引来杀身之祸", "appearance": "绿色磨砂小玉瓶，表面雕刻古朴云雷花纹，暗光流转 (small green jade bottle, frosted texture, ancient cloud thunder patterns, subtle ethereal glow)"}]}\n';
+
+  static const String _promptWritersRoomMacroArcs =
+      '你是一位擅长把控影视与爆款短剧全季大结构的资深剧作监制。你的职责是依据小说主线脉络、改编边界与核心人物，为全季划分出 3~6 个极具戏剧张力的大篇章宏观大幕 (macro_arcs)。\n\n'
+      '【四幕弧光设计原则】\n'
+      '1. 破局立威（如第 1 幕，约占 25% 集数）：主角初登场、世界观展开、获得关键机缘或金手指、斩杀首个敌人确立生存主线；\n'
+      '2. 矛盾升级（如第 2 幕，约占 25% 集数）：势力渗透、暗流涌动、与盟友建立微妙关系、粉碎中级危机；\n'
+      '3. 巅峰绝境（如第 3 幕，约占 25% 集数）：强敌倾巢而出、主角被逼入绝境、身份濒临暴露或至亲陷入危局；\n'
+      '4. 绝地反击与季终高潮（如第 4 幕，约占 25% 集数）：底牌全出、大高潮殊死搏杀、斩杀核心反派、结尾留下宏大新悬念。\n\n'
+      '【输出核心要求】\n'
+      '根据本季期望的总集数与原著章节跨度，合理分配各幕覆盖的集数范围（episode_range，如 "1-15", "16-30" 等）与原著章节范围（chapter_range，如 "1-12", "13-28" 等），确保所有大幕连续完整覆盖 1 到目标集数。\n\n'
+      '$_commonOutputRules\n\n'
+      '【Output JSON Schema】\n'
+      '{"season_title": "神手谷夺舍风云", "target_duration_sec": 90, "macro_arcs": ['
+      '{"arc_number": 1, "title": "拜师与暗藏神瓶", "episode_range": "1-15", "chapter_range": "1-12", "core_conflict": "韩立在墨大夫眼皮底下修习长春功并暗藏灵瓶", "turning_point": "偶然发现绿液能催熟草药"}, '
+      '{"arc_number": 2, "title": "各怀鬼胎与药谷疑云", "episode_range": "16-30", "chapter_range": "13-28", "core_conflict": "墨大夫试探与催熟灵药", "turning_point": "察觉墨大夫恶意"}, '
+      '{"arc_number": 3, "title": "七玄内乱与图穷匕见", "episode_range": "31-45", "chapter_range": "29-45", "core_conflict": "野狼帮入侵与七玄危机", "turning_point": "墨大夫回谷逼迫"}, '
+      '{"arc_number": 4, "title": "密室夺舍与绝命反杀", "episode_range": "46-60", "chapter_range": "46-60", "core_conflict": "夺舍殊死对决", "turning_point": "反杀墨大夫踏入仙路"}'
+      ']}\n';
+
+  static const String _promptWritersRoomSeasonBeats =
+      '你是一位擅长把控全季节奏的爆款短剧剧作总监。你的任务是依据小说主线脉络、改编边界与角色关系，将全季合理规划为【两级结构：宏观篇章大幕 (macro_arcs) + 单集高能分集大纲 (episodes)】。\n\n'
+      '【两级规划核心原则】\n'
+      '1. macro_arcs: 将全季按四幕弧光展开划分为 3~6 个核心大篇章/幕（破局立威 -> 危机加剧 -> 巅峰绝境 -> 季终反转），标定每幕序号 arc_number、篇章标题 title、覆盖集数范围 episode_range、对应原著章节范围 chapter_range、核心对抗矛盾 core_conflict、转折爆点 turning_point；\n'
+      '2. episodes 规划规则：\n'
+      '   - 必须基于原著小说情节密度与戏剧冲突，自然推演并输出完整、紧凑的高能独立分集；\n'
+      '   - 严禁机械克隆或多集使用相同矛盾！每一集必须有具体的戏剧推进动作与独特的集尾悬念；\n'
+      '   - 标题必须具备吸引力，严禁添加任何类似 "(节拍 X)" 的机械化后缀。\n'
+      '   每个分集条目包含：\n'
+      '   - episode_number: 集数（从 1 开始连续递增）；\n'
+      '   - arc_name: 所属篇章大幕名称；\n'
+      '   - title: 单集吸睛标题；\n'
+      '   - chapter_range: 本集取材的原著小说章节范围（如 "1-3"、"4-5" 等，必须根据情节密度合理分配，绝非机械 1:1！）；\n'
+      '   - conflict: 单集核心对抗事件与危机冲突（30~50字）；\n'
+      '   - characters: 本集核心登场角色姓名数组；\n'
+      '   - key_props: 本集核心登场或使用的关键道具名称数组（如 ["掌天瓶"]，无核心道具可为空数组）；\n'
+      '   - hook: 结尾极限留钩与断章悬念（20~40字，卡在最强反转瞬间）；\n'
+      '   - duration_sec: 单集建议时长（秒数，如 90）。\n\n'
+      '$_commonOutputRules\n\n'
+      '【Output JSON Schema】\n'
+      '{"season_title": "神手谷夺舍风云", "target_duration_sec": 90, '
+      '"macro_arcs": [{"arc_number": 1, "title": "拜师与暗藏神瓶", "episode_range": "1-20", "chapter_range": "1-15", "core_conflict": "韩立在墨大夫眼皮底下修习长春功并暗藏灵瓶", "turning_point": "偶然发现绿液能催熟草药"}], '
+      '"episodes": [{"episode_number": 1, "arc_name": "拜师与暗藏神瓶", "title": "神秘药园", "chapter_range": "1-3", "conflict": "墨大夫暗查灵根，韩立暗藏掌天瓶", "characters": ["墨大夫", "韩立"], "key_props": ["掌天瓶"], "hook": "墨大夫深夜突然推开密室暗门，眼神森冷盯着韩立后背", "duration_sec": 90}]}\n';
+
+  static const String _promptWritersRoomDialogue =
+      '你是一位经验丰富、善于倾听并精准执行制片人意图的短剧 AI 联合编剧。制片人正在与你讨论并修改全季分集大纲。\n\n'
+      '【交互原则】\n'
+      '1. 认真领会制片人的修改指令（如“把前三集节奏加快”、“第5集高潮提前到第2集”、“删除某个配角并合并到主角兄弟身上”、“调整第1集取材为第1~2章”）；\n'
+      '2. 给出专业的影视剧作反馈，分析修改对前后伏笔与因果链的影响；\n'
+      '3. 给出清晰具体的修订方案，并返回更新后的分集变动详情。\n\n'
+      '$_commonOutputRules\n\n'
+      '【Output JSON Schema】\n'
+      '{"reply": "已按要求将前三集节奏加快，第一集改为浓缩第1~2章退婚高潮...", "updated_episodes": [{"episode_number": 1, "title": "退婚之辱", "chapter_range": "1-2", "conflict": "家族当众退婚", "characters": ["萧炎", "纳兰嫣然"], "hook": "三年之约立下，玄重尺震地"}]}\n';
 }
 
 /// 各任务的 JSON Schema 校验器。
@@ -2153,6 +3468,12 @@ abstract final class _SchemaValidators {
       lightingState: text('lighting_state'),
       stateChanges:
           (json['state_changes'] as List?)?.cast<String>() ?? const [],
+      gazeDirection: text('gaze_direction'),
+      cameraAxis: text('camera_axis'),
+      cameraAngle: text('camera_angle'),
+      elevationLevel: text('elevation_level'),
+      gazeTarget: text('gaze_target'),
+      mountOrVehicle: text('mount_or_vehicle'),
       dynamicExitState: dynamicExitState ?? DynamicExitState.empty,
     ).toJson();
   }
@@ -2375,6 +3696,9 @@ abstract final class _SchemaValidators {
             final bCameraMove = (b['camera_move'] ?? b['cameraMove'] as String? ?? '').trim();
             final bScreenPosition = (b['screen_position'] ?? b['screenPosition'] as String? ?? '').trim();
             final bGazeDirection = (b['gaze_direction'] ?? b['gazeDirection'] as String? ?? '').trim();
+            final bProps = (b['props'] as List?)?.cast<String>() ?? const [];
+            final bHoldingItem = (b['holding_item'] ?? b['holdingItem'] as String? ?? '').trim();
+            final bHoldingHand = (b['holding_hand'] ?? b['holdingHand'] as String? ?? '').trim();
 
             beats.add({
               'id': bId.isNotEmpty ? bId : 'B${bIdx + 1}',
@@ -2394,6 +3718,9 @@ abstract final class _SchemaValidators {
               if (bCameraMove.isNotEmpty) 'camera_move': bCameraMove,
               if (bScreenPosition.isNotEmpty) 'screen_position': bScreenPosition,
               if (bGazeDirection.isNotEmpty) 'gaze_direction': bGazeDirection,
+              if (bProps.isNotEmpty) 'props': bProps,
+              if (bHoldingItem.isNotEmpty) 'holding_item': bHoldingItem,
+              if (bHoldingHand.isNotEmpty) 'holding_hand': bHoldingHand,
             });
           }
         }
@@ -2522,6 +3849,9 @@ abstract final class _SchemaValidators {
           final bCameraMove = (b['camera_move'] ?? b['cameraMove'] as String? ?? '').trim();
           final bScreenPosition = (b['screen_position'] ?? b['screenPosition'] as String? ?? '').trim();
           final bGazeDirection = (b['gaze_direction'] ?? b['gazeDirection'] as String? ?? '').trim();
+          final bProps = (b['props'] as List?)?.cast<String>() ?? const [];
+          final bHoldingItem = (b['holding_item'] ?? b['holdingItem'] as String? ?? '').trim();
+          final bHoldingHand = (b['holding_hand'] ?? b['holdingHand'] as String? ?? '').trim();
 
           beats.add({
             'id': bId.isNotEmpty ? bId : 'B${beats.length + 1}',
@@ -2540,6 +3870,9 @@ abstract final class _SchemaValidators {
             if (bCameraMove.isNotEmpty) 'camera_move': bCameraMove,
             if (bScreenPosition.isNotEmpty) 'screen_position': bScreenPosition,
             if (bGazeDirection.isNotEmpty) 'gaze_direction': bGazeDirection,
+            if (bProps.isNotEmpty) 'props': bProps,
+            if (bHoldingItem.isNotEmpty) 'holding_item': bHoldingItem,
+            if (bHoldingHand.isNotEmpty) 'holding_hand': bHoldingHand,
           });
         }
       }
@@ -2691,5 +4024,497 @@ abstract final class _SchemaValidators {
       '收尾': 'ending',
     };
     return zhMap[value.trim()];
+  }
+
+  static Map<String, dynamic>? videoPromptRewrite(Map<String, dynamic> data) {
+    if (data.containsKey('rewritten_prompt') && data['rewritten_prompt'] is String) {
+      final p = (data['rewritten_prompt'] as String).trim();
+      if (p.isNotEmpty) return {'rewritten_prompt': p};
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? directorAuditAutoFix(Map<String, dynamic> data) {
+    if (data.containsKey('fixed_shots') && data['fixed_shots'] is List) {
+      return data;
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? writersRoomMasterExtract(Map<String, dynamic> data) {
+    if (!data.containsKey('master_plot')) {
+      return null;
+    }
+    final normalized = Map<String, dynamic>.from(data);
+
+    // 推荐集数容错与归一化
+    final recCountRaw = normalized['recommended_episode_count'];
+    int recCount = 80;
+    if (recCountRaw is num) {
+      recCount = recCountRaw.toInt();
+    } else if (recCountRaw is String) {
+      recCount = int.tryParse(recCountRaw) ?? 80;
+    }
+    if (recCount < 6) recCount = 12;
+    if (recCount > 500) recCount = 120;
+    normalized['recommended_episode_count'] = recCount;
+
+    if (!normalized.containsKey('episode_count_reason') ||
+        normalized['episode_count_reason'] == null ||
+        (normalized['episode_count_reason'] as String).isEmpty) {
+      normalized['episode_count_reason'] = '根据小说情节密度与短剧节奏推荐';
+    }
+
+    // 必留/可删/可改安全保底
+    for (final key in ['must_keep', 'can_cut', 'can_modify']) {
+      final list = normalized[key];
+      if (list is List) {
+        normalized[key] = list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      } else {
+        normalized[key] = <Map<String, dynamic>>[];
+      }
+    }
+
+    // 角色画像列表规范化
+    final charsRaw = normalized['characters'];
+    final List<Map<String, dynamic>> cleanChars = [];
+    if (charsRaw is List) {
+      for (final item in charsRaw) {
+        if (item is Map) {
+          final m = Map<String, dynamic>.from(item);
+          final name = (m['name'] as String? ?? '').trim();
+          if (name.isNotEmpty) {
+            cleanChars.add({
+              'name': name,
+              'role': (m['role'] as String? ?? '核心角色').trim(),
+              'personality': (m['personality'] as String? ?? '').trim(),
+              'appearance_features': (m['appearance_features'] as String? ?? '').trim(),
+              'motivation': (m['motivation'] as String? ?? '').trim(),
+            });
+          }
+        }
+      }
+    }
+    normalized['characters'] = cleanChars;
+
+    // 角色网状关系矩阵规范化
+    final relsRaw = normalized['character_relations'];
+    final List<Map<String, dynamic>> cleanRels = [];
+    if (relsRaw is List) {
+      for (final item in relsRaw) {
+        if (item is Map) {
+          final m = Map<String, dynamic>.from(item);
+          final from = (m['from'] as String? ?? '').trim();
+          final to = (m['to'] as String? ?? '').trim();
+          if (from.isNotEmpty && to.isNotEmpty) {
+            cleanRels.add({
+              'from': from,
+              'to': to,
+              'relation_type': (m['relation_type'] as String? ?? '关联').trim(),
+              'description': (m['description'] as String? ?? '').trim(),
+            });
+          }
+        }
+      }
+    }
+    normalized['character_relations'] = cleanRels;
+
+    // 核心关键道具清单规范化
+    final propsRaw = normalized['key_props'];
+    final List<Map<String, dynamic>> cleanProps = [];
+    if (propsRaw is List) {
+      for (final item in propsRaw) {
+        if (item is Map) {
+          final m = Map<String, dynamic>.from(item);
+          final name = (m['name'] as String? ?? '').trim();
+          if (name.isNotEmpty) {
+            cleanProps.add({
+              'name': name,
+              'category': (m['category'] as String? ?? '核心道具').trim(),
+              'significance': (m['significance'] as String? ?? '').trim(),
+              'appearance': (m['appearance'] as String? ?? '').trim(),
+            });
+          }
+        }
+      }
+    }
+    normalized['key_props'] = cleanProps;
+
+    // 多季宇宙与首季规划规范化
+    normalized['season_number'] = (normalized['season_number'] as num?)?.toInt() ?? 1;
+    final seasonTitle = (normalized['season_title'] as String? ?? '').trim();
+    normalized['season_title'] = seasonTitle.isNotEmpty ? seasonTitle : '第1季';
+    final chaptersRange = (normalized['adapted_chapters_range'] as String? ?? '').trim();
+    normalized['adapted_chapters_range'] = chaptersRange.isNotEmpty ? chaptersRange : '原著第 1 ~ $recCount 章';
+    normalized['season_climax'] = (normalized['season_climax'] as String? ?? '').trim();
+
+    // 全书多季宇宙路线图规范化与自愈兜底
+    final roadmapRaw = normalized['seasons_roadmap'];
+    final List<Map<String, dynamic>> cleanRoadmap = [];
+    if (roadmapRaw is List && roadmapRaw.isNotEmpty) {
+      for (int i = 0; i < roadmapRaw.length; i++) {
+        final item = roadmapRaw[i];
+        if (item is Map) {
+          final sNum = (item['season_number'] as num?)?.toInt() ?? (i + 1);
+          final sTitle = (item['season_title'] as String? ?? '第$sNum季').trim();
+          final cRange = (item['adapted_chapters_range'] as String? ?? '').trim();
+          final epCount = (item['recommended_episode_count'] as num?)?.toInt() ?? 80;
+          final theme = (item['season_theme'] as String? ?? '').trim();
+          final antagonist = (item['core_antagonist'] as String? ?? '').trim();
+          final climax = (item['season_climax'] as String? ?? '').trim();
+          cleanRoadmap.add({
+            'season_number': sNum,
+            'season_title': sTitle.isNotEmpty ? sTitle : '第$sNum季',
+            'adapted_chapters_range': cRange.isNotEmpty ? cRange : '原著阶段 $sNum',
+            'recommended_episode_count': epCount > 0 ? epCount : 80,
+            'season_theme': theme,
+            'core_antagonist': antagonist,
+            'season_climax': climax,
+          });
+        }
+      }
+    }
+
+    // 若大模型输出缺失 seasons_roadmap，用当前单季元数据自愈兜底生成至少包含第 1 季的路线图
+    if (cleanRoadmap.isEmpty) {
+      cleanRoadmap.add({
+        'season_number': normalized['season_number'] ?? 1,
+        'season_title': normalized['season_title'] ?? '第1季',
+        'adapted_chapters_range': normalized['adapted_chapters_range'] ?? '原著第 1 ~ $recCount 章',
+        'recommended_episode_count': recCount,
+        'season_theme': normalized['episode_count_reason'] ?? '开局破局与命运逆转',
+        'core_antagonist': '宿敌与强敌',
+        'season_climax': normalized['season_climax'] ?? '',
+      });
+    }
+    normalized['seasons_roadmap'] = cleanRoadmap;
+
+    return normalized;
+  }
+
+  static Map<String, dynamic>? writersRoomMacroArcs(
+    Map<String, dynamic> data, {
+    int targetEpisodeCount = 80,
+    int targetDurationSec = 90,
+  }) {
+    if (data.isEmpty) return null;
+    final normalized = Map<String, dynamic>.from(data);
+    normalized['target_duration_sec'] =
+        (normalized['target_duration_sec'] as num?)?.toInt() ?? targetDurationSec;
+
+    final arcsRaw = normalized['macro_arcs'];
+    final List<Map<String, dynamic>> cleanArcs = [];
+    if (arcsRaw is List && arcsRaw.isNotEmpty) {
+      for (int i = 0; i < arcsRaw.length; i++) {
+        final a = arcsRaw[i];
+        if (a is Map) {
+          cleanArcs.add({
+            'arc_number': (a['arc_number'] as num?)?.toInt() ?? (i + 1),
+            'title': (a['title'] as String? ?? '第 ${i + 1} 幕').trim(),
+            'episode_range': (a['episode_range'] as String? ?? '').trim(),
+            'chapter_range': (a['chapter_range'] as String? ?? '').trim(),
+            'core_conflict': (a['core_conflict'] as String? ?? '').trim(),
+            'turning_point': (a['turning_point'] as String? ?? '').trim(),
+          });
+        }
+      }
+    }
+    if (cleanArcs.isEmpty) {
+      final perArc = (targetEpisodeCount / 4).ceil();
+      cleanArcs.addAll([
+        {
+          'arc_number': 1,
+          'title': '开局破局与暗藏机锋',
+          'episode_range': '1-$perArc',
+          'chapter_range': '',
+          'core_conflict': '危机降临与破局自保',
+          'turning_point': '初获机缘',
+        },
+        {
+          'arc_number': 2,
+          'title': '蓄势博弈与冲突升级',
+          'episode_range': '${perArc + 1}-${perArc * 2}',
+          'chapter_range': '',
+          'core_conflict': '各怀鬼胎与实力激增',
+          'turning_point': '发现惊天杀机',
+        },
+        {
+          'arc_number': 3,
+          'title': '图穷匕见与绝境逼迫',
+          'episode_range': '${perArc * 2 + 1}-${perArc * 3}',
+          'chapter_range': '',
+          'core_conflict': '对手撕破伪装与生死博弈',
+          'turning_point': '坠入绝境孤注一掷',
+        },
+        {
+          'arc_number': 4,
+          'title': '极限反杀与季终高潮',
+          'episode_range': '${perArc * 3 + 1}-$targetEpisodeCount',
+          'chapter_range': '',
+          'core_conflict': '最终殊死对决与命途逆转',
+          'turning_point': '斩除强敌踏入新征途',
+        },
+      ]);
+    }
+    normalized['macro_arcs'] = cleanArcs;
+    return normalized;
+  }
+
+  static Map<String, dynamic>? writersRoomSeasonBeats(
+    Map<String, dynamic> data, {
+    int targetEpisodeCount = 80,
+    int targetDurationSec = 90,
+    String seasonChaptersRange = '',
+  }) {
+    if (data.isEmpty) return null;
+    final normalized = Map<String, dynamic>.from(data);
+    normalized['target_duration_sec'] =
+        (normalized['target_duration_sec'] as num?)?.toInt() ?? targetDurationSec;
+
+    // 1. 规范化 macro_arcs
+    final arcsRaw = normalized['macro_arcs'];
+    final List<Map<String, dynamic>> cleanArcs = [];
+    if (arcsRaw is List && arcsRaw.isNotEmpty) {
+      for (int i = 0; i < arcsRaw.length; i++) {
+        final a = arcsRaw[i];
+        if (a is Map) {
+          cleanArcs.add({
+            'arc_number': (a['arc_number'] as num?)?.toInt() ?? (i + 1),
+            'title': (a['title'] as String? ?? '第 ${i + 1} 幕').trim(),
+            'episode_range': (a['episode_range'] as String? ?? '').trim(),
+            'chapter_range': (a['chapter_range'] as String? ?? '').trim(),
+            'core_conflict': (a['core_conflict'] as String? ?? '').trim(),
+            'turning_point': (a['turning_point'] as String? ?? '').trim(),
+          });
+        }
+      }
+    }
+    if (cleanArcs.isEmpty) {
+      final perArc = (targetEpisodeCount / 4).ceil();
+      cleanArcs.addAll([
+        {
+          'arc_number': 1,
+          'title': '开局破局与暗藏机锋',
+          'episode_range': '1-$perArc',
+          'chapter_range': '',
+          'core_conflict': '危机降临与破局自保',
+          'turning_point': '初获机缘',
+        },
+        {
+          'arc_number': 2,
+          'title': '蓄势博弈与冲突升级',
+          'episode_range': '${perArc + 1}-${perArc * 2}',
+          'chapter_range': '',
+          'core_conflict': '各怀鬼胎与实力激增',
+          'turning_point': '发现惊天杀机',
+        },
+        {
+          'arc_number': 3,
+          'title': '图穷匕见与绝境逼迫',
+          'episode_range': '${perArc * 2 + 1}-${perArc * 3}',
+          'chapter_range': '',
+          'core_conflict': '对手撕破伪装与生死博弈',
+          'turning_point': '坠入绝境孤注一掷',
+        },
+        {
+          'arc_number': 4,
+          'title': '极限反杀与季终高潮',
+          'episode_range': '${perArc * 3 + 1}-$targetEpisodeCount',
+          'chapter_range': '',
+          'core_conflict': '最终殊死对决与命途逆转',
+          'turning_point': '斩除强敌踏入新征途',
+        },
+      ]);
+    }
+    normalized['macro_arcs'] = cleanArcs;
+
+    // 2. 规范化并扩充 episodes，严格保障目标集数
+    final epsRaw = normalized['episodes'];
+    final rawEps = (epsRaw is List)
+        ? epsRaw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    final List<Map<String, dynamic>> fullEps = [];
+    if (rawEps.isEmpty) {
+      final defaultCount = targetEpisodeCount > 0 ? targetEpisodeCount : 12;
+      for (int i = 1; i <= defaultCount; i++) {
+        final arc = _findArcName(i, cleanArcs);
+        final parsedCh = AiConstraintEngine.parseChapterRange(
+          null,
+          fallbackEpisodeIndex: i,
+          totalEpisodes: defaultCount,
+          seasonChaptersRange: seasonChaptersRange,
+        );
+        fullEps.add({
+          'episode_number': i,
+          'arc_name': arc,
+          'title': '第 $i 集',
+          'chapter_range': parsedCh.rangeDesc,
+          'chapter_indices': parsedCh.indices,
+          'conflict': '推进本幕核心危机与对抗',
+          'characters': <String>[],
+          'key_props': <String>[],
+          'hook': '本集末尾悬念反转钩子',
+          'duration_sec': targetDurationSec,
+        });
+      }
+    } else {
+      // 真实保留大模型推演的每一集，按序规范编号，严禁任何机械拉伸克隆与 (节拍X) 后缀
+      for (int i = 0; i < rawEps.length; i++) {
+        final ep = rawEps[i];
+        final epNum = i + 1;
+        var title = (ep['title'] as String? ?? '第 $epNum 集').trim();
+        // 彻底清除历史残留或误输出的 "(节拍 X)" 后缀
+        title = title.replaceAll(RegExp(r'\s*\(节拍\s*\d+\)'), '').trim();
+        if (title.isEmpty) title = '第 $epNum 集';
+
+        final parsedCh = AiConstraintEngine.parseChapterRange(
+          ep['chapter_range'],
+          fallbackEpisodeIndex: epNum,
+          totalEpisodes: targetEpisodeCount,
+          seasonChaptersRange: seasonChaptersRange,
+        );
+
+        fullEps.add({
+          'episode_number': epNum,
+          'arc_name': (ep['arc_name'] as String? ?? _findArcName(epNum, cleanArcs)).trim(),
+          'title': title,
+          'chapter_range': parsedCh.rangeDesc,
+          'chapter_indices': parsedCh.indices,
+          'conflict': (ep['conflict'] as String? ?? '').trim(),
+          'characters': (ep['characters'] as List? ?? []).map((c) => c.toString()).toList(),
+          'key_props': (ep['key_props'] as List? ?? []).map((p) => p.toString().trim()).where((p) => p.isNotEmpty).toList(),
+          'hook': (ep['hook'] as String? ?? '').trim(),
+          'duration_sec': (ep['duration_sec'] as num?)?.toInt() ?? targetDurationSec,
+        });
+      }
+    }
+    normalized['episodes'] = fullEps;
+    return normalized;
+  }
+
+  static Map<String, dynamic>? writersRoomArcBeats(
+    Map<String, dynamic> data, {
+    required int startEpisode,
+    required int endEpisode,
+    required String arcName,
+    required int targetDurationSec,
+    String arcChapterRange = '',
+    int totalEpisodes = 80,
+    String seasonChaptersRange = '',
+  }) {
+    if (data.isEmpty) return null;
+    final normalized = Map<String, dynamic>.from(data);
+    final epsRaw = normalized['episodes'];
+    final rawEps = (epsRaw is List)
+        ? epsRaw
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    final List<Map<String, dynamic>> cleanEps = [];
+    final expectedCount = endEpisode - startEpisode + 1;
+
+    if (rawEps.isEmpty) {
+      for (int i = 0; i < expectedCount; i++) {
+        final epNum = startEpisode + i;
+        final parsedCh = AiConstraintEngine.parseChapterRange(
+          null,
+          fallbackEpisodeIndex: epNum,
+          totalEpisodes: totalEpisodes,
+          seasonChaptersRange: arcChapterRange.isNotEmpty ? arcChapterRange : seasonChaptersRange,
+        );
+        cleanEps.add({
+          'episode_number': epNum,
+          'arc_name': arcName,
+          'title': '第 $epNum 集',
+          'chapter_range': parsedCh.rangeDesc,
+          'chapter_indices': parsedCh.indices,
+          'conflict': '推进本幕核心危机与对抗',
+          'characters': <String>[],
+          'key_props': <String>[],
+          'hook': '本集末尾悬念反转钩子',
+          'duration_sec': targetDurationSec,
+        });
+      }
+    } else {
+      final limit = rawEps.length > expectedCount ? expectedCount : rawEps.length;
+      for (int i = 0; i < limit; i++) {
+        final ep = rawEps[i];
+        final epNum = startEpisode + i;
+        var title = (ep['title'] as String? ?? '第 $epNum 集').trim();
+        title = title.replaceAll(RegExp(r'\s*\(节拍\s*\d+\)'), '').trim();
+        if (title.isEmpty) title = '第 $epNum 集';
+
+        final parsedCh = AiConstraintEngine.parseChapterRange(
+          ep['chapter_range'],
+          fallbackEpisodeIndex: epNum,
+          totalEpisodes: totalEpisodes,
+          seasonChaptersRange: arcChapterRange.isNotEmpty ? arcChapterRange : seasonChaptersRange,
+        );
+
+        cleanEps.add({
+          'episode_number': epNum,
+          'arc_name': (ep['arc_name'] as String? ?? arcName).trim(),
+          'title': title,
+          'chapter_range': parsedCh.rangeDesc,
+          'chapter_indices': parsedCh.indices,
+          'conflict': (ep['conflict'] as String? ?? '').trim(),
+          'characters': (ep['characters'] as List? ?? []).map((c) => c.toString()).toList(),
+          'key_props': (ep['key_props'] as List? ?? []).map((p) => p.toString().trim()).where((p) => p.isNotEmpty).toList(),
+          'hook': (ep['hook'] as String? ?? '').trim(),
+          'duration_sec': (ep['duration_sec'] as num?)?.toInt() ?? targetDurationSec,
+        });
+      }
+    }
+
+    normalized['episodes'] = cleanEps;
+    return normalized;
+  }
+
+  static String _findArcName(int epNum, List<Map<String, dynamic>> arcs) {
+    if (arcs.isEmpty) return '核心篇章';
+    for (final arc in arcs) {
+      final range = arc['episode_range'] as String? ?? '';
+      final parts = range.split('-');
+      if (parts.length == 2) {
+        final start = int.tryParse(parts[0].trim());
+        final end = int.tryParse(parts[1].trim());
+        if (start != null && end != null && epNum >= start && epNum <= end) {
+          return arc['title'] as String? ?? '第 ${arc["arc_number"]} 幕';
+        }
+      }
+    }
+    return arcs.first['title'] as String? ?? '核心篇章';
+  }
+
+  static Map<String, dynamic>? writersRoomDialogue(Map<String, dynamic> data) {
+    if (data.containsKey('reply')) {
+      final updatedRaw = data['updated_episodes'];
+      if (updatedRaw is List) {
+        final List<Map<String, dynamic>> cleanUpdated = [];
+        for (final item in updatedRaw) {
+          if (item is Map) {
+            final m = Map<String, dynamic>.from(item);
+            final epNum = (m['episode_number'] as num?)?.toInt() ?? 1;
+            final rawCh = m['chapter_range'];
+            final parsed = AiConstraintEngine.parseChapterRange(rawCh, fallbackEpisodeIndex: epNum);
+            m['chapter_range'] = parsed.rangeDesc;
+            m['chapter_indices'] = parsed.indices;
+            cleanUpdated.add(m);
+          }
+        }
+        data['updated_episodes'] = cleanUpdated;
+      }
+      return data;
+    }
+    return null;
   }
 }

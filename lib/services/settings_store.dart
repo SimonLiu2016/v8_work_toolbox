@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -95,34 +94,27 @@ class SettingsStore {
     await _saveAppConfig();
   }
 
-  /// 本地词典桥密钥。首次读取时生成并持久化，因此桌面应用重启后扩展无需重新配置。
+  /// 本地词典桥密钥 —— 两端共享的固定常量。
   ///
-  /// 职责界定：回环 + 只读 + 仅词典数据。密钥拦的是误用与机会主义调用，不是
-  /// 已能读本地文件的攻击者——桥一旦要长出写路径，这个决策必须重新评估。
+  /// 为什么写死而不是随机生成：浏览器扩展读不到桌面端文件系统，无法发现运行时
+  /// 随机值；过去桌面端每次生成并持久化一个随机密钥，而扩展 `background.js` 写死
+  /// 一把，两者**必然**失配——重装/迁移/app.json 重置后，气泡从「桥未连接」变成
+  /// 「桥拒绝访问」，且无任何同步机制。
   ///
-  /// 异步版：写盘完成才算生成成功。getter 里"发射后不管"会留下真实竞态——
-  /// 紧接着的第二次 `init()` 会读到还没有密钥的 app.json，于是再生成一个，
-  /// 把已配对的扩展挡在授权失败上（表现与"桥没启动"难以区分）。
-  Future<String> ensureLocalDictionaryBridgeSecret() async {
-    final existing = _appConfig['localBridgeSecret'] as String?;
-    if (existing != null && existing.isNotEmpty) return existing;
+  /// 单人工具 + 既有威胁模型（见 local_dictionary_bridge.dart 顶部注释：密钥拦的
+  /// 是误用与机会主义调用，不是已能读本地文件/源码的攻击者）下，固定值是正确取舍。
+  /// 本工具只有一个用户，读源码即得钥匙是可接受的。
+  ///
+  /// ⚠️ 改这把钥匙必须**同步**改 `extensions/v8-browser-companion/background.js` 的
+  /// `BRIDGE_SECRET`，只改一边会立即造成授权失配（表现是「本地词典桥拒绝访问」）。
+  static const String kLocalBridgeSecret = '1rVOk7DvbImjMqu2nxzjxQ4UtDxFNkwK';
 
-    final generated = _generateBridgeSecret();
-    _appConfig['localBridgeSecret'] = generated;
-    await _saveAppConfig();
-    return generated;
-  }
+  /// 本地词典桥密钥。固定常量，不再生成/持久化；供桥启动与验密钥使用。
+  Future<String> ensureLocalDictionaryBridgeSecret() async =>
+      kLocalBridgeSecret;
 
-  /// 同步读取；未生成过时返回空串。只在"确定已经生成过"的调用点使用
-  /// （桥启动时 [ensureLocalDictionaryBridgeSecret] 已经跑过）。
-  String get localDictionaryBridgeSecretOrEmpty =>
-      (_appConfig['localBridgeSecret'] as String?) ?? '';
-
-  static String _generateBridgeSecret() {
-    final rand = Random.secure();
-    final bytes = List<int>.generate(24, (_) => rand.nextInt(256));
-    return base64Url.encode(bytes);
-  }
+  /// 同步读取。与 [ensureLocalDictionaryBridgeSecret] 同为固定常量。
+  String get localDictionaryBridgeSecretOrEmpty => kLocalBridgeSecret;
 
   static ThemeMode _parseThemeMode(String mode) {
     switch (mode.toLowerCase()) {

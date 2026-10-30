@@ -14,6 +14,7 @@ import 'package:V8WorkToolbox/tools/tool_definition.dart';
 import 'package:V8WorkToolbox/tools/reader/services/tts_coordinator.dart';
 import 'package:V8WorkToolbox/tools/reader/ui/doc_audio_reader_page.dart';
 import 'package:V8WorkToolbox/tools/registry.dart';
+import 'package:V8WorkToolbox/shell/ai_config_page.dart';
 import 'package:V8WorkToolbox/services/ai_config_store.dart';
 import 'package:V8WorkToolbox/services/ai_logger.dart';
 import 'package:V8WorkToolbox/services/keychain_service.dart';
@@ -200,6 +201,28 @@ Guide is very helpful.''';
       expect(parsed.customEndpoint, 'https://api.test.com/v1');
       expect(parsed.customApiKey, 'sk-test-secret');
       expect(parsed.customModel, 'tts-1-hd');
+    });
+
+    test('TtsSynthesisConfig styleInstruction round-trips and defaults empty', () {
+      // 默认空串
+      expect(const TtsSynthesisConfig().styleInstruction, isEmpty);
+
+      // 带 styleInstruction 的往返
+      const config = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        styleInstruction: '自然、清晰、语速适中、略带情感',
+      );
+      final json = config.toJson();
+      final parsed = TtsSynthesisConfig.fromJson(json);
+      expect(parsed.styleInstruction, '自然、清晰、语速适中、略带情感');
+
+      // copyWith 保留
+      final modified = config.copyWith(voiceId: 'mimo_default');
+      expect(modified.styleInstruction, '自然、清晰、语速适中、略带情感');
+
+      // 旧 JSON 无该字段 → 默认空串
+      final legacy = TtsSynthesisConfig.fromJson({'mode': 'customAi'});
+      expect(legacy.styleInstruction, isEmpty);
     });
 
     test('TtsVoiceOption 预设音色完整性', () {
@@ -468,6 +491,24 @@ Guide is very helpful.''';
       expect(OpenAiTtsEngine.isMimoModel('tts-1', providerName: 'mimo'), isTrue);
       expect(OpenAiTtsEngine.isMimoModel('tts-1', baseUrl: 'https://token-plan-sgp.xiaomimimo.com'), isTrue);
       expect(OpenAiTtsEngine.isMimoModel('tts-1', baseUrl: 'https://api.openai.com/v1'), isFalse);
+
+      expect(OpenAiTtsEngine.isQwenModel('cosyvoice-v3-flash'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('qwen-audio-tts'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('qwen3-tts-flash'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('tts-1', baseUrl: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('tts-1', baseUrl: 'https://maas.qianwenaiapi.com/compatible-mode/v1'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('tts-1', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('tts-1', providerName: '千问 (Token Plan)'), isTrue);
+      expect(OpenAiTtsEngine.isQwenModel('tts-1', baseUrl: 'https://api.openai.com/v1'), isFalse);
+    });
+
+    test('QwenPreset 常量定义符合官方规范', () {
+      expect(QwenPreset.displayName, '千问 (Qwen)');
+      expect(QwenPreset.baseUrl, 'https://maas.qianwenaiapi.com/compatible-mode/v1');
+      expect(QwenPreset.tokenPlanBaseUrl, 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1');
+      expect(QwenPreset.textModels, contains('qwen3.7-plus'));
+      expect(QwenPreset.sttModels, contains('qwen3-asr-flash'));
+      expect(QwenPreset.ttsModels, contains('cosyvoice-v3-flash'));
     });
 
     test('MiMo 官方音色集合覆盖与校验', () {
@@ -662,6 +703,54 @@ Guide is very helpful.''';
       final audio = await engine.synthesize('测试握手重试机制', config);
       expect(audio, isNotEmpty);
       expect(requestCount, 2);
+    });
+
+    test('OpenAiTtsEngine 针对千问 Token Plan 与通用 API 进行端点自适应与音色智能更正', () async {
+      late Uri capturedUri;
+      Map<String, dynamic> capturedBody = {};
+      final mockClient = _TestMockClient((request) async {
+        capturedUri = request.url;
+        if (request is http.Request) {
+          capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        }
+        return http.Response.bytes([0xFF, 0xFB, 0x90, 0x44], 200);
+      });
+
+      final engine = OpenAiTtsEngine(client: mockClient);
+
+      // 1. 测试 Token Plan 端点自适应与 alloy 音色自动替换为 longxiaochun
+      const configTokenPlan = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        useSystemAiConfig: false,
+        customEndpoint: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1',
+        customApiKey: 'test-qwen-key',
+        customModel: 'cosyvoice-v3-flash',
+        voiceId: 'alloy',
+      );
+      await engine.synthesize('千问测试', configTokenPlan);
+      expect(
+        capturedUri.toString(),
+        'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/audio/speech',
+      );
+      expect(capturedBody['voice'], 'longxiaochun');
+      expect(capturedBody['model'], 'cosyvoice-v3-flash');
+
+      // 2. 测试输入通用裸域名自适应补齐与模型默认回退
+      const configBareDomain = TtsSynthesisConfig(
+        mode: TtsMode.customAi,
+        useSystemAiConfig: false,
+        customEndpoint: 'https://maas.qianwenaiapi.com',
+        customApiKey: 'test-qwen-key',
+        customModel: 'tts-1', // 触发兜底
+        voiceId: '',
+      );
+      await engine.synthesize('千问裸域名测试', configBareDomain);
+      expect(
+        capturedUri.toString(),
+        'https://maas.qianwenaiapi.com/compatible-mode/v1/audio/speech',
+      );
+      expect(capturedBody['voice'], 'longxiaochun');
+      expect(capturedBody['model'], 'cosyvoice-v3-flash');
     });
 
     test('TtsSynthesisCoordinator 在 customAi 模式下限制 lookahead 为 1 且顺序预拉取', () async {

@@ -449,6 +449,14 @@ class TtsSynthesisConfig {
   final String? customApiKey;
   final String? customModel;    // e.g. tts-1, tts-1-hd, speech-01
 
+  /// 自然语言风格指令（主要供小米 MiMo 等 Chat Audio 模型使用）。
+  ///
+  /// MiMo 没有 `speed`/`pitch` 数值参数，其「快慢/语调/情绪」全部通过
+  /// `user` 消息中的自然语言指令表达。非空时，[OpenAiTtsEngine] 的
+  /// chat-audio 分支会把它作为 `user` 消息注入到合成请求中，实现可感知的
+  /// 语速与情感调节。非 MiMo 引擎忽略该字段。
+  final String styleInstruction;
+
   const TtsSynthesisConfig({
     this.mode = TtsMode.edge,
     this.voiceId = 'zh-CN-XiaoxiaoNeural',
@@ -460,6 +468,7 @@ class TtsSynthesisConfig {
     this.customEndpoint,
     this.customApiKey,
     this.customModel = 'tts-1',
+    this.styleInstruction = '',
   });
 
   /// 实际发往底层合成引擎的有效音色标识
@@ -481,6 +490,7 @@ class TtsSynthesisConfig {
     String? customEndpoint,
     String? customApiKey,
     String? customModel,
+    String? styleInstruction,
   }) {
     return TtsSynthesisConfig(
       mode: mode ?? this.mode,
@@ -493,6 +503,7 @@ class TtsSynthesisConfig {
       customEndpoint: customEndpoint ?? this.customEndpoint,
       customApiKey: customApiKey ?? this.customApiKey,
       customModel: customModel ?? this.customModel,
+      styleInstruction: styleInstruction ?? this.styleInstruction,
     );
   }
 
@@ -507,6 +518,7 @@ class TtsSynthesisConfig {
     'customEndpoint': customEndpoint,
     'customApiKey': customApiKey,
     'customModel': customModel,
+    'styleInstruction': styleInstruction,
   };
 
   factory TtsSynthesisConfig.fromJson(Map<String, dynamic> json) {
@@ -524,6 +536,7 @@ class TtsSynthesisConfig {
       customEndpoint: json['customEndpoint'] as String?,
       customApiKey: json['customApiKey'] as String?,
       customModel: (json['customModel'] as String?) ?? 'tts-1',
+      styleInstruction: (json['styleInstruction'] as String?) ?? '',
     );
   }
 }

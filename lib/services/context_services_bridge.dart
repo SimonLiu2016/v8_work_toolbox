@@ -122,6 +122,15 @@ class ContextServicesBridge {
     }
   }
 
+  /// 请求原生层将实时字幕子窗口配置为真透明底色、浮动置顶并隐藏系统红绿灯
+  Future<void> styleLiveCaptionWindow() async {
+    try {
+      await _channel.invokeMethod('styleLiveCaptionWindow');
+    } catch (e) {
+      debugPrint('[ContextServicesBridge] styleLiveCaptionWindow error: $e');
+    }
+  }
+
   /// 获取当前鼠标屏幕绝对坐标
   Future<Map<String, double>?> getMouseLocation() async {
     try {

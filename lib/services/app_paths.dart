@@ -227,6 +227,10 @@ abstract final class AppPaths {
   static Directory get videoStudioSeriesDir =>
       Directory(p.join(videoStudioDir.path, 'series_library'));
 
+  /// 独立持久化 IP 主库：存放长效 IP 资产（角色卡、场景库、道具、世界观）。
+  static Directory get videoStudioIpDir =>
+      Directory(p.join(videoStudioDir.path, 'ip_library'));
+
   /// Agnes 试炼场根目录（`tools/agnes_playground/`）。
   ///
   /// 挂在 `video_studio/` 下而不是自己一个顶层目录：它的产物要进同一个
@@ -260,6 +264,13 @@ abstract final class AppPaths {
   static Directory get infiniteCanvasDir =>
       Directory(p.join(root.path, 'infinite_canvas'));
 
+  /// 实时会议翻译工具的字幕导出目录（`live_translator/`）。
+  ///
+  /// 只存用户显式导出的字幕文件（SRT/VTT）。原始音频不落盘（spec），
+  /// 字幕记录在内存累积，导出时写入此处或用户选定位置。
+  static Directory get liveTranslatorExportDir =>
+      Directory(p.join(root.path, 'live_translator'));
+
   /// Dola 号池根目录（账号元数据 + 能力覆盖配置）。
   ///
   /// `dola_accounts.json` 此前直接躺在 [root] 根下，与其他工具的目录约定不
@@ -280,6 +291,103 @@ abstract final class AppPaths {
   /// 「积分扣了但视频在哪」的唯一线索——它必须比任务本身先落盘。
   static File get videoTaskLedgerFile =>
       File(p.join(videoTaskLedgerDir.path, 'tasks.json'));
+
+  /// IT 会议听力素材目录。
+  ///
+  /// 存**烘焙产物**：片段音频（`<clipId>.mp3`）与逐轮文稿清单
+  /// （`<clipId>.json`），外加一个全量索引（`index.json`）。
+  ///
+  /// 音频与文稿分离且同目录配对：精听模式的逐句高亮、术语收藏的时间点、
+  /// 以及将来导入其它来源（用户自己的会议录音）都依赖这份文稿结构。
+  static Directory get itMeetingListeningDir =>
+      Directory(p.join(root.path, 'it_meeting_listening'));
+
+  /// IT 会议听力的烘焙缓存目录（逐轮临时音频）。
+  ///
+  /// 与素材目录分开：素材是产物、需长期保留；缓存是合成过程的中间物，
+  /// 拼接完即可清理。混在一起会让"清理缓存"误删成品。
+  static Directory get itMeetingListeningCacheDir =>
+      Directory(p.join(itMeetingListeningDir.path, 'cache'));
+
+  /// IT 会议听力收藏的术语读音音频目录。
+  ///
+  /// 与素材目录分开：素材是烘焙产物（可整体重建），术语读音是**用户收藏的
+  /// 成果**（丢了就没了），两者生命周期不同，混在一起会让"重建素材"误删收藏。
+  static Directory get itMeetingTermAudioDir =>
+      Directory(p.join(itMeetingListeningDir.path, 'term_audio'));
+
+  /// IT 会议听力的来源同步状态文件。
+  ///
+  /// **与素材目录分开**（design D7）：素材是产物（会被重烘焙覆盖），
+  /// 同步状态是"上次同步到哪了"的历史——重烘焙不该让它丢失。
+  static File get itMeetingSyncStateFile =>
+      File(p.join(itMeetingListeningDir.path, 'sync_state.json'));
+
+  /// IT 会议听力的播放断点记忆文件。
+  ///
+  /// 记录每个场景最后播放到的片段与偏移。单独存一个文件而不是塞进素材索引：
+  /// 索引是烘焙产物（会被整体重写），断点是**用户行为**（不该被烘焙覆盖）。
+  static File get itMeetingListeningProgressFile =>
+      File(p.join(itMeetingListeningDir.path, 'play_progress.json'));
+
+  /// 排练会议的中间产物目录（材料、讲稿、剧本）。
+  ///
+  /// 与素材目录分开：素材目录装的是**成品**（mp3 + json 清单，被索引整体描述），
+  /// 这里装的是**三阶段各自的中间产物**——讲稿改了剧本要重生成、剧本改了音频
+  /// 要重烘，但材料本身不变。混在一起会让"清理缓存"误删用户改过的讲稿。
+  static Directory get itMeetingRehearsalDir =>
+      Directory(p.join(itMeetingListeningDir.path, 'rehearsal'));
+
+  /// 导入的会议材料原始副本目录。
+  ///
+  /// 材料是**用户提供的原始文件**（MD/HTML），讲稿与剧本都从它派生。单独放
+  /// 一份副本而不是只记路径：源文件可能被移动或修改，用户要能追溯"这场会议
+  /// 是基于哪一版材料生成的"。
+  static Directory get itMeetingMaterialDir =>
+      Directory(p.join(itMeetingRehearsalDir.path, 'materials'));
+
+  /// 真实会议（导入的逐字稿）根目录。
+  ///
+  /// **与 [itMeetingRehearsalDir] 分开**：排练会议的三层产物（材料/讲稿/剧本）
+  /// 是"从材料生成"的，真实会议的四层（原稿/设定/回答/合成状态）是"导入后
+  /// 演进"的。两者同名文件（`materials` vs `meetings`）混在一起时，清理任一侧
+  /// 都会误伤另一侧。
+  static Directory get realMeetingDir =>
+      Directory(p.join(itMeetingListeningDir.path, 'real_meetings'));
+
+  /// 真实会议原稿目录（`meetings/<meetingId>.json`）。
+  static Directory get realMeetingMeetingsDir =>
+      Directory(p.join(realMeetingDir.path, 'meetings'));
+
+  /// 真实会议说话人设定目录（覆盖层）。
+  static Directory get realMeetingSettingsDir =>
+      Directory(p.join(realMeetingDir.path, 'settings'));
+
+  /// 真实会议插入回答目录（回答层）。
+  static Directory get realMeetingAnswersDir =>
+      Directory(p.join(realMeetingDir.path, 'answers'));
+
+  /// 真实会议合成状态目录（派生数据，与整篇音频同目录）。
+  static Directory get realMeetingAudioDir =>
+      Directory(p.join(realMeetingDir.path, 'audio'));
+
+  /// 真实会议逐轮音频目录（`turns/<meetingId>/g<k>.mp3`）。
+  ///
+  /// **必须在持久目录**：界面的「清理缓存」会清空
+  /// [itMeetingListeningCacheDir]，而插入一段回答后的整篇重建依赖这些逐轮
+  /// 文件。放进缓存目录，清一次缓存就退化成重跑几百轮 TTS（design D4）。
+  static Directory realMeetingTurnsDir(String meetingId) =>
+      Directory(p.join(realMeetingDir.path, 'turns', meetingId));
+
+  /// 跨会议词汇索引文件。
+  ///
+  /// 与会议数据分开：索引是派生产物，损坏/缺失时从 `meetings/*.json` 全量重建。
+  static File get meetingVocabularyIndexFile =>
+      File(p.join(realMeetingDir.path, 'vocabulary_index.json'));
+
+  /// 「我的身份」配置文件（跨所有真实会议恒等）。
+  static File get listeningMyIdentityFile =>
+      File(p.join(itMeetingListeningDir.path, 'my_identity.json'));
 
   /// 全部导出路径，供回归测试断言单一性。
   static List<File> get allFiles => [
@@ -304,6 +412,10 @@ abstract final class AppPaths {
     agnesPlaygroundDraftFile,
     aestheticStylesFile,
     visualErasFile,
+    itMeetingSyncStateFile,
+    itMeetingListeningProgressFile,
+    meetingVocabularyIndexFile,
+    listeningMyIdentityFile,
   ];
 
   /// 全部导出目录，供回归测试断言单一性。
@@ -322,6 +434,7 @@ abstract final class AppPaths {
     videoStudioGlobalLibDir,
     videoStudioPresetsDir,
     videoStudioSeriesDir,
+    videoStudioIpDir,
     infiniteCanvasDir,
     dolaDir,
     novelLibraryDir,
@@ -329,6 +442,17 @@ abstract final class AppPaths {
     videoStudioAssetImagesDir,
     videoStudioAssetClipsDir,
     agnesPlaygroundDir,
+    itMeetingListeningDir,
+    itMeetingListeningCacheDir,
+    itMeetingTermAudioDir,
+    itMeetingRehearsalDir,
+    itMeetingMaterialDir,
+    realMeetingDir,
+    realMeetingMeetingsDir,
+    realMeetingSettingsDir,
+    realMeetingAnswersDir,
+    realMeetingAudioDir,
+    liveTranslatorExportDir,
   ];
 
   /// 小说管理器根目录（`tools/novel_manager/`）。

@@ -194,11 +194,23 @@ class _LookupPanelViewState extends State<LookupPanelView> with WindowListener {
     } catch (_) {}
   }
 
+  Future<void> _hideSubWindow() async {
+    try {
+      final controller = await WindowController.fromCurrentEngine();
+      await controller.hide();
+    } catch (_) {
+      try {
+        await windowManager.hide();
+      } catch (_) {}
+    }
+  }
+
   @override
   void onWindowBlur() {
-    // 失焦自动关闭
+    // 查词浮窗失焦自动隐藏。必须使用 WindowController 或 windowManager.hide()，
+    // 严禁调用全局 windowManager.close()，否则会给主窗口派发关闭事件引发生命周期死循环。
     if (widget.isSubWindow) {
-      windowManager.close();
+      _hideSubWindow();
     }
   }
 
@@ -367,7 +379,7 @@ class _LookupPanelViewState extends State<LookupPanelView> with WindowListener {
 
   void _close() {
     if (widget.isSubWindow) {
-      windowManager.close();
+      _hideSubWindow();
     } else {
       widget.onClose?.call();
     }

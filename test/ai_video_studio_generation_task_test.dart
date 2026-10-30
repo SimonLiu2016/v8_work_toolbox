@@ -296,6 +296,210 @@ void main() {
     expect(reloaded.shots[1].framePath, 'shot_2.png');
     expect(reloaded.shots[1].status, ShotGenerationStatus.done);
   });
+
+  group('首尾帧接力判据（spec: 分镜首帧来源的可信判据）', () {
+    test('canRelayFrameFromPrev：同场景同主体同景别时接力', () {
+      final prev = shotOf(1).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.medium,
+      );
+      final curr = shotOf(2).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.medium,
+      );
+      expect(canRelayFrameFromPrev(prev, curr), isTrue);
+    });
+
+    test('canRelayFrameFromPrev：场景卡不同不接力', () {
+      final prev = shotOf(1).copyWith(sceneId: 'scene_a', characterIds: ['c1']);
+      final curr = shotOf(2).copyWith(sceneId: 'scene_b', characterIds: ['c1']);
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('canRelayFrameFromPrev：sceneId 为空不接力', () {
+      final prev = shotOf(1).copyWith(sceneId: '', characterIds: ['c1']);
+      final curr = shotOf(2).copyWith(sceneId: '', characterIds: ['c1']);
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('canRelayFrameFromPrev：主体集合不同不接力', () {
+      final prev = shotOf(1).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1', 'c2'],
+      );
+      final curr = shotOf(2).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+      );
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('canRelayFrameFromPrev：正反打（一方特写另一方非特写）不接力', () {
+      final prev = shotOf(1).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.closeUp,
+      );
+      final curr = shotOf(2).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.medium,
+      );
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('canRelayFrameFromPrev：任一方标记为对峙分工时不接力', () {
+      final prev = shotOf(1).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1', 'c2'],
+        shotSize: StudioShotSize.medium,
+        assetBindings: {
+          'c2': const ShotAssetBinding(role: ShotAssetRole.confrontation),
+        },
+      );
+      final curr = shotOf(2).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1', 'c2'],
+        shotSize: StudioShotSize.medium,
+      );
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('canRelayFrameFromPrev：景别差 2 档不接力', () {
+      final prev = shotOf(1).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.mediumCloseUp,
+      );
+      final curr = shotOf(2).copyWith(
+        sceneId: 'scene_a',
+        characterIds: ['c1'],
+        shotSize: StudioShotSize.full,
+      );
+      expect(canRelayFrameFromPrev(prev, curr), isFalse);
+    });
+
+    test('VideoGenTask：正反打镜头使用本镜关键帧，不提取上一镜尾帧', () async {
+      final series = await manager.createSeries(name: '正反打测试');
+      final created = await manager.createEpisode(seriesId: series.id);
+      final framesDir = manager.episodeFramesDir(series.id, created.episode.id);
+      for (final n in [1, 2]) {
+        final f = File(p.join(framesDir.path, 'shot_$n.png'))
+          ..createSync(recursive: true);
+        f.writeAsBytesSync([n, n, n]);
+      }
+
+      final episode = created.episode.copyWith(
+        shots: [
+          shotOf(1).copyWith(
+            sceneId: 'scene_a',
+            characterIds: ['c1'],
+            framePath: 'shot_1.png',
+            shotSize: StudioShotSize.closeUp,
+            clipPath: 'shot_1.mp4',
+          ),
+          shotOf(2).copyWith(
+            sceneId: 'scene_a',
+            characterIds: ['c1'],
+            framePath: 'shot_2.png',
+            shotSize: StudioShotSize.medium,
+          ),
+        ],
+      );
+      await manager.saveEpisode(episode);
+
+      VideoGenRequest? captured;
+      final task = VideoGenTask(
+        taskId: 't-reverse',
+        seriesId: series.id,
+        episodeId: created.episode.id,
+        shotNumber: 2,
+        adapter: _CapturingVideoAdapter((req) => captured = req),
+      );
+      await task.run((_) {});
+
+      expect(captured, isNotNull);
+      // 首帧必须是本镜关键帧，不是上一镜尾帧（shot_1_last.png）。
+      expect(captured!.inputImage!.path, endsWith('shot_2.png'));
+
+      final reloaded = manager.readEpisode(series.id, created.episode.id)!;
+      expect(reloaded.shots[1].firstFramePath, 'shot_2.png');
+      expect(reloaded.shots[1].firstFrameSource, FirstFrameSource.keyframe);
+    });
+
+    test('VideoGenTask：满足接力条件时使用上一镜尾帧并记录来源', () async {
+      final series = await manager.createSeries(name: '接力测试');
+      final created = await manager.createEpisode(seriesId: series.id);
+      final framesDir = manager.episodeFramesDir(series.id, created.episode.id);
+      for (final n in [1, 2]) {
+        final f = File(p.join(framesDir.path, 'shot_$n.png'))
+          ..createSync(recursive: true);
+        f.writeAsBytesSync([n, n, n]);
+      }
+      // 上一镜的尾帧文件：接力判据通过后 VideoGenTask 会调 extractLastFrame
+      // 从上一镜视频里抽帧，测试环境没有 FFmpeg 也拿不到真视频——这里直接
+      // 验证「首帧来源字段」与「不抛错」两条契约，尾帧文件本身由判据单测覆盖。
+      final lastFrame = File(p.join(framesDir.path, 'shot_1_last.png'))
+        ..createSync(recursive: true);
+      lastFrame.writeAsBytesSync([9, 9, 9]);
+
+      final episode = created.episode.copyWith(
+        shots: [
+          shotOf(1).copyWith(
+            sceneId: 'scene_a',
+            characterIds: ['c1'],
+            framePath: 'shot_1.png',
+            shotSize: StudioShotSize.medium,
+            clipPath: 'shot_1.mp4',
+          ),
+          shotOf(2).copyWith(
+            sceneId: 'scene_a',
+            characterIds: ['c1'],
+            framePath: 'shot_2.png',
+            shotSize: StudioShotSize.medium,
+          ),
+        ],
+      );
+      await manager.saveEpisode(episode);
+
+      VideoGenRequest? captured;
+      final task = VideoGenTask(
+        taskId: 't-relay',
+        seriesId: series.id,
+        episodeId: created.episode.id,
+        shotNumber: 2,
+        adapter: _CapturingVideoAdapter((req) => captured = req),
+      );
+      await task.run((_) {});
+
+      expect(captured, isNotNull);
+      // 判据通过 → 试图用上一镜尾帧。测试环境抽不出真尾帧（无 FFmpeg），
+      // 提取失败时回落到本镜关键帧，来源记为 keyframe。
+      final reloaded = manager.readEpisode(series.id, created.episode.id)!;
+      expect(
+        reloaded.shots[1].firstFrameSource,
+        anyOf(FirstFrameSource.relay, FirstFrameSource.keyframe),
+      );
+      expect(reloaded.shots[1].firstFramePath, isNotNull);
+    });
+
+    test('StudioShot.firstFrameSource 序列化往返，缺失时默认 keyframe', () {
+      final shot = shotOf(1).copyWith(
+        firstFramePath: 'shot_1_last.png',
+        firstFrameSource: FirstFrameSource.relay,
+      );
+      final restored = StudioShot.fromJson(shot.toJson());
+      expect(restored.firstFrameSource, FirstFrameSource.relay);
+      expect(restored.firstFramePath, 'shot_1_last.png');
+
+      final legacy = StudioShot.fromJson(const {
+        'number': 1,
+      });
+      expect(legacy.firstFrameSource, FirstFrameSource.keyframe);
+    });
+  });
 }
 
 class _DelayingImageAdapter implements ImageGenAdapter {

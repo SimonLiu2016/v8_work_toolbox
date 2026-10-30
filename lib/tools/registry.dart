@@ -23,6 +23,8 @@ import 'reader/ui/doc_audio_reader_page.dart';
 import 'security_toolbox/ui/security_toolbox_main_page.dart';
 import 'slimmer/smart_disk_slimmer_page.dart';
 import 'infinite_canvas/ui/infinite_canvas_studio_page.dart';
+import 'it_meeting_listening/ui/it_meeting_listening_page.dart';
+import 'live_translator/ui/live_translator_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
 import 'vocab_book/ui/vocab_book_page.dart';
@@ -414,6 +416,37 @@ class NotebookToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const NotebookPage();
 }
 
+class ItMeetingListeningToolDefinition extends ToolDefinition {
+  @override
+  String get id => kToolIdItMeetingListening;
+  @override
+  String get title => '听力练习';
+  @override
+  String get subtitle =>
+      '职场技术英语碎片 + 会议材料排练：站会、故障复盘、架构评审，耳机常驻播放';
+  @override
+  IconData get icon => Icons.headphones_rounded;
+  @override
+  ToolCategory get category => ToolCategory.note;
+  @override
+  Widget buildPage(BuildContext context) => const ItMeetingListeningPage();
+}
+
+class LiveTranslatorToolDefinition extends ToolDefinition {
+  @override
+  String get id => kToolIdLiveTranslator;
+  @override
+  String get title => '实时会议翻译';
+  @override
+  String get subtitle => '系统音频内录 → 实时识别 → 双语字幕，悬浮窗常驻';
+  @override
+  IconData get icon => Icons.subtitles_outlined;
+  @override
+  ToolCategory get category => ToolCategory.note;
+  @override
+  Widget buildPage(BuildContext context) => const LiveTranslatorPage();
+}
+
 class VocabBookToolDefinition extends ToolDefinition {
   @override
   String get id => 'vocab-book';
@@ -623,6 +656,8 @@ class ToolRegistry {
     NotebookToolDefinition(),
     NovelManagerToolDefinition(),
     VocabBookToolDefinition(),
+    ItMeetingListeningToolDefinition(),
+    LiveTranslatorToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),
     BcConfigShellToolDefinition(),

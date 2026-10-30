@@ -1,4 +1,4 @@
-import 'dart:async' show runZonedGuarded;
+import 'dart:async' show Timer, runZonedGuarded;
 import 'dart:ui' show PlatformDispatcher;
 
 import 'dart:io';
@@ -22,6 +22,12 @@ import 'tools/dola_pool/services/dola_account_store.dart';
 import 'tools/dola_pool/services/dola_config_store.dart';
 import 'tools/infinite_canvas/services/infinite_canvas_compose_service.dart';
 import 'tools/infinite_canvas/services/infinite_canvas_bridge_server.dart';
+import 'tools/it_meeting_listening/services/it_listening_mini_bridge.dart';
+import 'tools/it_meeting_listening/services/listening_hot_key_service.dart';
+import 'tools/it_meeting_listening/services/listening_host.dart';
+import 'tools/it_meeting_listening/ui/it_listening_mini_player.dart';
+import 'tools/live_translator/services/live_translator_host.dart';
+import 'tools/live_translator/ui/live_caption_window.dart';
 import 'tools/lookup_panel/ui/lookup_window.dart';
 import 'tools/vocab_book/services/vocab_store.dart';
 import 'services/proxy_settings.dart';
@@ -45,6 +51,14 @@ import 'tools/password/ui/password_page.dart';
 import 'tools/private_player/services/media_history_store.dart';
 import 'tools/private_player/services/private_storage_manager.dart';
 import 'tools/security_toolbox/ui/security_toolbox_main_page.dart';
+
+/// 迷你窗参数前缀。
+///
+/// `listening_host.dart` 与 `tool_definition.dart` 各有一个同名常量，值还不一样
+/// （`it-listening-mini` vs `it-listen:`），同时 import 两个库会 ambiguous。
+/// 真正在用的值是 listening_host 那个——窗口由它创建、由它识别。这里直接写死
+/// 字面量并注释来源，比 import 别名更不会随两个库的演化而错配。
+const kItListeningWindowArgPrefixFromHost = 'it-listening-mini';
 
 // ---------------------------------------------------------------------------
 // 窗口类型与必需服务清单
@@ -83,6 +97,18 @@ enum WindowKind {
 
   /// Agnes 试炼场独立窗口：三通道直连调用，复用 AI 配置与代理
   agnesPlayground,
+
+  /// IT 会议听力的迷你播放窗：常驻置顶，只渲染播放状态并转发指令。
+  ///
+  /// **不消费 AI**：播放状态由主进程持有（design D7），本窗口只做视图，
+  /// 真正的合成发生在主进程的烘焙阶段。
+  itListeningMini,
+
+  /// 实时翻译的字幕悬浮窗：常驻置顶、透明，只渲染字幕快照并转发指令。
+  ///
+  /// **不消费 AI**：识别/翻译/记录状态由主进程持有（design D4），本窗口只做
+  /// 视图，真正的识别与翻译发生在主进程。
+  liveCaption,
 }
 
 /// 按窗口类型声明的必需服务。
@@ -203,6 +229,17 @@ class WindowServices {
       ..._proxy,
       ..._aiConfig,
     ],
+    // 迷你播放窗只需要能读到主题偏好（它渲染 themed MaterialApp）与本地路径
+    // （素材目录）。不需要 AI 配置：它不合成、不查词。
+    WindowKind.itListeningMini: [
+      ..._appPaths,
+      ..._settingsStore,
+    ],
+    // 字幕悬浮窗只渲染推送来的状态并发指令，不消费 AI（识别在主进程）。
+    WindowKind.liveCaption: [
+      ..._appPaths,
+      ..._settingsStore,
+    ],
   };
 
   /// 该窗口类型的必需服务名列表（供测试断言清单覆盖）。
@@ -321,14 +358,10 @@ Future<void> main(List<String> args) async {
     bootMark('notebook branch entered');
     await _sizeNotebookSubWindowToWorkArea();
     bootMark('notebook sized');
-    await _applyNotebookWindowFallbackBackground();
-    bootMark('notebook bg');
     await WindowServices.initFor(WindowKind.notebook);
     bootMark('notebook initFor');
-    // 启动链跑完才让窗口可见。窗口是以 hiddenAtLaunch: true 创建的，若不在此
-    // 处 show，用户点了「笔记本」会毫无反应。
-    await _showNotebookWindowWhenReady();
-    bootMark('notebook shown');
+    // 窗口可见时机由 _NotebookWindowApp 首帧回调控制（addPostFrameCallback），
+    // 不在此处 show——runApp 之前 show 会露出 Flutter view 的不透明黑 surface。
     runAppWithErrorHandling(const _NotebookWindowApp());
     bootMark('notebook runApp');
     return;
@@ -408,8 +441,38 @@ Future<void> main(List<String> args) async {
     return;
   }
 
+  if (isSubWindow &&
+      subWindowArgument.startsWith(
+        kItListeningWindowArgPrefixFromHost,
+      )) {
+    // IT 会议听力的迷你播放窗：常驻置顶，不消费 AI——播放状态在主进程。
+    await WindowServices.initFor(WindowKind.itListeningMini);
+    bootMark('it-listen-mini initFor');
+    runAppWithErrorHandling(const ItListeningMiniPlayerApp());
+    bootMark('it-listen-mini runApp');
+    return;
+  }
+
+  if (isSubWindow &&
+      subWindowArgument.startsWith(LiveTranslatorHost.windowArgPrefix)) {
+    // 实时翻译的字幕悬浮窗：常驻置顶、透明，不消费 AI——识别状态在主进程。
+    await WindowServices.initFor(WindowKind.liveCaption);
+    bootMark('live-caption initFor');
+    runAppWithErrorHandling(const LiveCaptionWindowApp());
+    bootMark('live-caption runApp');
+    return;
+  }
+
   // 主窗口：注册窗口焦点监听，用于感知子窗口中的笔记编辑。
   windowManager.addListener(_notebookFocusListener);
+
+  // IT 会议听力的全局播放热键（原生 Carbon 侧注册，这里只接回调）。
+  // 放在主窗口：热键是进程级的，且播放状态也在主进程。
+  _initListeningHotKeys();
+  _initListeningMiniBridge();
+  _initListeningMenuEntry();
+  // 实时翻译：主进程接线字幕桥（识别状态在此持有）。
+  _initLiveTranslatorBridge();
   // 主窗口：注册关闭监听，退出前清理 mihomo 进程。
   windowManager.addListener(_mainWindowCloseListener);
 
@@ -458,6 +521,7 @@ Future<void> main(List<String> args) async {
 
   // 注册全局快捷键
   final hotKey = SettingsStore.instance.getHotKeyConfig();
+  LauncherService.instance.init();
   await LauncherService.instance.registerHotKey(hotKey);
 
   // 进程级终止信号：与 [_MainWindowCloseListener] 收敛到同一清理逻辑。
@@ -531,47 +595,6 @@ Future<void> main(List<String> args) async {
 /// 笔记本什么都没发生」。加一道超时：到点后不再等待，让启动链继续走，
 /// 并留下诊断信号。窗口最终仍会由原生侧那次 setIsVisible 补上（或由用户
 /// 再次点击触发 show），至少不是永久无响应。
-Future<void> _showNotebookWindowWhenReady() async {
-  try {
-    await windowManager.show().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () {
-        debugPrint(
-          '[main] 笔记本窗口 show 超时（5s 未响应，启动链继续；'
-          '窗口可能延迟可见或不可见）',
-        );
-      },
-    );
-  } catch (e) {
-    debugPrint('[main] 笔记本窗口 show 失败（窗口可能不可见）: $e');
-  }
-}
-
-/// 笔记本子窗口：设置引擎绘制前的兜底背景色。
-///
-/// 引擎尚未绘制任何内容时，NSWindow 的 surface 是黑的。窗口以
-/// `hiddenAtLaunch: true` 创建后这段黑不再被用户看到；但 show 失败兜底、
-/// 或将来有人改回提前可见时，这个底色就是第二道防线——至少不是纯黑。
-///
-/// 取当前主题对应的窗口底色，与首帧后 `_NotebookWindowApp` 的
-/// `Scaffold` 背景一致，避免可见的色差跳变。
-///
-/// 只对笔记本窗口调用：查词浮窗的窗口必须保持透明（圆角由 macOS 原生层挖出，
-/// 见 `lookup_window.dart` 中 `backgroundColor: Colors.transparent` 的注释），
-/// 给它设底色会盖掉透明通道。
-Future<void> _applyNotebookWindowFallbackBackground() async {
-  try {
-    final isDark =
-        SettingsStore.instance.themeModeNotifier.value == ThemeMode.dark;
-    // 与 AppTheme 的 bgWindow / lightBgWindow 对应（app_theme.dart:12 / :49）。
-    await windowManager.setBackgroundColor(
-      isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF8FAFC),
-    );
-  } catch (e) {
-    debugPrint('[main] 笔记本窗口兜底背景色设置失败: $e');
-  }
-}
-
 /// 子窗口尺寸声明。
 ///
 /// [size] 由各窗口种类自己决定：查词浮窗是 420×520 的贴口气泡，单篇笔记
@@ -821,6 +844,13 @@ class _NotebookWindowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 首帧交付后才让窗口可见。窗口以 hiddenAtLaunch: true 创建，首帧前保持
+    // 隐藏——否则 Flutter view 的不透明黑 layer 会在首帧画出前裸露，用户看到
+    // 的就是「一片漆黑」。见 change fix-notebook-window-black-and-empty-on-cold-launch。
+    _startNotebookWindowShowTimeout();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showNotebookWindowAfterFirstFrame();
+    });
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: SettingsStore.instance.themeModeNotifier,
       builder: (context, currentThemeMode, _) {
@@ -842,6 +872,40 @@ class _NotebookWindowApp extends StatelessWidget {
       },
     );
   }
+}
+
+/// 首帧回调触发时调用：取消超时定时器并 show 窗口。
+///
+/// 同时被超时兜底路径调用（此时定时器已到期，cancel 是 no-op）。
+/// 用 `_notebookWindowShown` 保证只 show 一次。
+bool _notebookWindowShown = false;
+
+void _showNotebookWindowAfterFirstFrame() {
+  if (_notebookWindowShown) return;
+  _notebookWindowShown = true;
+  _notebookWindowShowTimer?.cancel();
+  _notebookWindowShowTimer = null;
+  try {
+    windowManager.show();
+    debugPrint('[main] 笔记本窗口首帧已交付，窗口可见');
+  } catch (e) {
+    debugPrint('[main] 笔记本窗口 show 失败: $e');
+  }
+}
+
+/// 首帧超时兜底定时器。若 10 秒内首帧回调未触发（build 异常等），强制 show。
+Timer? _notebookWindowShowTimer;
+
+/// 启动首帧超时兜底：10 秒后若窗口仍未可见，强制 show 并记诊断信号。
+///
+/// 遵守 fail-soft 契约：首帧回调因异常未触发时，用户不能「点了没反应」。
+void _startNotebookWindowShowTimeout() {
+  _notebookWindowShowTimer?.cancel();
+  _notebookWindowShowTimer = Timer(const Duration(seconds: 10), () {
+    if (_notebookWindowShown) return;
+    debugPrint('[main] 笔记本窗口首帧超时（10s），强制 show');
+    _showNotebookWindowAfterFirstFrame();
+  });
 }
 
 /// 主窗口焦点监听：重新获得焦点时通知笔记本页面刷新列表。
@@ -1083,3 +1147,51 @@ class _AiVideoStudioWindowApp extends StatelessWidget {
 }
 
 
+
+
+/// 注册 IT 会议听力的全局播放热键，并把原生侧回调接到主进程。
+///
+/// 播放状态在主进程（design D7），所以热键回调也在这里落地。
+void _initListeningHotKeys() {
+  final service = ListeningHotKeyService.instance;
+  service.init();
+  service.onAction = (action) {
+    // 控制器由 ListeningHost 持有（主进程唯一的播放状态来源，惰性创建）。
+    ListeningHost.instance.handleHotKeyAction(action);
+  };
+  // 注册用户配置的绑定（首次运行回落默认）；失败的动作记下来供 UI 提示。
+  final bindings = service.loadBindings();
+  service.register(bindings).then((failed) async {
+    final actions = failed.map((b) => b.action).toList();
+    await SettingsStore.instance.setListeningHotKeyFailures(actions);
+    if (actions.isNotEmpty) {
+      debugPrint('[ListeningHotKey] 以下热键注册失败: $actions');
+    }
+  });
+}
+
+/// 菜单栏「会议音频播放器」的入口。
+///
+/// 原生侧从托盘菜单发来 `openListeningMini`，这里转成打开迷你窗。
+void _initListeningMenuEntry() {
+  LauncherService.instance.onOpenListeningMini = () {
+    ListeningHost.instance.openMiniWindow();
+  };
+}
+
+/// 迷你窗 ↔ 主进程 的通道接线。
+///
+/// 迷你窗侧注册 `state` 接收器，主进程侧注册 `command` 接收器——两者用
+/// 同一个通道名，`desktop_multi_window` 按窗口 id 分发。
+void _initListeningMiniBridge() {
+  final bridge = ItListeningMiniBridge.instance;
+  bridge.onCommand = (action) {
+    ListeningHost.instance.handleMiniCommand(action);
+  };
+  bridge.attachAsHost();
+}
+
+/// 实时翻译：主进程侧接线字幕桥。
+void _initLiveTranslatorBridge() {
+  LiveTranslatorHost.instance.attachBridge();
+}

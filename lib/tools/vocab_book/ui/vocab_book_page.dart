@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+
+import '../../it_meeting_listening/services/listening_host.dart';
+import '../../it_meeting_listening/services/listening_term_collector.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../../services/settings_store.dart';
@@ -884,15 +887,7 @@ class _VocabBookPageState extends State<VocabBookPage> {
             if (entry.sourceContext != null && entry.sourceContext!.isNotEmpty) ...[
               Text('来源上下文', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: context.textPrimary)),
               SizedBox(height: 8),
-              Container(
-                padding: EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: context.bgCard,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: context.borderSubtle),
-                ),
-                child: Text(entry.sourceContext!, style: TextStyle(fontSize: 12.5, color: context.textSecondary)),
-              ),
+              _buildSourceContext(entry),
               SizedBox(height: 16),
             ],
 
@@ -916,6 +911,90 @@ class _VocabBookPageState extends State<VocabBookPage> {
         ),
       ),
     );
+  }
+
+  /// 渲染来源上下文。
+  ///
+  /// IT 会议听力写入的 `sourceContext` 是 JSON（含片段 id 与时间点），
+  /// 直接把 JSON 甩给用户看没有意义——这里解析成"来自哪个片段的第几秒"，
+  /// 并给出回到该片段重听的入口。
+  ///
+  /// 其它来源（划词查词写入的纯文本）按原文显示，不报错。
+  Widget _buildSourceContext(VocabEntryModel entry) {
+    final raw = entry.sourceContext ?? '';
+    final source = ListeningTermSource.fromSourceContext(raw);
+    if (source == null) {
+      return Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: context.bgCard,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: context.borderSubtle),
+        ),
+        child: Text(raw, style: TextStyle(fontSize: 12.5, color: context.textSecondary)),
+      );
+    }
+    final startSec = (source.startMs / 1000).toStringAsFixed(1);
+    final endSec = (source.endMs / 1000).toStringAsFixed(1);
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: context.bgCard,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: context.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.headphones_rounded, size: 14, color: context.accentText),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${source.clipTitle} · $startSec–$endSec 秒',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: context.textPrimary),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _replayFromListening(source),
+                icon: const Icon(Icons.play_arrow_rounded, size: 14),
+                label: const Text('回听'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: context.accentText,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            source.sentence,
+            style: TextStyle(fontSize: 12.5, color: context.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 回到 IT 会议听力工具的指定片段与时间点重听。
+  void _replayFromListening(ListeningTermSource source) {
+    final clip = ListeningHost.instance.index.byId(source.clipId);
+    if (clip == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该素材已不在素材库中')),
+      );
+      return;
+    }
+    // 打开工具页并跳到该片段：状态放在 host 里，工具页下次构建时读取。
+    ListeningHost.instance.pendingReplay = (
+      clipId: source.clipId,
+      offsetMs: source.startMs,
+    );
+    Navigator.of(context).pushNamed('/');
   }
 
   Widget _buildMasteryPicker(VocabEntryModel entry) {

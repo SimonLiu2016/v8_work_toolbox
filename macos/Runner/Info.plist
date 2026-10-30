@@ -38,6 +38,8 @@
 		<string>NSApplication</string>
 		<key>NSAppleEventsUsageDescription</key>
 		<string>需要访问其他应用的UI元素以读取快捷键信息</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>需要访问麦克风和音频输入设备以进行实时会议内录与语音翻译</string>
 		<key>NSServices</key>
 		<array>
 			<dict>

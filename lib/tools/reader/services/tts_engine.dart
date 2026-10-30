@@ -228,41 +228,187 @@ class OpenAiTtsEngine implements TtsEngine {
     return m.startsWith('mimo-') || url.contains('xiaomimimo.com') || name.contains('mimo');
   }
 
+  /// 判断目标是否属于阶跃星辰 (StepFun / StepAudio)
+  static bool isStepFunModel(String model, {String? baseUrl, String? providerName}) {
+    final m = model.toLowerCase();
+    final url = (baseUrl ?? '').toLowerCase();
+    final name = (providerName ?? '').toLowerCase();
+    return m.contains('stepaudio') ||
+        m.contains('stepfun') ||
+        url.contains('stepfun.com') ||
+        name.contains('阶跃') ||
+        name.contains('stepfun');
+  }
+
+  /// 判断目标是否属于通义千问 / 阿里云百炼 (Qwen / DashScope / CosyVoice)
+  static bool isQwenModel(String model, {String? baseUrl, String? providerName}) {
+    final m = model.toLowerCase();
+    final url = (baseUrl ?? '').toLowerCase();
+    final name = (providerName ?? '').toLowerCase();
+    return m.contains('cosyvoice') ||
+        m.contains('qwen-audio') ||
+        m.contains('qwen3-tts') ||
+        m.contains('qwen-tts') ||
+        url.contains('qianwenaiapi.com') ||
+        url.contains('dashscope.aliyuncs.com') ||
+        name.contains('千问') ||
+        name.contains('qwen');
+  }
+
+  /// 判断目标是否为 OpenAI 官方或默认端点
+  static bool isOpenAiProvider({String? baseUrl, String? providerName}) {
+    final url = (baseUrl ?? '').toLowerCase();
+    final name = (providerName ?? '').toLowerCase();
+    return url.contains('api.openai.com') || name.contains('openai');
+  }
+
+  /// 判断音色是否具有男性角色倾向
+  static bool _isMaleVoice(String voice) {
+    final v = voice.toLowerCase();
+    const maleVoiceIds = {
+      'boyinnansheng',
+      'cixingnansheng',
+      'ruyananshi',
+      'shenchennanyin',
+      'dushexiaoyu',
+      'echo',
+      'onyx',
+      'fable',
+      'longanlufeng',
+      'longcheng',
+      'longshuo',
+      'longyuan',
+      'longfei',
+    };
+    if (maleVoiceIds.contains(v)) return true;
+    if (v.contains('male') || v.contains('nan') || v.contains('boy')) return true;
+    return false;
+  }
+
+  /// 根据目标平台自适应映射与防御音色
+  static String adaptVoiceForProvider(
+    String requestedVoice, {
+    required bool isQwen,
+    required bool isMimo,
+    required bool isStepFun,
+    required bool isOpenAi,
+  }) {
+    final v = requestedVoice.trim();
+
+    if (isMimo) {
+      if (v.isEmpty || !TtsVoiceOption.mimoSupportedVoiceIds.contains(v)) {
+        return 'mimo_default';
+      }
+      return v;
+    }
+
+    if (isQwen) {
+      const qwenVoices = {
+        'longanlingxin',
+        'longanlufeng',
+        'longanlingxin_v3.1',
+        'longanhuan_v3.1',
+        'longanfengyue_v3.1',
+        'longxiaochun',
+        'longwan',
+        'longcheng',
+        'longshuo',
+      };
+      if (qwenVoices.contains(v.toLowerCase())) {
+        return v;
+      }
+      // 跨厂商音色自适应：如果是已知男声，映射为 longanlufeng；其余全部防御为 longanlingxin
+      return _isMaleVoice(v) ? 'longanlufeng' : 'longanlingxin';
+    }
+
+    if (isStepFun) {
+      const stepVoices = {
+        'zhixingjiejie',
+        'cixingnansheng',
+        'boyinnansheng',
+        'step_boy',
+        'dushexiaoyu',
+        'ruyananshi',
+        'shenchennanyin',
+        'elegantgentle-female',
+        'livelybreezy-female',
+      };
+      if (stepVoices.contains(v.toLowerCase())) {
+        return v;
+      }
+      return _isMaleVoice(v) ? 'cixingnansheng' : 'zhixingjiejie';
+    }
+
+    // 默认 OpenAI 兼容规范
+    const openAiVoices = {'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'};
+    if (openAiVoices.contains(v.toLowerCase())) {
+      return v;
+    }
+    if (_isMaleVoice(v)) {
+      return 'echo';
+    }
+    return 'alloy';
+  }
+
+  /// 构造 MiMo 的 user 消息风格指令。
+  ///
+  /// MiMo 没有 `speed`/`pitch` 数值参数，其「快慢/语调/情绪」全靠自然语言
+  /// 指令表达。这里把配置中的 [TtsSynthesisConfig.speed] 翻译成语速片段，
+  /// 拼接到用户配置的 [TtsSynthesisConfig.styleInstruction] 之后。非 MiMo
+  /// 引擎不会调用此方法（由调用方以 `isMimo` 门控）。
+  static String? _buildMimoStyleInstruction(TtsSynthesisConfig config) {
+    final base = config.styleInstruction.trim();
+    final speed = config.speed;
+
+    String? speedFragment;
+    if (speed > 1.5) {
+      speedFragment = '语速很快';
+    } else if (speed > 1.0) {
+      speedFragment = '语速加快';
+    } else if (speed < 0.75) {
+      speedFragment = '语速很慢';
+    } else if (speed < 1.0) {
+      speedFragment = '语速放慢';
+    }
+
+    if (speedFragment == null) return base.isEmpty ? null : base;
+    if (base.isEmpty) return speedFragment;
+    return '$base，$speedFragment';
+  }
+
   /// 解析系统 AI 配置下的 TTS 目标模型
   static String resolveSystemModel({
     AiProviderConfig? provider,
     String? configuredModel,
     AiConfigStore? store,
-  }) {
-    final s = store ?? AiConfigStore.instance;
+  }) {    final s = store ?? AiConfigStore.instance;
     String resolved = '';
 
     if (provider != null) {
       final candidates = s.slotBindings['tts'] ?? [];
-      // 1. 优先从 slotBindings['tts'] 中寻找匹配当前 provider 的模型
+      // 1. 严格仅从 slotBindings['tts'] 中寻找匹配当前 provider 的模型（禁止跨厂商候选项渗透）
       for (final cand in candidates) {
         if (cand.providerId == provider.id && cand.model.trim().isNotEmpty) {
-          resolved = cand.model.trim();
-          break;
-        }
-      }
-
-      // 2. 若当前 provider 未在 slot 中指定具体模型，查看 slot 中是否有任何非空候选模型
-      if (resolved.isEmpty) {
-        for (final cand in candidates) {
-          if (cand.model.trim().isNotEmpty) {
-            resolved = cand.model.trim();
+          final m = cand.model.trim();
+          if (m != 'qwen-audio-tts' && !m.startsWith('cosyvoice')) {
+            resolved = m;
             break;
           }
         }
       }
 
-      // 3. 从 provider.ttsModels 获取
+      // 2. 从 provider.ttsModels 获取可用模型（排除非法的 qwen-audio-tts 及不支持的 cosyvoice）
       if (resolved.isEmpty && provider.ttsModels.isNotEmpty) {
-        resolved = provider.ttsModels.first.trim();
+        for (final tm in provider.ttsModels) {
+          final t = tm.trim();
+          if (t.isNotEmpty && t != 'qwen-audio-tts' && !t.startsWith('cosyvoice')) {
+            resolved = t;
+            break;
+          }
+        }
       }
 
-      // 4. 从 provider 的所有模型列表中查找包含 'tts' 的模型
+      // 3. 从 provider 的所有模型列表中查找包含 'tts' 的模型
       if (resolved.isEmpty) {
         final allModels = [
           ...provider.ttsModels,
@@ -271,8 +417,11 @@ class OpenAiTtsEngine implements TtsEngine {
           ...provider.sttModels,
         ];
         for (final m in allModels) {
-          if (m.toLowerCase().contains('tts')) {
-            resolved = m.trim();
+          final trimmed = m.trim();
+          if (trimmed.toLowerCase().contains('tts') &&
+              trimmed != 'qwen-audio-tts' &&
+              !trimmed.startsWith('cosyvoice')) {
+            resolved = trimmed;
             break;
           }
         }
@@ -284,13 +433,39 @@ class OpenAiTtsEngine implements TtsEngine {
       baseUrl: provider?.baseUrl,
       providerName: provider?.name,
     );
+    final isQwen = isQwenModel(
+      resolved,
+      baseUrl: provider?.baseUrl,
+      providerName: provider?.name,
+    );
+    final isStepFun = isStepFunModel(
+      resolved,
+      baseUrl: provider?.baseUrl,
+      providerName: provider?.name,
+    );
+
+    // 4. 若为千问，且模型仍未解析出、为 tts-1 或历史遗留的 qwen-audio-tts/cosyvoice，统一使用官方稳定的 qwen-audio-3.0-tts-plus
+    if (isQwen &&
+        (resolved.isEmpty ||
+            resolved == 'tts-1' ||
+            resolved == 'qwen-audio-tts' ||
+            resolved.startsWith('cosyvoice'))) {
+      return 'qwen-audio-3.0-tts-plus';
+    }
 
     // 5. 若是小米 MiMo 供应商，且仍未解析出或者为 tts-1，兜底使用 mimo-v2.5-tts
     if (isMimo && (resolved.isEmpty || resolved == 'tts-1')) {
       return 'mimo-v2.5-tts';
     }
 
-    if (resolved.isNotEmpty) {
+    // 6. 若是阶跃 StepFun 供应商，且仍未解析出或者为 tts-1，兜底使用 stepaudio-2.5-tts
+    if (isStepFun && (resolved.isEmpty || resolved == 'tts-1')) {
+      return 'stepaudio-2.5-tts';
+    }
+
+    if (resolved.isNotEmpty &&
+        resolved != 'qwen-audio-tts' &&
+        !resolved.startsWith('cosyvoice')) {
       return resolved;
     }
 
@@ -299,10 +474,23 @@ class OpenAiTtsEngine implements TtsEngine {
       if (isMimo && (cm.isEmpty || cm == 'tts-1')) {
         return 'mimo-v2.5-tts';
       }
+      if (isQwen &&
+          (cm.isEmpty ||
+              cm == 'tts-1' ||
+              cm == 'qwen-audio-tts' ||
+              cm.startsWith('cosyvoice'))) {
+        return 'qwen-audio-3.0-tts-plus';
+      }
+      if (isStepFun && (cm.isEmpty || cm == 'tts-1')) {
+        return 'stepaudio-2.5-tts';
+      }
       return cm;
     }
 
-    return isMimo ? 'mimo-v2.5-tts' : 'tts-1';
+    if (isMimo) return 'mimo-v2.5-tts';
+    if (isQwen) return 'qwen-audio-3.0-tts-plus';
+    if (isStepFun) return 'stepaudio-2.5-tts';
+    return 'tts-1';
   }
 
   @override
@@ -375,28 +563,43 @@ class OpenAiTtsEngine implements TtsEngine {
       endpoint = endpoint.substring(0, endpoint.length - 1);
     }
 
-    // 强化防御：若为 MiMo 且模型仍为 tts-1 或空，强制更正为 mimo-v2.5-tts
-    if (isMimoModel(model, baseUrl: endpoint, providerName: providerName)) {
+    final isMimo = isMimoModel(model, baseUrl: endpoint, providerName: providerName);
+    final isQwen = isQwenModel(model, baseUrl: endpoint, providerName: providerName);
+    final isStepFun = isStepFunModel(model, baseUrl: endpoint, providerName: providerName);
+    final isOpenAi = isOpenAiProvider(baseUrl: endpoint, providerName: providerName);
+
+    // 强化防御：多平台模型自适应归一化
+    if (isQwen) {
+      if (model.isEmpty ||
+          model == 'tts-1' ||
+          model == 'qwen-audio-tts' ||
+          model.startsWith('cosyvoice')) {
+        model = 'qwen-audio-3.0-tts-plus';
+      }
+    } else if (isMimo) {
       if (model.isEmpty || model == 'tts-1') {
         model = 'mimo-v2.5-tts';
+      }
+    } else if (isStepFun) {
+      if (model.isEmpty || model == 'tts-1') {
+        model = 'stepaudio-2.5-tts';
       }
     }
 
     final isChatAudio = isChatAudioModel(model, baseUrl: endpoint, providerName: providerName);
-    final isMimo = isMimoModel(model, baseUrl: endpoint, providerName: providerName);
 
-    // 解析音色并进行兼容性防御兜底
-    String voice = config.effectiveVoiceId.trim();
-    if (isMimo) {
-      // 若当前音色不在 MiMo 允许的音色列表中（如继承了 Edge 或 OpenAI 的音色），兜底为 mimo_default
-      if (voice.isEmpty || !TtsVoiceOption.mimoSupportedVoiceIds.contains(voice)) {
-        voice = 'mimo_default';
-      }
-    } else {
-      if (voice.isEmpty) {
-        voice = 'alloy';
-      }
-    }
+    // 解析音色并进行全平台跨厂商自适应与防御兜底
+    final voice = adaptVoiceForProvider(
+      config.effectiveVoiceId,
+      isQwen: isQwen,
+      isMimo: isMimo,
+      isStepFun: isStepFun,
+      isOpenAi: isOpenAi,
+    );
+
+    // MiMo 没有 speed/pitch 数值参数，其语速靠自然语言指令表达。
+    // 这里把用户选的速度倍率翻译成指令片段，拼到风格指令末尾。
+    final mimoStyle = isMimo ? _buildMimoStyleInstruction(config) : null;
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -407,7 +610,8 @@ class OpenAiTtsEngine implements TtsEngine {
       },
     };
 
-    final pName = providerName ?? (isMimo ? 'Xiaomi MiMo' : 'OpenAI-Compatible TTS');
+    final pName = providerName ??
+        (isMimo ? 'Xiaomi MiMo' : (isQwen ? '千问 (Qwen)' : 'OpenAI-Compatible TTS'));
 
     if (isChatAudio) {
       // 采用 OpenAI Chat Audio Completions 规范 (POST /v1/chat/completions)
@@ -424,6 +628,10 @@ class OpenAiTtsEngine implements TtsEngine {
       final body = jsonEncode({
         'model': model.isNotEmpty ? model : 'mimo-v2.5-tts',
         'messages': [
+          // MiMo 的风格指令以 user 消息承载；有内容才注入，避免空 user 消息
+          // 破坏请求（MiMo 要求 TTS 请求必须含 assistant 角色消息）。
+          if (mimoStyle != null && mimoStyle.trim().isNotEmpty)
+            {'role': 'user', 'content': mimoStyle.trim()},
           {
             'role': 'assistant',
             'content': text,
@@ -527,6 +735,153 @@ class OpenAiTtsEngine implements TtsEngine {
           );
           AiLogger.logError('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
           throw Exception('Chat Audio TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
+        }
+      }
+    } else if (isQwen) {
+      // 采用阿里云百炼 DashScope 原生 SpeechSynthesizer 规范 (POST /api/v1/services/audio/tts/SpeechSynthesizer)
+      String dashscopeEndpoint = endpoint;
+      if (dashscopeEndpoint.contains('/compatible-mode/v1')) {
+        dashscopeEndpoint = dashscopeEndpoint.replaceAll(
+          '/compatible-mode/v1',
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+        );
+      } else if (dashscopeEndpoint.endsWith('/v1')) {
+        dashscopeEndpoint = dashscopeEndpoint.replaceAll(
+          RegExp(r'/v1$'),
+          '/api/v1/services/audio/tts/SpeechSynthesizer',
+        );
+      } else if (!dashscopeEndpoint.contains('/SpeechSynthesizer')) {
+        while (dashscopeEndpoint.endsWith('/')) {
+          dashscopeEndpoint = dashscopeEndpoint.substring(0, dashscopeEndpoint.length - 1);
+        }
+        dashscopeEndpoint = '$dashscopeEndpoint/api/v1/services/audio/tts/SpeechSynthesizer';
+      }
+
+      final url = Uri.parse(dashscopeEndpoint);
+      final body = jsonEncode({
+        'model': model.isNotEmpty ? model : 'qwen-audio-3.0-tts-plus',
+        'input': {
+          'text': text,
+          'voice': voice,
+          'format': 'mp3',
+        },
+      });
+
+      http.Response? response;
+      int retryCount = 0;
+      const maxRetries = 3;
+
+      while (true) {
+        final stopwatch = Stopwatch()..start();
+        AiLogger.logRequest(
+          providerName: pName,
+          protocol: 'dashscope-speech-synthesizer',
+          model: model,
+          endpoint: dashscopeEndpoint,
+          promptSummary: 'TTS 合成 [音色: $voice, 语速: ${config.speed}x]: $text',
+        );
+
+        try {
+          response = await _client
+              .post(url, headers: headers, body: body)
+              .timeout(const Duration(seconds: 90));
+        } catch (e) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            AiLogger.logWarning(
+              '百炼 TTS 网络连接波动 ($e)，重置连接并在 1.5s 后进行第 $retryCount 次重试...',
+              providerName: pName,
+            );
+            try {
+              _client.close();
+            } catch (_) {}
+            _client = _clientFactory?.call() ??
+                AppHttpClient.create(toolId: kToolIdDocAudioReader);
+            await Future.delayed(const Duration(milliseconds: 1500));
+            continue;
+          }
+          AiLogger.logError('百炼 TTS 请求网络异常: $e', providerName: pName);
+          rethrow;
+        }
+
+        if (response.statusCode == 429 && retryCount < maxRetries) {
+          retryCount++;
+          const steppedDelays = [4000, 10000, 20000];
+          int delayMs = steppedDelays[retryCount - 1];
+          final retryAfterHeader = response.headers['retry-after'];
+          if (retryAfterHeader != null) {
+            final parsedSeconds = int.tryParse(retryAfterHeader.trim());
+            if (parsedSeconds != null && parsedSeconds > 0) {
+              final headerMs = parsedSeconds * 1000;
+              if (headerMs > delayMs) delayMs = headerMs;
+            }
+          }
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logWarning(
+            '百炼 TTS 触发并发频率限制 (HTTP 429)，等待 ${delayMs ~/ 1000}s 后重试... [响应: $errorMsg]',
+            providerName: pName,
+          );
+          await Future.delayed(Duration(milliseconds: delayMs));
+          continue;
+        }
+
+        if (response.statusCode == 200) {
+          final bodyStr = utf8.decode(response.bodyBytes, allowMalformed: true);
+          try {
+            final jsonMap = jsonDecode(bodyStr);
+            if (jsonMap is Map<String, dynamic>) {
+              final output = jsonMap['output'];
+              if (output is Map<String, dynamic>) {
+                final audio = output['audio'];
+                if (audio is Map<String, dynamic>) {
+                  // 1. 若直接携带 base64 数据
+                  final data = (audio['data'] as String?)?.trim();
+                  if (data != null && data.isNotEmpty) {
+                    final bytes = base64Decode(data);
+                    AiLogger.logResponse(
+                      providerName: pName,
+                      statusCode: 200,
+                      durationMs: stopwatch.elapsedMilliseconds,
+                      bodyPreview: '百炼 TTS base64 音频解码成功: ${bytes.length} bytes',
+                    );
+                    return bytes;
+                  }
+                  // 2. 若携带音频临时下载地址 url
+                  final audioUrl = (audio['url'] as String?)?.trim();
+                  if (audioUrl != null && audioUrl.isNotEmpty) {
+                    final dlResp = await _client.get(Uri.parse(audioUrl)).timeout(const Duration(seconds: 30));
+                    if (dlResp.statusCode == 200 && dlResp.bodyBytes.isNotEmpty) {
+                      AiLogger.logResponse(
+                        providerName: pName,
+                        statusCode: 200,
+                        durationMs: stopwatch.elapsedMilliseconds,
+                        bodyPreview: '百炼 TTS url 下载成功: ${dlResp.bodyBytes.length} bytes',
+                      );
+                      return dlResp.bodyBytes;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+
+          if (response.bodyBytes.isNotEmpty && !bodyStr.trim().startsWith('{')) {
+            return response.bodyBytes;
+          }
+
+          final err = '百炼 TTS 响应成功但未解析到音频内容: $bodyStr';
+          AiLogger.logError(err, providerName: pName);
+          throw Exception(err);
+        } else {
+          final errorMsg = utf8.decode(response.bodyBytes, allowMalformed: true);
+          AiLogger.logResponse(
+            providerName: pName,
+            statusCode: response.statusCode,
+            durationMs: stopwatch.elapsedMilliseconds,
+            bodyPreview: errorMsg,
+          );
+          AiLogger.logError('百炼 TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg', providerName: pName);
+          throw Exception('百炼 TTS 合成失败 (HTTP ${response.statusCode}): $errorMsg');
         }
       }
     } else {

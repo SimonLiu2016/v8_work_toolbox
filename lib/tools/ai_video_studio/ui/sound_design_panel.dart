@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../theme/app_theme.dart';
 import '../../ai_video_studio/models/studio_models.dart';
+import '../../ai_video_studio/services/prompt_assembler.dart';
 import '../../ai_video_studio/services/studio_project_manager.dart';
 import '../../ai_video_studio/services/studio_sound_design.dart';
 import 'studio_shell.dart';
@@ -82,13 +83,31 @@ class _SoundDesignPanelState extends State<SoundDesignPanel> {
         audioDir: _manager.episodeAudioDir(series.id, episode.id).path,
         defaultVoiceId: series.defaultVoiceId,
         resolveVoiceId: (shot) {
-          if (shot.characterIds.isEmpty) return '';
-          final id = shot.characterIds.first;
-          return characters
-                  .where((c) => c.id == id)
-                  .firstOrNull
-                  ?.ttsVoiceId ??
-              '';
+          final speaker = PromptAssembler.extractSpeakerName(shot.dialogue);
+          if (speaker.isNotEmpty) {
+            // 优先根据提取的真实说话人姓名精准匹配角色库音色
+            final matched = characters.where((c) {
+              final name = c.name.trim();
+              if (name.isEmpty) return false;
+              if (name == speaker || name.contains(speaker) || speaker.contains(name)) {
+                return true;
+              }
+              return c.aliases.any((a) => a.trim().isNotEmpty && (a == speaker || speaker.contains(a)));
+            }).firstOrNull;
+            if (matched != null && matched.ttsVoiceId.trim().isNotEmpty) {
+              return matched.ttsVoiceId.trim();
+            }
+          }
+
+          // 回退：从该分镜出场角色中查找已绑定有效音色的角色
+          for (final id in shot.characterIds) {
+            final c = characters.where((c) => c.id == id).firstOrNull;
+            if (c != null && c.ttsVoiceId.trim().isNotEmpty) {
+              return c.ttsVoiceId.trim();
+            }
+          }
+
+          return '';
         },
         onProgress: (shotNumber, progress) {
           if (!mounted) return;

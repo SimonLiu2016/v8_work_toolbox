@@ -6,16 +6,164 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/studio_models.dart';
+import 'breakdown_input.dart';
 import 'ffmpeg_composer.dart';
 import 'image_gen_adapter.dart';
 import 'prompt_assembler.dart';
 import 'studio_project_manager.dart';
 import 'studio_task_queue.dart';
 import 'video_gen_adapter.dart';
+
+/// 首尾帧接力的判据（spec: 分镜首帧来源的可信判据）。
+///
+/// 上一镜的视频尾帧只能作为**同一主体连续动作**的下一镜首帧。正反打、切景
+/// 别、换主体都发生在同一个场景卡内——旧实现只比 `sceneId` 相等，于是
+/// 「三楼窗口俯拍特写」的尾帧会被塞给「地面街心仰拍中景」当首帧，视频模型
+/// 要么把人物换成另一个人，要么在窗户里变出一头驴。
+///
+/// 四个条件全部取自用户/AI 已声明的字段，不引入新输入：
+/// 1. 同一场景卡；
+/// 2. 出场主体集合判等（上镜三人、本镜一人同样是切主体）；
+/// 3. 非正反打；
+/// 4. 景别差不超过 1 档。
+bool canRelayFrameFromPrev(StudioShot prevShot, StudioShot shot) {
+  if (prevShot.sceneId != shot.sceneId) return false;
+  if (prevShot.sceneId.isEmpty) return false;
+
+  final prevIds = prevShot.characterIds.toSet();
+  final currIds = shot.characterIds.toSet();
+  if (!setEquals(prevIds, currIds)) return false;
+
+  // 空间高度层（elevationLevel）不一致时禁止接力（如二楼 balcony_2f vs 地面 ground）。
+  final prevElev = prevShot.continuity.elevationLevel.trim().toLowerCase();
+  final currElev = shot.continuity.elevationLevel.trim().toLowerCase();
+  if (prevElev.isNotEmpty && currElev.isNotEmpty && prevElev != currElev) {
+    return false;
+  }
+
+  // 拍摄俯仰角（cameraAngle）不一致时禁止接力（如俯拍 high_angle vs 仰拍 low_angle）。
+  final prevAngle = (prevShot.continuity.cameraAngle.trim().isNotEmpty
+          ? prevShot.continuity.cameraAngle
+          : prevShot.directorDecisions.cameraAngle)
+      .trim()
+      .toLowerCase();
+  final currAngle = (shot.continuity.cameraAngle.trim().isNotEmpty
+          ? shot.continuity.cameraAngle
+          : shot.directorDecisions.cameraAngle)
+      .trim()
+      .toLowerCase();
+  if (prevAngle.isNotEmpty && currAngle.isNotEmpty && prevAngle != currAngle) {
+    return false;
+  }
+
+  if (_isReverseShot(prevShot, shot)) return false;
+
+  final rankGap =
+      (_shotSizeRank(prevShot.shotSize) - _shotSizeRank(shot.shotSize)).abs();
+  return rankGap <= 1;
+}
+
+/// 正反打判定：
+/// 1. 任一方被显式标记为对峙分工（`confrontation`）；
+/// 2. 两镜中一方特写另一方非特写；
+/// 3. 两镜的连续性视线方向（`gazeDirection`）或画面站位（`screenPosition`）发生左右/俯仰镜像翻转。
+bool _isReverseShot(StudioShot prevShot, StudioShot shot) {
+  final ids = {...prevShot.characterIds, ...shot.characterIds};
+  for (final id in ids) {
+    final prevRole = prevShot.assetBindings[id]?.role;
+    final currRole = shot.assetBindings[id]?.role;
+    if (prevRole == ShotAssetRole.confrontation ||
+        currRole == ShotAssetRole.confrontation) {
+      return true;
+    }
+  }
+  final prevClose = prevShot.shotSize == StudioShotSize.closeUp;
+  final currClose = shot.shotSize == StudioShotSize.closeUp;
+  if (prevClose != currClose) return true;
+
+  final prevGaze = prevShot.continuity.gazeDirection.trim().isNotEmpty
+      ? prevShot.continuity.gazeDirection
+      : prevShot.directorDecisions.gazeDirection;
+  final currGaze = shot.continuity.gazeDirection.trim().isNotEmpty
+      ? shot.continuity.gazeDirection
+      : shot.directorDecisions.gazeDirection;
+  if (_hasOppositeOrientation(prevGaze, currGaze)) {
+    return true;
+  }
+
+  if (_hasOppositeOrientation(
+    prevShot.continuity.screenPosition,
+    shot.continuity.screenPosition,
+  )) {
+    return true;
+  }
+
+  return false;
+}
+
+bool _hasOppositeOrientation(String rawA, String rawB) {
+  final a = rawA.trim().toLowerCase();
+  final b = rawB.trim().toLowerCase();
+  if (a.isEmpty || b.isEmpty || a == b) return false;
+
+  int? sideOf(String s) {
+    final leftIdx = s.indexOf(RegExp(r'left|左'));
+    final rightIdx = s.indexOf(RegExp(r'right|右'));
+    if (leftIdx >= 0 && rightIdx < 0) return -1;
+    if (rightIdx >= 0 && leftIdx < 0) return 1;
+    if (leftIdx >= 0 && rightIdx >= 0) {
+      return leftIdx < rightIdx ? -1 : 1;
+    }
+    return null;
+  }
+
+  final sideA = sideOf(a);
+  final sideB = sideOf(b);
+  if (sideA != null && sideB != null && sideA != sideB) {
+    return true;
+  }
+
+  int? verticalOf(String s) {
+    final upIdx = s.indexOf(RegExp(r'up|仰|上'));
+    final downIdx = s.indexOf(RegExp(r'down|俯|下'));
+    if (upIdx >= 0 && downIdx < 0) return 1;
+    if (downIdx >= 0 && upIdx < 0) return -1;
+    if (upIdx >= 0 && downIdx >= 0) {
+      return upIdx < downIdx ? 1 : -1;
+    }
+    return null;
+  }
+
+  final vertA = verticalOf(a);
+  final vertB = verticalOf(b);
+  if (vertA != null && vertB != null && vertA != vertB) {
+    return true;
+  }
+  return false;
+}
+
+/// 景别档位（特写最近、大远景最远）。用于算两镜的景别差。
+int _shotSizeRank(StudioShotSize size) {
+  switch (size) {
+    case StudioShotSize.closeUp:
+      return 0;
+    case StudioShotSize.mediumCloseUp:
+      return 1;
+    case StudioShotSize.medium:
+      return 2;
+    case StudioShotSize.full:
+      return 3;
+    case StudioShotSize.long:
+      return 4;
+    case StudioShotSize.extremeLong:
+      return 5;
+  }
+}
 
 /// 关键帧生成任务。
 ///
@@ -65,135 +213,6 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
   @override
   bool isCancelled() => _cancelled;
 
-  /// 收集本次生图的参考图：所有同框角色形态三视图/基准三视图 + 场景主视图/机位匹配空间图。
-  List<String> _referenceImages(
-    StudioProjectManager manager,
-    List<CharacterCard> characters,
-    Map<String, CharacterVariation?> characterVariations,
-    CharacterCard? fallbackCharacter,
-    CharacterVariation? fallbackVariation,
-    SceneCard? scene, {
-    String? cameraMove,
-    String? shotSize,
-    String? actionZh,
-  }) {
-    final result = <String>[];
-    final effectiveCharacters = characters.isNotEmpty
-        ? characters
-        : (fallbackCharacter != null ? [fallbackCharacter] : <CharacterCard>[]);
-
-    for (final c in effectiveCharacters) {
-      final v = characterVariations[c.id] ??
-          (c.id == fallbackCharacter?.id ? fallbackVariation : null) ??
-          c.activeVariation;
-      final charDir = manager.characterDir(seriesId, c.id);
-      String? chosenRefPath;
-
-      // 1. 若指定了形态，优先读取形态专属三视图
-      if (v != null) {
-        if (v.turnaroundPath != null && v.turnaroundPath!.isNotEmpty) {
-          final f = File(p.join(charDir.path, v.turnaroundPath!));
-          if (f.existsSync()) chosenRefPath = f.path;
-        }
-        if (chosenRefPath == null) {
-          final autoStd =
-              File(p.join(charDir.path, 'turnaround_${v.id}.png'));
-          if (autoStd.existsSync()) chosenRefPath = autoStd.path;
-        }
-        if (chosenRefPath == null) {
-          final autoChibi =
-              File(p.join(charDir.path, 'turnaround_${v.id}_chibi.png'));
-          if (autoChibi.existsSync()) chosenRefPath = autoChibi.path;
-        }
-        if (chosenRefPath == null && v.referenceImages.isNotEmpty) {
-          final f = File(p.join(charDir.path, v.referenceImages.first));
-          if (f.existsSync()) chosenRefPath = f.path;
-        }
-      }
-
-      // 2. 回退到角色默认三视图
-      if (chosenRefPath == null) {
-        final stdTurnaround = File(p.join(charDir.path, 'turnaround.png'));
-        if (stdTurnaround.existsSync()) {
-          chosenRefPath = stdTurnaround.path;
-        } else {
-          final chibiTurnaround =
-              File(p.join(charDir.path, 'turnaround_chibi.png'));
-          if (chibiTurnaround.existsSync()) {
-            chosenRefPath = chibiTurnaround.path;
-          }
-        }
-      }
-
-      // 3. 回退到角色第一张参考图
-      if (chosenRefPath == null && c.referenceImages.isNotEmpty) {
-        final f = File(p.join(charDir.path, c.referenceImages.first));
-        if (f.existsSync()) chosenRefPath = f.path;
-      }
-
-      if (chosenRefPath != null) {
-        result.add(chosenRefPath);
-      }
-    }
-
-    if (scene != null) {
-      final matchedView = PromptAssembler.resolveSpatialViewForShot(
-        scene: scene,
-        cameraMove: cameraMove,
-        shotSize: shotSize,
-        actionZh: actionZh,
-      );
-      String? chosenSceneRef;
-      if (matchedView != null &&
-          matchedView.imagePath != null &&
-          matchedView.imagePath!.trim().isNotEmpty) {
-        final rel = matchedView.imagePath!.trim();
-        final path = p.isAbsolute(rel)
-            ? rel
-            : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
-        final f = File(path);
-        if (f.existsSync()) chosenSceneRef = f.path;
-      }
-      if (chosenSceneRef == null) {
-        final frontView = scene.viewFor(SceneDirection.front);
-        if (frontView.imagePath != null &&
-            frontView.imagePath!.trim().isNotEmpty) {
-          final rel = frontView.imagePath!.trim();
-          final path = p.isAbsolute(rel)
-              ? rel
-              : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
-          final f = File(path);
-          if (f.existsSync()) chosenSceneRef = f.path;
-        }
-      }
-      if (chosenSceneRef == null && scene.referenceImages.isNotEmpty) {
-        final f = File(
-          p.join(manager.sceneDir(seriesId, scene.id).path, scene.referenceImages.first),
-        );
-        if (f.existsSync()) chosenSceneRef = f.path;
-      }
-      if (chosenSceneRef == null) {
-        for (final v in scene.spatialViews.values) {
-          if (v.imagePath != null && v.imagePath!.trim().isNotEmpty) {
-            final rel = v.imagePath!.trim();
-            final path = p.isAbsolute(rel)
-                ? rel
-                : p.join(manager.sceneDir(seriesId, scene.id).path, rel);
-            final f = File(path);
-            if (f.existsSync()) {
-              chosenSceneRef = f.path;
-              break;
-            }
-          }
-        }
-      }
-      if (chosenSceneRef != null) {
-        result.add(chosenSceneRef);
-      }
-    }
-    return result;
-  }
-
   @override
   Future<String> run(void Function(double progress) onProgress) async {
     onProgress(0.05);
@@ -214,21 +233,66 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
             ? manager.readScene(seriesId, shot.sceneId)
             : null);
 
+    // 形态解析下沉为共享函数（spec: 生图与生视频的参考图取材同源）。旧实现
+    // 直接用 UI 传进来的 characterVariations / variation，而那是 UI 侧的
+    // _resolveVariation 结果——一旦入口没走 UI（批量路径、重试路径），三级
+    // 优先级就退化成 card.activeVariation，用户在分镜卡选的形态悄悄失效。
+    final effectiveVariations = <String, CharacterVariation?>{};
+    for (final c in characters) {
+      effectiveVariations[c.id] = ShotVariationResolver.resolve(
+        episode: episode,
+        shot: shot,
+        character: c,
+      );
+    }
+    final effectivePrimary = character ?? characters.firstOrNull;
+    final effectivePrimaryVariation = effectivePrimary != null
+        ? effectiveVariations[effectivePrimary.id]
+        : null;
+
+    // 参考图取材与视频生成读同一份素材绑定（spec: 生图与生视频的参考图取材
+    // 同源）。旧实现自己写了一份「turnaround.png → referenceImages.first」的
+    // 挑选，与视频路径的 AssetBindingResolver 各挑各的——同一分镜，关键帧用
+    // 三视图、视频用上传图，用户看到的就是「人物长相对不上」。
+    //
+    // 形态的三级优先级通过临时角色卡喂给 resolver：把 activeVariation 换成
+    // 解析结果，resolver 的默认取材就会优先找该形态的三视图。
+    final fallbackChar = character;
+    final resolverCharacters = <CharacterCard>[
+      ...characters,
+      if (characters.isEmpty && fallbackChar != null) fallbackChar,
+    ];
+    final cardsForResolver = <CharacterCard>[
+      for (final c in resolverCharacters)
+        ShotVariationResolver.resolveCharacterForShot(
+          episode: episode,
+          shot: shot,
+          character: c,
+        ),
+    ];
+    final allProps = await manager.listProps(seriesId);
+    final resolvedMaterials = AssetBindingResolver.resolve(
+      shot: shot,
+      characters: cardsForResolver,
+      props: allProps,
+      scene: effectiveScene,
+      seriesId: seriesId,
+      manager: manager,
+    );
+    final referenceImages = resolvedMaterials.map((m) => m.filePath).toList();
+    // 按参考图顺序推出「哪些角色有图」——多图编号段靠它对齐实际提交的数组。
+    final charactersWithImages = <CharacterCard>[];
+    for (final m in resolvedMaterials) {
+      if (m.isScene || m.isProp) continue;
+      final card = cardsForResolver.where((c) => c.id == m.assetId).firstOrNull;
+      if (card != null && !charactersWithImages.any((c) => c.id == card.id)) {
+        charactersWithImages.add(card);
+      }
+    }
+    final hasSceneImage = resolvedMaterials.any((m) => m.isScene);
+
     final series = manager.readSeries(seriesId);
     final eraGenre = VisualEraGenre.fromId(series?.eraGenre);
-
-    // 多参考图：角色形态专属/基准三视图 + 场景主视图（spec: 图像多参考图契约）。
-    final referenceImages = _referenceImages(
-      manager,
-      characters,
-      characterVariations,
-      character,
-      variation,
-      effectiveScene,
-      cameraMove: shot.cameraMove,
-      shotSize: ShotSizeTokens.of(shot.shotSize),
-      actionZh: shot.actionZh,
-    );
 
     final assembled = PromptAssembler.buildShotPrompt(PromptParts(
       productionType: series?.productionType,
@@ -238,10 +302,10 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
       shotSize: ShotSizeTokens.of(shot.shotSize),
       mood: MoodTokens.of(shot.mood),
       shotFunction: ShotFunctionTokens.of(shot.function),
-      character: character,
-      variation: variation,
-      characters: characters,
-      characterVariations: characterVariations,
+      character: effectivePrimary,
+      variation: effectivePrimaryVariation,
+      characters: cardsForResolver,
+      characterVariations: effectiveVariations,
       scene: effectiveScene,
       cameraMove: shot.cameraMove,
       actionZh: shot.actionZh,
@@ -251,7 +315,9 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
       directorDecisions: shot.directorDecisions,
       isMultiImage: referenceImages.length >= 2,
       hasCharacterReferences: referenceImages.isNotEmpty &&
-          (characters.isNotEmpty || character != null),
+          (cardsForResolver.isNotEmpty || effectivePrimary != null),
+      charactersWithImages: charactersWithImages,
+      hasSceneImage: hasSceneImage,
     ));
 
     // 每次生成都重新组装 Prompt：字段（台词/动作/运镜）可能刚被用户改过，
@@ -306,11 +372,16 @@ class ImageGenTask implements StudioTaskRunner, CancellableTaskRunner {
       seriesId,
       episodeId,
       shotNumber,
-      (current) => current.copyWith(
-        assembledPrompt: assembled.positive,
-        framePath: p.basename(outputFile.path),
-        status: ShotGenerationStatus.done,
-      ),
+      (current) {
+        final hasClip = current.clipPath != null && current.clipPath!.isNotEmpty;
+        return current.copyWith(
+          assembledPrompt: assembled.positive,
+          framePath: p.basename(outputFile.path),
+          status: ShotGenerationStatus.done,
+          // 若已有生成的视频，重新生成关键帧后原视频与最新地基脱节，标记为 stale 待重构
+          clipStatus: hasClip ? StudioClipStatus.stale : current.clipStatus,
+        );
+      },
     );
     // 关键帧可能覆盖了同名文件（如 shot_1.png），必须主动清除 Flutter 内存中的图片缓存，
     // 否则前端 Image.file 仍会命中旧图，需要重启或重开窗口才能展示。
@@ -421,18 +492,27 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
 
     File? inputImageFile;
     File? lastFrameImageFile;
+    var firstFrameSource = FirstFrameSource.none;
     final referenceFiles = <File>[];
 
-    // 提取出场人物卡与场景卡，用于组装 Prompt 或多参考图
+    // 提取出场人物卡与场景卡，用于组装 Prompt 或多参考图（通过 ShotVariationResolver 唯一激活当前分镜形态）
     final allCharacters = await manager.listCharacters(seriesId);
-    final shotCharacters = allCharacters
+    final rawShotCharacters = allCharacters
         .where((c) => shot.characterIds.contains(c.id))
         .toList();
-    shotCharacters.sort((a, b) {
+    rawShotCharacters.sort((a, b) {
       final aIdx = shot.characterIds.indexOf(a.id);
       final bIdx = shot.characterIds.indexOf(b.id);
       return aIdx.compareTo(bIdx);
     });
+    final shotCharacters = <CharacterCard>[
+      for (final c in rawShotCharacters)
+        ShotVariationResolver.resolveCharacterForShot(
+          episode: episode,
+          shot: shot,
+          character: c,
+        ),
+    ];
 
     final allScenes = await manager.listScenes(seriesId);
     final scene = allScenes.where((s) => s.id == shot.sceneId).firstOrNull;
@@ -446,14 +526,20 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
         final frameFile = File(
           p.join(manager.episodeFramesDir(seriesId, episodeId).path, frameName),
         );
+        // 本镜关键帧永远是默认首帧。跨镜尾帧接力只在满足严格判据时才会替换
+        // 它——正反打/切景别/换主体同属一个场景卡，旧实现只比 sceneId，会把
+        // 「三楼俯拍特写」的尾帧塞给「地面仰拍中景」当首帧（spec: 分镜首帧
+        // 来源的可信判据）。
         inputImageFile = frameFile;
+        firstFrameSource = FirstFrameSource.keyframe;
 
-        // 连续镜头首尾帧接力：当前后镜头连续时，提取前镜尾帧作为后镜首帧
+        // 连续镜头首尾帧接力：仅当两镜是同一主体的连续动作时才用上一镜尾帧。
         if (shotIndex > 0) {
           final prevShot = episode.shots[shotIndex - 1];
           if (prevShot.clipPath != null && prevShot.clipPath!.isNotEmpty) {
             final prevClipFile = File(p.join(clipsDir.path, prevShot.clipPath!));
-            if (prevClipFile.existsSync()) {
+            if (prevClipFile.existsSync() &&
+                canRelayFrameFromPrev(prevShot, shot)) {
               final framesDir = manager.episodeFramesDir(seriesId, episodeId);
               final prevLastFrameFile =
                   File(p.join(framesDir.path, 'shot_${prevShot.number}_last.png'));
@@ -462,9 +548,8 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
                 outputFile: prevLastFrameFile,
               );
               if (extracted != null && extracted.existsSync()) {
-                if (prevShot.sceneId == shot.sceneId || shot.sceneId.isEmpty) {
-                  inputImageFile = extracted;
-                }
+                inputImageFile = extracted;
+                firstFrameSource = FirstFrameSource.relay;
               }
             }
           }
@@ -478,9 +563,11 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
         // 逻辑，与生图路径的 _referenceImages 不一致——同一分镜，关键帧用
         // turnaround.png、视频用上传图，用户看到的就是「人物长相对不上」。
         // 现在两条路径读同一份 assetBindings，编号与 images 数组同序。
+        final allProps = await manager.listProps(seriesId);
         final resolved = AssetBindingResolver.resolveWithGaps(
           shot: shot,
           characters: shotCharacters,
+          props: allProps,
           scene: scene,
           seriesId: seriesId,
           manager: manager,
@@ -510,30 +597,46 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
       case AgnesVideoMode.text:
         inputImageFile = null;
         lastFrameImageFile = null;
+        firstFrameSource = FirstFrameSource.none;
         break;
 
       case AgnesVideoMode.auto:
         break;
     }
 
+    final allProps = await manager.listProps(seriesId);
     // 提示词与提交数组用同一份有序素材列表，编号错位在结构上不可能发生。
     final shotMaterials = AssetBindingResolver.resolve(
       shot: shot,
       characters: shotCharacters,
+      props: allProps,
       scene: scene,
       seriesId: seriesId,
       manager: manager,
     );
 
-    final videoPrompt = shot.videoPrompt.trim().isNotEmpty
-        ? shot.videoPrompt.trim()
-        : PromptAssembler.buildVideoGenPrompt(
-            shot: shot,
-            episode: episode,
-            characters: shotCharacters,
-            scene: scene,
-            materials: shotMaterials,
-          );
+    // 定制提示词只在来源未失效时使用（spec: 分镜字段变更作废缓存的视频提示词）。
+    // 用户在分镜卡改过动作/台词/出场角色/场景/素材绑定后，那份快照就不再反映
+    // 最新字段——继续用它，新绑定的 <Picture N> 与最新因果时间轴永远进不去请求。
+    final rawPrompt =
+        (!shot.isVideoPromptStale && shot.videoPrompt.trim().isNotEmpty)
+            ? shot.videoPrompt.trim()
+            : PromptAssembler.buildVideoGenPrompt(
+                shot: shot,
+                episode: episode,
+                characters: shotCharacters,
+                props: allProps,
+                scene: scene,
+                materials: shotMaterials,
+                videoMode: effectiveMode,
+                hasFirstFrame: inputImageFile != null,
+              );
+    final videoPrompt = PromptAssembler.sanitizeForVideoMode(
+      rawPrompt,
+      mode: effectiveMode,
+      materials: shotMaterials,
+      characters: shotCharacters,
+    );
 
     onProgress(0.1);
     await effectiveAdapter.generateVideo(
@@ -579,11 +682,19 @@ class VideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
       shotNumber,
       (current) => current.copyWith(
         clipPath: p.basename(outputFile.path),
+        // firstFramePath 记录**实际提交**的那个文件，firstFrameSource 记录它
+        // 是本镜关键帧还是接力自上一镜尾帧。旧实存在接力时把上一镜尾帧的
+        // basename 写进来却不标来源，本镜与自己关键帧的关联就此断裂
+        // （spec: 首帧路径记录真实使用的文件）。
         firstFramePath: inputImageFile != null
             ? p.basename(inputImageFile.path)
             : current.firstFramePath,
+        firstFrameSource: inputImageFile != null
+            ? firstFrameSource
+            : current.firstFrameSource,
         lastFramePath: lastFrameFileName ?? current.lastFramePath,
         status: ShotGenerationStatus.done,
+        clipStatus: StudioClipStatus.valid,
       ),
     );
     if (updatedShot != null) {
@@ -694,10 +805,14 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
     //
     // 旧实现自己写了一份「referenceImages.first」的挑选逻辑，与生图路径和
     // 分镜级视频都不一致；现在三条路径读同一份 assetBindings。
+    final allProps = await manager.listProps(seriesId);
     final orderedAssetIds = <String>[];
     for (final shot in shots) {
       for (final cid in shot.characterIds) {
         if (!orderedAssetIds.contains(cid)) orderedAssetIds.add(cid);
+      }
+      for (final pid in shot.propIds) {
+        if (!orderedAssetIds.contains(pid)) orderedAssetIds.add(pid);
       }
     }
     final dominantScene = scenes.isNotEmpty ? scenes.first : null;
@@ -711,34 +826,43 @@ class SegmentVideoGenTask implements StudioTaskRunner, CancellableTaskRunner {
     for (final assetId in orderedAssetIds) {
       // 找到该资产首次出镜的分镜，用那份绑定。
       final ownerShot = shots.firstWhere(
-        (s) => s.characterIds.contains(assetId) || s.sceneId == assetId,
+        (s) =>
+            s.characterIds.contains(assetId) ||
+            s.propIds.contains(assetId) ||
+            s.sceneId == assetId,
         orElse: () => shots.first,
       );
       final isScene = dominantScene != null && assetId == dominantScene.id;
-      final assetCharacters = isScene
+      final isProp = allProps.any((p) => p.id == assetId);
+      final assetCharacters = (isScene || isProp)
           ? const <CharacterCard>[]
           : characters.where((c) => c.id == assetId).toList();
+      final assetProps = isProp
+          ? allProps.where((p) => p.id == assetId).toList()
+          : const <PropCard>[];
 
       final resolved = AssetBindingResolver.resolve(
         shot: ownerShot.copyWith(
-          characterIds: isScene ? const [] : [assetId],
+          characterIds: (isScene || isProp) ? const [] : [assetId],
+          propIds: isProp ? [assetId] : const [],
           sceneId: isScene ? assetId : '',
         ),
         characters: assetCharacters,
+        props: assetProps,
         scene: isScene ? dominantScene : null,
         seriesId: seriesId,
         manager: manager,
       );
       if (resolved.isEmpty) {
-        // 该资产没有可用素材：角色是硬阻断（片段靠参考图保持人物一致），
+        // 该资产没有可用素材：角色与道具是硬阻断（片段靠参考图保持一致），
         // 场景只是空间感变弱，跳过即可。
         if (!isScene) {
-          final name = assetCharacters.isEmpty
-              ? assetId
-              : assetCharacters.first.name;
+          final name = assetCharacters.isNotEmpty
+              ? assetCharacters.first.name
+              : (assetProps.isNotEmpty ? assetProps.first.name : assetId);
           throw StateError(
-            '角色「$name」没有可用的素材图。片段生成依赖参考图保持人物一致，'
-            '请在 IP 主库为该角色上传参考图或生成三视图。',
+            '资产「$name」没有可用的素材图。片段生成依赖参考图保持一致，'
+            '请在 IP 主库为该资产上传参考图或生成三视图。',
           );
         }
         continue;

@@ -24,6 +24,7 @@ import '../../ai_video_studio/models/studio_models.dart';
 import '../../ai_video_studio/services/ai_constraint_engine.dart';
 import '../../ai_video_studio/services/director_validation_engine.dart';
 import '../../ai_video_studio/services/image_gen_adapter.dart';
+import '../../ai_video_studio/services/keyframe_visual_critic.dart';
 import '../../ai_video_studio/services/novel_import_task_service.dart';
 import '../../ai_video_studio/services/prompt_assembler.dart';
 import '../../ai_video_studio/services/studio_generation_tasks.dart';
@@ -31,6 +32,7 @@ import '../../ai_video_studio/services/studio_project_manager.dart';
 import '../../ai_video_studio/services/studio_task_queue.dart';
 import '../../ai_video_studio/services/video_gen_adapter.dart';
 import '../services/asset_library.dart';
+import '../services/storyboard_exporter.dart';
 import '../../ai_video_studio/services/video_task_ledger.dart';
 import '../../ai_video_studio/services/video_task_recovery.dart';
 import '../../agnes_playground/models/playground_models.dart';
@@ -86,6 +88,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
   List<StudioEpisode> _allEpisodes = const [];
   List<SceneCard> _scenes = const [];
   List<CharacterCard> _characters = const [];
+  List<PropCard> _props = const [];
 
   /// 看板视图模式（spec: 分镜看板提供「按片段」与「按镜头」两种视图）。
   ///
@@ -130,6 +133,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     final episodes = await _manager.listEpisodes(series.id);
     final scenes = await _manager.listScenes(series.id);
     final characters = await _manager.listCharacters(series.id);
+    final props = await _manager.listProps(series.id);
     if (!mounted) return;
 
     StudioEpisode? target = _episode;
@@ -145,6 +149,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       _allEpisodes = episodes;
       _scenes = scenes;
       _characters = characters;
+      _props = props;
       _episode = target;
       if (target != null && _synopsisController.text != target.synopsis) {
         _synopsisController.text = target.synopsis;
@@ -313,6 +318,84 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
 
   /// 带高危防误触弹窗的一键清空本集分镜。
   /// 清空成功后的提示文案（spec: 归档位置对用户可见）。
+  /// 导出整集分镜表到本地文件（支持 Markdown 与 CSV）
+  Future<void> _exportStoryboardToFile(String format) async {
+    final episode = widget.session.episode;
+    final series = widget.session.series;
+    if (episode == null || episode.shots.isEmpty) return;
+
+    final seriesName = series?.name ?? '剧作';
+    final isMd = format.toLowerCase() == 'md';
+    final ext = isMd ? 'md' : 'csv';
+    final defaultName = '${seriesName}_第${episode.index}集_${episode.title}_分镜表.$ext';
+
+    final charMap = {for (final c in _characters) c.id: c.name};
+    final propMap = {for (final p in _props) p.id: p.name};
+    final sceneMap = {for (final s in _scenes) s.id: s.name};
+
+    String contentToExport;
+    if (isMd) {
+      contentToExport = StoryboardExporter.exportToMarkdown(
+        seriesTitle: seriesName,
+        episode: episode,
+        characterNames: charMap,
+        propNames: propMap,
+        sceneNames: sceneMap,
+      );
+    } else {
+      contentToExport = StoryboardExporter.exportToCsv(
+        seriesTitle: seriesName,
+        episode: episode,
+        characterNames: charMap,
+        propNames: propMap,
+        sceneNames: sceneMap,
+      );
+    }
+
+    String? savePath;
+    try {
+      savePath = await FilePicker.platform.saveFile(
+        dialogTitle: '导出整集分镜表到本地',
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+    } catch (_) {
+      savePath = null;
+    }
+
+    if (savePath == null) return;
+
+    try {
+      final file = File(savePath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(contentToExport);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('分镜表已成功导出到: $savePath'),
+            action: SnackBarAction(
+              label: '在访达中显示',
+              onPressed: () {
+                Process.run('open', ['-R', savePath!]);
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('导出分镜表失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   String _clearSnackbarText(int archivedCount, String? archiveError) {
     if (archiveError != null) {
       return '已清空当前集的所有分镜，但媒体归档失败：$archiveError';
@@ -587,17 +670,82 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
     );
   }
 
+  StudioQualityScorecard? get _scorecard {
+    final ep = _episode;
+    if (ep == null || ep.shots.isEmpty) return null;
+    final seriesId = widget.session.series?.id ?? '';
+    final framesDir = _manager.episodeFramesDir(seriesId, ep.id).path;
+    return DirectorValidationEngine.computeScorecard(
+      episode: ep,
+      validationReport: _validationReport,
+      characters: _characters,
+      scenes: _scenes,
+      framesDir: framesDir,
+    );
+  }
+
+  bool _auditingKeyframes = false;
+
+  Future<void> _auditAllKeyframes() async {
+    final ep = _episode;
+    final series = widget.session.series;
+    if (ep == null || series == null) return;
+    setState(() => _auditingKeyframes = true);
+    final framesDir = _manager.episodeFramesDir(series.id, ep.id).path;
+    try {
+      final updatedShots = List<StudioShot>.from(ep.shots);
+      var auditedCount = 0;
+      for (var i = 0; i < updatedShots.length; i++) {
+        final shot = updatedShots[i];
+        final f = File('$framesDir/shot_${shot.number}.png');
+        if (f.existsSync()) {
+          final matchedScene =
+              _scenes.where((s) => s.id == shot.sceneId).firstOrNull;
+          final report = await KeyframeVisualCritic.evaluateShotKeyframe(
+            shot: shot,
+            episode: ep,
+            characters: _characters,
+            scene: matchedScene,
+            framesDir: framesDir,
+            useAi: false,
+          );
+          updatedShots[i] = shot.copyWith(vlmCriticReport: report);
+          auditedCount++;
+        }
+      }
+      final updatedEp = ep.copyWith(shots: updatedShots);
+      await _manager.saveEpisode(updatedEp);
+      setState(() => _episode = updatedEp);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已完成全片 $auditedCount 个关键帧的 4 维视觉审图验收！')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _auditingKeyframes = false);
+    }
+  }
+
   void _showAuditReportDialog(BuildContext context, ValidationReport report) {
     final ep = _episode;
-    if (ep == null) return;
+    final series = widget.session.series;
+    if (ep == null || series == null) return;
+    final framesDir = _manager.episodeFramesDir(series.id, ep.id).path;
+    final clipsDir = _manager.episodeClipsDir(series.id, ep.id).path;
+    final dialoguesDir = _manager.episodeAudioDir(series.id, ep.id).path;
     final messenger = ScaffoldMessenger.of(context);
     showDialog<void>(
       context: context,
       builder: (ctx) => _AuditReportDialog(
         report: report,
+        scorecard: _scorecard,
         episode: ep,
         characters: _characters,
         scenes: _scenes,
+        framesDir: framesDir,
+        clipsDir: clipsDir,
+        dialoguesDir: dialoguesDir,
+        onAuditAllKeyframes: _auditingKeyframes ? null : _auditAllKeyframes,
         onFixCompleted: (updatedEpisode) async {
           setState(() {
             _episode = updatedEpisode;
@@ -605,7 +753,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
           await _manager.saveEpisode(updatedEpisode);
           if (mounted) {
             messenger.showSnackBar(
-              const SnackBar(content: Text('AI 一键自愈完成，已修正不合规分镜并同步保存！')),
+              const SnackBar(content: Text('自愈与结构裂变完成，已同步保存最新分镜编排！')),
             );
           }
         },
@@ -911,7 +1059,15 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       if (_queue.tasksForShot(shot.number).any((t) => !t.isTerminal)) {
         continue;
       }
-      if (shot.framePath == null || shot.framePath!.isEmpty) {
+      final effectiveMode = shot.resolveEffectiveVideoMode(
+        hasKeyframe: shot.framePath != null && shot.framePath!.isNotEmpty,
+        hasCharacterOrSceneRef:
+            shot.characterIds.isNotEmpty || shot.sceneId.isNotEmpty,
+      );
+      // 仅在首尾帧/关键帧模式下且未生成关键帧时，才自动先入队关键帧任务
+      // 保持 reference/text 模式的确定性，避免非预期生成关键帧并篡改视频模式
+      if (effectiveMode == AgnesVideoMode.keyframe &&
+          (shot.framePath == null || shot.framePath!.isEmpty)) {
         await _enqueueFrame(shot);
       }
       await _enqueueClip(shot);
@@ -1052,7 +1208,13 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       if (_queue.tasksForShot(shot.number).any((t) => !t.isTerminal)) {
         continue;
       }
-      if (shot.framePath == null || shot.framePath!.isEmpty) {
+      final effectiveMode = shot.resolveEffectiveVideoMode(
+        hasKeyframe: shot.framePath != null && shot.framePath!.isNotEmpty,
+        hasCharacterOrSceneRef:
+            shot.characterIds.isNotEmpty || shot.sceneId.isNotEmpty,
+      );
+      if (effectiveMode == AgnesVideoMode.keyframe &&
+          (shot.framePath == null || shot.framePath!.isEmpty)) {
         await _enqueueFrame(shot);
       }
       await _enqueueClip(shot);
@@ -1336,6 +1498,52 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
               ],
               if (episode != null && episode.shots.isNotEmpty) ...[
                 const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  tooltip: '导出整集分镜表到文件',
+                  onSelected: _exportStoryboardToFile,
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'md',
+                      child: Row(
+                        children: [
+                          Icon(Icons.description_outlined, size: 16),
+                          SizedBox(width: 8),
+                          Text('导出为 Markdown 分镜表 (.md)'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'csv',
+                      child: Row(
+                        children: [
+                          Icon(Icons.table_chart_outlined, size: 16),
+                          SizedBox(width: 8),
+                          Text('导出为 CSV 表格分镜表 (.csv)'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: context.borderSubtle),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.table_view_outlined, size: 16, color: context.textPrimary),
+                        const SizedBox(width: 6),
+                        Text('导出分镜表', style: TextStyle(fontSize: 13, color: context.textPrimary)),
+                        const SizedBox(width: 4),
+                        Icon(Icons.arrow_drop_down, size: 16, color: context.textSecondary),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              if (episode != null && episode.shots.isNotEmpty) ...[
+                const SizedBox(width: 8),
                 FilledButton.tonalIcon(
                   onPressed: () => _enqueueAllSegments(episode),
                   icon: const Icon(Icons.video_collection_outlined, size: 16),
@@ -1347,6 +1555,13 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                 Builder(
                   builder: (context) {
                     final audit = _validationReport!;
+                    final scorecard = _scorecard;
+                    final score = scorecard?.overallScore;
+                    final isHealthy = audit.isValid && (score == null || score >= 80);
+                    final color = !audit.isValid
+                        ? context.errorText
+                        : (isHealthy ? const Color(0xFF22C55E) : context.warningText);
+
                     return InkWell(
                       onTap: () => _showAuditReportDialog(context, audit),
                       borderRadius: BorderRadius.circular(6),
@@ -1356,51 +1571,35 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
                           vertical: 5,
                         ),
                         decoration: BoxDecoration(
-                          color: audit.isValid
-                              ? (audit.warningCount > 0
-                                    ? context.warningText.withAlpha(20)
-                                    : const Color(0xFF22C55E).withAlpha(20))
-                              : context.errorText.withAlpha(20),
+                          color: color.withAlpha(20),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: audit.isValid
-                                ? (audit.warningCount > 0
-                                      ? context.warningText.withAlpha(90)
-                                      : const Color(0xFF22C55E).withAlpha(90))
-                                : context.errorText.withAlpha(90),
-                          ),
+                          border: Border.all(color: color.withAlpha(90)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              audit.isValid
-                                  ? (audit.warningCount > 0
-                                        ? Icons.warning_amber_rounded
-                                        : Icons.check_circle_outline)
-                                  : Icons.error_outline,
+                              !audit.isValid
+                                  ? Icons.error_outline
+                                  : (isHealthy
+                                        ? Icons.verified_outlined
+                                        : Icons.warning_amber_rounded),
                               size: 14,
-                              color: audit.isValid
-                                  ? (audit.warningCount > 0
-                                        ? context.warningText
-                                        : const Color(0xFF22C55E))
-                                  : context.errorText,
+                              color: color,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              audit.isValid
-                                  ? (audit.warningCount > 0
-                                        ? 'C01~C09: ${audit.warningCount}建议'
-                                        : 'C01~C09通过')
-                                  : 'C01~C09: ${audit.blockingCount}阻断',
+                              scorecard != null
+                                  ? '质检: ${scorecard.overallScore}分 (${audit.warningCount + audit.blockingCount}项)'
+                                  : (audit.isValid
+                                        ? (audit.warningCount > 0
+                                              ? '质检: ${audit.warningCount}建议'
+                                              : '质检全通')
+                                        : '质检: ${audit.blockingCount}阻断'),
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: audit.isValid
-                                    ? (audit.warningCount > 0
-                                          ? context.warningText
-                                          : const Color(0xFF22C55E))
-                                    : context.errorText,
+                                color: color,
                               ),
                             ),
                           ],
@@ -1531,6 +1730,7 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       episode: episode,
       scenes: _scenes,
       characters: _characters,
+      props: _props,
       queue: _queue,
       framesDir: framesDir,
       clipsDir: clipsDir,
@@ -1707,7 +1907,12 @@ class _StoryboardBoardState extends State<StoryboardBoard> {
       context: context,
       backgroundColor: context.bgCard,
       isScrollControlled: true,
-      builder: (_) => _QueueDrawer(queue: _queue, onReloadBoard: _reload),
+      builder: (_) => _QueueDrawer(
+        queue: _queue,
+        seriesId: widget.session.series?.id,
+        episodeId: _episode?.id,
+        onReloadBoard: _reload,
+      ),
     );
   }
 }
@@ -2313,6 +2518,7 @@ class _ShotCard extends StatelessWidget {
     required this.episode,
     required this.scenes,
     required this.characters,
+    this.props = const [],
     required this.queue,
     required this.dialogueController,
     required this.actionController,
@@ -2335,6 +2541,7 @@ class _ShotCard extends StatelessWidget {
   final StudioEpisode episode;
   final List<SceneCard> scenes;
   final List<CharacterCard> characters;
+  final List<PropCard> props;
   final StudioTaskQueue queue;
   final TextEditingController dialogueController;
   final TextEditingController actionController;
@@ -2581,6 +2788,10 @@ class _ShotCard extends StatelessWidget {
                         const SizedBox(width: 6),
                         _buildValidationBadge(context),
                       ],
+                      if (shot.vlmCriticReport != null) ...[
+                        const SizedBox(width: 6),
+                        _buildVlmCriticBadge(context),
+                      ],
                       const SizedBox(width: 6),
                       _buildVideoModeBadge(context),
                       const Spacer(),
@@ -2759,9 +2970,10 @@ class _ShotCard extends StatelessWidget {
                       // 原「角色」单选下拉写死 characterIds: [val]，选第二个角色
                       // 会覆盖第一个——双人镜在 UI 上根本无法表达。这里改为可增删
                       // 的多角色列表，每行带分工与素材指定，「形态」从属于角色。
-                      _ShotAssetPanel(
+                      ShotAssetPanel(
                         shot: shot,
                         characters: characters,
+                        props: props,
                         seriesId: episode.seriesId,
                         scene: scenes.any((s) => s.id == shot.sceneId)
                             ? scenes.firstWhere((s) => s.id == shot.sceneId)
@@ -3156,6 +3368,66 @@ class _ShotCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message: shot.vlmCriticReport != null
+                            ? (shot.vlmCriticReport!.passed
+                                ? (shot.vlmCriticReport!.isAiEvaluated
+                                    ? 'VLM 多模态大模型审图通过 (${shot.vlmCriticReport!.score}分)'
+                                    : '确定性规则预审通过 (${shot.vlmCriticReport!.score}分)，建议点击进行 AI 真实读图复验')
+                                : '质检未通过：${shot.vlmCriticReport!.issues.join("；")}')
+                            : '使用 VLM 审核关键帧角色人数、高低透视、坐骑与构图',
+                        child: TextButton.icon(
+                          onPressed: () => _handleVlmCritic(context),
+                          icon: Icon(
+                            shot.vlmCriticReport != null
+                                ? (shot.vlmCriticReport!.passed
+                                    ? (shot.vlmCriticReport!.isAiEvaluated
+                                        ? Icons.verified
+                                        : Icons.fact_check_outlined)
+                                    : Icons.warning_amber)
+                                : Icons.visibility_outlined,
+                            size: 15,
+                            color: shot.vlmCriticReport != null
+                                ? (shot.vlmCriticReport!.passed
+                                    ? (shot.vlmCriticReport!.isAiEvaluated
+                                        ? Colors.green
+                                        : Colors.blueGrey)
+                                    : Colors.orange)
+                                : null,
+                          ),
+                          label: Text(
+                            shot.vlmCriticReport != null
+                                ? (shot.vlmCriticReport!.passed
+                                    ? (shot.vlmCriticReport!.isAiEvaluated
+                                        ? 'VLM合格'
+                                        : '规则通过')
+                                    : 'VLM待改')
+                                : 'VLM审图',
+                          ),
+                        ),
+                      ),
+                      if (shot.vlmCriticReport != null && !shot.vlmCriticReport!.passed) ...[
+                        const SizedBox(width: 4),
+                        Tooltip(
+                          message: '一键采纳 VLM 审图修复建议并重新抽卡关键帧',
+                          child: TextButton.icon(
+                            onPressed: () => _handleApplyVlmFix(context),
+                            icon: const Icon(
+                              Icons.auto_fix_high,
+                              size: 15,
+                              color: Colors.orange,
+                            ),
+                            label: const Text(
+                              '采纳建议重抽',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                       if (_hasMedia) ...[
                         const SizedBox(width: 4),
                         TextButton.icon(
@@ -3386,6 +3658,243 @@ class _ShotCard extends StatelessWidget {
     );
   }
 
+  Widget _buildVlmCriticBadge(BuildContext context) {
+    final vlm = shot.vlmCriticReport;
+    if (vlm == null) return const SizedBox.shrink();
+    final color = vlm.passed ? Colors.green : Colors.orange;
+
+    return InkWell(
+      onTap: () {
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(
+                  vlm.passed ? Icons.verified : Icons.warning_amber,
+                  color: color,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text('镜 #${shot.number} 关键帧 VLM 审图报告'),
+              ],
+            ),
+            content: SizedBox(
+              width: 500,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        _buildVlmDimTag(ctx, '角色防克隆', vlm.characterCountOk),
+                        const SizedBox(width: 6),
+                        _buildVlmDimTag(ctx, '高低位透视', vlm.spatialElevationOk),
+                        const SizedBox(width: 6),
+                        _buildVlmDimTag(ctx, '坐骑道具', vlm.mountPropOk),
+                        const SizedBox(width: 6),
+                        _buildVlmDimTag(ctx, '景别对白', vlm.shotScaleOk),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (vlm.issues.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withAlpha(20),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          '关键帧构图完全符合剧本视听要求，未检测到克隆分身、浮空或坐骑丢失。',
+                          style: TextStyle(fontSize: 12, color: Colors.green),
+                        ),
+                      )
+                    else
+                      ...vlm.issues.map(
+                        (iss) => Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withAlpha(15),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: Colors.orange.withAlpha(50),
+                            ),
+                          ),
+                          child: Text(
+                            '• $iss',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                      ),
+                    if (vlm.promptFixSuggestion.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        '建议修复生图词：',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: ctx.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: ctx.bgInput,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: ctx.borderSubtle),
+                        ),
+                        child: Text(
+                          vlm.promptFixSuggestion,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            color: ctx.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+              if (!vlm.passed)
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _handleApplyVlmFix(context);
+                  },
+                  icon: const Icon(Icons.auto_fix_high, size: 15),
+                  label: const Text('采纳修复词并重抽'),
+                ),
+            ],
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: color.withAlpha(25),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withAlpha(90)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              vlm.passed ? Icons.verified : Icons.warning_amber,
+              size: 11,
+              color: color,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              vlm.passed ? 'VLM合格' : 'VLM待改',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVlmDimTag(BuildContext context, String label, bool ok) {
+    final color = ok ? Colors.green : Colors.orange;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withAlpha(20),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withAlpha(60)),
+        ),
+        child: Column(
+          children: [
+            Text(
+              label,
+              style: TextStyle(fontSize: 9, color: context.textSecondary),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              ok ? '合格' : '待改',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleVlmCritic(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('正在审核镜 #${shot.number} 关键帧与生图提示词…'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+
+    final matchedScene = scenes.where((s) => s.id == shot.sceneId).firstOrNull;
+    final report = await KeyframeVisualCritic.evaluateShotKeyframe(
+      shot: shot,
+      episode: episode,
+      characters: characters,
+      scene: matchedScene,
+      framesDir: framesDir,
+      useAi: true,
+    );
+
+    final updated = shot.copyWith(vlmCriticReport: report);
+    onEdited(updated);
+
+    if (context.mounted) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            report.passed
+                ? '镜 #${shot.number} 关键帧 VLM 审图通过！'
+                : '镜 #${shot.number} 关键帧存在 ${report.issues.length} 项隐患，可点击采纳建议重抽',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _handleApplyVlmFix(BuildContext context) {
+    final matchedScene = scenes.where((s) => s.id == shot.sceneId).firstOrNull;
+    final fixedShot = KeyframeVisualCritic.applySuggestedFixToShot(
+      shot,
+      characters: characters,
+      scene: matchedScene,
+    );
+    onEdited(fixedShot);
+    onGenerateFrame();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已采纳修复提示词并重新提交镜 #${shot.number} 关键帧生成！'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Widget _buildVideoModeBadge(BuildContext context) {
     final hasFrame =
         (_frameFile != null && _frameFile!.existsSync()) ||
@@ -3423,6 +3932,7 @@ class _ShotCard extends StatelessWidget {
         shot: shot,
         episode: episode,
         characters: characters,
+        props: props,
         scenes: scenes,
         framesDir: framesDir,
         onSave: onEdited,
@@ -3436,13 +3946,15 @@ class _ShotCard extends StatelessWidget {
 /// 折叠式：分镜卡已有场景/模式/画幅/时长/景别等一排控件，面板默认收起，
 /// 展开时才占空间。
 ///
-/// 每行一个角色，含分工（主体/对峙/配角）与素材指定；素材下拉列出该角色
-/// 资产下**磁盘上真实存在**的候选图，默认选中系统默认项。用户未显式指定时
+/// 每行一个角色或道具，含分工与素材多图指定；素材弹窗列出该资产下
+/// **磁盘上真实存在**的候选图，支持多选。用户未显式指定时
 /// 显示「自动：<默认文件名>」，让「程序挑了哪张」始终可见、可覆盖。
-class _ShotAssetPanel extends StatelessWidget {
-  const _ShotAssetPanel({
+class ShotAssetPanel extends StatelessWidget {
+  const ShotAssetPanel({
+    super.key,
     required this.shot,
     required this.characters,
+    this.props = const [],
     required this.scene,
     required this.seriesId,
     required this.onEdited,
@@ -3450,6 +3962,7 @@ class _ShotAssetPanel extends StatelessWidget {
 
   final StudioShot shot;
   final List<CharacterCard> characters;
+  final List<PropCard> props;
 
   /// 当前分镜关联的场景卡；null 表示未关联。
   final SceneCard? scene;
@@ -3459,14 +3972,40 @@ class _ShotAssetPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedIds = shot.characterIds;
-    final available = characters
-        .where((c) => !selectedIds.contains(c.id))
-        .toList();
+    final selectedCharIds = shot.characterIds;
+    final selectedPropIds = shot.propIds;
+    final availableChars =
+        characters.where((c) => !selectedCharIds.contains(c.id)).toList();
+    final availableProps =
+        props.where((p) => !selectedPropIds.contains(p.id)).toList();
     final bindings = shot.assetBindings;
 
-    // 素材总数（角色 + 场景）= 将要提交的参考图数量。
-    final materialCount = selectedIds.length + (scene != null ? 1 : 0);
+    // 汇总将要提交的参考图总数量（支持多图展开）
+    var materialCount = 0;
+    for (final cid in selectedCharIds) {
+      final b = bindings[cid];
+      if (b != null && b.materialPaths.isNotEmpty) {
+        materialCount += b.materialPaths.length;
+      } else {
+        materialCount += 1;
+      }
+    }
+    for (final pid in selectedPropIds) {
+      final b = bindings[pid];
+      if (b != null && b.materialPaths.isNotEmpty) {
+        materialCount += b.materialPaths.length;
+      } else {
+        materialCount += 1;
+      }
+    }
+    if (scene != null) {
+      final b = bindings[scene!.id];
+      if (b != null && b.materialPaths.isNotEmpty) {
+        materialCount += b.materialPaths.length;
+      } else {
+        materialCount += 1;
+      }
+    }
     final maxRefs = SettingsStore.instance.videoMaxReferenceImages;
 
     return Theme(
@@ -3488,21 +4027,26 @@ class _ShotAssetPanel extends StatelessWidget {
               style: TextStyle(color: context.textTertiary, fontSize: 11),
             ),
             const SizedBox(width: 8),
-            Text(
-              '${selectedIds.length} 角色 · ${scene != null ? 1 : 0} 场景',
-              style: TextStyle(color: context.textPrimary, fontSize: 11),
+            Expanded(
+              child: Text(
+                '${selectedCharIds.length} 角色 · ${selectedPropIds.length} 道具 · ${scene != null ? 1 : 0} 场景 ($materialCount 参考图)',
+                style: TextStyle(color: context.textPrimary, fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ],
         ),
         children: [
           if (maxRefs != null && materialCount > maxRefs)
             _OverLimitBanner(count: materialCount, max: maxRefs),
-          for (final id in selectedIds) ...[
-            _AssetRow(
+          for (final id in selectedCharIds) ...[
+            AssetRow(
               key: ValueKey('char_$id'),
               assetId: id,
-              assetName: characters.firstWhere((c) => c.id == id).name,
+              assetName:
+                  characters.where((c) => c.id == id).firstOrNull?.name ?? id,
               isScene: false,
+              isProp: false,
               binding: bindings[id] ?? const ShotAssetBinding(),
               seriesId: seriesId,
               onChanged: (b) => _updateBinding(id, b),
@@ -3516,12 +4060,28 @@ class _ShotAssetPanel extends StatelessWidget {
               ),
             ),
           ],
+          for (final id in selectedPropIds) ...[
+            AssetRow(
+              key: ValueKey('prop_$id'),
+              assetId: id,
+              assetName:
+                  props.where((p) => p.id == id).firstOrNull?.name ?? id,
+              isScene: false,
+              isProp: true,
+              binding: bindings[id] ?? const ShotAssetBinding(),
+              seriesId: seriesId,
+              onChanged: (b) => _updateBinding(id, b),
+              onRemove: () => _removeProp(id),
+              trailing: null,
+            ),
+          ],
           if (scene != null)
-            _AssetRow(
+            AssetRow(
               key: ValueKey('scene_${scene!.id}'),
               assetId: scene!.id,
               assetName: scene!.name,
               isScene: true,
+              isProp: false,
               binding: bindings[scene!.id] ?? const ShotAssetBinding(),
               seriesId: seriesId,
               onChanged: (b) => _updateBinding(scene!.id, b),
@@ -3529,41 +4089,146 @@ class _ShotAssetPanel extends StatelessWidget {
               onRemove: null,
               trailing: null,
             ),
-          if (available.isNotEmpty)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                icon: const Icon(Icons.person_add_alt, size: 14),
-                label: const Text('添加角色', style: TextStyle(fontSize: 11)),
-                style: TextButton.styleFrom(
-                  foregroundColor: context.textSecondary,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(0, 32),
-                ),
-                onPressed: () => _addCharacter(available.first.id),
-              ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                if (availableChars.isNotEmpty)
+                  PopupMenuButton<String>(
+                    tooltip: '选择添加角色',
+                    onSelected: _addCharacter,
+                    itemBuilder: (ctx) => [
+                      for (final c in availableChars)
+                        PopupMenuItem<String>(
+                          value: c.id,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.person_outline, size: 14),
+                              const SizedBox(width: 6),
+                              Text(c.name,
+                                  style: const TextStyle(fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                    ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: context.bgInput,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: context.borderSubtle),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.person_add_alt,
+                              size: 13, color: context.textSecondary),
+                          const SizedBox(width: 4),
+                          Text('添加角色',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: context.textSecondary)),
+                          const SizedBox(width: 2),
+                          Icon(Icons.arrow_drop_down,
+                              size: 14, color: context.textTertiary),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (availableChars.isNotEmpty && availableProps.isNotEmpty)
+                  const SizedBox(width: 8),
+                if (availableProps.isNotEmpty)
+                  PopupMenuButton<String>(
+                    tooltip: '选择添加道具',
+                    onSelected: _addProp,
+                    itemBuilder: (ctx) => [
+                      for (final p in availableProps)
+                        PopupMenuItem<String>(
+                          value: p.id,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.category_outlined, size: 14),
+                              const SizedBox(width: 6),
+                              Text(p.name,
+                                  style: const TextStyle(fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                    ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: context.bgInput,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: context.borderSubtle),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_circle_outline,
+                              size: 13, color: context.textSecondary),
+                          const SizedBox(width: 4),
+                          Text('添加道具',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: context.textSecondary)),
+                          const SizedBox(width: 2),
+                          Icon(Icons.arrow_drop_down,
+                              size: 14, color: context.textTertiary),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );
   }
 
   void _addCharacter(String characterId) {
+    if (shot.characterIds.contains(characterId)) return;
     final nextIds = [...shot.characterIds, characterId];
     onEdited(shot.copyWith(characterIds: nextIds));
   }
 
   void _removeCharacter(String characterId) {
-    final nextIds = shot.characterIds.where((id) => id != characterId).toList();
-    final nextBindings = Map<String, ShotAssetBinding>.from(shot.assetBindings)
-      ..remove(characterId);
-    final nextVariations = Map<String, String>.from(shot.characterVariations)
-      ..remove(characterId);
+    final nextIds =
+        shot.characterIds.where((id) => id != characterId).toList();
+    final nextBindings =
+        Map<String, ShotAssetBinding>.from(shot.assetBindings)
+          ..remove(characterId);
+    final nextVariations =
+        Map<String, String>.from(shot.characterVariations)
+          ..remove(characterId);
     onEdited(
       shot.copyWith(
         characterIds: nextIds,
         assetBindings: nextBindings,
         characterVariations: nextVariations,
+      ),
+    );
+  }
+
+  void _addProp(String propId) {
+    if (shot.propIds.contains(propId)) return;
+    final nextIds = [...shot.propIds, propId];
+    onEdited(shot.copyWith(propIds: nextIds));
+  }
+
+  void _removeProp(String propId) {
+    final nextIds = shot.propIds.where((id) => id != propId).toList();
+    final nextBindings =
+        Map<String, ShotAssetBinding>.from(shot.assetBindings)..remove(propId);
+    onEdited(
+      shot.copyWith(
+        propIds: nextIds,
+        assetBindings: nextBindings,
       ),
     );
   }
@@ -3575,13 +4240,283 @@ class _ShotAssetPanel extends StatelessWidget {
   }
 }
 
+/// 多图素材选择弹窗（spec: 支持单个角色或道具绑定多张参考素材）。
+class MaterialMultiSelectDialog extends StatefulWidget {
+  const MaterialMultiSelectDialog({
+    super.key,
+    required this.assetName,
+    required this.isProp,
+    required this.isScene,
+    required this.candidates,
+    required this.initialSelected,
+    required this.assetDirPath,
+  });
+
+  final String assetName;
+  final bool isProp;
+  final bool isScene;
+  final List<AssetMaterialCandidate> candidates;
+  final List<String> initialSelected;
+  final String assetDirPath;
+
+  @override
+  State<MaterialMultiSelectDialog> createState() =>
+      _MaterialMultiSelectDialogState();
+}
+
+class _MaterialMultiSelectDialogState extends State<MaterialMultiSelectDialog> {
+  late final List<String> _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List<String>.from(widget.initialSelected);
+  }
+
+  void _toggle(String fileName) {
+    setState(() {
+      if (_selected.contains(fileName)) {
+        _selected.remove(fileName);
+      } else {
+        _selected.add(fileName);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
+    final assetTypeLabel = widget.isScene
+        ? '场景'
+        : (widget.isProp ? '道具' : '角色');
+    return Dialog(
+      backgroundColor: context.bgCard,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: context.borderSubtle),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460, maxHeight: 520),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    widget.isProp
+                        ? Icons.category_outlined
+                        : (widget.isScene
+                            ? Icons.landscape_outlined
+                            : Icons.person_outline),
+                    size: 18,
+                    color: primaryColor,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '选择参考图 · ${widget.assetName}（$assetTypeLabel）',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: context.textPrimary,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () => Navigator.of(context).pop(),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '支持勾选多张参考图，按勾选次序编排为连续的 <Picture N> 序列指代',
+                style: TextStyle(fontSize: 11, color: context.textTertiary),
+              ),
+              const Divider(height: 16),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: widget.candidates.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 4),
+                  itemBuilder: (context, index) {
+                    final candidate = widget.candidates[index];
+                    final isChecked = _selected.contains(candidate.fileName);
+                    final filePath =
+                        p.join(widget.assetDirPath, candidate.fileName);
+                    final fileExists = File(filePath).existsSync();
+
+                    return InkWell(
+                      onTap: () => _toggle(candidate.fileName),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: isChecked
+                              ? primaryColor.withValues(alpha: 0.08)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: isChecked
+                                ? primaryColor.withValues(alpha: 0.3)
+                                : context.borderSubtle.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Checkbox(
+                              value: isChecked,
+                              onChanged: (_) => _toggle(candidate.fileName),
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            const SizedBox(width: 6),
+                            if (fileExists)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: Image.file(
+                                  File(filePath),
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.broken_image,
+                                      size: 20),
+                                ),
+                              )
+                            else
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: context.bgInput,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Icon(Icons.image_outlined,
+                                    size: 18),
+                              ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        candidate.label,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          color: context.textPrimary,
+                                        ),
+                                      ),
+                                      if (candidate.isDefault) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: primaryColor
+                                                .withValues(alpha: 0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(3),
+                                          ),
+                                          child: Text(
+                                            '默认',
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              color: primaryColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    candidate.fileName,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: context.textTertiary,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const Divider(height: 16),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      // 恢复自动默认（清空显式绑定）
+                      Navigator.of(context).pop(<String>[]);
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: context.textTertiary,
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                    child: const Text('恢复自动默认'),
+                  ),
+                  const Spacer(),
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(_selected);
+                    },
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                    child: Text(
+                      _selected.isEmpty
+                          ? '确定（自动默认）'
+                          : '确定（已选 ${_selected.length} 张）',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 单个资产的素材指定行。
-class _AssetRow extends StatelessWidget {
-  const _AssetRow({
+class AssetRow extends StatelessWidget {
+  const AssetRow({
     super.key,
     required this.assetId,
     required this.assetName,
     required this.isScene,
+    this.isProp = false,
     required this.binding,
     required this.seriesId,
     required this.onChanged,
@@ -3593,6 +4528,7 @@ class _AssetRow extends StatelessWidget {
   final String assetId;
   final String assetName;
   final bool isScene;
+  final bool isProp;
   final ShotAssetBinding binding;
   final String seriesId;
 
@@ -3602,22 +4538,64 @@ class _AssetRow extends StatelessWidget {
   /// 角色行显示分工下拉；场景行传 null。
   final Widget? trailing;
 
-  /// 角色行的移除按钮；场景行传 null（场景由主行选择，不在此处移除）。
+  /// 移除按钮；场景行传 null。
   final VoidCallback? onRemove;
 
   /// 场景变更（保留字段，暂由主行「场景」下拉承担）。
   final ValueChanged<String>? onChangedScene;
 
+  String _getAssetDirPath() {
+    if (isScene) {
+      return StudioProjectManager.instance.sceneDir(seriesId, assetId).path;
+    }
+    if (isProp) {
+      return StudioProjectManager.instance.propDir(seriesId, assetId).path;
+    }
+    return StudioProjectManager.instance.characterDir(seriesId, assetId).path;
+  }
+
+  Future<void> _openMaterialSelector(
+    BuildContext context,
+    List<AssetMaterialCandidate> candidates,
+  ) async {
+    final selected = binding.materialPaths;
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => MaterialMultiSelectDialog(
+        assetName: assetName,
+        isProp: isProp,
+        isScene: isScene,
+        candidates: candidates,
+        initialSelected: selected,
+        assetDirPath: _getAssetDirPath(),
+      ),
+    );
+    if (result != null) {
+      onChanged(
+        binding.copyWith(
+          materialPaths: result,
+          materialPath: result.isNotEmpty ? result.first : '',
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).colorScheme.primary;
     final candidates = _loadCandidates();
     final binding = this.binding;
-    // 用户未显式指定时，下拉指向默认项（若能枚举出默认项）。
-    final effectiveValue = binding.hasExplicitMaterial
-        ? binding.materialPath
-        : (candidates.isNotEmpty && candidates.first.isDefault
-              ? candidates.first.fileName
-              : '');
+
+    String displayText;
+    if (candidates.isEmpty) {
+      displayText = '无素材图';
+    } else if (!binding.hasExplicitMaterial) {
+      displayText = '自动：${candidates.first.fileName}';
+    } else if (binding.materialPaths.length == 1) {
+      displayText = binding.materialPaths.first;
+    } else {
+      displayText = '已选 ${binding.materialPaths.length} 张图片';
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -3625,48 +4603,76 @@ class _AssetRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 72,
-            child: Text(
-              assetName,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: context.textPrimary, fontSize: 11),
+            child: Row(
+              children: [
+                Icon(
+                  isProp
+                      ? Icons.category_outlined
+                      : (isScene
+                          ? Icons.landscape_outlined
+                          : Icons.person_outline),
+                  size: 12,
+                  color: context.textTertiary,
+                ),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: Text(
+                    assetName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: context.textPrimary, fontSize: 11),
+                  ),
+                ),
+              ],
             ),
           ),
           if (trailing != null) ...[trailing!, const SizedBox(width: 6)],
           Expanded(
-            child: DropdownButton<String>(
-              value: candidates.any((c) => c.fileName == effectiveValue)
-                  ? effectiveValue
-                  : null,
-              isDense: true,
-              underline: const SizedBox.shrink(),
-              dropdownColor: context.bgCard,
-              style: TextStyle(color: context.textSecondary, fontSize: 11),
-              items: [
-                if (candidates.isNotEmpty && candidates.first.isDefault)
-                  DropdownMenuItem(
-                    value: '',
-                    child: Text(
-                      '自动：${candidates.first.fileName}',
-                      style: TextStyle(
-                        color: context.textTertiary,
-                        fontSize: 11,
+            child: InkWell(
+              onTap: candidates.isEmpty
+                  ? null
+                  : () => _openMaterialSelector(context, candidates),
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: binding.hasExplicitMaterial
+                        ? primaryColor.withValues(alpha: 0.4)
+                        : context.borderSubtle,
+                  ),
+                  borderRadius: BorderRadius.circular(4),
+                  color: context.bgInput,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      binding.materialPaths.length > 1
+                          ? Icons.photo_library_outlined
+                          : Icons.image_outlined,
+                      size: 13,
+                      color: binding.hasExplicitMaterial
+                          ? primaryColor
+                          : context.textTertiary,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        displayText,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: binding.hasExplicitMaterial
+                              ? context.textPrimary
+                              : context.textTertiary,
+                        ),
                       ),
                     ),
-                  ),
-                ...candidates.map(
-                  (c) => DropdownMenuItem(
-                    value: c.fileName,
-                    child: Text(
-                      '${c.label} · ${c.fileName}',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ),
+                    Icon(Icons.arrow_drop_down,
+                        size: 14, color: context.textTertiary),
+                  ],
                 ),
-              ],
-              onChanged: (val) {
-                onChanged(binding.copyWith(materialPath: val ?? ''));
-              },
+              ),
             ),
           ),
           if (onRemove != null)
@@ -3693,6 +4699,16 @@ class _AssetRow extends StatelessWidget {
             .path,
       );
     }
+    if (isProp) {
+      final prop = _propCard;
+      if (prop == null) return const [];
+      return AssetMaterialEnumerator.forProp(
+        prop,
+        propDirPath: StudioProjectManager.instance
+            .propDir(seriesId, assetId)
+            .path,
+      );
+    }
     final character = _characterCard;
     if (character == null) return const [];
     return AssetMaterialEnumerator.forCharacter(
@@ -3705,7 +4721,6 @@ class _AssetRow extends StatelessWidget {
   }
 
   SceneCard? get _sceneCard {
-    // 场景行只在面板内渲染，场景卡由调用方通过 scene 传入；此处按 id 反查。
     try {
       return StudioProjectManager.instance.readScene(seriesId, assetId);
     } catch (_) {
@@ -3716,6 +4731,14 @@ class _AssetRow extends StatelessWidget {
   CharacterCard? get _characterCard {
     try {
       return StudioProjectManager.instance.readCharacter(seriesId, assetId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  PropCard? get _propCard {
+    try {
+      return StudioProjectManager.instance.readProp(seriesId, assetId);
     } catch (_) {
       return null;
     }
@@ -3774,7 +4797,7 @@ class _OverLimitBanner extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '已选 $count 个素材，当前模型上限 $max 个。请减少角色或场景后再生成。',
+              '已选 $count 张参考图，当前视频模型上限 $max 张。请减少角色、道具或参考图后再生成。',
               style: TextStyle(color: context.errorText, fontSize: 10),
             ),
           ),
@@ -4844,18 +5867,39 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-class _QueueDrawer extends StatefulWidget {
-  const _QueueDrawer({required this.queue, this.onReloadBoard});
+class QueueDrawer extends StatefulWidget {
+  const QueueDrawer({
+    super.key,
+    required this.queue,
+    this.seriesId,
+    this.episodeId,
+    this.onReloadBoard,
+  });
 
   final StudioTaskQueue queue;
+  final String? seriesId;
+  final String? episodeId;
   final VoidCallback? onReloadBoard;
 
   @override
-  State<_QueueDrawer> createState() => _QueueDrawerState();
+  State<QueueDrawer> createState() => _QueueDrawerState();
+}
+
+typedef _QueueDrawer = QueueDrawer;
+
+enum _QueueFilter {
+  all('全部'),
+  active('进行中'),
+  completed('已完成'),
+  failed('失败');
+
+  final String label;
+  const _QueueFilter(this.label);
 }
 
 class _QueueDrawerState extends State<_QueueDrawer> {
   List<VideoTaskLedgerEntry> _cloudTasks = const [];
+  _QueueFilter _filter = _QueueFilter.all;
 
   @override
   void initState() {
@@ -4866,149 +5910,231 @@ class _QueueDrawerState extends State<_QueueDrawer> {
   Future<void> _loadCloudTasks() async {
     final all = await VideoTaskLedger.instance.allEntries();
     if (!mounted) return;
-    // **active + completed** 都展示。
-    //
-    // 曾经只显示 active，理由是「已终结的进历史，别让'当前有什么在跑'变糊」。
-    // 但 completed 条目不是历史——它的云端 URL 仍有效、产物仍可取回，
-    // 而用户付过费。把它们藏起来等于让「积分扣了但本地没片子」无法自助。
-    //
-    // failed / abandoned 仍然不显示：它们没有可取回产物，堆在这里只会噪。
-    //
-    // 小说导入条目也排除：它有专属的任务抽屉（顶栏指示 → novel_task_drawer），
-    // 混进来会让「云端任务」区出现一个既没有 video_id 也没有云端 URL 的条目，
-    // 而这里的每个按钮（刷新/取回）对它都不适用。
     setState(() {
       _cloudTasks = all
           .where(
             (e) =>
                 e.adapterId != NovelImportTaskService.adapterId &&
                 (e.status.isActive ||
-                    e.status == VideoTaskLedgerStatus.completed),
+                    e.status == VideoTaskLedgerStatus.completed) &&
+                (widget.seriesId == null ||
+                    widget.seriesId!.isEmpty ||
+                    e.seriesId == widget.seriesId) &&
+                (widget.episodeId == null ||
+                    widget.episodeId!.isEmpty ||
+                    e.episodeId == widget.episodeId),
           )
           .toList();
     });
   }
 
+  Widget _buildFilterChip(_QueueFilter filter, String text) {
+    final isSelected = _filter == filter;
+    return ChoiceChip(
+      label: Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+        ),
+      ),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _filter = filter),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _buildTaskTile(BuildContext context, StudioTask task) {
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        switch (task.kind) {
+          StudioTaskKind.image => Icons.image_outlined,
+          StudioTaskKind.video => Icons.movie_outlined,
+          StudioTaskKind.segment => Icons.view_column_outlined,
+        },
+        color: context.textSecondary,
+        size: 18,
+      ),
+      title: Text(
+        task.label,
+        style: TextStyle(color: context.textPrimary, fontSize: 12),
+      ),
+      subtitle: Text(
+        task.error ?? task.status.label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: task.status == StudioTaskStatus.failed
+              ? context.errorText
+              : context.textTertiary,
+          fontSize: 11,
+        ),
+      ),
+      trailing: task.isTerminal
+          ? null
+          : IconButton(
+              onPressed: () {
+                widget.queue.cancel(task.id);
+              },
+              icon: const Icon(Icons.close, size: 16),
+              tooltip: '取消',
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tasks = widget.queue.tasks;
+    final activeCount = tasks
+        .where(
+          (t) =>
+              t.status == StudioTaskStatus.queued ||
+              t.status == StudioTaskStatus.running,
+        )
+        .length;
+    final completedCount =
+        tasks.where((t) => t.status == StudioTaskStatus.completed).length;
+    final failedCount =
+        tasks.where((t) => t.status == StudioTaskStatus.failed).length;
+
+    final filteredTasks = tasks.where((t) {
+      return switch (_filter) {
+        _QueueFilter.all => true,
+        _QueueFilter.active =>
+          t.status == StudioTaskStatus.queued ||
+              t.status == StudioTaskStatus.running,
+        _QueueFilter.completed => t.status == StudioTaskStatus.completed,
+        _QueueFilter.failed => t.status == StudioTaskStatus.failed,
+      };
+    }).toList();
+
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  '任务队列',
-                  style: TextStyle(
-                    color: context.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  '并发数:',
-                  style: TextStyle(color: context.textSecondary, fontSize: 12),
-                ),
-                const SizedBox(width: 6),
-                SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(value: 1, label: Text('1')),
-                    ButtonSegment(value: 2, label: Text('2')),
-                    ButtonSegment(value: 3, label: Text('3')),
-                    ButtonSegment(value: 4, label: Text('4')),
-                    ButtonSegment(value: 5, label: Text('5')),
-                  ],
-                  selected: {widget.queue.maxConcurrency},
-                  onSelectionChanged: (set) {
-                    widget.queue.setMaxConcurrency(set.first);
-                    setState(() {});
-                  },
-                  style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {
-                    widget.queue.clearFinished();
-                    setState(() {});
-                  },
-                  child: const Text('清掉已完成'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (tasks.isEmpty && _cloudTasks.isEmpty)
-              Text(
-                '队列是空的。',
-                style: TextStyle(color: context.textTertiary, fontSize: 12),
-              ),
-            // 按 kind 分组展示：片段任务是分钟级长任务，和分镜级任务混排在一
-            // 起时用户看不出为什么看板"卡住不动了"（spec: 队列面板按 kind 分组）。
-            for (final entry in _groupByKind(tasks)) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 10, bottom: 2),
-                child: Text(
-                  entry.key.label,
-                  style: TextStyle(
-                    color: context.textTertiary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              for (final task in entry.value)
-                ListTile(
-                  dense: true,
-                  leading: Icon(
-                    switch (task.kind) {
-                      StudioTaskKind.image => Icons.image_outlined,
-                      StudioTaskKind.video => Icons.movie_outlined,
-                      StudioTaskKind.segment => Icons.view_column_outlined,
-                    },
-                    color: context.textSecondary,
-                    size: 18,
-                  ),
-                  title: Text(
-                    task.label,
-                    style: TextStyle(color: context.textPrimary, fontSize: 12),
-                  ),
-                  subtitle: Text(
-                    task.error ?? task.status.label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '任务队列',
                     style: TextStyle(
-                      color: task.status == StudioTaskStatus.failed
-                          ? context.errorText
-                          : context.textTertiary,
-                      fontSize: 11,
+                      color: context.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  trailing: task.isTerminal
-                      ? null
-                      : IconButton(
-                          onPressed: () {
-                            widget.queue.cancel(task.id);
-                          },
-                          icon: const Icon(Icons.close, size: 16),
-                          tooltip: '取消',
-                        ),
+                  const SizedBox(width: 14),
+                  Text(
+                    '并发数:',
+                    style: TextStyle(color: context.textSecondary, fontSize: 12),
+                  ),
+                  const SizedBox(width: 6),
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(value: 1, label: Text('1')),
+                      ButtonSegment(value: 2, label: Text('2')),
+                      ButtonSegment(value: 3, label: Text('3')),
+                      ButtonSegment(value: 4, label: Text('4')),
+                      ButtonSegment(value: 5, label: Text('5')),
+                    ],
+                    selected: {widget.queue.maxConcurrency},
+                    onSelectionChanged: (set) {
+                      widget.queue.setMaxConcurrency(set.first);
+                      setState(() {});
+                    },
+                    style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      widget.queue.clearFinished();
+                      setState(() {});
+                    },
+                    child: const Text('清掉已完成'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildFilterChip(_QueueFilter.all, '全部 (${tasks.length})'),
+                    const SizedBox(width: 8),
+                    _buildFilterChip(_QueueFilter.active, '进行中 ($activeCount)'),
+                    const SizedBox(width: 8),
+                    _buildFilterChip(
+                      _QueueFilter.completed,
+                      '已完成 ($completedCount)',
+                    ),
+                    const SizedBox(width: 8),
+                    _buildFilterChip(_QueueFilter.failed, '失败 ($failedCount)'),
+                  ],
                 ),
-            ],
-            if (_cloudTasks.isNotEmpty) ...[
-              _CloudTaskSection(
-                tasks: _cloudTasks,
-                onChanged: _loadCloudTasks,
-                onReloadBoard: widget.onReloadBoard,
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: Scrollbar(
+                  thumbVisibility: true,
+                  child: ListView(
+                    children: [
+                      if (filteredTasks.isEmpty &&
+                          (_filter != _QueueFilter.all || _cloudTasks.isEmpty))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 30),
+                          child: Center(
+                            child: Text(
+                              _filter == _QueueFilter.all
+                                  ? '队列是空的。'
+                                  : '没有 ${_filter.label} 的任务。',
+                              style: TextStyle(
+                                color: context.textTertiary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      for (final entry in _groupByKind(filteredTasks)) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10, bottom: 2),
+                          child: Text(
+                            entry.key.label,
+                            style: TextStyle(
+                              color: context.textTertiary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        for (final task in entry.value)
+                          _buildTaskTile(context, task),
+                      ],
+                      if (_cloudTasks.isNotEmpty &&
+                          (_filter == _QueueFilter.all ||
+                              _filter == _QueueFilter.active ||
+                              _filter == _QueueFilter.completed)) ...[
+                        _CloudTaskSection(
+                          tasks: _cloudTasks,
+                          onChanged: _loadCloudTasks,
+                          onReloadBoard: widget.onReloadBoard,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -5112,6 +6238,17 @@ class _CloudTaskTile extends StatelessWidget {
   final Future<void> Function() onChanged;
   final VoidCallback? onReloadBoard;
 
+  String get _createdTimeStr {
+    final t = entry.createdAt.toLocal();
+    final y = t.year.toString().padLeft(4, '0');
+    final m = t.month.toString().padLeft(2, '0');
+    final d = t.day.toString().padLeft(2, '0');
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    final ss = t.second.toString().padLeft(2, '0');
+    return '$y-$m-$d $hh:$mm:$ss';
+  }
+
   String get _elapsed {
     final d = DateTime.now().toUtc().difference(entry.createdAt);
     if (d.inMinutes < 1) return '${d.inSeconds} 秒';
@@ -5150,9 +6287,26 @@ class _CloudTaskTile extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(
-                    entry.label.isEmpty ? entry.model : entry.label,
-                    style: TextStyle(color: context.textPrimary, fontSize: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.label.isEmpty ? entry.model : entry.label,
+                        style: TextStyle(
+                          color: context.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '创建时间：$_createdTimeStr',
+                        style: TextStyle(
+                          color: context.textTertiary,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 // video_id 可复制：这是用户去控制台自查的唯一钥匙。
@@ -5765,16 +6919,26 @@ class _CameraMoveSheet extends StatelessWidget {
 class _AuditReportDialog extends StatefulWidget {
   const _AuditReportDialog({
     required this.report,
+    this.scorecard,
     required this.episode,
     required this.characters,
     required this.scenes,
+    this.framesDir,
+    this.clipsDir,
+    this.dialoguesDir,
+    this.onAuditAllKeyframes,
     required this.onFixCompleted,
   });
 
   final ValidationReport report;
+  final StudioQualityScorecard? scorecard;
   final StudioEpisode episode;
   final List<CharacterCard> characters;
   final List<SceneCard> scenes;
+  final String? framesDir;
+  final String? clipsDir;
+  final String? dialoguesDir;
+  final VoidCallback? onAuditAllKeyframes;
   final ValueChanged<StudioEpisode> onFixCompleted;
 
   @override
@@ -5846,9 +7010,75 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
     }
   }
 
+  void _handleStaggerShot(int shotNumber) {
+    final updated = DirectorValidationEngine.staggerConsecutiveShotScale(
+      widget.episode,
+      shotNumber,
+    );
+    widget.onFixCompleted(updated);
+    Navigator.of(context).pop();
+  }
+
+  void _handleSplitOverloaded(int shotNumber) {
+    final updated = DirectorValidationEngine.splitOverloadedShot(
+      widget.episode,
+      shotNumber,
+      framesDir: widget.framesDir,
+      clipsDir: widget.clipsDir,
+      dialoguesDir: widget.dialoguesDir,
+    );
+    widget.onFixCompleted(updated);
+    Navigator.of(context).pop();
+  }
+
+  void _handleSplitVerticalReversePair(int shotNumber) {
+    final updated = DirectorValidationEngine.splitVerticalShotIntoReversePair(
+      widget.episode,
+      shotNumber,
+      characters: widget.characters,
+      framesDir: widget.framesDir,
+      clipsDir: widget.clipsDir,
+      dialoguesDir: widget.dialoguesDir,
+    );
+    widget.onFixCompleted(updated);
+    Navigator.of(context).pop();
+  }
+
+  Widget _buildScorePill(BuildContext context, String stage, int score, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withAlpha(20),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withAlpha(80)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              stage,
+              style: TextStyle(fontSize: 10, color: context.textSecondary),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '$score 分',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final report = widget.report;
+    final sc = widget.scorecard;
     final errorColor = context.errorText;
     final warningColor = context.warningText;
 
@@ -5865,19 +7095,55 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              report.isValid ? '导演质检报告（全部通过）' : '导演质检报告（存在待优化项）',
+              sc != null
+                  ? '全链路影视质检报告 (${sc.overallScore}分 · C01~C17)'
+                  : (report.isValid ? '导演质检报告（通过）' : '导演质检报告（待优化）'),
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
         ],
       ),
       content: SizedBox(
-        width: 620,
+        width: 660,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (sc != null) ...[
+                Row(
+                  children: [
+                    _buildScorePill(
+                      context,
+                      '1.剧本可拍性',
+                      sc.screenplayScore,
+                      sc.screenplayScore >= 80 ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildScorePill(
+                      context,
+                      '2.分镜语法',
+                      sc.storyboardGrammarScore,
+                      sc.storyboardGrammarScore >= 80 ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildScorePill(
+                      context,
+                      '3.关键帧生图',
+                      sc.keyframeAndPromptScore,
+                      sc.keyframeAndPromptScore >= 80 ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 6),
+                    _buildScorePill(
+                      context,
+                      '4.视频安全',
+                      sc.videoMotionSafetyScore,
+                      sc.videoMotionSafetyScore >= 80 ? Colors.green : Colors.orange,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Container(
@@ -5931,11 +7197,11 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                   ),
                   const Spacer(),
                   Text(
-                    '合规分: ${report.passCount} / 10',
+                    '合规通关: ${report.passCount} / 14 规则',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: report.passCount >= 8
+                      color: report.passCount >= 10
                           ? const Color(0xFF22C55E)
                           : errorColor,
                     ),
@@ -5948,7 +7214,7 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                   padding: EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(
-                      '恭喜！全案所有分镜完全符合 C01~C10 视听与物理可执行性规范。',
+                      '恭喜！全案所有分镜完全符合 C01~C17 视听与物理可执行性规范。',
                       style: TextStyle(fontSize: 13, color: Color(0xFF22C55E)),
                     ),
                   ),
@@ -5959,7 +7225,7 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                       issue.severity == ValidationSeverity.blocking;
                   final color = isBlocking ? errorColor : warningColor;
                   return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
+                    margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: color.withAlpha(16),
@@ -6023,6 +7289,45 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                             color: context.textSecondary,
                           ),
                         ),
+                        if (issue.shotNumber != null) ...[
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              if (issue.ruleId == 'C14')
+                                FilledButton.tonalIcon(
+                                  onPressed: () =>
+                                      _handleStaggerShot(issue.shotNumber!),
+                                  icon: const Icon(Icons.tune, size: 14),
+                                  label: Text('一键错落景别 (#${issue.shotNumber})'),
+                                ),
+                              if (issue.ruleId == 'C15')
+                                FilledButton.tonalIcon(
+                                  onPressed: () =>
+                                      _handleSplitOverloaded(issue.shotNumber!),
+                                  icon: const Icon(Icons.call_split, size: 14),
+                                  label: Text('一键拆分双镜 (#${issue.shotNumber})'),
+                                ),
+                              if (issue.ruleId == 'C16')
+                                FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: Colors.indigo,
+                                  ),
+                                  onPressed: () =>
+                                      _handleSplitVerticalReversePair(
+                                        issue.shotNumber!,
+                                      ),
+                                  icon: const Icon(
+                                    Icons.swap_horiz,
+                                    size: 14,
+                                  ),
+                                  label: Text(
+                                    '一键裂变为正反打双镜 (#${issue.shotNumber})',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   );
@@ -6044,6 +7349,15 @@ class _AuditReportDialogState extends State<_AuditReportDialog> {
                 : const Icon(Icons.auto_fix_high, size: 16),
             label: Text(_isAutoFixing ? 'AI 一键自愈中…' : 'AI 一键自愈'),
           ),
+        if (widget.onAuditAllKeyframes != null)
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              widget.onAuditAllKeyframes?.call();
+            },
+            icon: const Icon(Icons.fact_check_outlined, size: 16),
+            label: const Text('全片关键帧质检'),
+          ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('关闭'),
@@ -6058,6 +7372,7 @@ class _VideoPromptDialog extends StatefulWidget {
     required this.shot,
     required this.episode,
     required this.characters,
+    this.props = const [],
     required this.scenes,
     required this.framesDir,
     required this.onSave,
@@ -6066,6 +7381,7 @@ class _VideoPromptDialog extends StatefulWidget {
   final StudioShot shot;
   final StudioEpisode episode;
   final List<CharacterCard> characters;
+  final List<PropCard> props;
   final List<SceneCard> scenes;
   final String framesDir;
   final ValueChanged<StudioShot> onSave;
@@ -6087,6 +7403,7 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
             shot: widget.shot,
             episode: widget.episode,
             characters: widget.characters,
+            props: widget.props,
             scene: widget.scenes
                 .where((s) => s.id == widget.shot.sceneId)
                 .firstOrNull,
@@ -6110,6 +7427,7 @@ class _VideoPromptDialogState extends State<_VideoPromptDialog> {
         shot: widget.shot,
         episode: widget.episode,
         characters: widget.characters,
+        props: widget.props,
         scene: widget.scenes
             .where((s) => s.id == widget.shot.sceneId)
             .firstOrNull,

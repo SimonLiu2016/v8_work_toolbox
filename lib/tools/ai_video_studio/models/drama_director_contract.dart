@@ -249,6 +249,10 @@ class DramaBeat {
   final String cameraMove;
   final String screenPosition;
   final String gazeDirection;
+  final String mountOrVehicle;
+  final List<String> props;
+  final String holdingItem;
+  final String holdingHand;
 
   const DramaBeat({
     required this.id,
@@ -269,6 +273,10 @@ class DramaBeat {
     this.cameraMove = '',
     this.screenPosition = '',
     this.gazeDirection = '',
+    this.mountOrVehicle = '',
+    this.props = const [],
+    this.holdingItem = '',
+    this.holdingHand = '',
   });
 
   DramaBeat copyWith({
@@ -290,6 +298,10 @@ class DramaBeat {
     String? cameraMove,
     String? screenPosition,
     String? gazeDirection,
+    String? mountOrVehicle,
+    List<String>? props,
+    String? holdingItem,
+    String? holdingHand,
   }) {
     return DramaBeat(
       id: id ?? this.id,
@@ -310,6 +322,10 @@ class DramaBeat {
       cameraMove: cameraMove ?? this.cameraMove,
       screenPosition: screenPosition ?? this.screenPosition,
       gazeDirection: gazeDirection ?? this.gazeDirection,
+      mountOrVehicle: mountOrVehicle ?? this.mountOrVehicle,
+      props: props ?? this.props,
+      holdingItem: holdingItem ?? this.holdingItem,
+      holdingHand: holdingHand ?? this.holdingHand,
     );
   }
 
@@ -332,6 +348,10 @@ class DramaBeat {
     if (cameraMove.isNotEmpty) 'camera_move': cameraMove,
     if (screenPosition.isNotEmpty) 'screen_position': screenPosition,
     if (gazeDirection.isNotEmpty) 'gaze_direction': gazeDirection,
+    if (mountOrVehicle.isNotEmpty) 'mount_or_vehicle': mountOrVehicle,
+    if (props.isNotEmpty) 'props': props,
+    if (holdingItem.isNotEmpty) 'holding_item': holdingItem,
+    if (holdingHand.isNotEmpty) 'holding_hand': holdingHand,
   };
 
   static DramaBeat fromJson(Map<String, dynamic> json) {
@@ -354,6 +374,10 @@ class DramaBeat {
       cameraMove: (json['camera_move'] ?? json['cameraMove']) as String? ?? '',
       screenPosition: (json['screen_position'] ?? json['screenPosition']) as String? ?? '',
       gazeDirection: (json['gaze_direction'] ?? json['gazeDirection']) as String? ?? '',
+      mountOrVehicle: (json['mount_or_vehicle'] ?? json['mountOrVehicle']) as String? ?? '',
+      props: (json['props'] as List?)?.cast<String>() ?? const [],
+      holdingItem: (json['holding_item'] ?? json['holdingItem']) as String? ?? '',
+      holdingHand: (json['holding_hand'] ?? json['holdingHand']) as String? ?? '',
     );
   }
 }
@@ -511,7 +535,7 @@ class DramaScene {
 
 /// 连续性台账契约（Continuity Ledger）。
 ///
-/// 维护空间坐标、屏幕机位朝向、视线朝向（gazeDirection）、机位轴线侧（cameraAxis）
+/// 维护空间坐标、屏幕机位朝向、视线朝向（gazeDirection）、机位俯仰（cameraAngle）、空间海拔（elevationLevel）
 /// 与镜尾动态相态（dynamicExitState）。
 @immutable
 class ContinuityLedger {
@@ -523,6 +547,9 @@ class ContinuityLedger {
   final List<String> stateChanges;
   final String gazeDirection;
   final String cameraAxis;
+  final String cameraAngle;
+  final String elevationLevel;
+  final String gazeTarget;
   final DynamicExitState dynamicExitState;
 
   const ContinuityLedger({
@@ -534,6 +561,9 @@ class ContinuityLedger {
     this.stateChanges = const [],
     this.gazeDirection = '',
     this.cameraAxis = '',
+    this.cameraAngle = '',
+    this.elevationLevel = '',
+    this.gazeTarget = '',
     this.dynamicExitState = DynamicExitState.empty,
   });
 
@@ -548,6 +578,9 @@ class ContinuityLedger {
       stateChanges.isEmpty &&
       gazeDirection.isEmpty &&
       cameraAxis.isEmpty &&
+      cameraAngle.isEmpty &&
+      elevationLevel.isEmpty &&
+      gazeTarget.isEmpty &&
       dynamicExitState.isEmpty;
 
   bool get isNotEmpty => !isEmpty;
@@ -561,6 +594,9 @@ class ContinuityLedger {
     List<String>? stateChanges,
     String? gazeDirection,
     String? cameraAxis,
+    String? cameraAngle,
+    String? elevationLevel,
+    String? gazeTarget,
     DynamicExitState? dynamicExitState,
   }) {
     return ContinuityLedger(
@@ -572,6 +608,9 @@ class ContinuityLedger {
       stateChanges: stateChanges ?? this.stateChanges,
       gazeDirection: gazeDirection ?? this.gazeDirection,
       cameraAxis: cameraAxis ?? this.cameraAxis,
+      cameraAngle: cameraAngle ?? this.cameraAngle,
+      elevationLevel: elevationLevel ?? this.elevationLevel,
+      gazeTarget: gazeTarget ?? this.gazeTarget,
       dynamicExitState: dynamicExitState ?? this.dynamicExitState,
     );
   }
@@ -585,6 +624,9 @@ class ContinuityLedger {
     'state_changes': stateChanges,
     if (gazeDirection.isNotEmpty) 'gaze_direction': gazeDirection,
     if (cameraAxis.isNotEmpty) 'camera_axis': cameraAxis,
+    if (cameraAngle.isNotEmpty) 'camera_angle': cameraAngle,
+    if (elevationLevel.isNotEmpty) 'elevation_level': elevationLevel,
+    if (gazeTarget.isNotEmpty) 'gaze_target': gazeTarget,
     if (dynamicExitState.isNotEmpty)
       'dynamic_exit_state': dynamicExitState.toJson(),
   };
@@ -601,6 +643,9 @@ class ContinuityLedger {
           (json['state_changes'] as List?)?.cast<String>() ?? const [],
       gazeDirection: json['gaze_direction'] as String? ?? '',
       cameraAxis: json['camera_axis'] as String? ?? '',
+      cameraAngle: json['camera_angle'] as String? ?? '',
+      elevationLevel: json['elevation_level'] as String? ?? '',
+      gazeTarget: json['gaze_target'] as String? ?? '',
       dynamicExitState: json['dynamic_exit_state'] is Map
           ? DynamicExitState.fromJson(
               (json['dynamic_exit_state'] as Map).map((k, v) => MapEntry(k as String, v)))
@@ -633,6 +678,12 @@ class DirectorDecisions {
   /// 本镜主要视觉任务。
   final String visualTask;
 
+  /// 机位俯仰角（如 high_angle 俯拍、low_angle 仰拍、eye_level 平视）。
+  final String cameraAngle;
+
+  /// 视线朝向向量描述（如 looking down at street below at -35 degree angle）。
+  final String gazeDirection;
+
   const DirectorDecisions({
     this.physicalMomentum = '',
     this.lightingStaging = '',
@@ -641,6 +692,8 @@ class DirectorDecisions {
     this.aestheticTexture = '',
     this.cutReason = '',
     this.visualTask = '',
+    this.cameraAngle = '',
+    this.gazeDirection = '',
   });
 
   static const DirectorDecisions empty = DirectorDecisions();
@@ -652,7 +705,9 @@ class DirectorDecisions {
       temporalEvolution.isEmpty &&
       aestheticTexture.isEmpty &&
       cutReason.isEmpty &&
-      visualTask.isEmpty;
+      visualTask.isEmpty &&
+      cameraAngle.isEmpty &&
+      gazeDirection.isEmpty;
 
   bool get isNotEmpty => !isEmpty;
 
@@ -664,6 +719,8 @@ class DirectorDecisions {
     String? aestheticTexture,
     String? cutReason,
     String? visualTask,
+    String? cameraAngle,
+    String? gazeDirection,
   }) {
     return DirectorDecisions(
       physicalMomentum: physicalMomentum ?? this.physicalMomentum,
@@ -673,6 +730,8 @@ class DirectorDecisions {
       aestheticTexture: aestheticTexture ?? this.aestheticTexture,
       cutReason: cutReason ?? this.cutReason,
       visualTask: visualTask ?? this.visualTask,
+      cameraAngle: cameraAngle ?? this.cameraAngle,
+      gazeDirection: gazeDirection ?? this.gazeDirection,
     );
   }
 
@@ -684,6 +743,8 @@ class DirectorDecisions {
     'aesthetic_texture': aestheticTexture,
     'cut_reason': cutReason,
     'visual_task': visualTask,
+    if (cameraAngle.isNotEmpty) 'camera_angle': cameraAngle,
+    if (gazeDirection.isNotEmpty) 'gaze_direction': gazeDirection,
   };
 
   static DirectorDecisions fromJson(Map<String, dynamic>? json) {
@@ -696,6 +757,8 @@ class DirectorDecisions {
       aestheticTexture: json['aesthetic_texture'] as String? ?? '',
       cutReason: json['cut_reason'] as String? ?? '',
       visualTask: json['visual_task'] as String? ?? '',
+      cameraAngle: json['camera_angle'] as String? ?? '',
+      gazeDirection: json['gaze_direction'] as String? ?? '',
     );
   }
 }

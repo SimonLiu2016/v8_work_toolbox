@@ -489,6 +489,144 @@ void main() {
       expect(segTasks.first.kind, StudioTaskKind.segment);
     });
   });
+
+  group('任务依赖（spec: 分镜视频任务等待同镜关键帧）', () {
+    test('视频任务等待前置生图任务成功后才启动', () async {
+      var imageStarted = false;
+      var videoStarted = false;
+      final order = <String>[];
+
+      final imageId = queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 1,
+        label: '分镜 1 关键帧',
+        runner: _FakeRunner(
+          taskId: 'img-1',
+          body: () async {
+            imageStarted = true;
+            order.add('image-start');
+            await Future<void>.delayed(const Duration(milliseconds: 40));
+            order.add('image-done');
+            return 'shot_1.png';
+          },
+        ),
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.video,
+        shotNumber: 1,
+        label: '分镜 1 视频',
+        requiresTaskId: imageId,
+        runner: _FakeRunner(
+          taskId: 'vid-1',
+          body: () async {
+            videoStarted = true;
+            order.add('video-start');
+            return 'shot_1.mp4';
+          },
+        ),
+      );
+
+      // 图任务跑完之前，视频任务不得启动。
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      expect(imageStarted, isTrue);
+      expect(videoStarted, isFalse,
+          reason: '视频任务必须等关键帧生成成功，不能抢并发槽');
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(videoStarted, isTrue);
+      expect(order, ['image-start', 'image-done', 'video-start']);
+    });
+
+    test('前置失败时视频任务标记为前置未满足，不启动', () async {
+      var videoStarted = false;
+      final imageId = queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 2,
+        label: '分镜 2 关键帧',
+        runner: _FakeRunner(
+          taskId: 'img-2',
+          body: () async => throw StateError('生图引擎超时'),
+        ),
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.video,
+        shotNumber: 2,
+        label: '分镜 2 视频',
+        requiresTaskId: imageId,
+        runner: _FakeRunner(
+          taskId: 'vid-2',
+          body: () async {
+            videoStarted = true;
+            return 'shot_2.mp4';
+          },
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      expect(videoStarted, isFalse,
+          reason: '缺首帧的视频任务跑出去只会产出与关键帧不符的片子');
+      // StudioTask 没有暴露 runner 的 taskId，用 label 找。
+      final videoTask = queue.tasks
+          .firstWhere((t) => t.label == '分镜 2 视频');
+      expect(videoTask.status, StudioTaskStatus.failed);
+      expect(videoTask.error, contains('前置任务未满足'));
+    });
+
+    test('无依赖的任务不受影响，照常入队即跑', () async {
+      var ran = false;
+      queue.enqueue(
+        kind: StudioTaskKind.video,
+        shotNumber: 3,
+        label: '分镜 3 视频',
+        runner: _FakeRunner(
+          taskId: 'vid-3',
+          body: () async {
+            ran = true;
+            return 'shot_3.mp4';
+          },
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(ran, isTrue);
+    });
+
+    test('isWaitingForPrerequisite 与 prerequisite 暴露等待状态', () async {
+      final imageId = queue.enqueue(
+        kind: StudioTaskKind.image,
+        shotNumber: 4,
+        label: '分镜 4 关键帧',
+        runner: _FakeRunner(
+          taskId: 'img-4',
+          body: () async {
+            await Future<void>.delayed(const Duration(milliseconds: 60));
+            return 'shot_4.png';
+          },
+        ),
+      );
+      queue.enqueue(
+        kind: StudioTaskKind.video,
+        shotNumber: 4,
+        label: '分镜 4 视频',
+        requiresTaskId: imageId,
+        runner: _FakeRunner(
+          taskId: 'vid-4',
+          body: () async => 'shot_4.mp4',
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      final videoTask = queue.lookup(
+        queue.tasks.firstWhere((t) => t.label == '分镜 4 视频').id,
+      )!;
+      expect(videoTask.isWaitingForPrerequisite, isTrue);
+      expect(videoTask.prerequisite?.label, '分镜 4 关键帧');
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(videoTask.isWaitingForPrerequisite, isFalse);
+    });
+  });
 }
 
 class _FakeRunner implements StudioTaskRunner, CancellableTaskRunner {

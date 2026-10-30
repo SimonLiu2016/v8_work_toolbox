@@ -1,0 +1,14 @@
+# 本目录（IT 会议听力工具）单独开启 strict-casts。
+#
+# 背景：词汇表发音播放曾出现 `type '() => Null' is not a subtype of type ...`——
+# 这类错误**只在运行期**成立，因为根配置只 include 了 flutter_lints、未开
+# strict-casts，`dynamic` → 具体类型的隐式降级在编译期被静默放行。
+#
+# 覆盖范围（当前）：仅 lib/tools/it_meeting_listening/。
+# 后续推进：按同样方式逐个目录接入（reader / services / ai_video_studio 等）。
+# 全仓一次性开启会暴露约 47 处既有隐式降级，需分批处置后再并入根配置。
+include: ../../../analysis_options.yaml
+
+analyzer:
+  language:
+    strict-casts: true

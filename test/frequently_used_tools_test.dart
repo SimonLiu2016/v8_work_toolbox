@@ -139,7 +139,12 @@ void main() {
       );
       expect(
         ToolRegistry.getByCategory(ToolCategory.note).map((t) => t.id).toSet(),
-        {'notebook', 'vocab-book'},
+        {
+          'notebook',
+          'vocab-book',
+          'it-meeting-listening',
+          'live-meeting-translator',
+        },
       );
       expect(
         ToolRegistry.getByCategory(ToolCategory.ops).map((t) => t.id).toSet(),

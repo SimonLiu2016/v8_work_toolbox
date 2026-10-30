@@ -15,10 +15,11 @@ class MainFlutterWindow: NSWindow {
     self.center()
 
     // 沉浸式透明标题栏与全尺寸内容视图（消除原生灰色标题条）
+    // 注意：不设置 isMovableByWindowBackground，改由 Flutter 侧 DragToMoveArea 精确控制
+    // 拖拽区域，避免 NSWindow 在模态弹窗内截获 mouseDown 导致按钮无法点击。
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
     self.styleMask.insert(.fullSizeContentView)
-    self.isMovableByWindowBackground = true
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
@@ -42,10 +43,10 @@ class MainFlutterWindow: NSWindow {
           window.minSize = NSSize(width: 400, height: 400)
 
           // 沉浸式透明标题栏与全尺寸内容视图（与主窗口完全一致）
+          // 不设置 isMovableByWindowBackground，避免子窗口模态弹窗按钮被 NSWindow 截获。
           window.titlebarAppearsTransparent = true
           window.titleVisibility = .hidden
           window.styleMask.insert(.fullSizeContentView)
-          window.isMovableByWindowBackground = true
         }
       }
     }

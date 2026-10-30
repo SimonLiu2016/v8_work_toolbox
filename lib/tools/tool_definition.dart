@@ -15,6 +15,23 @@ const String kToolIdAgnesPlayground = 'agnes-playground';
 const String kToolIdInfiniteCanvas = 'infinite-canvas';
 const String kToolIdNovelManager = 'novel-manager';
 
+/// IT 会议听力工具。
+///
+/// 标识同时是代理通道键、素材目录名与子窗口 arguments 前缀的组成部分，
+/// 统一走这一个常量。
+const String kToolIdItMeetingListening = 'it-meeting-listening';
+
+/// 实时会议翻译工具。
+///
+/// 标识同时是代理通道键与字幕导出目录名的组成部分，统一走这一个常量。
+const String kToolIdLiveTranslator = 'live-meeting-translator';
+
+/// IT 会议听力的迷你播放窗子窗口 arguments 前缀。
+///
+/// 值里不含 `:` 之后的内容即为「无附加参数」。解析见
+/// `lib/main.dart` 的子窗口启动分支。
+const String kItListeningWindowArgPrefix = 'it-listen:';
+
 /// 工具分类枚举。
 ///
 /// 分类的顺序即活动栏的展示顺序（`ActivityBar` 遍历 `values`，仅排除

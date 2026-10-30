@@ -188,6 +188,12 @@ resign() {
    $signed_ent
    期望含 files.user-selected.read-write（saveFile 只认它）。" ;;
     esac
+    case "$signed_ent" in
+        *device.audio-input*) ;;
+        *) die resign "entitlements 未进入签名：
+   $signed_ent
+   期望含 com.apple.security.device.audio-input（实时内录与语音翻译所需）。" ;;
+    esac
 
     codesign -v --strict "$SOURCE_APP" \
         || die resign "签名后 strict 校验失败（seal 不自洽）"

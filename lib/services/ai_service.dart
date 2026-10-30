@@ -264,6 +264,8 @@ class AiService {
     switch (provider.protocol) {
       case AiProtocolType.openai:
       case AiProtocolType.agnes:
+      case AiProtocolType.stepfun:
+      case AiProtocolType.openrouter:
         return _discoverOpenAiModels(provider.baseUrl, key);
       case AiProtocolType.anthropic:
         return _discoverAnthropicModels(provider.baseUrl, key);
@@ -476,6 +478,8 @@ class AiService {
     switch (provider.protocol) {
       case AiProtocolType.openai:
       case AiProtocolType.agnes:
+      case AiProtocolType.stepfun:
+      case AiProtocolType.openrouter:
         await _chatOpenAi(provider, key, model, pingMessages, maxTokens: 5);
         break;
       case AiProtocolType.anthropic:
@@ -487,12 +491,12 @@ class AiService {
     }
   }
 
-  /// 统一文本对话能力调用（带自动愈合路由）
+  /// 统一文本/多模态对话能力调用（带自动愈合路由）
   Future<ChatResult> chat({
     String slot = 'text',
     String? explicitProviderId,
     String? explicitModel,
-    required List<Map<String, String>> messages,
+    required List<Map<String, dynamic>> messages,
     Duration? timeout,
     bool ignoreCooldown = false,
   }) async {
@@ -641,7 +645,7 @@ class AiService {
   Future<String> _chatWithProvider(
     AiProviderConfig provider,
     String modelName,
-    List<Map<String, String>> messages, {
+    List<Map<String, dynamic>> messages, {
     Duration? timeout,
   }) async {
     final key =
@@ -650,6 +654,8 @@ class AiService {
     switch (provider.protocol) {
       case AiProtocolType.openai:
       case AiProtocolType.agnes:
+      case AiProtocolType.stepfun:
+      case AiProtocolType.openrouter:
         return _chatOpenAi(
           provider,
           key,
@@ -680,7 +686,7 @@ class AiService {
     AiProviderConfig provider,
     String apiKey,
     String model,
-    List<Map<String, String>> messages, {
+    List<Map<String, dynamic>> messages, {
     int? maxTokens,
     Duration? timeout,
   }) async {
@@ -786,7 +792,7 @@ class AiService {
     AiProviderConfig provider,
     String apiKey,
     String model,
-    List<Map<String, String>> messages, {
+    List<Map<String, dynamic>> messages, {
     int? maxTokens,
     Duration? timeout,
   }) async {
@@ -806,17 +812,66 @@ class AiService {
 
     // 分离 system prompt 与对话消息
     String systemPrompt = '';
-    final chatMsgs = <Map<String, String>>[];
+    final chatMsgs = <Map<String, dynamic>>[];
     for (final m in messages) {
-      if (m['role'] == 'system') {
+      final role = m['role'] ?? 'user';
+      final content = m['content'];
+      if (role == 'system') {
+        final textContent = content is String
+            ? content
+            : (content is List
+                ? content
+                    .map((e) => e is Map ? (e['text'] ?? '') : e.toString())
+                    .join('\n')
+                : content?.toString() ?? '');
         systemPrompt = systemPrompt.isEmpty
-            ? (m['content'] ?? '')
-            : '$systemPrompt\n\n${m['content']}';
+            ? textContent
+            : '$systemPrompt\n\n$textContent';
       } else {
-        chatMsgs.add({
-          'role': m['role'] ?? 'user',
-          'content': m['content'] ?? '',
-        });
+        if (content is List) {
+          final anthropicContent = <Map<String, dynamic>>[];
+          for (final item in content) {
+            if (item is Map) {
+              final type = item['type'];
+              if (type == 'text') {
+                anthropicContent.add({'type': 'text', 'text': item['text'] ?? ''});
+              } else if (type == 'image_url') {
+                final url = (item['image_url'] is Map
+                        ? item['image_url']['url']
+                        : item['image_url']) as String? ??
+                    '';
+                if (url.startsWith('data:')) {
+                  final commaIdx = url.indexOf(',');
+                  if (commaIdx != -1) {
+                    final meta = url.substring(5, commaIdx);
+                    final mediaType = meta.split(';').first;
+                    final b64 = url.substring(commaIdx + 1);
+                    anthropicContent.add({
+                      'type': 'image',
+                      'source': {
+                        'type': 'base64',
+                        'media_type':
+                            mediaType.isEmpty ? 'image/png' : mediaType,
+                        'data': b64,
+                      },
+                    });
+                  }
+                }
+              } else if (type == 'image') {
+                anthropicContent.add(Map<String, dynamic>.from(item));
+              }
+            }
+          }
+          chatMsgs.add({
+            'role': role,
+            'content': anthropicContent,
+          });
+        } else {
+          chatMsgs.add({
+            'role': role,
+            'content': content?.toString() ?? '',
+          });
+        }
       }
     }
 
@@ -918,7 +973,7 @@ class AiService {
     String baseUrl,
     String apiKey,
     String model,
-    List<Map<String, String>> messages, {
+    List<Map<String, dynamic>> messages, {
     Duration? timeout,
   }) async {
     final effTimeout = timeout ?? defaultChatTimeout;
@@ -941,16 +996,56 @@ class AiService {
     String systemPrompt = '';
     final contents = <Map<String, dynamic>>[];
     for (final m in messages) {
-      if (m['role'] == 'system') {
+      final role = m['role'] ?? 'user';
+      final content = m['content'];
+      if (role == 'system') {
+        final textContent = content is String
+            ? content
+            : (content is List
+                ? content
+                    .map((e) => e is Map ? (e['text'] ?? '') : e.toString())
+                    .join('\n')
+                : content?.toString() ?? '');
         systemPrompt = systemPrompt.isEmpty
-            ? (m['content'] ?? '')
-            : '$systemPrompt\n\n${m['content']}';
+            ? textContent
+            : '$systemPrompt\n\n$textContent';
       } else {
+        final parts = <Map<String, dynamic>>[];
+        if (content is List) {
+          for (final item in content) {
+            if (item is Map) {
+              final type = item['type'];
+              if (type == 'text') {
+                parts.add({'text': item['text'] ?? ''});
+              } else if (type == 'image_url') {
+                final url = (item['image_url'] is Map
+                        ? item['image_url']['url']
+                        : item['image_url']) as String? ??
+                    '';
+                if (url.startsWith('data:')) {
+                  final commaIdx = url.indexOf(',');
+                  if (commaIdx != -1) {
+                    final meta = url.substring(5, commaIdx);
+                    final mimeType = meta.split(';').first;
+                    final b64 = url.substring(commaIdx + 1);
+                    parts.add({
+                      'inline_data': {
+                        'mime_type':
+                            mimeType.isEmpty ? 'image/png' : mimeType,
+                        'data': b64,
+                      },
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          parts.add({'text': content?.toString() ?? ''});
+        }
         contents.add({
-          'role': m['role'] == 'assistant' ? 'model' : 'user',
-          'parts': [
-            {'text': m['content'] ?? ''},
-          ],
+          'role': role == 'assistant' ? 'model' : 'user',
+          'parts': parts,
         });
       }
     }

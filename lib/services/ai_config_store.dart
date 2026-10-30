@@ -12,7 +12,9 @@ enum AiProtocolType {
   openai('OpenAI 兼容协议'),
   anthropic('Anthropic 协议'),
   gemini('Google Gemini 协议'),
-  agnes('Agnes 专用协议');
+  agnes('Agnes 专用协议'),
+  stepfun('StepFun 阶跃星辰协议'),
+  openrouter('OpenRouter 协议');
 
   final String label;
   const AiProtocolType(this.label);
@@ -431,7 +433,15 @@ class AiConfigStore {
       });
 
       // 确保所有标准槽位存在
-      for (final slot in ['text', 'multimodal', 'tts', 'stt', 'video', 'image']) {
+      for (final slot in [
+        'text',
+        'decision',
+        'multimodal',
+        'tts',
+        'stt',
+        'video',
+        'image',
+      ]) {
         _slotBindings.putIfAbsent(slot, () => <SlotCandidate>[]);
       }
 
@@ -446,9 +456,52 @@ class AiConfigStore {
         await _save();
       }
 
-      // 旧格式检测到后立即重新保存为新格式
+      // 自动修复历史遗留的无效 TTS 模型 (例如千问曾被误置为 qwen-audio-tts 或不支持的 cosyvoice-v1)
+      for (int i = 0; i < _providers.length; i++) {
+        final p = _providers[i];
+        final isQwen = p.name.contains('千问') ||
+            p.name.toLowerCase().contains('qwen') ||
+            p.baseUrl.toLowerCase().contains('qianwenaiapi.com') ||
+            p.baseUrl.toLowerCase().contains('dashscope.aliyuncs.com');
+        if (isQwen) {
+          final legacyModels = {'qwen-audio-tts', 'cosyvoice-v1', 'cosyvoice-v2', 'cosyvoice-v3-flash', 'cosyvoice-v3.5-flash'};
+          if (p.ttsModels.any((m) => legacyModels.contains(m)) || !p.ttsModels.contains('qwen-audio-3.0-tts-plus')) {
+            final updatedTts = [
+              'qwen-audio-3.0-tts-plus',
+              'qwen-audio-3.1-tts-plus',
+              'qwen-audio-3.1-tts-flash',
+              ...p.ttsModels.where((m) => !legacyModels.contains(m) && !m.startsWith('qwen-audio-3.')),
+            ].toSet().toList();
+            _providers[i] = p.copyWith(ttsModels: updatedTts);
+            needsMigration = true;
+          }
+        }
+      }
+
+      final ttsCandidates = _slotBindings['tts'];
+      if (ttsCandidates != null) {
+        for (int i = 0; i < ttsCandidates.length; i++) {
+          final c = ttsCandidates[i];
+          final candProvider = _providers.cast<AiProviderConfig?>().firstWhere(
+                (p) => p?.id == c.providerId,
+                orElse: () => null,
+              );
+          final isQwenCand = candProvider != null &&
+              (candProvider.name.contains('千问') ||
+                  candProvider.name.toLowerCase().contains('qwen') ||
+                  candProvider.baseUrl.toLowerCase().contains('qianwenaiapi.com') ||
+                  candProvider.baseUrl.toLowerCase().contains('dashscope.aliyuncs.com'));
+          final legacyModels = {'qwen-audio-tts', 'cosyvoice-v1', 'cosyvoice-v2', 'cosyvoice-v3-flash', 'cosyvoice-v3.5-flash', 'tts-1'};
+          if (isQwenCand && legacyModels.contains(c.model)) {
+            ttsCandidates[i] = c.copyWith(model: 'qwen-audio-3.0-tts-plus');
+            needsMigration = true;
+          }
+        }
+      }
+
+      // 旧格式或自愈修复检测到后立即重新保存
       if (needsMigration) {
-        debugPrint('检测到旧格式 defaultSlots，已自动迁移为候选列表格式');
+        debugPrint('检测到旧格式或需自愈的配置，已自动更新并保存');
         await _save();
       }
     } catch (e) {
@@ -465,6 +518,7 @@ class AiConfigStore {
     _providers = [];
     _slotBindings = {
       'text': <SlotCandidate>[],
+      'decision': <SlotCandidate>[],
       'multimodal': <SlotCandidate>[],
       'tts': <SlotCandidate>[],
       'stt': <SlotCandidate>[],

@@ -34,7 +34,7 @@ The system SHALL support extracting readable body content from public web articl
 - **THEN** system displays error message with retry option
 
 ### Requirement: Tri-mode Text-to-Speech synthesis engine
-The system SHALL provide a tri-mode TTS engine supporting Edge-TTS, OpenAI-compatible commercial TTS APIs, and macOS native speech synthesis, with automatic protocol adaptation for legacy speech and chat audio models.
+The system SHALL provide a tri-mode TTS engine supporting Edge-TTS, OpenAI-compatible commercial TTS APIs, and macOS native speech synthesis, with automatic protocol adaptation for legacy speech, chat audio models, and vendor-specific voice conventions.
 
 #### Scenario: Default Edge-TTS free neural voice synthesis
 - **WHEN** Edge-TTS mode is selected and playback starts
@@ -55,6 +55,11 @@ The system SHALL provide a tri-mode TTS engine supporting Edge-TTS, OpenAI-compa
 #### Scenario: Custom voice ID specification for third-party providers
 - **WHEN** user inputs or selects a custom voice ID for an OpenAI-compatible speech provider
 - **THEN** system passes the voice identifier in the synthesis request body to the target provider, safely falling back to provider defaults if incompatible
+
+#### Scenario: Voice adaptation for Qwen and CosyVoice TTS models
+- **WHEN** user synthesizes audio using a Qwen or CosyVoice model (such as `cosyvoice-v3-flash` or `qwen-audio-tts`) or a provider whose endpoint is on `qianwenaiapi.com` or `dashscope.aliyuncs.com`
+- **THEN** the system SHALL NOT send OpenAI-specific default voice identifiers (such as `alloy`)
+- **AND** the system SHALL automatically substitute an applicable Qwen/CosyVoice voice (defaulting to `longxiaochun` or `Cherry`) when the configured voice is empty or an OpenAI default voice
 
 ### Requirement: Low-latency streaming chunk queue and cache
 The system SHALL segment document text into sentence/paragraph chunks and schedule pre-synthesis of subsequent chunks in a strictly serialized, non-colliding order to avoid concurrent request spikes against external providers, cleaning repetitive filler dots from table-of-contents entries.
@@ -98,7 +103,7 @@ The system SHALL allow users to export the complete speech synthesis of a docume
 - **THEN** system batches and merges all chunk audio files into a single MP3 file and displays completion notification
 
 ### Requirement: OpenAI Chat Audio Completions and Xiaomi MiMo adaptation
-The system SHALL dynamically detect Chat Audio Completions models (such as Xiaomi MiMo `mimo-v2.5-tts` or OpenAI chat audio models), routing synthesis requests to `/v1/chat/completions` with assistant messages and audio configurations, and decoding Base64 audio payloads.
+The system SHALL dynamically detect Chat Audio Completions models (such as Xiaomi MiMo `mimo-v2.5-tts` or OpenAI chat audio models), routing synthesis requests to `/v1/chat/completions` with assistant messages and audio configurations, and decoding Base64 audio payloads. When targeting Xiaomi MiMo, the system SHALL support an optional natural-language style instruction conveyed via a user message, and SHALL translate the synthesis speed into an instruction fragment when the provider does not expose a numeric speed parameter.
 
 #### Scenario: Xiaomi MiMo TTS model synthesis
 - **WHEN** user selects a Xiaomi MiMo TTS model or provider via system AI config or manual settings
@@ -107,6 +112,24 @@ The system SHALL dynamically detect Chat Audio Completions models (such as Xiaom
 #### Scenario: Incompatible voice fallback protection
 - **WHEN** a synthesis request targets Xiaomi MiMo but the active voice is not in MiMo's supported voice list
 - **THEN** system automatically substitutes `mimo_default` as the synthesis voice to prevent HTTP 400 parameter errors
+
+#### Scenario: Style instruction injected as user message
+- **WHEN** a synthesis request targets Xiaomi MiMo and a style instruction is configured (e.g. "自然、清晰、语速适中、略带情感")
+- **THEN** the request body SHALL include a `user`-role message carrying the style instruction BEFORE the `assistant`-role message that carries the synthesis text
+- **AND** the response audio SHALL be synthesized according to the instructed pacing, tone, and emotion rather than the neutral default
+
+#### Scenario: No user message when instruction absent
+- **WHEN** a synthesis request targets Xiaomi MiMo and no style instruction is configured
+- **THEN** the request body SHALL contain only the `assistant`-role message (no empty `user` message), preserving existing behavior
+
+#### Scenario: Speed translated to instruction fragment
+- **WHEN** a synthesis request targets Xiaomi MiMo with a speed multiplier other than 1.0
+- **THEN** the system SHALL append a speed instruction fragment (e.g. "语速加快" for faster, "语速放慢" for slower) to the style instruction rather than sending a numeric `speed` parameter the provider does not support
+- **AND** speed 1.0 SHALL NOT add any fragment
+
+#### Scenario: Non-MiMo engines ignore style instruction
+- **WHEN** a synthesis request targets a non-MiMo provider (OpenAI speech, Qwen DashScope, Edge, or macOS native)
+- **THEN** the style instruction SHALL be ignored and the existing request format preserved
 
 ### Requirement: Audio format sniffing and cache persistence
 The system SHALL inspect audio byte headers to persist chunk audio files with correct format extensions (.wav or .mp3) to ensure macOS audio player compatibility.
@@ -171,7 +194,7 @@ The system SHALL provide an accessible action in the reader navigation bar to di
 - **THEN** system opens the AiLogDialog modal displaying recent TTS synthesis requests, status codes, latency, and error details with one-click copy support
 
 ### Requirement: TTS configuration persistence and smart mode defaulting
-The system SHALL persist the user's TTS configuration (synthesis mode, selected provider, model, voice ID, and speech rate) to local application storage, and automatically resolve a functional default mode on startup.
+The system SHALL persist the reader's TTS synthesis configuration (mode, voice, speed, pitch, style instruction, and system-provider binding) to a local config file and SHALL derive a sensible default on first run by inspecting enabled providers and the TTS slot binding.
 
 #### Scenario: Persisting user TTS configuration changes
 - **WHEN** user changes the TTS synthesis mode, voice, speed, or provider settings
@@ -184,6 +207,16 @@ The system SHALL persist the user's TTS configuration (synthesis mode, selected 
 #### Scenario: Smart initial default when AI provider configured
 - **WHEN** the audio reader opens without prior saved configuration and the system AI configuration contains an active TTS model provider
 - **THEN** system automatically defaults the synthesis mode to Custom AI TTS using the configured provider and model rather than defaulting to Edge-TTS
+
+#### Scenario: Style instruction persisted with config
+- **WHEN** user saves a reader configuration containing a non-empty style instruction
+- **THEN** the style instruction is written to the reader config file and restored on the next launch
+- **AND** an empty style instruction is also persisted (round-trip preserves emptiness)
+
+#### Scenario: Smart default seeds a MiMo-friendly style instruction
+- **WHEN** the reader derives its first-run default and the TTS slot is bound to a MiMo provider
+- **THEN** the default style instruction SHALL be a non-empty conservative value (e.g. "自然、清晰、语速适中、略带情感") so out-of-the-box MiMo synthesis is not flat/neutral
+- **AND** the default voice SHALL be `mimo_default`
 
 ### Requirement: Resilient commercial AI rate limit backoff and extended synthesis timeout
 The system SHALL protect commercial AI TTS synthesis against transient HTTP 429 rate limits, network connection terminations, and TLS handshake failures through automatic retry and stepped backoff delays with observable progress updates, supporting synthesis durations up to 90 seconds for long paragraphs.

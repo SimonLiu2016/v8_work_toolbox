@@ -61,3 +61,44 @@ The browser companion SHALL route in-page bubble "加生词本" actions through 
 - **WHEN** user clicks "加生词本" but the local bridge is unreachable (desktop application closed or bridge uninitialized)
 - **THEN** the bubble displays a graceful failure notification indicating the desktop application is not running, without navigating to an OS URL scheme.
 
+### Requirement: Browser bubble actions express their intent through the deep link
+The in-page bubble's action buttons SHALL each dispatch a deep link that names their actual intent, so that the desktop app performs the action the button promised rather than a generic lookup.
+
+#### Scenario: Ask AI dispatches AI mode
+- **WHEN** the user clicks the bubble's "问 AI 深度解析" action while the clipboard word was not found in the dictionary
+- **THEN** the extension dispatches a lookup deep link carrying AI mode, so the desktop app goes directly to AI analysis instead of repeating the failed dictionary lookup.
+
+#### Scenario: Add to vocabulary book dispatches the vocabulary action
+- **WHEN** the user clicks the bubble's "加入词本" action
+- **THEN** the extension dispatches a vocabulary deep link that adds the word without opening any window, and the bubble confirms the addition rather than announcing a window opening.
+
+#### Scenario: Open on desktop keeps dictionary-first behaviour
+- **WHEN** the user clicks the bubble's "在桌面端打开" action
+- **THEN** the extension dispatches a lookup deep link with no mode parameter, preserving dictionary-first behaviour.
+
+#### Scenario: Button labels match the dispatched action
+- **WHEN** any bubble action is dispatched
+- **THEN** the button's own confirmation text names the action actually taken — an action that adds a word confirms the addition, and does not display text about opening a window.
+
+### Requirement: First-level browser context menu with V8 branding
+The browser companion extension SHALL register a first-level context menu item with the V8 brand icon and nested submenus in Chromium-based browsers (Chrome, Edge, Brave, etc.).
+
+#### Scenario: User opens context menu on selected web text
+- **WHEN** the user selects text on any web page and right-clicks
+- **THEN** a first-level context menu labeled "V8 Work Toolbox" appears with the V8 icon, containing submenus: "查词 (Lookup in V8)" and "保存笔记 (Save to V8 Notes)".
+
+#### Scenario: Trigger lookup from context menu
+- **WHEN** the user clicks "查词 (Lookup in V8)"
+- **THEN** the word/selection is immediately passed to V8's lookup service or displayed in an in-page popover bubble.
+
+#### Scenario: Trigger note save from context menu
+- **WHEN** the user clicks "保存笔记 (Save to V8 Notes)"
+- **THEN** the selection along with page URL, title, and HTML structure is sent to V8 note capture service silently.
+
+### Requirement: Desktop app communication bridge
+The browser companion extension SHALL establish communication with the desktop V8 Work Toolbox application via deep link protocol (`v8toolbox://`) or local loopback HTTP service.
+
+#### Scenario: Deep link execution
+- **WHEN** a browser context menu action is invoked
+- **THEN** the extension dispatches the query payload to the V8 desktop application via registered custom URL scheme or local API bridge, bringing up the lookup popover or saving note.
+

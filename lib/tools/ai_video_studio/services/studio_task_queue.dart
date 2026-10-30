@@ -77,6 +77,14 @@ class StudioTask {
   /// 片段专属标识（片段级任务时填充，确保任务匹配不依赖哈希或分镜号碰撞）。
   final String? segmentId;
 
+  /// 前置任务 id 列表：该任务 SHALL 等待列表内全部任务成功完成后才可启动
+  /// （spec: 分镜视频任务等待同镜关键帧 & 批量接力生视频的跨镜串行依赖）。
+  final List<String> requiredTaskIds;
+
+  /// 向后兼容的单前置访问器（返回第一个前置任务 id，无则为 null）。
+  String? get requiresTaskId =>
+      requiredTaskIds.isEmpty ? null : requiredTaskIds.first;
+
   final DateTime enqueuedAt;
   DateTime? startedAt;
   DateTime? finishedAt;
@@ -87,6 +95,8 @@ class StudioTask {
     required this.shotNumber,
     required this.label,
     this.segmentId,
+    String? requiresTaskId,
+    List<String>? requiredTaskIds,
     this.status = StudioTaskStatus.queued,
     this.progress = 0,
     this.error,
@@ -94,13 +104,46 @@ class StudioTask {
     required this.enqueuedAt,
     this.startedAt,
     this.finishedAt,
-  });
+  }) : requiredTaskIds = List.unmodifiable(<String>[
+         if (requiredTaskIds != null)
+           ...requiredTaskIds.where((id) => id.isNotEmpty),
+         if (requiresTaskId != null &&
+             requiresTaskId.isNotEmpty &&
+             (requiredTaskIds == null ||
+                 !requiredTaskIds.contains(requiresTaskId)))
+           requiresTaskId,
+       ]);
 
   bool get isTerminal =>
       status == StudioTaskStatus.completed ||
       status == StudioTaskStatus.failed ||
       status == StudioTaskStatus.cancelled;
 
+  /// 是否在等未终态的前置任务（队列面板据此显示「等待前置」）。
+  ///
+  /// 通过 [StudioTaskQueue.lookup] 找前置。找不到（被 clearFinished 清掉）
+  /// 时视为不等——那种情况下 [_nextRunnable] 会直接放行它。
+  bool get isWaitingForPrerequisite {
+    if (status != StudioTaskStatus.queued || requiredTaskIds.isEmpty) {
+      return false;
+    }
+    for (final id in requiredTaskIds) {
+      final p = StudioTaskQueue.instance.lookup(id);
+      if (p != null && !p.isTerminal) return true;
+    }
+    return false;
+  }
+
+  /// 当前正在等待的首个前置任务对象（不存在时为 null）。
+  StudioTask? get prerequisite {
+    for (final id in requiredTaskIds) {
+      final p = StudioTaskQueue.instance.lookup(id);
+      if (p != null && !p.isTerminal) return p;
+    }
+    return requiredTaskIds.isEmpty
+        ? null
+        : StudioTaskQueue.instance.lookup(requiredTaskIds.first);
+  }
 }
 
 /// 可取消的执行体：队列在用户点取消时置位 [cancelled]。
@@ -204,6 +247,8 @@ class StudioTaskQueue {
     required String label,
     required StudioTaskRunner runner,
     String? segmentId,
+    String? requiresTaskId,
+    List<String>? requiredTaskIds,
   }) {
     // 片段任务的 shotNumber 由调用方经 [segmentKey] 转换后传入，这里不区分
     // —— 队列只关心「一个整数关联键」，它是什么语义由 kind 决定。
@@ -213,6 +258,8 @@ class StudioTaskQueue {
       shotNumber: shotNumber,
       label: label,
       segmentId: segmentId,
+      requiresTaskId: requiresTaskId,
+      requiredTaskIds: requiredTaskIds,
       enqueuedAt: DateTime.now(),
     );
     _tasks.add(task);
@@ -256,8 +303,58 @@ class StudioTaskQueue {
     _emit();
   }
 
+  /// 按 id 查一个任务。队列面板的「等待前置」提示要用它。
+  StudioTask? lookup(String taskId) {
+    for (final t in _tasks) {
+      if (t.id == taskId) return t;
+    }
+    return null;
+  }
+
   void _emit() {
     if (!_controller.isClosed) _controller.add(List.unmodifiable(_tasks));
+  }
+
+  /// 队首的可启动任务：跳过等待中的与前置未满足的。
+  ///
+  /// 返回 null 表示「当前没有可启动的任务」——可能是真没了，也可能剩下的都在
+  /// 等前置（此时 [_drain] 直接返回，等前置终态时再被唤起）。
+  StudioTask? _nextRunnable() {
+    for (final t in _tasks) {
+      if (t.status != StudioTaskStatus.queued) continue;
+      if (t.requiredTaskIds.isEmpty) return t;
+
+      StudioTask? failedPrereq;
+      var waitingOnRunning = false;
+      for (final prereqId in t.requiredTaskIds) {
+        final prereq = _tasks.where((p) => p.id == prereqId).firstOrNull;
+        // 前置不存在（被 clearFinished 清掉了）时按已满足处理——否则这个任务
+        // 永远启动不了，而用户看不到任何原因。
+        if (prereq == null) continue;
+        if (!prereq.isTerminal) {
+          waitingOnRunning = true;
+        } else if (prereq.status != StudioTaskStatus.completed) {
+          failedPrereq ??= prereq;
+        }
+      }
+      if (failedPrereq != null) {
+        // 任一前置失败/取消 → 本方标记为前置未满足，不启动（spec: 生图失败时视频
+        // 任务不裸跑 & 跨镜接力依赖失败级联）。
+        _replace(
+          t,
+          status: StudioTaskStatus.failed,
+          error:
+              '前置任务未满足：${failedPrereq.label}（${failedPrereq.status.label}）',
+        );
+        continue;
+      }
+      if (waitingOnRunning) {
+        // 仍有前置在跑或排队：继续等，看看队列里有没有别人能先跑。
+        continue;
+      }
+      return t;
+    }
+    return null;
   }
 
   Future<void> _drain() async {
@@ -268,10 +365,8 @@ class StudioTaskQueue {
         final running =
             _tasks.where((t) => t.status == StudioTaskStatus.running).length;
         if (running >= _maxConcurrency) return;
-        final next = _tasks.firstWhere(
-          (t) => t.status == StudioTaskStatus.queued,
-          orElse: () => throw StateError('empty'),
-        );
+        final next = _nextRunnable();
+        if (next == null) return;
         // 排到队头但在启动前被取消了的，直接跳过。
         if (_cancelRequested.contains(next.id)) {
           _replace(next, status: StudioTaskStatus.cancelled);

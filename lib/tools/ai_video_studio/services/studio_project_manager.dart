@@ -96,14 +96,50 @@ class StudioProjectManager {
   Directory episodeArchiveDir(String seriesId, String episodeId) =>
       Directory(p.join(episodeDir(seriesId, episodeId).path, 'archive'));
 
-  Directory charactersDir(String seriesId) =>
-      Directory(p.join(seriesDir(seriesId).path, 'characters'));
+  /// 独立持久化 IP 主库目录。
+  Directory ipDir(String ipId) =>
+      Directory(p.join(AppPaths.videoStudioIpDir.path, ipId));
+
+  Directory ipCharactersDir(String ipId) =>
+      Directory(p.join(ipDir(ipId).path, 'characters'));
+
+  Directory ipScenesDir(String ipId) =>
+      Directory(p.join(ipDir(ipId).path, 'common_scenes'));
+
+  Directory charactersDir(String seriesOrIpId) {
+    final inIp = Directory(p.join(AppPaths.videoStudioIpDir.path, seriesOrIpId, 'characters'));
+    if (inIp.existsSync()) return inIp;
+
+    final series = readSeries(seriesOrIpId);
+    if (series != null && series.ipId.isNotEmpty) {
+      final refIp = Directory(p.join(AppPaths.videoStudioIpDir.path, series.ipId, 'characters'));
+      if (refIp.existsSync()) return refIp;
+
+      final refSeriesChars = Directory(p.join(seriesDir(series.ipId).path, 'characters'));
+      if (refSeriesChars.existsSync()) return refSeriesChars;
+    }
+
+    return Directory(p.join(seriesDir(seriesOrIpId).path, 'characters'));
+  }
 
   Directory characterDir(String seriesId, String characterId) =>
       Directory(p.join(charactersDir(seriesId).path, characterId));
 
-  Directory scenesDir(String seriesId) =>
-      Directory(p.join(seriesDir(seriesId).path, 'common_scenes'));
+  Directory scenesDir(String seriesOrIpId) {
+    final inIp = Directory(p.join(AppPaths.videoStudioIpDir.path, seriesOrIpId, 'common_scenes'));
+    if (inIp.existsSync()) return inIp;
+
+    final series = readSeries(seriesOrIpId);
+    if (series != null && series.ipId.isNotEmpty) {
+      final refIp = Directory(p.join(AppPaths.videoStudioIpDir.path, series.ipId, 'common_scenes'));
+      if (refIp.existsSync()) return refIp;
+
+      final refSeriesScenes = Directory(p.join(seriesDir(series.ipId).path, 'common_scenes'));
+      if (refSeriesScenes.existsSync()) return refSeriesScenes;
+    }
+
+    return Directory(p.join(seriesDir(seriesOrIpId).path, 'common_scenes'));
+  }
 
   Directory sceneDir(String seriesId, String sceneId) =>
       Directory(p.join(scenesDir(seriesId).path, sceneId));
@@ -116,6 +152,9 @@ class StudioProjectManager {
 
   File seriesProfileFile(String seriesId) =>
       File(p.join(seriesDir(seriesId).path, 'series_profile.json'));
+
+  File writersRoomFile(String seriesId) =>
+      File(p.join(seriesDir(seriesId).path, 'writers_room.json'));
 
   File episodeStoryboardFile(String seriesId, String episodeId) =>
       File(p.join(episodeDir(seriesId, episodeId).path, 'storyboard.json'));
@@ -134,6 +173,7 @@ class StudioProjectManager {
       Directory(p.join(AppPaths.videoStudioGlobalLibDir.path, 'sfx')),
     );
     await _ensureDir(AppPaths.videoStudioSeriesDir);
+    await _ensureDir(AppPaths.videoStudioIpDir);
   }
 
   Future<void> _ensureSeriesDirs(String seriesId) async {
@@ -168,25 +208,53 @@ class StudioProjectManager {
   // ---------------------------------------------------------------------------
 
   /// 新建剧集项目，按 spec 自动建好整棵目录树并写下默认 `series_profile.json`。
+  /// 若指定了 [ipId]，则自动继承该 IP 主库的世界观、风格锁、时代题材与道具卡。
   Future<StudioSeries> createSeries({
     required String name,
     StudioProductionType productionType = StudioProductionType.drama,
     String worldview = '',
     String styleTokens = '',
     String defaultVoiceId = '',
+    String? ipId,
   }) async {
     await ensureBaseStructure();
     final now = DateTime.now();
-    final resolvedStyle = styleTokens.trim().isNotEmpty
-        ? styleTokens.trim()
+
+    var inheritedWorldview = worldview;
+    var inheritedStyle = styleTokens;
+    var inheritedEra = '';
+    var inheritedStyleId = '';
+    var inheritedVoice = defaultVoiceId;
+    var inheritedProps = const <PropCard>[];
+
+    if (ipId != null && ipId.trim().isNotEmpty) {
+      final ipProfile = File(p.join(ipDir(ipId).path, 'ip_profile.json'));
+      var ipSeries = _readJson(ipProfile, StudioSeries.fromJson);
+      ipSeries ??= readSeries(ipId);
+      if (ipSeries != null) {
+        if (inheritedWorldview.isEmpty) inheritedWorldview = ipSeries.worldview;
+        if (inheritedStyle.isEmpty) inheritedStyle = ipSeries.styleTokens;
+        inheritedEra = ipSeries.eraGenre;
+        inheritedStyleId = ipSeries.styleId;
+        if (inheritedVoice.isEmpty) inheritedVoice = ipSeries.defaultVoiceId;
+        inheritedProps = ipSeries.props;
+      }
+    }
+
+    final resolvedStyle = inheritedStyle.trim().isNotEmpty
+        ? inheritedStyle.trim()
         : productionType.defaultPositiveStyle;
     final series = StudioSeries(
       id: idGenerator(),
       name: name.trim().isEmpty ? '未命名剧集' : name.trim(),
       productionType: productionType,
-      worldview: worldview,
+      worldview: inheritedWorldview,
       styleTokens: resolvedStyle,
-      defaultVoiceId: defaultVoiceId,
+      eraGenre: inheritedEra,
+      styleId: inheritedStyleId,
+      defaultVoiceId: inheritedVoice,
+      props: inheritedProps,
+      ipId: ipId?.trim() ?? '',
       createdAt: now,
       updatedAt: now,
     );
@@ -222,13 +290,107 @@ class StudioProjectManager {
     return result;
   }
 
-  /// 删除剧集项目及其全部素材。不可撤销，UI 层必须先确认。
+  /// 保存编剧研讨室顶层全景策划（多季路线图、宏观大幕、情节红线、人物关系与分集大纲）。
+  Future<void> saveWritersRoomData(
+    String seriesId,
+    Map<String, dynamic> data,
+  ) async {
+    final file = writersRoomFile(seriesId);
+    final enriched = Map<String, dynamic>.from(data);
+    enriched['updated_at'] = DateTime.now().toIso8601String();
+    await _writeJsonAtomic(file, enriched);
+  }
+
+  /// 读取编剧研讨室顶层全景策划。若不存在则返回 null。
+  Map<String, dynamic>? readWritersRoomData(String seriesId) {
+    final file = writersRoomFile(seriesId);
+    return _readJson(file, (m) => m);
+  }
+
+  /// 删除剧集制作项目：彻底清除分集、剧本、分镜看板及音视频媒体产物，
+  /// 但严格保护并完整保留 IP 主库（角色卡、场景卡、道具卡、世界观）与全局资产库。
   Future<void> deleteSeries(String seriesId) async {
+    final series = readSeries(seriesId);
+    final effectiveIpId = series?.resolvedIpId ?? seriesId;
+
+    // 1. 保全 IP 资产至独立持久化 IP 库（characters、common_scenes、ip_profile.json）
+    final targetIp = ipDir(effectiveIpId);
+    await _ensureDir(targetIp);
+
+    final legacyChars = Directory(p.join(seriesDir(seriesId).path, 'characters'));
+    final targetChars = ipCharactersDir(effectiveIpId);
+    if (await legacyChars.exists()) {
+      await _copyDirectory(legacyChars, targetChars);
+    }
+
+    final legacyScenes = Directory(p.join(seriesDir(seriesId).path, 'common_scenes'));
+    final targetScenes = ipScenesDir(effectiveIpId);
+    if (await legacyScenes.exists()) {
+      await _copyDirectory(legacyScenes, targetScenes);
+    }
+
+    if (series != null) {
+      final ipProfile = File(p.join(targetIp.path, 'ip_profile.json'));
+      await _writeJsonAtomic(ipProfile, series.copyWith(id: effectiveIpId).toJson());
+    }
+
+    // 2. 彻底销毁单集制作产物（剧本、分镜、关键帧、配音音频、视频片段、时间轴交付）
+    final epDir = episodesDir(seriesId);
+    _forgetDirsUnder(epDir);
+    if (await epDir.exists()) {
+      await epDir.delete(recursive: true);
+    }
+
+    // 3. 从剧集库中彻底移除该剧集制作目录
     final dir = seriesDir(seriesId);
     _forgetDirsUnder(dir);
     if (await dir.exists()) {
       await dir.delete(recursive: true);
     }
+  }
+
+  /// 递归复制目录
+  static Future<void> _copyDirectory(Directory src, Directory dst) async {
+    if (!await src.exists()) return;
+    await dst.create(recursive: true);
+    await for (final entity in src.list(recursive: false)) {
+      final name = p.basename(entity.path);
+      final targetPath = p.join(dst.path, name);
+      if (entity is Directory) {
+        await _copyDirectory(entity, Directory(targetPath));
+      } else if (entity is File) {
+        await entity.copy(targetPath);
+      }
+    }
+  }
+
+  /// 获取所有可用 IP 资产列表（包含独立持久化 IP 库与现有剧集的 IP 资产）。
+  Future<List<StudioSeries>> listAvailableIps() async {
+    await ensureBaseStructure();
+    final result = <StudioSeries>[];
+    final seenIds = <String>{};
+
+    // 1. 独立 IP 库
+    final ipRoot = AppPaths.videoStudioIpDir;
+    if (ipRoot.existsSync()) {
+      for (final entry in ipRoot.listSync().whereType<Directory>()) {
+        final profile = File(p.join(entry.path, 'ip_profile.json'));
+        final s = _readJson(profile, StudioSeries.fromJson);
+        if (s != null && seenIds.add(s.id)) {
+          result.add(s);
+        }
+      }
+    }
+
+    // 2. 现存剧集项目
+    final seriesList = await listSeries();
+    for (final s in seriesList) {
+      if (seenIds.add(s.resolvedIpId)) {
+        result.add(s);
+      }
+    }
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -654,6 +816,40 @@ class StudioProjectManager {
     if (await dir.exists()) {
       await dir.delete(recursive: true);
     }
+    final series = readSeries(seriesId);
+    if (series != null && series.memories.any((m) => m.episodeId == episodeId)) {
+      final updatedMemories = series.memories.where((m) => m.episodeId != episodeId).toList();
+      await saveSeries(series.copyWith(memories: updatedMemories));
+    }
+  }
+
+  /// 删除当前剧集的最后一集（按 index 最大的那一集）。
+  /// 返回被删除的分集对象；若剧集没有任何分集则返回 null。
+  Future<StudioEpisode?> deleteLastEpisode(String seriesId) async {
+    final episodes = await listEpisodes(seriesId);
+    if (episodes.isEmpty) return null;
+    final lastEpisode = episodes.last;
+    await deleteEpisode(seriesId, lastEpisode.id);
+    return lastEpisode;
+  }
+
+  /// 一键清空当前剧集下的全部分集物理目录及剧本分镜数据，
+  /// 同时重置跨集记忆库。
+  /// 返回被清理的分集总数。
+  Future<int> clearAllEpisodes(String seriesId) async {
+    final episodes = await listEpisodes(seriesId);
+    final count = episodes.length;
+    final epDir = episodesDir(seriesId);
+    _forgetDirsUnder(epDir);
+    if (await epDir.exists()) {
+      await epDir.delete(recursive: true);
+      await epDir.create(recursive: true);
+    }
+    final series = readSeries(seriesId);
+    if (series != null && series.memories.isNotEmpty) {
+      await saveSeries(series.copyWith(memories: const []));
+    }
+    return count;
   }
 
   // ---------------------------------------------------------------------------
@@ -1239,7 +1435,14 @@ class StudioProjectManager {
     if (series == null) {
       throw StateError('剧集项目不存在: $seriesId');
     }
-    final props = series.props.map((p) => p.id == card.id ? card : p).toList();
+    final index = series.props.indexWhere((p) => p.id == card.id);
+    final List<PropCard> props;
+    if (index >= 0) {
+      props = List<PropCard>.from(series.props);
+      props[index] = card;
+    } else {
+      props = [...series.props, card];
+    }
     await saveSeries(series.copyWith(props: props));
   }
 
@@ -1369,28 +1572,90 @@ class StudioProjectManager {
       final baseNeg = ((c['base_prompt_negative'] ?? c['prompt_negative']) as String? ?? '').trim();
       final now = DateTime.now();
 
-      final existing = existingCharacters.cast<CharacterCard?>().firstWhere(
-        (card) => card?.name.trim() == name,
-        orElse: () => null,
+      final existingIdx = existingCharacters.indexWhere(
+        (card) => card.name.trim() == name,
       );
+      final existing = existingIdx >= 0 ? existingCharacters[existingIdx] : null;
 
       if (existing != null) {
-        // 已有角色：保留已有锚点图片与定制提示词，若描述有增量则丰富
+        // 已有角色：保留已有锚点图片与当前激活态；若新章节提炼出更详尽的特征描述则升级，
+        // 若提炼出全新的服饰造型则自动追加为非激活的新 CharacterVariation。
+        String pickRicher(String oldVal, String newVal) {
+          final o = oldVal.trim();
+          final n = newVal.trim();
+          if (o.isEmpty) return n;
+          if (n.isEmpty) return o;
+          if (n.length > o.length && !o.contains(n)) return n;
+          return o;
+        }
+
+        final candFacialZh = facialZh.isNotEmpty ? facialZh : descZh;
+        final candFacialPos = facialPos.isNotEmpty ? facialPos : basePos;
+
+        var nextDefaultAttireZh = existing.defaultAttireZh;
+        var nextDefaultAttirePrompt = existing.defaultAttirePrompt;
+        var nextVariations = List<CharacterVariation>.from(existing.variations);
+
+        if (nextDefaultAttireZh.trim().isEmpty &&
+            nextDefaultAttirePrompt.trim().isEmpty) {
+          nextDefaultAttireZh = attireZh;
+          nextDefaultAttirePrompt = attirePos;
+          if (nextVariations.isNotEmpty &&
+              nextVariations.first.attirePrompt.trim().isEmpty &&
+              attirePos.isNotEmpty) {
+            nextVariations[0] = nextVariations.first.copyWith(
+              attirePrompt: attirePos,
+            );
+          }
+        } else if (attirePos.isNotEmpty || attireZh.isNotEmpty) {
+          final candPrompt = attirePos.isNotEmpty ? attirePos : attireZh;
+          final normCand = candPrompt.toLowerCase().trim();
+          final normDefaultPrompt =
+              nextDefaultAttirePrompt.toLowerCase().trim();
+          final normDefaultZh = nextDefaultAttireZh.trim();
+
+          final matchesDefault =
+              (normCand.isNotEmpty && normCand == normDefaultPrompt) ||
+              (attireZh.isNotEmpty && attireZh == normDefaultZh);
+          final matchesExistingVar = nextVariations.any((v) {
+            final vp = v.attirePrompt.toLowerCase().trim();
+            final vn = v.name.trim();
+            return (normCand.isNotEmpty && vp == normCand) ||
+                (attireZh.isNotEmpty && vn == attireZh);
+          });
+
+          if (!matchesDefault && !matchesExistingVar) {
+            final varName = attireZh.isNotEmpty
+                ? (attireZh.length <= 16
+                    ? attireZh
+                    : '${attireZh.substring(0, 15)}…')
+                : '造型${nextVariations.length + 1}';
+            nextVariations.add(
+              CharacterVariation(
+                id: idGenerator(),
+                name: varName,
+                attirePrompt: candPrompt,
+                active: false,
+              ),
+            );
+          }
+        }
+
         final updatedChar = existing.copyWith(
-          descriptionZh: existing.descriptionZh.isEmpty ? descZh : existing.descriptionZh,
-          facialFeaturesZh: existing.facialFeaturesZh.isEmpty
-              ? (facialZh.isNotEmpty ? facialZh : descZh)
-              : existing.facialFeaturesZh,
-          facialPrompt: existing.facialPrompt.isEmpty
-              ? (facialPos.isNotEmpty ? facialPos : basePos)
-              : existing.facialPrompt,
-          defaultAttireZh: existing.defaultAttireZh.isEmpty ? attireZh : existing.defaultAttireZh,
-          defaultAttirePrompt: existing.defaultAttirePrompt.isEmpty ? attirePos : existing.defaultAttirePrompt,
-          basePromptPositive: existing.basePromptPositive.isEmpty ? basePos : existing.basePromptPositive,
-          basePromptNegative: existing.basePromptNegative.isEmpty ? baseNeg : existing.basePromptNegative,
+          descriptionZh: pickRicher(existing.descriptionZh, descZh),
+          facialFeaturesZh: pickRicher(existing.facialFeaturesZh, candFacialZh),
+          facialPrompt: pickRicher(existing.facialPrompt, candFacialPos),
+          defaultAttireZh: nextDefaultAttireZh,
+          defaultAttirePrompt: nextDefaultAttirePrompt,
+          basePromptPositive: pickRicher(existing.basePromptPositive, basePos),
+          basePromptNegative: existing.basePromptNegative.isEmpty
+              ? baseNeg
+              : existing.basePromptNegative,
+          variations: nextVariations,
           updatedAt: now,
         );
         await saveCharacter(seriesId, updatedChar);
+        existingCharacters[existingIdx] = updatedChar;
       } else {
         // 新角色：新增入库
         final charCard = CharacterCard(
@@ -1414,6 +1679,7 @@ class StudioProjectManager {
           updatedAt: now,
         );
         await saveCharacter(seriesId, charCard);
+        existingCharacters.add(charCard);
       }
     }
 
@@ -1441,13 +1707,23 @@ class StudioProjectManager {
         }
       }
 
-      final existing = existingScenes.cast<SceneCard?>().firstWhere(
-        (scene) => scene?.name.trim() == name,
-        orElse: () => null,
+      final existingSceneIdx = existingScenes.indexWhere(
+        (scene) => scene.name.trim() == name,
       );
+      final existing =
+          existingSceneIdx >= 0 ? existingScenes[existingSceneIdx] : null;
 
       if (existing != null) {
-        // 已有场景：保留已有参考图，补全空缺描述与空间视角
+        // 已有场景：保留已有参考图，补全空缺或升级更详尽的描述与空间视角
+        String pickRicherScene(String oldVal, String newVal) {
+          final o = oldVal.trim();
+          final n = newVal.trim();
+          if (o.isEmpty) return n;
+          if (n.isEmpty) return o;
+          if (n.length > o.length && !o.contains(n)) return n;
+          return o;
+        }
+
         final mergedViews = Map<String, SceneDirectionalView>.from(existing.fullSpatialViews);
         for (final e in spatialViews.entries) {
           if (e.value.hasContent && (!mergedViews.containsKey(e.key) || !mergedViews[e.key]!.hasContent)) {
@@ -1455,12 +1731,13 @@ class StudioProjectManager {
           }
         }
         final updatedScene = existing.copyWith(
-          descriptionZh: existing.descriptionZh.isEmpty ? descZh : existing.descriptionZh,
-          promptEn: existing.promptEn.isEmpty ? promptEn : existing.promptEn,
+          descriptionZh: pickRicherScene(existing.descriptionZh, descZh),
+          promptEn: pickRicherScene(existing.promptEn, promptEn),
           spatialViews: mergedViews,
           updatedAt: now,
         );
         await saveScene(seriesId, updatedScene);
+        existingScenes[existingSceneIdx] = updatedScene;
       } else {
         // 新场景：新增入库
         final sceneCard = SceneCard(
@@ -1472,6 +1749,7 @@ class StudioProjectManager {
           updatedAt: now,
         );
         await saveScene(seriesId, sceneCard);
+        existingScenes.add(sceneCard);
       }
     }
 
@@ -1498,6 +1776,8 @@ class StudioProjectManager {
           updatedAt: now,
         );
         await saveProp(seriesId, updatedProp);
+        final idx = existingProps.indexWhere((c) => c.id == existing.id);
+        if (idx >= 0) existingProps[idx] = updatedProp;
       } else {
         final propCard = PropCard(
           id: idGenerator(),
@@ -1507,6 +1787,7 @@ class StudioProjectManager {
           updatedAt: now,
         );
         await saveProp(seriesId, propCard);
+        existingProps.add(propCard);
       }
     }
 
@@ -1649,7 +1930,47 @@ class StudioProjectManager {
     return finalSeries;
   }
 
+  /// 全季重导入将删除的既有数据规模预览（spec: 全季重导入前显式确认破坏性删除）。
+  ///
+  /// [importNovelProject] 会清空该剧集下所有既有剧集再按新分集重建——那是
+  /// 破坏性操作，调用方 MUST 先经本函数取得用户确认。UI 拿这三项数字弹确认
+  /// 对话框，用户取消则根本不调 [importNovelProject]。
+  ///
+  /// 返回 `(episodeCount, shotCount, mediaFileCount)`。没有任何既有剧集时
+  /// 三项全为 0，调用方应跳过确认直接导入。
+  Future<({int episodeCount, int shotCount, int mediaFileCount})>
+      previewFullSeasonImportImpact(String seriesId) async {
+    final episodes = await listEpisodes(seriesId);
+    var shotCount = 0;
+    var mediaFileCount = 0;
+    for (final ep in episodes) {
+      shotCount += ep.shots.length;
+      for (final dir in [
+        episodeFramesDir(seriesId, ep.id),
+        episodeClipsDir(seriesId, ep.id),
+        episodeSegmentsDir(seriesId, ep.id),
+        episodeAudioDir(seriesId, ep.id),
+        episodeExportsDir(seriesId, ep.id),
+      ]) {
+        if (!dir.existsSync()) continue;
+        mediaFileCount += dir
+            .listSync(recursive: true)
+            .whereType<File>()
+            .length;
+      }
+    }
+    return (
+      episodeCount: episodes.length,
+      shotCount: shotCount,
+      mediaFileCount: mediaFileCount,
+    );
+  }
+
   /// 全案长篇小说解构入库（全季规划）。
+  ///
+  /// **破坏性操作**：本方法会删除该剧集下全部既有剧集（含其分镜与物理媒体）
+  /// 后按新分集重建。调用方 MUST 先经 [previewFullSeasonImportImpact] 取得
+  /// 用户显式确认，未经确认不得调用（spec: 全季重导入前显式确认破坏性删除）。
   ///
   /// 返回更新后的 [StudioSeries] 实例。
   Future<StudioSeries> importNovelProject({

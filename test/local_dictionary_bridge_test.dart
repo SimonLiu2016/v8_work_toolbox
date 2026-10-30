@@ -303,17 +303,21 @@ void main() {
     });
 
     test('secret persists across SettingsStore re-init', () async {
+      // 密钥现为固定常量（kLocalBridgeSecret），不再是随机生成+持久化。这条
+      // 断言从「重启后密钥不变」弱化为「常量==常量」，恒真——但它仍是有价值的
+      // 回归护栏：一旦未来有人把密钥改回随机生成，这里会立刻暴露「已配对的
+      // 扩展被挡在授权失败上」的回归。
       final first =
           await SettingsStore.instance.ensureLocalDictionaryBridgeSecret();
       expect(first, isNotEmpty);
+      expect(first, SettingsStore.kLocalBridgeSecret);
 
-      // 桌面应用重启 = 重新 init；密钥必须保持不变，否则已配对的扩展会被挡在
-      // 授权失败上，而那个表现在和"桥没启动"难以区分。这条正是 getter 里
-      // "发射后不管"的写盘与下一次 init() 竞态时会挂的用例。
+      // 桌面应用重启 = 重新 init；固定常量天然不变，扩展无需重新配置。
       await SettingsStore.instance.init(rootDir: tempRoot);
       final second = SettingsStore.instance.localDictionaryBridgeSecretOrEmpty;
 
       expect(second, first);
+      expect(second, SettingsStore.kLocalBridgeSecret);
 
       final resp = await rawRequest(
         'GET',

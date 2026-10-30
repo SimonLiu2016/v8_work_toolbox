@@ -79,7 +79,12 @@ class StudioPresetStore {
 
   /// 便捷获取指定模板的当前有效内容
   String getPromptContent(String templateId, {String defaultFallback = ''}) {
-    final t = getTemplateById(templateId);
+    var t = getTemplateById(templateId);
+    if (t == null && templateId == 'script_breakdown_5d') {
+      t = getTemplateById('director_breakdown_5d');
+    } else if (t == null && templateId == 'director_breakdown_5d') {
+      t = getTemplateById('script_breakdown_5d');
+    }
     if (t != null) {
       return t.effectiveContent;
     }
@@ -356,6 +361,36 @@ class StudioPresetStore {
     _templates = List.of(StudioPromptTemplate.builtinPresets);
     await _persistTemplates();
     _templatesController.add(_templates);
+  }
+
+  /// 导出提示词模板为 JSON 字符串
+  String exportTemplatesJson() {
+    const encoder = JsonEncoder.withIndent('  ');
+    return encoder.convert(_templates.map((t) => t.toJson()).toList());
+  }
+
+  /// 从 JSON 字符串批量导入模板
+  Future<int> importTemplatesJson(String jsonStr) async {
+    final list = jsonDecode(jsonStr);
+    if (list is! List) return 0;
+    int imported = 0;
+    for (final item in list) {
+      if (item is Map<String, dynamic>) {
+        final parsed = StudioPromptTemplate.fromJson(item);
+        final idx = _templates.indexWhere((t) => t.id.toLowerCase() == parsed.id.toLowerCase());
+        if (idx >= 0) {
+          _templates[idx] = parsed;
+        } else {
+          _templates.add(parsed);
+        }
+        imported++;
+      }
+    }
+    if (imported > 0) {
+      await _persistTemplates();
+      _templatesController.add(_templates);
+    }
+    return imported;
   }
 
   /// 保存或更新美学风格

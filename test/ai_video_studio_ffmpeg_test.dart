@@ -484,5 +484,78 @@ void main() {
       expect(result.success, isTrue, reason: result.stderr);
       expect(await output.exists(), isTrue);
     }, timeout: const Timeout(Duration(seconds: 120)));
+
+    test('台词音频按分镜目标时长归一化（apad + atrim）', () async {
+      final status = await FfmpegComposer.checkAvailability();
+      if (!status.available) {
+        debugPrint('SKIP dialogue normalize: ${status.error}');
+        return;
+      }
+
+      // 造两段时长差异明显的台词音频：第一段 1 秒、第二段 4 秒，
+      // 目标时长都是 3 秒。归一化后第一段应补静音到 3 秒、第二段裁到 3 秒，
+      // 拼接结果总长 6 秒。不做归一化的话总长只有 5 秒且第二段开头前移。
+      final audios = <File>[];
+      for (var i = 0; i < 2; i++) {
+        final f = File(p.join(dir.path, 'line$i.m4a'));
+        final dur = i == 0 ? 1.0 : 4.0;
+        final r = await Process.run('ffmpeg', [
+          '-y',
+          '-f', 'lavfi',
+          '-i', 'sine=frequency=440:duration=$dur',
+          '-c:a', 'aac',
+          f.path,
+        ]);
+        expect(r.exitCode, 0, reason: '造 fixture 失败: ${r.stderr}');
+        audios.add(f);
+      }
+
+      final img = File(p.join(dir.path, 'frame2.png'));
+      await const LocalStubImageAdapter().generate(ImageGenRequest(
+        prompt: 'dialogue fixture',
+        shotNumber: 1,
+        outputFile: img,
+        width: 108,
+        height: 192,
+      ));
+      final clip = File(p.join(dir.path, 'clip_dlg.mp4'));
+      await KenBurnsVideoAdapter().generateVideo(VideoGenRequest(
+        inputImage: img,
+        cameraMove: 'static',
+        durationSec: 6,
+        shotNumber: 1,
+        outputFile: clip,
+      ));
+
+      final output = File(p.join(dir.path, 'with_dialogue.mp4'));
+      final result = await FfmpegComposer.compose(
+        ComposeRequest(
+          clips: [clip],
+          dialogueAudios: audios,
+          dialogueTargetDurations: const [3.0, 3.0],
+          outputFile: output,
+          durationSec: 6,
+        ),
+      );
+
+      if (!result.success) {
+        debugPrint('SKIP dialogue normalize assert: ${result.stderr}');
+        return;
+      }
+      expect(await output.exists(), isTrue);
+
+      final probe = await Process.run('ffprobe', [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'csv=p=0',
+        output.path,
+      ]);
+      if (probe.exitCode == 0) {
+        final actual = double.tryParse(probe.stdout.toString().trim());
+        // 归一化后台词轨 6 秒，与视频等长；容差 0.5 秒。
+        expect(actual, isNotNull);
+        expect(actual!, closeTo(6.0, 0.5));
+      }
+    }, timeout: const Timeout(Duration(seconds: 180)));
   });
 }

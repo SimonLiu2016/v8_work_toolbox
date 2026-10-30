@@ -352,6 +352,9 @@ abstract final class MediaCapabilityDefaults {
         return openai;
       case 'agnes':
         return agnes;
+      case 'stepfun':
+        // StepFun 走 OpenAI 兼容协议，能力按 openai 处理。
+        return openai;
       default:
         return none;
     }

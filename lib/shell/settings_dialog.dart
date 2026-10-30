@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../components/app_components.dart';
 import '../services/launcher_service.dart';
+import '../tools/it_meeting_listening/services/listening_hot_key_service.dart';
 import '../services/note_capture_service.dart';
 import '../services/settings_store.dart';
 import '../theme/app_theme.dart';
@@ -25,6 +26,13 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late HotKeyConfig _currentHotKey;
+
+  /// IT 会议听力的播放控制热键绑定。
+  List<ListeningHotKeyBinding> _listeningBindings =
+      ListeningHotKeyService.defaultBindings;
+
+  /// 热键注册失败的动作名（该键被系统或其它应用占用）。
+  final Set<String> _listeningHotKeyFailures = {};
   late ThemeMode _currentThemeMode;
   bool _isRegistering = false;
   String? _statusMessage;
@@ -43,6 +51,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _currentHotKey = SettingsStore.instance.getHotKeyConfig();
+    _listeningBindings = ListeningHotKeyService.instance.loadBindings();
     _currentThemeMode = SettingsStore.instance.themeMode;
     _loadNotebooks();
   }
@@ -65,6 +74,24 @@ class _SettingsDialogState extends State<SettingsDialog> {
         });
       }
     } catch (_) {}
+  }
+
+  /// 播放控制动作的中文名。
+  static String _listeningActionLabel(String action) {
+    switch (action) {
+      case ListeningHotKeyAction.toggle:
+        return '播放 / 暂停';
+      case ListeningHotKeyAction.previous:
+        return '上一段';
+      case ListeningHotKeyAction.next:
+        return '下一段';
+      case ListeningHotKeyAction.slower:
+        return '减速';
+      case ListeningHotKeyAction.faster:
+        return '加速';
+      default:
+        return action;
+    }
   }
 
   Future<void> _applyHotKey(HotKeyConfig config) async {
@@ -265,6 +292,78 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 );
               }),
+
+              const SizedBox(height: AppTheme.space16),
+              Divider(height: 1, color: colors.borderSubtle),
+              const SizedBox(height: AppTheme.space16),
+
+              // IT 会议听力播放控制热键
+              Text(
+                '会议音频播放热键',
+                style: AppTheme.fontCaption.copyWith(
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: AppTheme.space4),
+              Text(
+                '在任意应用中控制正在播放的会议音频，无需切换到本工具',
+                style: AppTheme.fontCaption.copyWith(color: colors.textTertiary),
+              ),
+              const SizedBox(height: AppTheme.space12),
+              ..._listeningBindings.map((b) {
+                final failed = _listeningHotKeyFailures.contains(b.action);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: AppTheme.space8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppTheme.space12,
+                      vertical: AppTheme.space8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.bgInput,
+                      borderRadius: AppTheme.borderRadiusSmall,
+                      border: Border.all(
+                        color: failed
+                            ? context.accentSolid.withValues(alpha: 0.6)
+                            : colors.borderSubtle,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          failed
+                              ? Icons.error_outline
+                              : Icons.keyboard_alt_outlined,
+                          size: 16,
+                          color: failed ? context.accentText : colors.textTertiary,
+                        ),
+                        const SizedBox(width: AppTheme.space12),
+                        Text(
+                          _listeningActionLabel(b.action),
+                          style: AppTheme.fontBody.copyWith(color: colors.textPrimary),
+                        ),
+                        const Spacer(),
+                        Text(
+                          b.label,
+                          style: AppTheme.fontBody.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: failed ? context.accentText : colors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+              if (_listeningHotKeyFailures.isNotEmpty) ...[
+                const SizedBox(height: AppTheme.space4),
+                Text(
+                  '以下热键被系统或其它应用占用，未能生效：'
+                  '${_listeningHotKeyFailures.map((a) => _listeningActionLabel(a)).join('、')}',
+                  style: AppTheme.fontCaption.copyWith(color: context.accentText),
+                ),
+              ],
 
               if (_statusMessage != null) ...[
                 const SizedBox(height: AppTheme.space8),

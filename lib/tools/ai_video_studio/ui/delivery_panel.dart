@@ -286,9 +286,20 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
     final exportsDir = _manager.episodeExportsDir(series.id, episode.id);
     final audioDir = _manager.episodeAudioDir(series.id, episode.id);
     final clips = _timelineClips;
-    final audios = episode.shots
+    // 台词音频与分镜时长一一对应：_concatAudio 靠 targetDurations 把每段念白
+    // 补到该镜时长，否则音频整体前移，字幕与口型全错位（spec: 台词音频按分镜
+    // 游标落位）。filter 保留 audioDurationMs 为空的镜——那些是缺音频的镜，
+    // 由 _concatAudioNormalized 的 atrim 自然裁掉。
+    final shotsWithAudio = episode.shots
         .where((s) => s.audioPath != null && s.audioPath!.isNotEmpty)
+        .toList();
+    final audios = shotsWithAudio
         .map((s) => File(p.join(audioDir.path, s.audioPath!)))
+        .toList();
+    final audioTargetDurations = shotsWithAudio
+        .map((s) => (s.audioDurationMs != null && s.audioDurationMs! > 0
+                ? s.audioDurationMs! / 1000.0
+                : s.durationSec))
         .toList();
     final srt = File(p.join(audioDir.path, 'ep_${episode.id}.srt'));
     final bgm = episode.shots
@@ -307,6 +318,7 @@ class _DeliveryPanelState extends State<DeliveryPanel> {
       ComposeRequest(
         clips: clips,
         dialogueAudios: audios,
+        dialogueTargetDurations: audioTargetDurations,
         bgm: (bgm != null && bgm.existsSync()) ? bgm : null,
         subtitle: srt.existsSync() ? srt : null,
         useDissolve: true,

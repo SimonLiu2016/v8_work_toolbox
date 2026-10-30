@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 import '../theme/app_theme.dart';
 import '../tools/tool_definition.dart';
 
@@ -41,8 +42,11 @@ class ActivityBar extends StatelessWidget {
       color: context.bgActivityBar,
       child: Column(
         children: [
-          // 顶部预留 macOS 原生交通灯安全高度
-          const SizedBox(height: 38),
+          // 顶部拖拽区：替代 isMovableByWindowBackground，精确圈定可拖拽区域，
+          // 防止 NSWindow 全局背景拖拽截获模态弹窗内的点击事件。
+          DragToMoveArea(
+            child: const SizedBox(height: 38, width: double.infinity),
+          ),
 
           // 品牌 Logo 按钮 (点击可回到全部首页或呼出关于)
           Padding(

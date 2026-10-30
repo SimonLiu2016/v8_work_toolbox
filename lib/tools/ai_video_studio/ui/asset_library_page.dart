@@ -881,48 +881,52 @@ class _AssetCard extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 2),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '编辑信息',
-                      icon: const Icon(Icons.edit_outlined, size: 15),
-                      color: context.textSecondary,
-                      onPressed: () => onEdit(asset),
-                    ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: isVideo ? '播放视频' : '查看大图',
-                      icon: Icon(
-                        isVideo ? Icons.play_arrow_outlined : Icons.visibility_outlined,
-                        size: 15,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: '编辑信息',
+                        icon: const Icon(Icons.edit_outlined, size: 15),
+                        color: context.textSecondary,
+                        onPressed: () => onEdit(asset),
                       ),
-                      color: context.textSecondary,
-                      onPressed: () => onPreview(asset),
-                    ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '在访达中显示',
-                      icon: const Icon(Icons.folder_open_outlined, size: 15),
-                      color: context.textSecondary,
-                      onPressed: () => onRevealInFinder(asset),
-                    ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '导出到本地...',
-                      icon: const Icon(Icons.download_outlined, size: 15),
-                      color: context.textSecondary,
-                      onPressed: () => onExport(asset),
-                    ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: '删除',
-                      icon: const Icon(Icons.delete_outline, size: 15),
-                      color: context.errorText,
-                      onPressed: () => onDelete(asset),
-                    ),
-                  ],
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: isVideo ? '播放视频' : '查看大图',
+                        icon: Icon(
+                          isVideo ? Icons.play_arrow_outlined : Icons.visibility_outlined,
+                          size: 15,
+                        ),
+                        color: context.textSecondary,
+                        onPressed: () => onPreview(asset),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: '在访达中显示',
+                        icon: const Icon(Icons.folder_open_outlined, size: 15),
+                        color: context.textSecondary,
+                        onPressed: () => onRevealInFinder(asset),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: '导出到本地...',
+                        icon: const Icon(Icons.download_outlined, size: 15),
+                        color: context.textSecondary,
+                        onPressed: () => onExport(asset),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: '删除',
+                        icon: const Icon(Icons.delete_outline, size: 15),
+                        color: context.errorText,
+                        onPressed: () => onDelete(asset),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

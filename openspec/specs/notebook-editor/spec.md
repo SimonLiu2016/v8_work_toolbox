@@ -128,11 +128,25 @@ The system SHALL render table headers with distinct background color and bold te
 - **THEN** the first row (row 0) displays as a distinct header with light slate background and bold text, while table borders use clean 1.0px stroke.
 
 ### Requirement: Editor chrome theme isolation and full-width alignment
-The system SHALL isolate the note editor and title input from the global dark input decoration theme, and stretch the formatting toolbar across the full width of the editor container.
+The system SHALL isolate **every light-surface panel in the notebook** from the global dark input decoration theme — including the note editor, the title input, the "问我的笔记" (ask-my-notes) panel, and the asset/credential dialog — and stretch the formatting toolbar across the full width of the editor container. Isolation SHALL be applied at the panel boundary (a light `Theme` wrapper overriding `filled: false` and a transparent fill), not patched field-by-field, so that newly added fields are covered by construction.
 
 #### Scenario: Note title input background
 - **WHEN** viewing or editing the note title
 - **THEN** the title input field renders with transparent background on white canvas, with no dark gray box artifacts.
+
+#### Scenario: Ask-my-notes panel input legibility
+- **WHEN** the user opens the "问我的笔记" panel and types a question
+- **THEN** the input field renders on the panel's light background with the global dark fill color suppressed
+- **AND** the entered text is legible against that background.
+
+#### Scenario: Asset dialog field legibility
+- **WHEN** the user opens the asset/credential dialog and edits the category field
+- **THEN** the field renders with the global dark fill color suppressed and its text legible.
+
+#### Scenario: Newly added light-surface panel inherits isolation
+- **WHEN** a new light-surface panel is added to the notebook UI
+- **THEN** it is wrapped in the shared light-theme boundary rather than relying on each form field to override the global fill
+- **AND** its form fields are legible without per-field fixes.
 
 #### Scenario: Formatting toolbar width alignment
 - **WHEN** viewing the note editor in any desktop window size
@@ -189,4 +203,58 @@ The notebook editor SHALL render a custom attachment block (`AttachmentBlock`) w
 
 - **WHEN** an attachment block's referenced record no longer exists
 - **THEN** the block renders an explicit unavailable state without offering file actions
+
+### Requirement: Asset fields panel
+The editor SHALL provide a panel for editing a note's optional asset fields (category, purchase date, service period, expiry date) and for flagging an attachment as a credential, alongside the rich-text editor. The panel is collapsible and hidden by default for notes that carry no asset data.
+
+#### Scenario: Filling asset fields
+- **WHEN** user opens the asset panel for a note and fills category, purchase date, and expiry date
+- **THEN** the values are saved to the note's asset fields, and an asset badge with expiry countdown appears on the note in the list.
+
+#### Scenario: Panel hidden for plain notes
+- **WHEN** a note has no asset fields filled
+- **THEN** the asset panel is collapsed and does not intrude on the editing surface.
+
+#### Scenario: Flagging a credential attachment
+- **WHEN** user selects an attachment in the asset panel and marks it as a credential
+- **THEN** the attachment is flagged as the credential of record, and is surfaced in AI answers about that asset.
+
+### Requirement: Related notes view in note detail
+The editor's note detail view SHALL display the notes related to the current note via the `note_links` table, showing the related note's title and the link's free-text reason, with a click action that navigates to the related note.
+
+#### Scenario: Viewing related notes
+- **WHEN** user opens a note that has links to other notes
+- **THEN** the detail view lists each related note with its title and the link reason, and clicking one navigates to that note.
+
+#### Scenario: No related notes
+- **WHEN** a note has no links
+- **THEN** the related-notes section is absent or empty, without placeholder clutter.
+
+### Requirement: Note detail properties consolidated into the metadata bar
+The note detail view SHALL present all of a note's property affordances — notebook selector, tags, asset/credential entry, AI tidy-up entry, and related-notes entry — together in the single metadata bar above the formatting toolbar. Property affordances MUST NOT be rendered as separate blocks below the toolbar, so that the editor canvas is not vertically compressed by property UI and a note's attributes are not split across two regions.
+
+#### Scenario: Metadata bar holds all property affordances
+- **WHEN** viewing a note in the detail view
+- **THEN** the metadata bar contains the notebook selector, the tag list with an add-tag affordance, an asset/credential affordance, and an AI tidy-up affordance
+- **AND** no asset panel, tidy-up button, or related-notes block is rendered between the formatting toolbar and the editor canvas.
+
+#### Scenario: Asset affordance opens the full editor
+- **WHEN** user activates the asset affordance in the metadata bar
+- **THEN** a dialog opens carrying the full asset editing surface (category, purchase date, service period, expiry date, and credential flagging)
+- **AND** saving it updates the note and closes the dialog.
+
+#### Scenario: Asset affordance reflects asset state
+- **WHEN** a note carries asset data
+- **THEN** the asset affordance in the metadata bar reflects that state (e.g. shows the category or the expiry countdown)
+- **AND** a note with no asset data shows the bare affordance without a misleading badge.
+
+#### Scenario: Related-notes affordance appears only when links exist
+- **WHEN** a note has one or more links
+- **THEN** the metadata bar shows a related-notes affordance with the count, and activating it lists the related notes for navigation or removal
+- **AND** a note with no links shows no related-notes affordance.
+
+#### Scenario: Editor canvas is not compressed by property UI
+- **WHEN** a note carries asset data, tags, and links simultaneously
+- **THEN** the editor canvas occupies the remaining vertical space without inline property blocks reducing it
+- **AND** the formatting toolbar sits directly above the canvas.
 

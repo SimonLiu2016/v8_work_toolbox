@@ -37,6 +37,104 @@ abstract final class AgnesPreset {
   static const String displayName = 'Agnes';
 }
 
+/// StepFun 阶跃星辰预设常量。
+abstract final class StepFunPreset {
+  /// 供应商显示名。
+  static const String displayName = 'StepFun (阶跃星辰)';
+
+  /// 官方 Base URL（开放平台）。若为 Step Plan 订阅可改为 https://api.stepfun.com/step_plan/v1。
+  static const String baseUrl = 'https://api.stepfun.com/v1';
+
+  /// Step Plan 专属 Base URL。
+  static const String stepPlanBaseUrl = 'https://api.stepfun.com/step_plan/v1';
+
+  /// 文本模型（对话槽位）。
+  static const String textModels =
+      'step-2-16k, step-1-8k, step-1-flash, step-1v-8k, stepaudio-2.5-chat';
+
+  /// 语音识别模型 (STT 槽位)。
+  static const String sttModels = 'stepaudio-2.5-asr';
+
+  /// 语音合成模型 (TTS 槽位)。
+  static const String ttsModels = 'stepaudio-2.5-tts';
+}
+
+/// OpenRouter 预设常量。
+abstract final class OpenRouterPreset {
+  /// 供应商显示名。
+  static const String displayName = 'OpenRouter';
+
+  /// 官方 Base URL。
+  static const String baseUrl = 'https://openrouter.ai/api/v1';
+
+  /// 常用推荐文本模型。
+  static const String textModels =
+      'openai/gpt-4o, anthropic/claude-3.5-sonnet, deepseek/deepseek-r1, qwen/qwen-2.5-72b-instruct';
+
+  /// 语音识别模型 (STT 槽位)。
+  static const String sttModels = 'qwen/qwen3-asr-0.6b';
+}
+
+/// 小米 MiMo 预设常量。
+///
+/// 仅覆盖 **API 模式**（按量计费，`https://api.xiaomimimo.com/v1`，`sk-` 前缀
+/// Key）。**不提供 Token Plan 订阅入口**：官方订阅条款明确「Token Plan 套餐
+/// 额度仅可在编程工具中使用，禁止以 API 调用形式用于自动化脚本、自定义应用
+/// 后端等明显非 Coding 场景」，本 App（阅读器 TTS / 同传 ASR / 字幕）落在该
+/// 条款划定的违规滥用范围，提供入口会引导用户触雷（平台有权停服/封 Key）。
+///
+/// MiMo 走 OpenAI 兼容协议（`/v1/chat/completions` Chat Audio 规范 + `/v1/models`），
+/// TTS 引擎侧 `OpenAiTtsEngine` 已通过 `isMimoModel`（`xiaomimimo.com` 域名 +
+/// `mimo-` 模型前缀）识别，无需新增 `AiProtocolType` 枚举值。
+abstract final class MimoPreset {
+  /// 供应商显示名。
+  static const String displayName = 'Mimo (小米)';
+
+  /// API 模式 Base URL（按量计费，非 Token Plan 订阅地址）。
+  static const String baseUrl = 'https://api.xiaomimimo.com/v1';
+
+  /// 文本模型（对话槽位）。
+  ///
+  /// 官方已于 2026-10-21 10:00（UTC+8）下线 `mimo-v2.5` / `mimo-v2.5-pro`，
+  /// 文本模型改用 v2.6 系列。`ultraspeed` 不在预设内：Token Plan 套餐不含该
+  /// 型号，且 API 模式预填以稳定可用的两档为准。
+  static const String textModels = 'mimo-v2.6-flash, mimo-v2.6-pro';
+
+  /// 语音合成模型 (TTS 槽位)。
+  ///
+  /// `mimo-v2.5-tts` 仍在 `/v1/models` 列表中，真机合成返回合法音频（base64 WAV），
+  /// 官方公告仅下线文本模型，TTS/ASR 系列不受影响。
+  static const String ttsModels = 'mimo-v2.5-tts';
+
+  /// 语音识别模型 (STT 槽位)。
+  static const String sttModels = 'mimo-v2.5-asr';
+}
+
+/// 千问 (Qwen / 阿里百炼) 预设常量。
+abstract final class QwenPreset {
+  /// 供应商显示名。
+  static const String displayName = '千问 (Qwen)';
+
+  /// 官方 Base URL（通用 API，按量付费）。
+  static const String baseUrl =
+      'https://maas.qianwenaiapi.com/compatible-mode/v1';
+
+  /// Token Plan 专属 Base URL（订阅会员套餐）。
+  static const String tokenPlanBaseUrl =
+      'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1';
+
+  /// 常用推荐文本模型。
+  static const String textModels =
+      'qwen3.7-plus, qwen3.7-max, qwen3.8-flash, qwq-32b, qwen-max, qwen-plus, qwen-turbo';
+
+  /// 语音识别模型 (STT 槽位)。
+  static const String sttModels = 'qwen3-asr-flash';
+
+  /// 语音合成模型 (TTS 槽位)。
+  static const String ttsModels =
+      'qwen-audio-3.0-tts-plus, qwen-audio-3.1-tts-plus, qwen-audio-3.1-tts-flash';
+}
+
 class AiConfigPage extends StatefulWidget {
   const AiConfigPage({super.key});
 
@@ -314,6 +412,11 @@ class _AiConfigPageState extends State<AiConfigPage>
   Widget _buildSlotsTab() {
     final slots = [
       {'key': 'text', 'label': '文本补全 / 对话 (Text)', 'desc': '用于代码解释、文本生成、规则重写等'},
+      {
+        'key': 'decision',
+        'label': '决策模型 (Decision / Reasoning)',
+        'desc': '用于任务拆解、策略规划、深度思考与复杂研判，支持 DeepSeek-R1 / QwQ / o1 等',
+      },
       {
         'key': 'multimodal',
         'label': '视觉多模态 (Multimodal)',
@@ -1124,6 +1227,12 @@ class _AiConfigPageState extends State<AiConfigPage>
     final imageModelsCtrl = TextEditingController(
       text: provider?.imageModels.join(', ') ?? '',
     );
+    final sttModelsCtrl = TextEditingController(
+      text: provider?.sttModels.join(', ') ?? '',
+    );
+    final ttsModelsCtrl = TextEditingController(
+      text: provider?.ttsModels.join(', ') ?? '',
+    );
     AiProtocolType protocol = provider?.protocol ?? AiProtocolType.openai;
     bool isDetecting = false;
     bool isSaving = false;
@@ -1336,6 +1445,136 @@ class _AiConfigPageState extends State<AiConfigPage>
                           });
                         },
                       ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.graphic_eq,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'StepFun (Step Plan会员)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'StepFun (Step Plan)';
+                            protocol = AiProtocolType.stepfun;
+                            urlCtrl.text = StepFunPreset.stepPlanBaseUrl;
+                            modelsCtrl.text = StepFunPreset.textModels;
+                            sttModelsCtrl.text = StepFunPreset.sttModels;
+                            ttsModelsCtrl.text = StepFunPreset.ttsModels;
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.graphic_eq,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'StepFun (开放平台)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = 'StepFun (开放平台)';
+                            protocol = AiProtocolType.stepfun;
+                            urlCtrl.text = StepFunPreset.baseUrl;
+                            modelsCtrl.text = StepFunPreset.textModels;
+                            sttModelsCtrl.text = StepFunPreset.sttModels;
+                            ttsModelsCtrl.text = StepFunPreset.ttsModels;
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.psychology_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          '千问 (Token Plan会员)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = '千问 (Token Plan)';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = QwenPreset.tokenPlanBaseUrl;
+                            modelsCtrl.text = QwenPreset.textModels;
+                            sttModelsCtrl.text = QwenPreset.sttModels;
+                            ttsModelsCtrl.text = QwenPreset.ttsModels;
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.psychology_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          '千问 (通用 API)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = '千问 (通用 API)';
+                            protocol = AiProtocolType.openai;
+                            urlCtrl.text = QwenPreset.baseUrl;
+                            modelsCtrl.text = QwenPreset.textModels;
+                            sttModelsCtrl.text = QwenPreset.sttModels;
+                            ttsModelsCtrl.text = QwenPreset.ttsModels;
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.hub_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'OpenRouter',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = OpenRouterPreset.displayName;
+                            protocol = AiProtocolType.openrouter;
+                            urlCtrl.text = OpenRouterPreset.baseUrl;
+                            modelsCtrl.text = OpenRouterPreset.textModels;
+                            sttModelsCtrl.text = OpenRouterPreset.sttModels;
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        avatar: Icon(
+                          Icons.record_voice_over_outlined,
+                          size: 14,
+                          color: context.accentText,
+                        ),
+                        label: const Text(
+                          'Mimo (小米)',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            nameCtrl.text = MimoPreset.displayName;
+                            protocol = AiProtocolType.openai;
+                            // 只在空着或还指向别家默认地址时才覆盖——用户可能
+                            // 正在填自建网关，那个地址比预设值更该保留。
+                            if (urlCtrl.text.isEmpty ||
+                                urlCtrl.text.contains('openai.com')) {
+                              urlCtrl.text = MimoPreset.baseUrl;
+                            }
+                            modelsCtrl.text = MimoPreset.textModels;
+                            ttsModelsCtrl.text = MimoPreset.ttsModels;
+                            sttModelsCtrl.text = MimoPreset.sttModels;
+                          });
+                        },
+                      ),
                     ],
                   ),
                   const Divider(height: AppTheme.space24),
@@ -1364,6 +1603,44 @@ class _AiConfigPageState extends State<AiConfigPage>
                     label: 'API Base URL',
                     hintText: 'https://api.openai.com/v1',
                   ),
+                  if (protocol == AiProtocolType.stepfun) ...[
+                    const SizedBox(height: AppTheme.space8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: context.accentSubtle,
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        border: Border.all(color: context.accentText.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(
+                        '💡 提示：若使用 Step Plan 会员套餐，Base URL 请使用 https://api.stepfun.com/step_plan/v1；若使用开放平台按量计费，请使用 https://api.stepfun.com/v1',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.textSecondary,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (protocol == AiProtocolType.openrouter) ...[
+                    const SizedBox(height: AppTheme.space8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: context.accentSubtle,
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        border: Border.all(color: context.accentText.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(
+                        '💡 提示：OpenRouter 支持文本对话、推理与语音识别。语音识别 (STT) 推荐模型：qwen/qwen3-asr-0.6b',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.textSecondary,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: AppTheme.space12),
                   AppTextField(
                     controller: keyCtrl,
@@ -1550,6 +1827,22 @@ class _AiConfigPageState extends State<AiConfigPage>
                     maxLines: 2,
                     hintText: '如 black-forest-labs/FLUX.1-schnell, dall-e-3',
                   ),
+                  const SizedBox(height: AppTheme.space12),
+                  const Text('语音识别模型 (STT，逗号分隔，可选)', style: AppTheme.fontCaption),
+                  const SizedBox(height: AppTheme.space4),
+                  AppTextField(
+                    controller: sttModelsCtrl,
+                    maxLines: 2,
+                    hintText: '如 stepaudio-2.5-asr, whisper-1',
+                  ),
+                  const SizedBox(height: AppTheme.space12),
+                  const Text('语音合成模型 (TTS，逗号分隔，可选)', style: AppTheme.fontCaption),
+                  const SizedBox(height: AppTheme.space4),
+                  AppTextField(
+                    controller: ttsModelsCtrl,
+                    maxLines: 2,
+                    hintText: '如 stepaudio-2.5-tts, tts-1',
+                  ),
                 ],
               ),
             ),
@@ -1582,6 +1875,16 @@ class _AiConfigPageState extends State<AiConfigPage>
                             .where((s) => s.isNotEmpty)
                             .toList();
                         final imageModels = imageModelsCtrl.text
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList();
+                        final sttModels = sttModelsCtrl.text
+                            .split(',')
+                            .map((s) => s.trim())
+                            .where((s) => s.isNotEmpty)
+                            .toList();
+                        final ttsModels = ttsModelsCtrl.text
                             .split(',')
                             .map((s) => s.trim())
                             .where((s) => s.isNotEmpty)
@@ -1622,8 +1925,8 @@ class _AiConfigPageState extends State<AiConfigPage>
                           textModels: models,
                           multimodalModels:
                               provider?.multimodalModels ?? const [],
-                          ttsModels: provider?.ttsModels ?? const [],
-                          sttModels: provider?.sttModels ?? const [],
+                          ttsModels: ttsModels,
+                          sttModels: sttModels,
                           videoModels: videoModels,
                           imageModels: imageModels,
                           mediaCapabilities: capabilities,

@@ -834,11 +834,69 @@ void main() {
         isMultiImage: true,
       ));
 
-      // 验证自然语言多图声明
+      // 验证自然语言多图声明。
+      //
+      // 场景卡（sceneJail）没有 referenceImages 也没有七方位图——按 spec
+      // 「生图多图编号按实际参考图顺序」，没有场景图就不编「第3张图作为
+      // 背景场景参考」的错指代。角色编号按出场顺序仍为 1、2。
       expect(result.positive, contains('【参考图角色与保留要求】:'));
-      expect(result.positive, contains('将第1张图作为主要角色（姜七夜），第2张图作为次要角色（老王），第3张图作为背景场景参考（巡城司大牢）'));
+      expect(result.positive, contains('将第1张图作为主要角色（姜七夜），第2张图作为次要角色（老王）'));
+      expect(result.positive, isNot(contains('第3张图作为背景场景参考')));
       expect(result.positive, contains('严格保留角色的面容身形与服装特征'));
+    });
+
+    test('场景卡有图时场景编号按实际顺序接在角色后', () {
+      final char1 = CharacterCard(
+        id: 'c-jiang',
+        name: '姜七夜',
+        basePromptPositive: 'handsome young guard',
+        updatedAt: DateTime(2026),
+      );
+      final sceneWithImage = SceneCard(
+        id: 's-jail',
+        name: '巡城司大牢',
+        descriptionZh: '青石条地面泛着水光',
+        referenceImages: const ['jail_front.png'],
+        updatedAt: DateTime(2026),
+      );
+
+      final result = PromptAssembler.buildShotPrompt(PromptParts(
+        characters: [char1],
+        scene: sceneWithImage,
+        actionZh: '姜七夜单手按刀',
+        isMultiImage: true,
+        hasSceneImage: true,
+      ));
+
+      expect(result.positive, contains('将第1张图作为主要角色（姜七夜），第2张图作为背景场景参考（巡城司大牢）'));
       expect(result.positive, contains('保留场景图中的建筑材质与环境光影风格，镜头根据当前分镜动作动态取景'));
+    });
+
+    test('角色缺图时编号按实际有图的角色前移', () {
+      final char1 = CharacterCard(
+        id: 'c-jiang',
+        name: '姜七夜',
+        basePromptPositive: 'handsome young guard',
+        updatedAt: DateTime(2026),
+      );
+      final char2 = CharacterCard(
+        id: 'c-wang',
+        name: '老王',
+        referenceImages: const ['wang_ref.png'],
+        updatedAt: DateTime(2026),
+      );
+
+      // charactersWithImages 只含老王（姜七夜没有可用素材图）——实际提交给
+      // 引擎的第 1 张图是老王的，提示词必须这么说，不能沿用数组下标。
+      final result = PromptAssembler.buildShotPrompt(PromptParts(
+        characters: [char1, char2],
+        actionZh: '姜七夜单手按刀',
+        isMultiImage: true,
+        charactersWithImages: [char2],
+      ));
+
+      expect(result.positive, contains('将第1张图作为主要角色（老王）'));
+      expect(result.positive, isNot(contains('第1张图作为主要角色（姜七夜）')));
     });
 
     test('核心动作与戏剧焦点置顶前置，注意力权重纠偏', () {
@@ -997,11 +1055,13 @@ void main() {
         contains('【核心视觉动作与焦点】: 单手按刀，垂眸立于案前，指尖有节奏地轻敲刀鞘'),
       );
 
-      // 验证动态取景指令
+      // jailScene 没有参考图也没有七方位图——按 spec「生图多图编号按实际参考图
+      // 顺序」，不编场景编号，也不输出场景保留要求。
       expect(
         result.positive,
-        contains('保留场景图中的建筑材质与环境光影风格，镜头根据当前分镜动作动态取景'),
+        isNot(contains('保留场景图中的建筑材质')),
       );
+      expect(result.positive, isNot(contains('第2张图作为背景场景参考')));
     });
 
     test('单角色在具备参考图时剥离静态容貌，仅输出主体焦点与即时变体', () {

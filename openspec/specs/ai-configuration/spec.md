@@ -58,8 +58,16 @@ When a preset fills a Base URL, it SHALL NOT overwrite an address the user has a
 - **THEN** the system SHALL NOT overwrite that address
 - **AND** the system SHALL overwrite it only when the field is empty or holds another provider's well-known default
 
+#### Scenario: Quick preset for Qwen Token Plan
+- **WHEN** user activates the "千问 (Token Plan)" quick preset
+- **THEN** the system fills Base URL with `https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1`, protocol with OpenAI-compatible, text models with recommended Qwen models (`qwen3.7-plus, qwen3.7-max, qwen3.8-flash, qwen-max, qwen-plus, qwen-turbo`), STT models with `qwen3-asr-flash`, and TTS models with `cosyvoice-v3-flash, cosyvoice-v3.5-flash, qwen-audio-tts`.
+
+#### Scenario: Quick preset for Qwen General API
+- **WHEN** user activates the "千问 (通用 API)" quick preset
+- **THEN** the system fills Base URL with `https://maas.qianwenaiapi.com/compatible-mode/v1`, protocol with OpenAI-compatible, and the corresponding recommended Qwen text, STT, and TTS models.
+
 ### Requirement: Model discovery and capability slots
-The application SHALL allow discovering available models via authentic provider API requests or manual entry, and assigning models to global capability slots (Text, Multimodal, TTS, STT). Each slot SHALL support an ordered list of provider-model candidates instead of a single binding, with user-controllable priority ordering.
+The application SHALL allow discovering available models via authentic provider API requests or manual entry, and assigning models to global capability slots (Text, Multimodal, TTS, STT, Image, Video, and Decision). Each slot SHALL support an ordered list of provider-model candidates instead of a single binding, with user-controllable priority ordering.
 
 #### Scenario: Automatic model discovery
 - **WHEN** user clicks "Detect Models" for an active provider
@@ -77,13 +85,22 @@ The application SHALL allow discovering available models via authentic provider 
 - **WHEN** user removes a candidate from a slot's candidate list
 - **THEN** the candidate is removed, remaining candidates retain their relative order, and the change is persisted
 
+#### Scenario: Binding candidates to Decision capability slot
+- **WHEN** user configures candidates for the `decision` capability slot
+- **THEN** the system persists the decision model candidates to `ai_config.json`
+- **AND** the AI configuration UI renders a dedicated slot card for Decision/Reasoning with candidate ordering and health indicators
+
 #### Scenario: Routing requests through capability slot
-- **WHEN** a business tool requests text completion without specifying an explicit provider
+- **WHEN** a business tool requests completion through a capability slot (e.g., `text` or `decision`) without specifying an explicit provider
 - **THEN** the system resolves the provider and model via the slot's ordered candidate list and the auto-healing routing engine
 
 #### Scenario: Backward-compatible loading of legacy single-binding format
 - **WHEN** the application loads an `ai_config.json` containing the legacy `defaultSlots` format with single `{providerId, model}` entries
 - **THEN** each legacy binding is automatically migrated to a single-element candidate list, and the config is re-saved in the new format without data loss
+
+#### Scenario: Graceful migration when Decision slot is missing from config
+- **WHEN** the application loads an `ai_config.json` that lacks the `decision` slot key
+- **THEN** the system automatically initializes `decision` with an empty candidate list without failing or corrupting existing slot bindings
 
 ### Requirement: External MCP client configuration
 The application SHALL allow configuring connection parameters for external third-party Model Context Protocol (MCP) servers (supporting stdio command with arguments and environment variables, or SSE endpoint) to discover and execute external tool calls, and SHALL provide authentic connection and tool discovery testing with automatic desktop environment PATH resolution and detailed stderr diagnostic reporting. The application SHALL persist modifications and deletions of MCP servers, honoring empty client configurations across application restarts without automatically re-injecting deleted presets. Connection testing MUST distinguish between reachability of the locally launched MCP process and reachability of the remote service that process ultimately talks to, and MUST NOT report a server as healthy on the basis of local process reachability alone.
@@ -207,4 +224,93 @@ The 外部 MCP 客户端 configuration tab SHALL present the tools discovered fr
 - **WHEN** Agnes 预填视频槽位
 - **THEN** 候选 SHALL 同时包含标准型号与 Flash 型号
 - **AND** 用户 SHALL 能按需选择其一或两者并调整优先级
+
+### Requirement: Builtin Mimo Provider Candidate
+系统 SHALL 提供小米 MiMo 供应商的快速填充预设，预填 MiMo API 模式（按量计费）的服务地址与其文本、语音合成、语音识别模型标识。预填的模型 SHALL 覆盖 MiMo 当前在售的 TTS、STT 与文本型号，并按用途分别填入对应槽位，使用户无需手工查文档即可配齐三槽位。预设的协议类型 SHALL 为 OpenAI 兼容协议，且 SHALL NOT 新增专用协议枚举值。
+
+#### Scenario: One preset fills all three slots
+- **WHEN** 用户在添加供应商时激活 MiMo 快速填充预设
+- **THEN** 系统填入 MiMo 的 API 模式服务地址 `https://api.xiaomimimo.com/v1`、OpenAI 兼容协议类型，以及分别用于文本、TTS、STT 槽位的 MiMo 模型标识
+- **AND** 用户 SHALL 能直接进入连接验证，无需手工查找模型名称
+
+#### Scenario: TTS model is the currently served mimo-v2.5-tts
+- **WHEN** 用户激活 MiMo 快速填充预设
+- **THEN** TTS 槽位预填模型 SHALL 为 `mimo-v2.5-tts`
+- **AND** 该模型 SHALL 为官方 `/v1/models` 列表当前仍提供、且经真机合成返回合法音频的型号
+
+#### Scenario: Text models use the v2.6 series
+- **WHEN** 用户激活 MiMo 快速填充预设
+- **THEN** 文本槽位预填模型 SHALL 为 `mimo-v2.6-flash` 与 `mimo-v2.6-pro`
+- **AND** 预设 SHALL NOT 包含已下线（2026-10-21 起）的 `mimo-v2.5` / `mimo-v2.5-pro`
+
+#### Scenario: Preset must not expose Token Plan subscription route
+- **WHEN** 用户激活 MiMo 快速填充预设
+- **THEN** 预填的 Base URL SHALL 为 API 模式地址 `https://api.xiaomimimo.com/v1`
+- **AND** 预设 SHALL NOT 预填任何 Token Plan 订阅地址（`token-plan-cn` / `token-plan-sgp` / `token-plan-ams` 等 `*.xiaomimimo.com` 集群）或 `tp-` 前缀 Key
+- **AND** 预设 SHALL NOT 提供「Token Plan 会员」快捷入口（对齐 Qwen 的双入口先例，MiMo 仅保留 API 模式单一入口）
+
+#### Scenario: Preset respects user-entered Base URL
+- **WHEN** 用户激活 MiMo 快速填充预设，且当前 Base URL 输入框已填有非 MiMo 的地址
+- **THEN** 预设 SHALL NOT 覆盖用户已输入的自定义地址，除非当前值为空或为 MiMo API 默认地址
+- **AND** 模型标识 SHALL 仍按预设填充，供用户仅需修正地址即可
+
+### Requirement: StepFun Provider Dual-Route Presets and Step Plan Adaptation
+The AI provider configuration interface SHALL offer dual quick-fill options for StepFun: one for standard Open Platform (`https://api.stepfun.com/v1`) and one for Step Plan subscribers (`https://api.stepfun.com/step_plan/v1`). If an ASR or TTS request returns HTTP 402 with quota exceeded on a standard endpoint, the system SHALL inform the user to switch the base URL to the Step Plan dedicated path.
+
+#### Scenario: User selects Step Plan preset
+- **WHEN** user clicks the "StepFun (Step Plan)" quick-fill preset in provider configuration
+- **THEN** the Base URL is populated with `https://api.stepfun.com/step_plan/v1`, and the protocol is set to `stepfun`.
+
+#### Scenario: Step Plan 402 remediation guidance
+- **WHEN** a StepFun ASR or TTS request fails with HTTP 402 and the provider's base URL does not contain `step_plan`
+- **THEN** the error notification specifically suggests updating the base URL to `https://api.stepfun.com/step_plan/v1` for Step Plan subscriptions.
+
+### Requirement: Unified Multi-modal Provider and SenseAudio Image Protocol Adapter
+The system SHALL support configuring SenseAudio as a unified multi-modal provider whose credentials and base URL are shared across both video and image capability slots. When generating images using SenseAudio, the system SHALL adhere to the official SenseAudio image generation protocol (supporting `POST /v1/image/sync` and `POST /v1/image/async` with `GET /v1/image/pending`), perform automatic resolution snapping to legal whitelist dimensions, support base64 Data URI reference images, and record all interactions to `AiLogger`.
+
+#### Scenario: Unified provider credential and model sharing
+- **WHEN** user configures the SenseAudio provider in the AI infrastructure settings
+- **THEN** the single provider record holds video models (e.g. `doubao-seedance-2-0-260128`) and image models (e.g. `senseaudio-image-2.0-260319`), and the same API Key is shared across video and image generation without redundant credential entries
+
+#### Scenario: Synchronous image generation via SenseAudio protocol
+- **WHEN** an image generation request is dispatched to SenseAudio in synchronous mode
+- **THEN** the system issues a `POST` request to `/v1/image/sync` with authorization headers, extracts the direct `url` field from the root JSON response, downloads the image file, and logs request/response details to `AiLogger`
+
+#### Scenario: Asynchronous fallback and pending polling
+- **WHEN** synchronous image generation is unavailable or timed out, or asynchronous mode is explicitly dispatched
+- **THEN** the system issues a `POST` request to `/v1/image/async` to obtain a `task_id`, periodically queries `/v1/image/pending?task_id={task_id}` until the status is `completed`, and saves the resulting image to disk
+
+#### Scenario: Automatic resolution snapping to supported dimensions
+- **WHEN** a client requests an arbitrary portrait or landscape aspect ratio (such as 1080x1920 for vertical short videos)
+- **THEN** the system automatically snaps the requested size to the nearest supported dimension whitelist for the chosen model (e.g. `1152x2048` or `864x1536` for `senseaudio-image-2.0-260319`), preventing `400000` parameter errors from the provider
+
+#### Scenario: Transmitting reference image via Data URI
+- **WHEN** a storyboard shot provides a character or scene reference image file
+- **THEN** the system encodes the image to a base64 Data URI (`data:image/png;base64,...`) and includes it in the `reference` parameter of the SenseAudio request body
+
+### Requirement: Provider credential masking with explicit reveal
+The provider API key field SHALL be masked by default and SHALL provide an explicit reveal affordance so the user can confirm the credential currently in effect. The raw credential MUST NOT be rendered on screen without an explicit user action. Revealing a stored credential SHALL be read-only with respect to the secure store.
+
+#### Scenario: Credential field masked by default
+- **WHEN** the provider dialog opens
+- **THEN** the API key field displays masked (asterisk) content by default
+- **AND** the raw credential is not rendered on screen without an explicit user action.
+
+#### Scenario: Reveal the credential being entered
+- **WHEN** user types a credential into the field and activates the reveal affordance
+- **THEN** the field switches from masked to plain display so the user can verify what was entered
+- **AND** activating the affordance again returns it to masked display.
+
+#### Scenario: Reveal the already-stored credential when editing
+- **WHEN** user edits an existing provider, whose key field is empty, and activates the reveal affordance
+- **THEN** the system loads the currently stored credential from the secure store and displays it for inspection
+- **AND** it indicates that the stored credential was loaded rather than typed by the user.
+
+#### Scenario: Revealing a stored credential does not rewrite it
+- **WHEN** user reveals the stored credential and then saves the provider without modifying the field
+- **THEN** the stored credential is left unchanged, with no redundant write to the secure store.
+
+#### Scenario: Stored credential unavailable
+- **WHEN** user activates the reveal affordance but the credential cannot be read from the secure store
+- **THEN** the system reports that the credential could not be loaded, rather than silently showing an empty field.
 

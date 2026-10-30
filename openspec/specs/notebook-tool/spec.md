@@ -46,7 +46,7 @@ The notebook tool SHALL organize notebooks into collapsible stack groups accordi
 - **THEN** the system matches existing notebooks against the local Evernote database store and updates their stack values without requiring re-import.
 
 ### Requirement: Fixed-Width Column Layout and Launch Sizing
-The standalone notebook window SHALL provide consistent, non-stretching column widths for navigation and maximize to the display workspace upon opening.
+The standalone notebook window SHALL provide consistent, non-stretching column widths for navigation and fill the current display's visible work area upon opening.
 
 #### Scenario: Fixed sidebar and note list dimensions
 - **WHEN** the notebook window is resized or maximized
@@ -54,7 +54,11 @@ The standalone notebook window SHALL provide consistent, non-stretching column w
 
 #### Scenario: Maximizing notebook sub-window on creation
 - **WHEN** the user opens the standalone notebook window
-- **THEN** the window is automatically maximized to fill the active screen's visible work area (excluding system dock and menu bar).
+- **THEN** the window fills the active screen's visible work area (excluding system dock and menu bar) at its first appearance, without first appearing at a smaller size and then resizing.
+
+#### Scenario: Window position matches its size at first appearance
+- **WHEN** the notebook window becomes visible for the first time
+- **THEN** it is already at the work-area size and position described above, rather than appearing at a small default size in a screen corner and later jumping.
 
 ### Requirement: Compact Single-Row Editor Toolbar
 The rich-text note editor SHALL display a streamlined, single-row compact toolbar to maximize vertical writing canvas space.
@@ -390,4 +394,58 @@ The notebook tool SHALL import a locally chosen document (`pdf`, `docx`, `xlsx`,
 - **WHEN** an embedded image cannot be extracted from the source document
 - **THEN** the import result reports the count of images that could not be carried over
 - **AND** the import does not present itself as a complete success.
+
+### Requirement: 笔记本可标记为捕获默认目标
+
+笔记本 SHALL 支持被用户标记为「笔记捕获默认目标」，且同一时刻最多只有一个笔记本处于该状态。
+
+#### Scenario: 设置某笔记本为默认捕获目标
+
+- **WHEN** 用户在笔记本列表中右键某笔记本并选择「设为笔记捕获默认」
+- **THEN** 该笔记本被标记为默认捕获目标，列表中以特殊图标标注；若之前已有其他笔记本持有该标记，其标记自动清除
+
+#### Scenario: 默认捕获目标在列表中可识别
+
+- **WHEN** 笔记本列表展示
+- **THEN** 被设为笔记捕获默认目标的笔记本在名称旁显示「📥」或等效图标
+
+### Requirement: Cross-View Note Navigation and Selection Persistence
+When a user navigates to a note from external panels (such as clicking a node in the knowledge graph or a citation in the AI assistant), the notebook tool SHALL synchronously switch sidebar navigation to the target note's notebook context and maintain steady editor selection without deselection flicker.
+
+#### Scenario: Jumping from knowledge graph node to note in another notebook
+- **WHEN** the user clicks a note node in the knowledge graph that belongs to a notebook different from the currently selected notebook
+- **THEN** the sidebar updates its active notebook selection to match the target note's notebook, loads the target notebook's note list, and highlights and opens the target note in the main editor.
+
+#### Scenario: Jumping from knowledge graph node to standalone note
+- **WHEN** the user clicks a note node in the knowledge graph that does not belong to any notebook
+- **THEN** the sidebar updates its active selection to "全部笔记" (all notes), refreshes the list to include the target note, and keeps the target note stably selected in the editor.
+
+#### Scenario: Clearing conflicting search or tag filter on cross-view jump
+- **WHEN** the user initiates a jump from the knowledge graph while an active search query or tag filter is applied
+- **THEN** the system clears the active search query and tag filter so the target note is not excluded from the refreshed note list and is not reset to an empty state.
+
+### Requirement: 3D Spherical Perspective Knowledge Star Map
+The notebook tool SHALL render note relationship networks as a 3D spherical star map with perspective depth, continuous ambient rotation, interactive 3D orbit manipulation, and persistent title labels on core hub nodes.
+
+#### Scenario: Displaying 3D star map in deep space visual theme
+- **WHEN** the user opens the knowledge graph view
+- **THEN** the system renders a cosmic canvas featuring deep-space background gradients, twinkling background star dust, glowing celestial note nodes, and semi-transparent depth-attenuated constellation edges.
+
+#### Scenario: Ambient slow rotation of the star map
+- **WHEN** the knowledge star map is idle without user touch or drag interaction
+- **THEN** the system rotates the entire 3D star cluster smoothly around its vertical axis at a subtle ambient velocity.
+
+#### Scenario: User gesture manipulation in 3D space
+- **WHEN** the user drags across the star map canvas
+- **THEN** ambient rotation temporarily pauses, the viewpoint rotates freely across pitch and yaw angles according to the drag vector, and smoothly resumes ambient rotation after interaction ends.
+
+#### Scenario: Always-on title labels for core hub nodes with depth culling
+- **WHEN** the star map contains note nodes
+- **THEN** the top connected hub nodes (ranked by degree) and asset notes display persistent title labels when facing the camera, while fading labels out when rotated behind the celestial sphere to prevent visual overlap.
+
+#### Scenario: Hover and click interactions on star map nodes
+- **WHEN** the user hovers over any star node
+- **THEN** the hovered node scales up with an intense halo, displays its full title, and highlights its connected edges.
+- **WHEN** the user clicks on the star node
+- **THEN** the system triggers note navigation and opens the corresponding note in the main editor.
 

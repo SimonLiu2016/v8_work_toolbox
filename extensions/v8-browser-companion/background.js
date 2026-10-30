@@ -106,10 +106,10 @@ function openHiddenTab(url) {
 // 与 SettingsStore.defaultBridgePort 保持一致；端口可在桌面应用设置中改，
 // 改的是两端都要改的常量（见 proposals/design 的 Decision 3）。
 const BRIDGE_PORT = 8797;
-// 与桌面应用 SettingsStore 生成的同一密钥。读取位置：
-//   ~/Library/Application Support/V8WorkToolbox/app.json → localBridgeSecret
-// 何时需要重新同步：重装/迁移桌面应用、桥密钥被重新生成。密钥不匹配时气泡会
-// 显示「本地词典桥拒绝访问」而不是含糊的查询失败。
+// 与桌面应用 SettingsStore.kLocalBridgeSecret 共享的同一密钥；改这把钥匙必须
+// 同步改 lib/services/settings_store.dart，只改一边会立即授权失配（气泡报
+// 「本地词典桥拒绝访问」）。读取位置（仅供参考，扩展无文件系统权限，无法读取）：
+//   ~/Library/Application Support/V8WorkToolbox/app.json → localBridgeSecret（已废弃）
 const BRIDGE_SECRET = '1rVOk7DvbImjMqu2nxzjxQ4UtDxFNkwK';
 
 // 客户端超时。MV3 的硬规则：service worker 在一次 fetch 响应超过 30s 时被杀

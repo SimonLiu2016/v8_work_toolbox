@@ -22,6 +22,8 @@
 
 注册表 SHALL 同时暴露工具的唯一标识作为持久化配置键与代理通道键；新增工具时其标识 SHALL 在 `tool_definition.dart` 中以常量声明，而不是在使用处散落字面量。
 
+新工具的分类 SHALL 依据分类归属判定规则（capability: `tool-category-assignment`）按工具目的推出，而不是由接入者自行判断。当工具的分类与其名称给人的第一印象不符时，注册处 SHALL 注明判定依据，说明为何属于该分类、为何不属于看起来更接近的分类。
+
 #### Scenario: 注册即出现
 
 - **WHEN** 开发者向注册表注册一个新工具
@@ -31,6 +33,12 @@
 
 - **WHEN** 新增一个需要持久化配置或代理开关的工具
 - **THEN** 该工具的标识以常量形式集中声明，配置读取、代理判断与注册表条目引用同一常量
+
+#### Scenario: 新工具的分类有判定依据
+
+- **WHEN** 开发者注册一个新工具并声明其分类
+- **THEN** 该分类 SHALL 是分类归属判定规则的首个匹配结果
+- **AND** 当名称暗示的分类与判定结果不符时，注册处 SHALL 注明判定依据
 
 ### Requirement: 侧边栏导航与分类分组
 
@@ -128,4 +136,83 @@ Every window entry point SHALL install a global error handler so that an uncaugh
 - **THEN** 已选中项保留明确的激活视觉标识（如左侧指示条与选中状态）
 - **AND** 悬停项呈现不同于选中项的轻量悬停反馈
 - **AND** 两者在视觉上不会混淆为同一种灰色块。
+
+### Requirement: 窗口拖拽仅限专用拖拽区，不得使用全局背景拖拽
+
+应用主窗口及所有子窗口 MUST NOT 启用 `isMovableByWindowBackground`（macOS NSWindow 全局背景拖拽）。窗口拖动 SHALL 仅由 ActivityBar 顶部的专用 `DragToMoveArea` widget（38px 高）响应用户的 pan/drag 手势，通过 `windowManager.startDragging()` 委托给系统执行窗口移动。
+
+全局启用 `isMovableByWindowBackground` 会导致 NSWindow 在收到任何落在 FlutterView 上的 mouseDown 时，不将事件传入 Flutter 事件系统，从而使 showDialog / showModalBottomSheet 等模态层内的所有可交互控件（按钮、IconButton、InkWell）点击失效。
+
+#### Scenario: 用户在 ActivityBar 顶部区域拖动窗口
+
+- **WHEN** 用户在 ActivityBar 顶部 38px 的专用拖拽区按下并拖动鼠标
+- **THEN** 窗口随鼠标移动，松开后停在新位置
+
+#### Scenario: 模态对话框内的按钮可正常点击
+
+- **WHEN** 任意 showDialog 或 showModalBottomSheet 弹出的模态层处于前台
+- **THEN** 该层内的所有按钮（包括右上角关闭按钮、图标按钮、FilledButton）的 onPressed/onTap SHALL 被正常触发，不得被 NSWindow 原生事件截获
+
+#### Scenario: ActivityBar 顶部区域之外不可拖动
+
+- **WHEN** 用户在 ActivityBar 顶部拖拽区以外的区域（如内容区、工具面板、弹窗内）按下并拖动鼠标
+- **THEN** 窗口 MUST NOT 被拖动，鼠标事件正常传递给 Flutter widget 处理
+
+### Requirement: 桌面模态弹窗顶部交互安全区
+
+系统在沉浸式桌面无边框窗口环境下呈现模态弹窗（Dialog）与模态抽屉（BottomSheet）时，弹窗顶部交互元素 SHALL 与应用窗口顶边保持至少 48px 的安全避让距离，确保右上角关闭、导出、定位及各快捷操作按钮不会落入 macOS 系统级标题栏拖拽截获区。
+
+#### Scenario: 媒体预览弹窗操作栏可点击
+- **WHEN** 用户在分镜工作台打开分镜媒体预览弹窗
+- **THEN** 弹窗外边距与顶部保持至少 48px 间距，右上角的操作按钮（外部播放器、在访达中显示、导出、关闭）处于系统拖拽盲区之外，鼠标点击能正常触发对应操作
+
+#### Scenario: 模态编辑抽屉顶部关闭按钮可点击
+- **WHEN** 用户在资产页面唤起资产编辑模态抽屉
+- **THEN** 模态抽屉内部顶部提供安全边距避让，右上角的关闭按钮完整处于有效交互区域内，点击后能正常关闭抽屉
+
+### Requirement: 窗口关闭事件防重入与递归熔断
+
+所有实现了 `WindowListener` 并在 `onWindowClose()` 回调中触发窗口销毁或二次关闭逻辑的界面组件，SHALL 实现状态自锁保护（例如 `_isClosing` 标志位），并在调用底层关闭命令前显式注销自身监听器（`windowManager.removeListener(this)`），MUST NOT 在 `onWindowClose()` 回调中无防护地直接调用 `windowManager.close()`。
+
+#### Scenario: 确认关闭含有运行任务的工坊窗口
+- **WHEN** 用户在有未完成小说解构任务时点击窗口关闭按钮，并在确认弹窗中选择「确认关闭并中断」
+- **THEN** 系统先将关闭状态置为锁定，注销 `WindowListener`，解除 `preventClose`
+- **AND** 随后调用底层关闭逻辑
+- **AND** 关闭过程不会形成 Native ↔ Dart 间的二次 `close` 事件递归风暴，主线程 CPU 占用不得激增至 100%
+
+### Requirement: 子窗口生命周期隔离
+
+由 `desktop_multi_window` 创建的独立辅助子窗口（如查词浮窗 `lookupPanel` 等）在失焦关闭、点击关闭或隐藏时，SHALL 仅针对自身所属的子窗口实例执行关闭或隐藏操作（通过 `WindowController` 或特定子窗口通道），MUST NOT 调用作用于应用全局主窗口的 `windowManager.close()`。
+
+#### Scenario: 查词浮窗失去焦点自动关闭
+- **WHEN** 用户点击查词浮窗外部区域导致浮窗失焦
+- **THEN** 查词浮窗通过子窗口实例或通道执行关闭/隐藏
+- **AND** 主应用窗口的 `WindowListener` 监听器不会收到关闭事件，主应用生命周期与 CPU 占用保持平稳正常
+
+### Requirement: 常驻透明悬浮字幕窗形态的工具
+
+工具注册表 SHALL 支持一种"常驻透明悬浮窗 + 主窗口管理界面"的工具形态：主窗口内容区呈现该工具的管理与设置界面，同时拥有一个独立于主窗口、常驻置顶、背景透明的悬浮窗承载实时内容，两者共享同一份状态。
+
+该形态与"内嵌于主窗口内容区"和"整页独立窗口"不同：其悬浮窗 MUST NOT 抢夺焦点，且 MUST NOT 因悬浮窗关闭而丢失主窗口持有的状态。常驻形态工具的标识 SHALL 同样在 `tool_definition.dart` 中以常量声明，且 MUST NOT 硬编码于任何导航或快捷键代码中。
+
+#### Scenario: 注册常驻悬浮窗形态工具
+
+- **WHEN** 开发者注册一个声明为常驻悬浮窗形态的工具
+- **THEN** 该工具在主窗口内容区呈现管理界面，并可打开一个独立于主窗口的常驻透明悬浮窗，无需修改外壳导航代码
+
+#### Scenario: 关闭悬浮窗不丢失状态
+
+- **WHEN** 用户关闭悬浮窗后从主窗口管理界面重新打开
+- **THEN** 悬浮窗恢复到关闭前的状态（含未导出的记录数据），主窗口持有的状态不受悬浮窗关闭影响
+
+### Requirement: 实时会议翻译工具的归类
+
+实时会议翻译工具 SHALL 归类于"笔记与学习"（`ToolCategory.note`）分类，MUST NOT 归类于"AI 与资讯"（`ToolCategory.ai`）。
+
+**理由**：该工具处理的是用户自己的会议音频转录（用户自己产出的文字），符合 note 分类"组织用户自己产出的文字"的语义；它虽用 AI 能力，但"带 AI 能力不改变归属"。
+
+#### Scenario: 侧边栏中的位置
+
+- **WHEN** 用户查看侧边栏分类
+- **THEN** "实时会议翻译"出现在"笔记与学习"分组下，不在"AI 与资讯"分组下
 

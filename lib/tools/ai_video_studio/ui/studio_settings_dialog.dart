@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import '../../../components/app_components.dart';
 import '../../../services/ai_config_store.dart';
+import '../../../services/ai_service.dart';
 import '../../../services/media_capability.dart';
 import '../../../shell/ai_log_dialog.dart';
 import '../../../services/keychain_service.dart';
@@ -19,10 +20,14 @@ import '../services/image_gen_adapter.dart';
 import '../services/video_gen_adapter.dart';
 import 'studio_preset_management_dialog.dart';
 
-/// 能力类型：图像 / 视频 / TTS。
+/// 影视工坊六维能力矩阵：文本 / 视觉 / 图像 / 视频 / TTS / STT。
 enum StudioCapability {
-  image('image', '图像生成'),
-  video('video', '视频生成');
+  text('text', '剧本与编剧 (Text)'),
+  vision('vision', '多模态视觉审片 (Vision)'),
+  image('image', '图像生成 (Image)'),
+  video('video', '视频生成 (Video)'),
+  tts('tts', '台词配音 (TTS)'),
+  stt('stt', '语音识别 (STT)');
 
   final String id;
   final String label;
@@ -48,8 +53,12 @@ class StudioSettingsDialog extends StatefulWidget {
 class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
   final Map<String, TextEditingController> _keys = {};
   final Map<String, String> _engines = {
+    StudioCapability.text.id: 'system-text',
+    StudioCapability.vision.id: 'system-vision',
     StudioCapability.image.id: 'system-image',
     StudioCapability.video.id: 'system-video',
+    StudioCapability.tts.id: 'system-tts',
+    StudioCapability.stt.id: 'system-stt',
   };
   final Map<String, String> _testResult = {};
   bool _loaded = false;
@@ -106,21 +115,22 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
     );
     if (mounted) {
       setState(() {
-        _testResult.remove(StudioCapability.image.id);
-        _testResult.remove(StudioCapability.video.id);
+        for (final cap in StudioCapability.values) {
+          _testResult.remove(cap.id);
+        }
       });
     }
   }
 
   Future<void> _save(StudioCapability capability) async {
     final engineId = _engines[capability.id]!;
-    if (engineId == 'system-image' ||
-        engineId == 'system-video' ||
+    if (engineId.startsWith('system-') ||
         engineId == 'local-kenburns-ffmpeg' ||
-        engineId == 'local-stub') {
+        engineId == 'local-stub' ||
+        engineId == 'dola-pool-2.5') {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${capability.label} 引擎设置已应用')),
+        SnackBar(content: Text('${capability.label} 设置已生效')),
       );
       return;
     }
@@ -143,19 +153,29 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
     setState(() => _testResult[capability.id] = 'testing');
     final engineId = _engines[capability.id]!;
     try {
-      final ok = switch (engineId) {
-        'system-image' => await (await ImageGenAdapterFactory.create(
-            preferredEngineId: 'system-image',
-          )).isAvailable(),
-        'local-stub' => await const LocalStubImageAdapter().isAvailable(),
-        'siliconflow-flux-schnell' =>
-          await SiliconFlowImageAdapter().isAvailable(),
-        'local-kenburns-ffmpeg' => await KenBurnsVideoAdapter().isAvailable(),
-        'kling-i2v' => await KlingVideoAdapter().isAvailable(),
-        'system-video' => await (await VideoGenAdapterFactory.create(
-            preferredEngineId: 'system-video',
-          )).isAvailable(),
-        _ => false,
+      final ok = switch (capability) {
+        StudioCapability.text => await _testTextEngine(),
+        StudioCapability.vision => await _testVisionEngine(),
+        StudioCapability.image => switch (engineId) {
+            'system-image' => await (await ImageGenAdapterFactory.create(
+                preferredEngineId: 'system-image',
+              )).isAvailable(),
+            'local-stub' => await const LocalStubImageAdapter().isAvailable(),
+            'siliconflow-flux-schnell' =>
+              await SiliconFlowImageAdapter().isAvailable(),
+            _ => false,
+          },
+        StudioCapability.video => switch (engineId) {
+            'system-video' => await (await VideoGenAdapterFactory.create(
+                preferredEngineId: 'system-video',
+              )).isAvailable(),
+            'local-kenburns-ffmpeg' =>
+              await KenBurnsVideoAdapter().isAvailable(),
+            'kling-i2v' => await KlingVideoAdapter().isAvailable(),
+            _ => false,
+          },
+        StudioCapability.tts => _testSlotConfigured('tts'),
+        StudioCapability.stt => _testSlotConfigured('stt'),
       };
       if (!mounted) return;
       setState(() => _testResult[capability.id] = ok ? 'pass' : 'fail');
@@ -163,6 +183,41 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
       if (!mounted) return;
       setState(() => _testResult[capability.id] = 'fail');
     }
+  }
+
+  bool _testSlotConfigured(String slot) {
+    final candidates = AiConfigStore.instance.slotBindings[slot] ?? [];
+    return candidates.isNotEmpty;
+  }
+
+  Future<bool> _testTextEngine() async {
+    final res = await AiService.instance.chat(
+      slot: 'text',
+      messages: [
+        {'role': 'user', 'content': 'ping'},
+      ],
+      timeout: const Duration(seconds: 10),
+    );
+    return res.text.trim().isNotEmpty;
+  }
+
+  Future<bool> _testVisionEngine() async {
+    const test1x1Png =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAAElFTkSuQmCC';
+    final res = await AiService.instance.chat(
+      slot: 'multimodal',
+      messages: [
+        {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': 'Describe this image or say OK.'},
+            {'type': 'image_url', 'image_url': {'url': test1x1Png}},
+          ],
+        },
+      ],
+      timeout: const Duration(seconds: 15),
+    );
+    return res.text.trim().isNotEmpty;
   }
 
   @override
@@ -339,46 +394,195 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
     );
   }
 
+  static ({
+    bool isConfigured,
+    String providerName,
+    String modelName,
+    String description,
+  }) _getSystemConfigSummary(String slotName, String slotDisplayName) {
+    final candidates = AiConfigStore.instance.slotBindings[slotName] ?? [];
+    for (final candidate in candidates) {
+      final provider = AiConfigStore.instance.providers.firstWhere(
+        (p) => p.id == candidate.providerId,
+        orElse: () => const AiProviderConfig(
+          id: '',
+          name: '',
+          protocol: AiProtocolType.openai,
+          baseUrl: '',
+          keychainKeyId: '',
+        ),
+      );
+      if (provider.id.isNotEmpty) {
+        final model = candidate.model.isNotEmpty
+            ? candidate.model
+            : (slotName == 'image'
+                ? (provider.imageModels.isNotEmpty
+                    ? provider.imageModels.first
+                    : 'flux-schnell')
+                : (slotName == 'video'
+                    ? (provider.videoModels.isNotEmpty
+                        ? provider.videoModels.first
+                        : 'video')
+                    : (slotName == 'multimodal'
+                        ? (provider.multimodalModels.isNotEmpty
+                            ? provider.multimodalModels.first
+                            : 'multimodal')
+                        : (slotName == 'text'
+                            ? (provider.textModels.isNotEmpty
+                                ? provider.textModels.first
+                                : 'text')
+                            : (slotName == 'tts'
+                                ? (provider.ttsModels.isNotEmpty
+                                    ? provider.ttsModels.first
+                                    : 'tts')
+                                : (provider.sttModels.isNotEmpty
+                                    ? provider.sttModels.first
+                                    : 'stt'))))));
+        return (
+          isConfigured: true,
+          providerName: provider.name,
+          modelName: model,
+          description: '${provider.name} ($model)',
+        );
+      }
+    }
+    return (
+      isConfigured: false,
+      providerName: '',
+      modelName: '',
+      description: '未绑定$slotDisplayName模型',
+    );
+  }
+
   /// 当前引擎绑定模型的能力摘要（spec: 设置页展示能力摘要）。
   ///
   /// 走与运行时同一条解析链（[MediaCapabilityResolver]），所以用户在这里看到
   /// 的限制就是生成时真正生效的限制——不存在"设置页说支持、生成时被拒"。
   _CapabilitySummary _capabilitySummaryFor(StudioCapability capability) {
-    final isVideo = capability == StudioCapability.video;
-    final summary = isVideo
-        ? VideoGenAdapterFactory.getSystemVideoConfigSummary()
-        : ImageGenAdapterFactory.getSystemImageConfigSummary();
-    if (!summary.isConfigured) {
-      return const _CapabilitySummary(
-        available: false,
-        isDeclared: false,
-        lines: [],
-      );
+    switch (capability) {
+      case StudioCapability.image:
+        final summary = ImageGenAdapterFactory.getSystemImageConfigSummary();
+        if (!summary.isConfigured) {
+          return const _CapabilitySummary(
+            available: false,
+            isDeclared: false,
+            lines: [],
+          );
+        }
+        final candidates =
+            AiConfigStore.instance.slotBindings['image'] ?? [];
+        final providerId =
+            candidates.isNotEmpty ? candidates.first.providerId : '';
+        final provider = AiConfigStore.instance.providers.firstWhere(
+          (p) => p.id == providerId,
+          orElse: () => const AiProviderConfig(
+            id: '',
+            name: '',
+            protocol: AiProtocolType.openai,
+            baseUrl: '',
+            keychainKeyId: '',
+          ),
+        );
+        final capabilityModel = provider.id.isEmpty
+            ? MediaCapabilityDefaults.forProtocolId('openai')
+            : MediaCapabilityResolver.resolve(provider, summary.modelName);
+        return _CapabilitySummary.fromCapability(capabilityModel);
+
+      case StudioCapability.video:
+        final summary = VideoGenAdapterFactory.getSystemVideoConfigSummary();
+        if (!summary.isConfigured) {
+          return const _CapabilitySummary(
+            available: false,
+            isDeclared: false,
+            lines: [],
+          );
+        }
+        final candidates =
+            AiConfigStore.instance.slotBindings['video'] ?? [];
+        final providerId =
+            candidates.isNotEmpty ? candidates.first.providerId : '';
+        final provider = AiConfigStore.instance.providers.firstWhere(
+          (p) => p.id == providerId,
+          orElse: () => const AiProviderConfig(
+            id: '',
+            name: '',
+            protocol: AiProtocolType.openai,
+            baseUrl: '',
+            keychainKeyId: '',
+          ),
+        );
+        final capabilityModel = provider.id.isEmpty
+            ? MediaCapabilityDefaults.forProtocolId('openai')
+            : MediaCapabilityResolver.resolve(provider, summary.modelName);
+        return _CapabilitySummary.fromCapability(capabilityModel);
+
+      case StudioCapability.vision:
+        final summary = _getSystemConfigSummary('multimodal', '视觉/多模态');
+        return _CapabilitySummary(
+          available: summary.isConfigured,
+          isDeclared: true,
+          lines: const [
+            _CapabilityLine('质检模式', '像素级真读图 (Base64 多模态)'),
+            _CapabilityLine('缺陷拦截', '五官融解 / 肢体畸形 / 风格对冲 一票否决'),
+            _CapabilityLine('支持格式', 'PNG / JPEG / WebP'),
+          ],
+        );
+
+      case StudioCapability.text:
+        final summary = _getSystemConfigSummary('text', '剧本文本');
+        return _CapabilitySummary(
+          available: summary.isConfigured,
+          isDeclared: true,
+          lines: const [
+            _CapabilityLine('任务范畴', '小说剧本改编 / 节拍因果推演 / 提示词组装'),
+            _CapabilityLine('调度策略', '自动故障转移与愈合路由'),
+          ],
+        );
+
+      case StudioCapability.tts:
+        final summary = _getSystemConfigSummary('tts', '台词配音');
+        return _CapabilitySummary(
+          available: summary.isConfigured,
+          isDeclared: true,
+          lines: const [
+            _CapabilityLine('任务范畴', '分镜台词对白 / 角色声线复刻 / 情绪旁白'),
+          ],
+        );
+
+      case StudioCapability.stt:
+        final summary = _getSystemConfigSummary('stt', '语音识别');
+        return _CapabilitySummary(
+          available: summary.isConfigured,
+          isDeclared: true,
+          lines: const [
+            _CapabilityLine('任务范畴', '音视频字幕对齐 / 逐字时间戳提取'),
+          ],
+        );
     }
-    // 从系统槽位反查供应商，才能拿到它的能力声明表。
-    final candidates =
-        AiConfigStore.instance.slotBindings[isVideo ? 'video' : 'image'] ?? [];
-    final providerId = candidates.isNotEmpty ? candidates.first.providerId : '';
-    final provider = AiConfigStore.instance.providers.firstWhere(
-      (p) => p.id == providerId,
-      orElse: () => const AiProviderConfig(
-        id: '',
-        name: '',
-        protocol: AiProtocolType.openai,
-        baseUrl: '',
-        keychainKeyId: '',
-      ),
-    );
-    final capabilityModel = provider.id.isEmpty
-        ? MediaCapabilityDefaults.forProtocolId('openai')
-        : MediaCapabilityResolver.resolve(provider, summary.modelName);
-    return _CapabilitySummary.fromCapability(capabilityModel);
   }
 
   List<({String id, String label, bool needsKey})> _enginesFor(
     StudioCapability capability,
   ) {
     switch (capability) {
+      case StudioCapability.text:
+        final summary = _getSystemConfigSummary('text', '剧本文本');
+        final systemLabel = summary.isConfigured
+            ? '🌟 跟随系统配置 (${summary.description})'
+            : '🌟 跟随系统配置 (未绑定文本模型)';
+        return [
+          (id: 'system-text', label: systemLabel, needsKey: false),
+        ];
+
+      case StudioCapability.vision:
+        final summary = _getSystemConfigSummary('multimodal', '视觉/多模态');
+        final systemLabel = summary.isConfigured
+            ? '🌟 跟随系统配置 (${summary.description})'
+            : '🌟 跟随系统配置 (未绑定多模态模型)';
+        return [
+          (id: 'system-vision', label: systemLabel, needsKey: false),
+        ];
+
       case StudioCapability.image:
         final summary = ImageGenAdapterFactory.getSystemImageConfigSummary();
         final systemLabel = summary.isConfigured
@@ -393,6 +597,7 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
             needsKey: true,
           ),
         ];
+
       case StudioCapability.video:
         final summary = VideoGenAdapterFactory.getSystemVideoConfigSummary();
         final systemLabel = summary.isConfigured
@@ -414,6 +619,24 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
             label: 'Dola 免费号池 seedance-2.5（5/10 秒）',
             needsKey: false,
           ),
+        ];
+
+      case StudioCapability.tts:
+        final summary = _getSystemConfigSummary('tts', '台词配音');
+        final systemLabel = summary.isConfigured
+            ? '🌟 跟随系统配置 (${summary.description})'
+            : '🌟 跟随系统配置 (未绑定TTS模型)';
+        return [
+          (id: 'system-tts', label: systemLabel, needsKey: false),
+        ];
+
+      case StudioCapability.stt:
+        final summary = _getSystemConfigSummary('stt', '语音识别');
+        final systemLabel = summary.isConfigured
+            ? '🌟 跟随系统配置 (${summary.description})'
+            : '🌟 跟随系统配置 (未绑定STT模型)';
+        return [
+          (id: 'system-stt', label: systemLabel, needsKey: false),
         ];
     }
   }
@@ -511,15 +734,17 @@ class _CapabilitySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isSystemVideo = engineId == 'system-video';
-    final isSystemImage = engineId == 'system-image';
-    final isSystemEngine = isSystemVideo || isSystemImage;
+    final isSystemEngine = engineId.startsWith('system-');
 
-    final summary = isSystemVideo
-        ? VideoGenAdapterFactory.getSystemVideoConfigSummary()
-        : (isSystemImage
-            ? ImageGenAdapterFactory.getSystemImageConfigSummary()
-            : (isConfigured: false, providerName: '', modelName: '', description: ''));
+    final summary = switch (engineId) {
+      'system-video' => VideoGenAdapterFactory.getSystemVideoConfigSummary(),
+      'system-image' => ImageGenAdapterFactory.getSystemImageConfigSummary(),
+      'system-vision' => _StudioSettingsDialogState._getSystemConfigSummary('multimodal', '视觉/多模态'),
+      'system-text' => _StudioSettingsDialogState._getSystemConfigSummary('text', '剧本文本'),
+      'system-tts' => _StudioSettingsDialogState._getSystemConfigSummary('tts', '台词配音'),
+      'system-stt' => _StudioSettingsDialogState._getSystemConfigSummary('stt', '语音识别'),
+      _ => (isConfigured: false, providerName: '', modelName: '', description: ''),
+    };
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -618,7 +843,7 @@ class _CapabilitySection extends StatelessWidget {
                     child: Text(
                       summary.isConfigured
                           ? '当前模型: ${summary.description}（全局统一生效）'
-                          : '系统全局尚未配置${isSystemVideo ? "视频" : "图像"}模型候选，请点击右侧按钮添加',
+                          : '系统全局尚未配置$title模型候选，请点击右侧按钮添加',
                       style: TextStyle(
                         fontSize: 12,
                         color: summary.isConfigured

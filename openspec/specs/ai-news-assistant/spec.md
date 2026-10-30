@@ -143,3 +143,49 @@ The AI news and retrieval assistant SHALL provide built-in `web_search` and `web
 - **WHEN** the user instructs the assistant to inspect or scrape a target URL without using MCP
 - **THEN** the assistant uses the built-in `web_scrape` tool to retrieve the page content via the active network client (honoring proxy rules) and synthesizes the answer.
 
+### Requirement: Resilient multi-format tool invocation parsing
+The Agent execution loop SHALL parse and dispatch tool calls from model replies formatted in Markdown blocks, XML tags (`<tool_call>`), or raw JSON objects, correctly extracting tool names and normalizing diverse argument parameter names.
+
+#### Scenario: XML tool call tags are parsed and executed
+- **WHEN** an AI model outputs a tool call enclosed in `<tool_call>` and `</tool_call>` XML tags
+- **THEN** the agent loop extracts the JSON payload, resolves the tool name and arguments, and executes the tool without leaking the XML tags to user-visible chat bubbles.
+
+#### Scenario: Unclosed XML tool call tags are parsed and executed
+- **WHEN** an AI model outputs an unclosed `<tool_call>` tag followed by a valid JSON object
+- **THEN** the agent loop successfully identifies the tool call block and executes the tool.
+
+#### Scenario: Markdown tool call blocks are parsed and executed
+- **WHEN** an AI model outputs tool call JSON inside markdown fences (````tool_call```` or ````json````)
+- **THEN** the agent loop parses the block and dispatches the tool call.
+
+#### Scenario: Parameter aliases are normalized to arguments
+- **WHEN** an AI model returns parameters under keys such as `"parameters"` or `"args"` instead of `"arguments"`
+- **THEN** the parser normalizes these aliases into the standard arguments map passed to the tool executor.
+
+#### Scenario: Reasoning think tags are stripped before parsing
+- **WHEN** a reasoning model emits `<think>...</think>` thoughts before or around the tool call
+- **THEN** the agent loop strips reasoning blocks so thoughts do not interfere with tool call extraction.
+
+### Requirement: Resilient web search backend orchestration and proxy failover
+The web retrieval system SHALL automatically adapt its search endpoint routing based on proxy status, provide cross-domain failover, and support secondary fallback search backends to ensure uninterrupted search capabilities across both proxy and direct-connection environments.
+
+#### Scenario: Search with active proxy selects international endpoint
+- **WHEN** user or scheduled task executes a web search and proxy routing is enabled for the AI assistant
+- **THEN** the search backend prioritizes the international search endpoint (`www.bing.com`) to avoid regional TLS termination or 301 homepage redirects.
+
+#### Scenario: Search with direct connection selects mainland endpoint
+- **WHEN** user or scheduled task executes a web search without an active proxy
+- **THEN** the search backend prioritizes the mainland search endpoint (`cn.bing.com`) for optimal direct connectivity.
+
+#### Scenario: Primary domain failure triggers automatic alternate domain failover
+- **WHEN** a search request to the preferred endpoint encounters a handshake error, connection reset, HTTP failure, or empty parsed results
+- **THEN** the search backend immediately attempts the alternate endpoint (`cn.bing.com` <-> `www.bing.com`) before declaring the backend unhealthy.
+
+#### Scenario: All primary engine endpoints fail falls back to secondary search backend
+- **WHEN** the primary search backend (Bing) fails across all candidate endpoints
+- **THEN** the orchestrator automatically degrades to the secondary zero-configuration search backend (DuckDuckGo Lite) without throwing a premature failure to the user.
+
+#### Scenario: Search requests honor tool-specific proxy configuration
+- **WHEN** web search requests are initiated
+- **THEN** the underlying HTTP client is configured with the tool identifier (`ai-assistant`) so that proxy routing decisions respect per-tool proxy settings.
+

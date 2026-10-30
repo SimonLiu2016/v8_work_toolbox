@@ -80,6 +80,37 @@ Beyond Compare 配置修改脚本。
 - 修改 Beyond Compare 配置文件
 - 自动启动 Beyond Compare
 
+### release.sh
+**一键版本发布与远程备份脚本**——自动化全量工作区提交、语义化版本升级、分支合并、Git Tag 附注与远程推送。
+
+主要目的：防止本地代码被覆盖或遗漏，确保所有修改 100% 同步备份至 GitHub 远程仓库，并结构化记录版本与 Release Notes。
+
+**功能：**
+- **防丢失提交**：自动检测工作区未暂存/未跟踪文件，全量 `git add -A` 并提交，绝不遗漏新文件
+- **分支与合并**：支持从当前特性分支一键安全合并入 `main` 后发布
+- **智能网络/代理探测**：直连与代理自动 fallback（支持 `~/.proxy_profile` 及 7890/7897/6160 等常用代理端口）
+- **版本号自动化**：自动读取与更新 `pubspec.yaml`，支持 Patch/Minor/Major 自动递增或自定义版本
+- **Release Notes 与 Changelog**：自动提取最近的 OpenSpec 规约更新与 Git 提交，同步维护 `CHANGELOG.md`
+- **Git Tag 与远程推送**：生成带详细说明的附注标签（Annotated Tag），同步推送分支与标签至远程仓库
+
+**使用方法：**
+```bash
+# 交互式向导（推荐）：逐步确认提交说明、版本号与发布选项
+./scripts/release.sh
+
+# 自动递增补丁版本 (0.1.0 -> 0.1.1) 并直接发布
+./scripts/release.sh --patch -y
+
+# 自动递增次版本号 (0.1.0 -> 0.2.0)
+./scripts/release.sh --minor -y
+
+# 指定版本号与提交说明
+./scripts/release.sh 0.2.0 "feat: release v0.2.0"
+
+# 仅本地完成提交与 Tag 打包（不推送到远程仓库）
+./scripts/release.sh --no-push
+```
+
 ### push_codes.sh
 代码推送脚本。
 

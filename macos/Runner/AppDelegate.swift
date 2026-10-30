@@ -23,6 +23,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
   private var saveNoteHotKeyRef: EventHotKeyRef?
   private var isTrulyQuitting = false
 
+  // IT 会议听力的播放控制热键（5 个：播放/暂停、上一段、下一段、减速、加速）
+  // 走 Carbon RegisterEventHotKey，与既有 ⌥Space / ⌥D / ⌥S 同一套机制。
+  // 键位用 id 10-14 区分，避免与既有 id 1-3 冲突。
+  private var listeningHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+  private var listeningChannel: FlutterMethodChannel?
+
+  // 实时会议翻译热键（⌥1/⌥2/⌥3 切说话人，⌥T 开关字幕窗），id 20-23。
+  private var liveCaptionHotKeyRefs: [UInt32: EventHotKeyRef] = [:]
+  private var liveCaptionChannel: FlutterMethodChannel?
+
   // 无人值守托盘指示器
   private var defaultTrayImage: NSImage?
   private var unattendedTimer: Timer?
@@ -43,6 +53,8 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
     _ = registerHotKey(modifiers: UInt32(optionKey), keyCode: 49)
     // 注册上下文热键 ⌥D / ⌥S
     registerContextHotKeys()
+    // 注册实时会议翻译热键 ⌥1/⌥2/⌥3 与 ⌥T
+    registerLiveCaptionHotKeys()
     // 注册桌面全局选区悬浮小图标监听 (Bob / PopClip 模式)
     setupGlobalSelectionMonitor()
 
@@ -147,6 +159,17 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
 
     menu.addItem(NSMenuItem.separator())
 
+    // IT 会议听力：直接呼出常驻迷你播放窗。
+    let listeningItem = NSMenuItem(
+      title: "会议音频播放器",
+      action: #selector(showListeningMiniFromMenu),
+      keyEquivalent: "l"
+    )
+    listeningItem.target = self
+    menu.addItem(listeningItem)
+
+    menu.addItem(NSMenuItem.separator())
+
     let quitItem = NSMenuItem(
       title: "退出 V8 工作工具箱",
       action: #selector(quitApp),
@@ -184,6 +207,16 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
 
   @objc private func showMainWindowFromMenu() {
     showMainWindow()
+  }
+
+  /// 从菜单栏打开 IT 会议听力的迷你播放窗。
+  ///
+  /// 窗口由 Dart 侧创建（`ListeningHost.openMiniWindow`），这里只是发一条
+  /// 指令过去——原生侧不直接操作 Flutter 子窗口。
+  @objc private func showListeningMiniFromMenu() {
+    DispatchQueue.main.async { [weak self] in
+      self?.launcherChannel?.invokeMethod("openListeningMini", arguments: nil)
+    }
   }
 
   @objc private func quitApp() {
@@ -352,6 +385,109 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
 
     // 2. 降级：释放 Option 修饰键后模拟 ⌘C，防止键码泄漏（如 \D）
     simulateCopyAndInvoke(method: "lookup")
+  }
+
+  // MARK: - IT 会议听力播放控制热键
+
+  /// 播放控制热键的默认键位。
+  ///
+  /// 全部用 ⌃⌥ 组合（controlKey | optionKey），避开既有的 ⌥Space/⌥D/⌥S，
+  /// 也避开编辑器里最常用的 ⌘ 组合。keyCode 是 macOS 虚拟键码。
+  private static let listeningHotKeyDefaults: [(id: UInt32, keyCode: UInt32, name: String)] = [
+    (id: 10, keyCode: 49, name: "toggle"),    // Space
+    (id: 11, keyCode: 46, name: "previous"),  // C
+    (id: 12, keyCode: 45, name: "next"),      // B
+    (id: 13, keyCode: 21, name: "slower"),    // 1
+    (id: 14, keyCode: 20, name: "faster"),    // 0
+  ]
+
+  /// 注册全部播放控制热键。
+  ///
+  /// 返回失败的键名列表——注册冲突（被系统或其他应用占用）必须能被
+  /// Dart 侧感知并提示"该热键不可用"，而不是静默失效。
+  func registerListeningHotKeys(
+    bindings: [[String: Any]]
+  ) -> [[String: Any]] {
+    unregisterListeningHotKeys()
+    installCarbonEventHandlerIfNeeded()
+
+    var failures: [[String: Any]] = []
+    for (index, binding) in bindings.enumerated() {
+      let name = (binding["name"] as? String) ?? "unknown"
+      let keyCode = (binding["keyCode"] as? Int).map { UInt32($0) }
+      let modifiers = (binding["modifiers"] as? Int).map { UInt32($0) }
+      guard let keyCode = keyCode, let modifiers = modifiers else {
+        failures.append(["name": name, "reason": "invalid_arguments"])
+        continue
+      }
+      // id 必须落在 10-14；用下标定位到预设 id，多余的忽略。
+      guard index < Self.listeningHotKeyDefaults.count else { continue }
+      let hotKeyId = Self.listeningHotKeyDefaults[index].id
+
+      var ref: EventHotKeyRef?
+      let hotKeyID = EventHotKeyID(signature: OSType(0x56384354), id: hotKeyId) // 'V8CT'
+      let status = RegisterEventHotKey(
+        keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
+      if status == noErr, let ref = ref {
+        listeningHotKeyRefs[hotKeyId] = ref
+      } else {
+        failures.append(["name": name, "reason": "register_failed"])
+      }
+    }
+    return failures
+  }
+
+  func unregisterListeningHotKeys() {
+    for (_, ref) in listeningHotKeyRefs {
+      UnregisterEventHotKey(ref)
+    }
+    listeningHotKeyRefs.removeAll()
+  }
+
+  /// 播放控制热键被按下——转发给 Dart 层。
+  func handleListeningHotKey(_ action: String) {
+    DispatchQueue.main.async { [weak self] in
+      self?.listeningChannel?.invokeMethod("listeningHotKey", arguments: action)
+    }
+  }
+
+  // MARK: - 实时会议翻译热键
+
+  /// 注册实时会议翻译的固定热键：⌥1/⌥2/⌥3 切说话人，⌥T 开关字幕窗。
+  ///
+  /// 用 optionKey 修饰避开 ⌘ 组合与既有 ⌥Space/⌥D/⌥S。id 落在 20-23。
+  func registerLiveCaptionHotKeys() {
+    installCarbonEventHandlerIfNeeded()
+    let defs: [(id: UInt32, keyCode: UInt32)] = [
+      (20, 18), // ⌥1 (keyCode 18)
+      (21, 19), // ⌥2 (keyCode 19)
+      (22, 20), // ⌥3 (keyCode 20)
+      (23, 17), // ⌥T (keyCode 17)
+    ]
+    for d in defs {
+      var ref: EventHotKeyRef?
+      let hotKeyID = EventHotKeyID(signature: OSType(0x56384354), id: d.id) // 'V8CT'
+      let status = RegisterEventHotKey(
+        d.keyCode, UInt32(optionKey), hotKeyID,
+        GetApplicationEventTarget(), 0, &ref)
+      if status == noErr, let ref = ref {
+        liveCaptionHotKeyRefs[d.id] = ref
+      }
+    }
+  }
+
+  func unregisterLiveCaptionHotKeys() {
+    for (_, ref) in liveCaptionHotKeyRefs {
+      UnregisterEventHotKey(ref)
+    }
+    liveCaptionHotKeyRefs.removeAll()
+  }
+
+  /// 实时会议翻译热键被按下——转发给 Dart 层。
+  func handleLiveCaptionHotKey(_ action: String) {
+    DispatchQueue.main.async { [weak self] in
+      self?.liveCaptionChannel?.invokeMethod("liveCaptionHotKey", arguments: action)
+    }
   }
 
   @objc func handleSaveNoteHotKey() {
@@ -524,6 +660,24 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
     }
   }
 
+  /// 配置实时字幕悬浮窗：真透明底色、悬浮置顶、隐藏原生红黄绿三键
+  func configureLiveCaptionWindow() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      for window in NSApp.windows where window != self.mainFlutterWindow && !(window is SelectionBubblePanel) {
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.level = .floating
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+      }
+    }
+  }
+
   // MARK: - Native Notification Support
 
   func showNoteNotification(title: String, notebook: String) {
@@ -691,6 +845,17 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
         case 1: AppDelegate.shared?.handleHotKey()          // ⌥Space - 原有行为
         case 2: AppDelegate.shared?.handleLookupHotKey()    // ⌥D
         case 3: AppDelegate.shared?.handleSaveNoteHotKey()  // ⌥S
+        // IT 会议听力的播放控制
+        case 10: AppDelegate.shared?.handleListeningHotKey("toggle")
+        case 11: AppDelegate.shared?.handleListeningHotKey("previous")
+        case 12: AppDelegate.shared?.handleListeningHotKey("next")
+        case 13: AppDelegate.shared?.handleListeningHotKey("slower")
+        case 14: AppDelegate.shared?.handleListeningHotKey("faster")
+        // 实时会议翻译：说话人切换与字幕开关
+        case 20: AppDelegate.shared?.handleLiveCaptionHotKey("speaker:0") // ⌥1
+        case 21: AppDelegate.shared?.handleLiveCaptionHotKey("speaker:1") // ⌥2
+        case 22: AppDelegate.shared?.handleLiveCaptionHotKey("speaker:2") // ⌥3
+        case 23: AppDelegate.shared?.handleLiveCaptionHotKey("toggle")    // ⌥T 字幕开关
         default: break
         }
         return noErr
@@ -818,6 +983,11 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
         let success = strongSelf.unregisterHotKey()
         result(success)
 
+      case "openListeningMini":
+        // 菜单栏「会议音频播放器」→ Dart 侧打开迷你窗。
+        strongSelf.listeningChannel?.invokeMethod("openMiniWindow", arguments: nil)
+        result(true)
+
       case "showWindow":
         strongSelf.showMainWindow()
         result(true)
@@ -863,6 +1033,9 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
       case "styleLookupWindow":
         self.configureLookupWindow()
         result(true)
+      case "styleLiveCaptionWindow":
+        self.configureLiveCaptionWindow()
+        result(true)
       case "getMouseLocation":
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -900,6 +1073,62 @@ class AppDelegate: FlutterAppDelegate, NSWindowDelegate, NSUserNotificationCente
       }
     }
     self.contextServicesChannel = contextServices
+
+    // 3.5 IT 会议听力播放控制通道
+    //     职责：接收 Dart 侧的热键注册请求，并把热键按下事件回传 Dart。
+    let listening = FlutterMethodChannel(
+      name: "v8_work_toolbox/it_listening",
+      binaryMessenger: messenger
+    )
+    listening.setMethodCallHandler { [weak self] call, result in
+      guard let strongSelf = self else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      switch call.method {
+      case "registerListeningHotKeys":
+        guard let args = call.arguments as? [String: Any],
+              let bindings = args["bindings"] as? [[String: Any]]
+        else {
+          result(FlutterError(code: "INVALID_ARGS", message: "bindings required", details: nil))
+          return
+        }
+        let failures = strongSelf.registerListeningHotKeys(bindings: bindings)
+        result(["failures": failures])
+      case "unregisterListeningHotKeys":
+        strongSelf.unregisterListeningHotKeys()
+        result(true)
+      case "openMiniWindow":
+        // 菜单栏「会议音频播放器」→ Dart 侧创建迷你窗。
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.listeningChannel = listening
+
+    // 3.6 实时会议翻译通道：注册 ⌥1/⌥2/⌥3 与 ⌥T 热键，回传按下事件。
+    let liveCaption = FlutterMethodChannel(
+      name: "v8_work_toolbox/live_caption_hotkeys",
+      binaryMessenger: messenger
+    )
+    liveCaption.setMethodCallHandler { [weak self] call, result in
+      guard let strongSelf = self else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      switch call.method {
+      case "registerLiveCaptionHotKeys":
+        strongSelf.registerLiveCaptionHotKeys()
+        result(true)
+      case "unregisterLiveCaptionHotKeys":
+        strongSelf.unregisterLiveCaptionHotKeys()
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.liveCaptionChannel = liveCaption
 
     // 4. 隐私空间私密浏览器通道
     let browserChannel = FlutterMethodChannel(

@@ -151,6 +151,10 @@ class _NotebookPageState extends State<NotebookPage> {
 
   Future<void> _init() async {
     await _store.init();
+    // 不在首帧关键路径上做第二次全量查询。initFor 中的 NoteStore.init() 已
+    // 打开数据库连接并完成 beforeOpen；此处直接读取已加载的数据填充 UI，
+    // 避免 44MB 库的二次冷读导致「空界面 → 数据」的延迟填充。
+    // 后续刷新仍可通过 NotebookFocusBridge 触发。
     await _refresh();
   }
 
