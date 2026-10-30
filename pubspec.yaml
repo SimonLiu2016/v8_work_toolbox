@@ -1,7 +1,7 @@
 name: V8WorkToolbox
 description: "V8 工作工具包 - 一个实用的文件处理工具集合"
 publish_to: "none"
-version: 0.1.0
+version: 0.2.0+1
 
 environment:
   sdk: ^3.9.0
