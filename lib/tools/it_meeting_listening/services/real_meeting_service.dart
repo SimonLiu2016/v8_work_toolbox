@@ -20,6 +20,9 @@ import 'real_meeting_baker.dart';
 import 'real_meeting_store.dart';
 import 'speaker_profile_resolver.dart';
 import 'transcript_parser.dart';
+import 'tts_binding_probe.dart';
+
+import '../../reader/models/reader_models.dart';
 
 /// 导入结果。
 class ImportOutcome {
@@ -233,14 +236,29 @@ class RealMeetingService {
   // ---------------------------------------------------------------------
 
   /// 解析某场会议的全部说话人。
+  ///
+  /// 自动清洗并自愈持久化跨供应商非法音色，确保说话人音色始终落在当前有效候选池内。
   Future<Map<String, ResolvedSpeaker>> resolveSpeakers(
       RealMeeting meeting) async {
-    final settings = await store.loadSettings(meeting.id);
+    final rawSettings = await store.loadSettings(meeting.id);
     final identity = await store.loadMyIdentity();
+    final (cleanedSettings, changed) =
+        rawSettings.sanitizeVoices(TtsBindingProbe.isIncompatibleVoice);
+    if (changed) {
+      await store.saveSettings(meeting.id, cleanedSettings);
+    }
+
+    // MiMo 下把散列兜底落在 MiMo 官方音色池内，避免被 adaptVoiceForProvider
+    // 吞成 mimo_default；非 MiMo 传 null 走既有 VoicePool，行为不变。
+    final fallbackVoiceIds = TtsBindingProbe.isMimo()
+        ? TtsVoiceOption.defaultMimoVoices.map((v) => v.id).toList()
+        : null;
     return SpeakerProfileResolver.resolveAll(
       slotIds: meeting.slotIds,
-      settings: settings,
+      settings: cleanedSettings,
       identity: identity,
+      fallbackVoiceIds: fallbackVoiceIds,
+      isIncompatibleVoice: TtsBindingProbe.isIncompatibleVoice,
     );
   }
 
@@ -487,6 +505,17 @@ class RealMeetingService {
     final titled = await _withDisplayTitle(meeting, clip);
     await _publish(meeting, clip);
     return titled;
+  }
+
+  /// 仅重新拼接整篇音频并发布（用于逐组音频均在但整篇缺失或损坏的情况）。
+  Future<Clip?> repairAudio(RealMeeting meeting) async {
+    final speakers = await resolveSpeakers(meeting);
+    final (clip, state) = await baker.rebuildAudio(meeting, speakers: speakers);
+    await store.saveBakeState(meeting.id, state);
+    if (clip != null) {
+      await _publish(meeting, clip);
+    }
+    return clip;
   }
 
   Future<void> _rebuild(RealMeeting meeting) async {

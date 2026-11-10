@@ -38,6 +38,7 @@ import 'shell/app_shell.dart';
 import 'tools/network_proxy/services/network_proxy_service.dart';
 import 'shell/settings_dialog.dart';
 import 'theme/app_theme.dart';
+import 'tools/agnes_playground/services/prompt_template_store.dart';
 import 'tools/agnes_playground/ui/playground_page.dart';
 import 'tools/ai_video_studio/services/studio_preset_store.dart';
 import 'tools/ai_video_studio/ui/studio_shell.dart';
@@ -95,7 +96,7 @@ enum WindowKind {
   /// AI 短视频工坊独立窗口：长时合成（FFmpeg / 云端图生视频），复用 AI 配置与代理
   aiVideoStudio,
 
-  /// Agnes 试炼场独立窗口：三通道直连调用，复用 AI 配置与代理
+  /// 大模型试炼场独立窗口：三通道直连调用，复用 AI 配置与代理
   agnesPlayground,
 
   /// IT 会议听力的迷你播放窗：常驻置顶，只渲染播放状态并转发指令。
@@ -156,6 +157,11 @@ class WindowServices {
     ServiceInit('StudioPresetStore', _initStudioPresetStore),
   ];
 
+  /// 全局大模型提示词效果库与样片管理。
+  static const List<ServiceInit> _promptTemplateStore = [
+    ServiceInit('PromptTemplateStore', _initPromptTemplateStore),
+  ];
+
   /// 每个窗口类型的必需服务，按依赖拓扑序排列。
   ///
   /// 主窗口包含 [WindowKind.notebook] 与 [WindowKind.singleNote] 的全部条目
@@ -170,6 +176,7 @@ class WindowServices {
       // 主窗口的 AI 配置页有「Dola 号池」tab，必须能读到账号。
       ..._dolaStore,
       ..._studioPresetStore,
+      ..._promptTemplateStore,
     ],
     WindowKind.notebook: [
       ..._appPaths,
@@ -219,6 +226,7 @@ class WindowServices {
       // 漏了它号池在此窗口显示为空，用户以为没配账号。
       ..._dolaStore,
       ..._studioPresetStore,
+      ..._promptTemplateStore,
     ],
     // 试炼场不需要 Dola 号池：它只调用户自己配的 Agnes 供应商，不像工坊
     // 那样把免费号池当可选引擎。漏列 _aiConfig 才会出问题——那会让供应商
@@ -228,6 +236,7 @@ class WindowServices {
       ..._settingsStore,
       ..._proxy,
       ..._aiConfig,
+      ..._promptTemplateStore,
     ],
     // 迷你播放窗只需要能读到主题偏好（它渲染 themed MaterialApp）与本地路径
     // （素材目录）。不需要 AI 配置：它不合成、不查词。
@@ -274,6 +283,8 @@ class WindowServices {
       DolaConfigStore.instance.init();
   static Future<void> _initStudioPresetStore() =>
       StudioPresetStore.instance.init();
+  static Future<void> _initPromptTemplateStore() =>
+      PromptTemplateStore.instance.init();
 }
 
 /// 单个服务的惰性初始化入口。`name` 仅用于诊断与测试断言。
@@ -1080,7 +1091,7 @@ class _SecurityToolboxWindowApp extends StatelessWidget {
   }
 }
 
-/// Agnes 试炼场独立子窗口 app。
+/// 大模型试炼场独立子窗口 app。
 class _AgnesPlaygroundWindowApp extends StatelessWidget {
   const _AgnesPlaygroundWindowApp();
 
@@ -1090,7 +1101,7 @@ class _AgnesPlaygroundWindowApp extends StatelessWidget {
       valueListenable: SettingsStore.instance.themeModeNotifier,
       builder: (context, currentThemeMode, _) {
         return MaterialApp(
-          title: 'Agnes 试炼场',
+          title: '大模型试炼场',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

@@ -9,10 +9,13 @@ import '../../../components/markdown_view.dart';
 import '../../../theme/app_theme.dart';
 import '../../ai_video_studio/services/video_gen_adapter.dart';
 import '../models/playground_models.dart';
+import '../models/prompt_template_models.dart';
 import '../services/playground_service.dart';
 import '../services/playground_store.dart';
+import '../services/prompt_template_store.dart';
+import 'prompt_template_sheet.dart';
 
-/// Agnes 试炼场主界面。
+/// 大模型试炼场主界面。
 ///
 /// 形态照即梦的聊天窗，但**核心不是气泡，是请求快照**：每一轮把"喂了什么"
 /// （提示词逐字、参考图副本、吸附后的参数）与"出了什么"（产物、耗时、错误）
@@ -301,7 +304,7 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
       return;
     }
     if (_providerId.isEmpty) {
-      _toast('请先在「AI 基础设施」配置并启用一个 Agnes 供应商');
+      _toast('请先在「AI 基础设施」配置并启用 AI 供应商');
       return;
     }
     if (_submitting) return;
@@ -346,6 +349,160 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
     final asset = await _store.collectToAssetLibrary(turn);
     if (!mounted) return;
     _toast(asset != null ? '已收进资产库' : '收进资产库失败');
+  }
+
+  void _openPromptTemplateSheet() {
+    PromptTemplateSheet.show(
+      context,
+      initialChannel: _channel,
+      currentModel: _model,
+      onSelectTemplate: _applyPromptTemplate,
+    );
+  }
+
+  void _applyPromptTemplate(VisualPromptTemplate template) {
+    if (template.channel != _channel) {
+      _switchChannel(template.channel);
+    }
+    setState(() {
+      _promptCtrl.text = template.promptTemplate;
+      if (template.recommendedParams.isNotEmpty) {
+        if (template.recommendedParams['aspect_ratio'] != null) {
+          _ratio = template.recommendedParams['aspect_ratio'].toString();
+        }
+        if (template.recommendedParams['seconds'] != null) {
+          _durationSec =
+              int.tryParse(template.recommendedParams['seconds'].toString()) ??
+                  _durationSec;
+        }
+        if (template.recommendedParams['mode'] != null) {
+          _mode = template.recommendedParams['mode'].toString();
+        }
+      }
+    });
+    _syncParamsWithCapability();
+    _toast('已载入「${template.title}」提示词模板与推荐参数');
+  }
+
+  void _syncParamsWithCapability() {
+    if (_channel != PlaygroundChannel.video) return;
+    final cap = _service.capabilityFor(_model);
+    final ratios = cap.ratios;
+    if (ratios.isNotEmpty && !ratios.contains(_ratio)) {
+      _ratio = ratios.first;
+    }
+  }
+
+  Future<void> _saveAsBenchmark(PlaygroundTurn turn, File file) async {
+    final templates = PromptTemplateStore.instance.templates;
+    if (templates.isEmpty) {
+      _toast('当前模板库暂无可用模板，请先在效果库创建或查看模板');
+      return;
+    }
+
+    String selectedTemplateId = templates.first.id;
+    int rating = 5;
+    bool isRecommended = true;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.biotech_outlined, size: 20),
+              SizedBox(width: 8),
+              Text('将本次产物沉淀为模型实测样片', style: TextStyle(fontSize: 15)),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '模型型号: ${turn.model}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const Text('关联提示词模板:', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 4),
+                DropdownButtonFormField<String>(
+                  value: selectedTemplateId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: [
+                    for (final t in templates)
+                      DropdownMenuItem(
+                        value: t.id,
+                        child: Text(
+                          '${t.title} (${t.subcategory})',
+                          style: const TextStyle(fontSize: 12),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => selectedTemplateId = v);
+                  },
+                ),
+                const SizedBox(height: 14),
+                const Text('质量评星:', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 4),
+                Row(
+                  children: List.generate(5, (idx) {
+                    final star = idx + 1;
+                    return IconButton(
+                      icon: Icon(
+                        star <= rating ? Icons.star : Icons.star_border,
+                        color: Colors.amber,
+                        size: 22,
+                      ),
+                      onPressed: () => setDialogState(() => rating = star),
+                    );
+                  }),
+                ),
+                CheckboxListTile(
+                  title: const Text('设为该模型的官方推荐标杆样片', style: TextStyle(fontSize: 12)),
+                  value: isRecommended,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  onChanged: (v) => setDialogState(() => isRecommended = v ?? true),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                await PromptTemplateStore.instance.recordBenchmark(
+                  templateId: selectedTemplateId,
+                  providerId: turn.providerId,
+                  modelName: turn.model,
+                  mediaFile: file,
+                  testedPrompt: turn.prompt,
+                  qualityRating: rating,
+                  isRecommended: isRecommended,
+                );
+                _toast(
+                  '已将该产物记录为「${PromptTemplateStore.instance.getById(selectedTemplateId)?.title}」的标准样片',
+                );
+              },
+              child: const Text('确认保存'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -409,7 +566,7 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
           Icon(Icons.science_outlined, size: 18, color: context.accentText),
           const SizedBox(width: 8),
           Text(
-            'Agnes 试炼场',
+            '大模型试炼场',
             style: TextStyle(
               color: context.textPrimary,
               fontSize: 14,
@@ -437,6 +594,18 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
           const SizedBox(width: 8),
           // 型号
           _buildModelPicker(),
+          const Spacer(),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.auto_awesome, size: 14),
+            label: const Text('提示词效果库', style: TextStyle(fontSize: 12)),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              visualDensity: VisualDensity.compact,
+              foregroundColor: context.accentText,
+              side: BorderSide(color: context.accentText.withOpacity(0.5)),
+            ),
+            onPressed: _openPromptTemplateSheet,
+          ),
         ],
           ),
         ),
@@ -522,7 +691,7 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              '填写提示词与参数，直接调用 Agnes。每一轮都会留下完整请求快照，'
+              '填写提示词与参数，直接调用多模型。每一轮都会留下完整请求快照，'
               '方便对比提示词与参考图对画面的影响。',
               textAlign: TextAlign.center,
               style: TextStyle(color: context.textSecondary, fontSize: 12, height: 1.5),
@@ -543,6 +712,7 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
         resuming: _resuming.contains(_turns[i].id),
         onResume: () => _resume(_turns[i]),
         onCollect: () => _collect(_turns[i]),
+        onSaveBenchmark: _saveAsBenchmark,
         onDelete: () async {
           await _store.remove(_turns[i].id);
           if (!mounted) return;
@@ -590,6 +760,12 @@ class _PlaygroundPageState extends State<PlaygroundPage> {
                   onTap: () => _pickMedia(PlaygroundMediaRole.reference),
                 ),
               if (_channel == PlaygroundChannel.video) const SizedBox(width: 6),
+              _MediaButton(
+                icon: Icons.auto_awesome,
+                tooltip: '从提示词效果库载入预置模板',
+                onTap: _openPromptTemplateSheet,
+              ),
+              const SizedBox(width: 6),
               Expanded(
                 child: TextField(
                   controller: _promptCtrl,
@@ -902,6 +1078,7 @@ class _TurnCard extends StatelessWidget {
     required this.resuming,
     required this.onResume,
     required this.onCollect,
+    this.onSaveBenchmark,
     required this.onDelete,
   });
 
@@ -909,6 +1086,7 @@ class _TurnCard extends StatelessWidget {
   final bool resuming;
   final VoidCallback onResume;
   final VoidCallback onCollect;
+  final void Function(PlaygroundTurn turn, File file)? onSaveBenchmark;
   final VoidCallback onDelete;
 
   @override
@@ -1360,6 +1538,15 @@ class _TurnCard extends StatelessWidget {
             icon: const Icon(Icons.bookmark_add_outlined, size: 14),
             label: const Text('存入资产库', style: TextStyle(fontSize: 12)),
             style: TextButton.styleFrom(foregroundColor: context.successText),
+          ),
+        if (hasOutput &&
+            turn.status == PlaygroundTurnStatus.completed &&
+            turn.channel != PlaygroundChannel.text)
+          TextButton.icon(
+            onPressed: () => onSaveBenchmark?.call(turn, file),
+            icon: const Icon(Icons.star_outline, size: 14),
+            label: const Text('存为模板样片', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(foregroundColor: Colors.amber),
           ),
         const Spacer(),
         IconButton(

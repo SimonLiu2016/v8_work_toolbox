@@ -31,6 +31,7 @@ import 'continuation_merger.dart';
 import 'real_meeting_store.dart';
 import 'speaker_profile_resolver.dart';
 import 'text_sanitizer.dart';
+import 'tts_binding_probe.dart';
 
 /// 合成进度回调：`(已完成组数, 总组数, 当前说话人显示名)`。
 typedef RealMeetingBakeProgress = void Function(
@@ -151,15 +152,30 @@ class RealMeetingBaker {
       final fileName = groupAudioFileName(i);
       final file = File(p.join(turnsDir.path, fileName));
       final speaker = speakers[group.slotId];
-      final voice = speaker?.voiceId ?? MyIdentity.defaultVoiceId;
+      final defaultVoice = TtsBindingProbe.defaultVoiceId();
+      final voice = (speaker?.voiceId.isNotEmpty == true)
+          ? speaker!.voiceId
+          : defaultVoice;
       final forced = forceGroups.contains(i);
 
       onProgress?.call(i, groups.length, speaker?.displayName ?? group.slotId);
 
-      // 续跑：文件已在且上次没失败 → 直接复用，不再请求 TTS。
+      // 续跑：文件已在、上次没失败、**且当初就是用这个音色念的** → 直接复用。
+      //
+      // 音色一致性必须进复用条件：只判「文件在 + 没失败」会让历史音频永久滞留
+      // ——早期被底层兜底成 `mimo_default`、或来自上一个供应商的音色、或旧版本
+      // 根本没记 voiceId 的组，全部被原样拼进整篇音频。用户改了说话人音色再点
+      // 「重新合成」，听到的还是老声音，且 `pendingGroups` 永远清不掉。
+      //
+      // 落盘 voiceId 为空串的组同样视为不一致：不知道当初用的什么，就不该假设
+      // 它是对的。重烘后会补上实际音色，可追溯性缺口一并自愈。
+      final previousVoice = i < previousGroups.length
+          ? previousGroups[i].voiceId
+          : '';
       if (!forced &&
           resume &&
           !previousFailed.contains(i) &&
+          previousVoice == voice &&
           await file.exists() &&
           await file.length() > 0) {
         continue;
@@ -177,10 +193,12 @@ class RealMeetingBaker {
       }
 
       // 强制重烘走临时文件；普通烘焙直接写目标（没有更旧的东西要保护）。
+      // 临时文件扩展名必须保持为 .mp3（例如 g39.new.mp3），避免 ffmpeg 在多段拼接时
+      // 无法根据非标准扩展名（如 .new）推断容器格式导致 exitCode 234。
       final target = forced
-          ? File(p.join(turnsDir.path, '$fileName.new'))
+          ? File(p.join(turnsDir.path, '${p.withoutExtension(fileName)}.new.mp3'))
           : file;
-      final ok = await _synthesizeToFile(
+      final synthResult = await _synthesizeToFile(
         text: text,
         voice: voice,
         target: target,
@@ -188,18 +206,23 @@ class RealMeetingBaker {
         turnsDir: turnsDir,
       );
 
-      if (ok) {
+      if (synthResult.success) {
         if (forced) {
           // rename 在同一文件系统内是原子的：要么新音频就位，要么旧的原封不动。
           await target.rename(file.path);
         }
-        groupAudios[i] =
-            groupAudios[i].copyWith(fileName: fileName, failed: false, voiceId: voice);
+        groupAudios[i] = groupAudios[i].copyWith(
+          fileName: fileName,
+          failed: false,
+          voiceId: voice,
+          failureReason: '',
+        );
         failures.remove(i);
         continue;
       }
 
-      failures[i] = '合成失败';
+      final errorReason = synthResult.error ?? '合成失败';
+      failures[i] = errorReason;
       if (forced) {
         // 保留旧音频与旧音色记录：这一组仍然"待更新"，但用户还能听。
         if (await target.exists()) {
@@ -210,7 +233,11 @@ class RealMeetingBaker {
         continue;
       }
       await _audio.writeSilence(file.path, failureSilenceMs);
-      groupAudios[i] = groupAudios[i].copyWith(failed: true, voiceId: voice);
+      groupAudios[i] = groupAudios[i].copyWith(
+        failed: true,
+        voiceId: voice,
+        failureReason: errorReason,
+      );
     }
 
     onProgress?.call(groups.length, groups.length, '');
@@ -235,7 +262,7 @@ class RealMeetingBaker {
   ///
   /// 超长文本按句子切分后逐段合成再拼回——端点对单次 input 有 1000 字硬限制，
   /// 不切就整组丢失。
-  Future<bool> _synthesizeToFile({
+  Future<({bool success, String? error})> _synthesizeToFile({
     required String text,
     required String voice,
     required File target,
@@ -247,11 +274,12 @@ class RealMeetingBaker {
     await tmpDir.create(recursive: true);
 
     final partFiles = <String>[];
-    var ok = true;
+    String? synthError;
     for (var k = 0; k < parts.length; k++) {
-      final bytes = await _synthesize(parts[k], voice, '${tag}_p$k');
-      if (bytes == null) {
-        ok = false;
+      final res = await _synthesize(parts[k], voice, '${tag}_p$k');
+      final bytes = res.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        synthError = res.error ?? '分段合成失败';
         break;
       }
       for (var j = 0; j < bytes.length; j++) {
@@ -261,8 +289,14 @@ class RealMeetingBaker {
       }
     }
 
+    if (synthError != null) {
+      return (success: false, error: synthError);
+    }
+    if (partFiles.isEmpty) {
+      return (success: false, error: '未能生成任何音频切片');
+    }
+
     try {
-      if (!ok || partFiles.isEmpty) return false;
       if (partFiles.length == 1) {
         await File(partFiles.single).copy(target.path);
       } else {
@@ -270,10 +304,15 @@ class RealMeetingBaker {
         // 产出一条被腰斩的音频而界面报成功。
         await _audio.concat(partFiles, target.path);
       }
-      return await target.exists() && await target.length() > 0;
+      final exists = await target.exists();
+      final len = exists ? await target.length() : 0;
+      if (exists && len > 0) {
+        return (success: true, error: null);
+      }
+      return (success: false, error: '输出文件大小为空');
     } catch (e) {
       debugPrint('[RealMeetingBaker] "$tag" 拼接失败: $e');
-      return false;
+      return (success: false, error: '多段音频拼接失败: $e');
     } finally {
       for (final f in partFiles) {
         try {
@@ -284,8 +323,8 @@ class RealMeetingBaker {
     }
   }
 
-  /// 合成一段文本，失败时重试。返回非空音频片段列表，全失败返回 null。
-  Future<List<List<int>>?> _synthesize(
+  /// 合成一段文本，失败时重试。返回非空音频片段列表，全失败返回 null 与错误信息。
+  Future<({List<List<int>>? bytes, String? error})> _synthesize(
       String text, String voice, String tag) async {
     Object? lastError;
     for (var attempt = 0; attempt <= turnRetries; attempt++) {
@@ -295,16 +334,21 @@ class RealMeetingBaker {
           const TtsSynthesisConfig(
             mode: TtsMode.customAi,
             useSystemAiConfig: true,
-          ).copyWith(customVoiceId: voice),
+          ).copyWith(
+            customVoiceId: voice,
+            // MiMo 的语速/情感全靠自然语言风格指令表达；与生词本一致，
+            // 在 MiMo 下注入保守默认，非 MiMo 引擎忽略该字段。
+            styleInstruction: TtsBindingProbe.defaultStyle(),
+          ),
         );
-        if (bytes.isNotEmpty) return [bytes];
+        if (bytes.isNotEmpty) return (bytes: [bytes], error: null);
         lastError = '返回空音频';
       } catch (e) {
         lastError = e;
         // 配额耗尽重试多少次都一样，立即放弃这一组，让整场标记失败等配额恢复。
         if (_isQuotaExhausted(e)) {
           debugPrint('[RealMeetingBaker] "$tag" 配额耗尽，跳过重试: $e');
-          return null;
+          return (bytes: null, error: '配额耗尽: $e');
         }
         if (_isCensorshipRejection(e)) {
           final finer = _splitFiner(text);
@@ -313,13 +357,14 @@ class RealMeetingBaker {
             var ok = true;
             for (var i = 0; i < finer.length; i++) {
               final sub = await _synthesize(finer[i], voice, '${tag}_f$i');
-              if (sub == null || sub.isEmpty) {
+              if (sub.bytes == null || sub.bytes!.isEmpty) {
                 ok = false;
+                lastError = sub.error ?? '内容审查细分后仍失败';
                 break;
               }
-              parts.addAll(sub);
+              parts.addAll(sub.bytes!);
             }
-            if (ok) return parts;
+            if (ok) return (bytes: parts, error: null);
             lastError = '内容审查拒绝，细分后仍失败';
           }
         }
@@ -328,8 +373,9 @@ class RealMeetingBaker {
         await Future.delayed(Duration(milliseconds: 600 * (attempt + 1)));
       }
     }
-    debugPrint('[RealMeetingBaker] "$tag" 合成失败: $lastError');
-    return null;
+    final errMsg = '$lastError';
+    debugPrint('[RealMeetingBaker] "$tag" 合成失败: $errMsg');
+    return (bytes: null, error: errMsg);
   }
 
   static bool _isQuotaExhausted(Object error) {
@@ -378,14 +424,14 @@ class RealMeetingBaker {
     final turnsDir = _store.turnsDir(meetingId);
     await turnsDir.create(recursive: true);
     final target = File(p.join(turnsDir.path, fileName));
-    final ok = await _synthesizeToFile(
+    final res = await _synthesizeToFile(
       text: text,
       voice: voiceId,
       target: target,
       tag: '${meetingId}_${p.basenameWithoutExtension(fileName)}',
       turnsDir: turnsDir,
     );
-    return ok ? fileName : null;
+    return res.success ? fileName : null;
   }
 
   // ---------------------------------------------------------------------
@@ -463,17 +509,25 @@ class RealMeetingBaker {
     // 无条件拼接。曾经这里套着 `if (_audio.isAvailable)`——那个属性背后是
     // 惰性解析，启动后恒为 false，于是整篇音频从来没被拼出来，而素材照样
     // 以"有音频"的形态进了索引（design D1）。拼接失败就记下来，由下面
-    // 「文件是否真的存在」决定发布形态。
+    // 「文件是否真的存在且非空」决定发布形态。
     var concatError = '';
     try {
       await audioFile.parent.create(recursive: true);
+      // 清理历史残留的 0 字节损坏文件，确保干净重建
+      if (await audioFile.exists() && (await audioFile.length()) == 0) {
+        try {
+          await audioFile.delete();
+        } catch (_) {}
+      }
       await _audio.concat(
           existing.map((e) => e.filePath).toList(), audioFile.path);
     } catch (e) {
       concatError = '$e';
       debugPrint('[RealMeetingBaker] 整篇拼接失败: $e');
     }
-    final audioReady = concatError.isEmpty && await audioFile.exists();
+    final audioReady = concatError.isEmpty &&
+        await audioFile.exists() &&
+        (await audioFile.length()) > 0;
 
     // 逐段探时长并累加，得到每组与每条回答的起止。
     var cursor = 0;
@@ -502,10 +556,11 @@ class RealMeetingBaker {
       //
       // **优先用组记录的实际音色**：用户改了设定但还没重新合成时，磁盘上的
       // 音频仍是旧音色，`Clip` 写新音色会让追溯变成猜测。
+      final defaultVoice = TtsBindingProbe.defaultVoiceId();
       final configuredVoice = grp.turnIndices.isEmpty
-          ? MyIdentity.defaultVoiceId
+          ? defaultVoice
           : speakers[byIndex[grp.turnIndices.first]?.slotId ?? '']?.voiceId ??
-              MyIdentity.defaultVoiceId;
+              defaultVoice;
       final groupVoice =
           grp.voiceId.isNotEmpty ? grp.voiceId : configuredVoice;
       for (final idx in grp.turnIndices) {
@@ -563,10 +618,13 @@ class RealMeetingBaker {
     );
 
     final newState = MeetingBakeState(
-      // 保留原组的失败标记：重建不改变"这一组合成失败过"的事实。
+      // 保留原组的失败标记与失败原因：重建不改变"这一组合成失败过"的事实。
       groups: [
         for (var g = 0; g < timedGroups.length; g++)
-          timedGroups[g].copyWith(failed: state[g].failed),
+          timedGroups[g].copyWith(
+            failed: state[g].failed,
+            failureReason: state[g].failureReason,
+          ),
       ],
       audioFile: '${meeting.id}.mp3',
       totalMs: totalMs,

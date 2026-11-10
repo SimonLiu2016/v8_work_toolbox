@@ -29,6 +29,17 @@ class RecordingAudioBackend implements PronunciationAudioBackend {
 
   int stopCount = 0;
   bool disposed = false;
+  double _rate = 1.0;
+  final List<double> setRates = [];
+
+  @override
+  double get playbackRate => _rate;
+
+  @override
+  Future<void> setPlaybackRate(double rate) async {
+    _rate = rate;
+    setRates.add(rate);
+  }
 
   /// 永不发送也永不结束的流（只在 [completesImmediately] 为假时使用）。
   /// 必须是 broadcast：超时放行后上一个 `.first` 的订阅可能仍在，single-subscription

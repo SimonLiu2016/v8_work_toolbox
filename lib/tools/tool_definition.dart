@@ -26,6 +26,12 @@ const String kToolIdItMeetingListening = 'it-meeting-listening';
 /// 标识同时是代理通道键与字幕导出目录名的组成部分，统一走这一个常量。
 const String kToolIdLiveTranslator = 'live-meeting-translator';
 
+/// 会议录音工具。
+const String kToolIdMeetingRecorder = 'meeting-recorder';
+
+/// 隐私空间随心短剧工具。
+const String kToolIdCasualShortDrama = 'casual-short-drama';
+
 /// IT 会议听力的迷你播放窗子窗口 arguments 前缀。
 ///
 /// 值里不含 `:` 之后的内容即为「无附加参数」。解析见

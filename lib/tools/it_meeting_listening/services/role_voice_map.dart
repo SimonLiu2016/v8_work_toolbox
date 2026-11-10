@@ -227,24 +227,38 @@ class RoleVoiceMap {
   ///
   /// 最后一级保证**任何**说话人都拿得到音色，且同一名字每次都拿到同一个
   /// （散列是纯函数）——不会因为解析失败就在不同片段里换声音。
-  static String voiceFor(String speaker, String role) {
+  ///
+  /// [candidateIds] 可覆盖音色候选池：默认用 [VoicePool.all]（StepFun 角色
+  /// 音色池）。当 TTS 槽位绑定 MiMo 时，调用方传入 MiMo 官方音色 id 列表，
+  /// 使显式映射与散列结果都落在 MiMo 合法音色内，而非被 `adaptVoiceForProvider`
+  /// 兜底吞成 `mimo_default`。传入非空列表时，散列函数本身不变（同一名字恒定、
+  /// 不同名字大概率不同），只换候选池；显式映射命中但结果不在候选池内时，
+  /// 也回落到候选池散列，保证返回值恒在候选池中。
+  static String voiceFor(String speaker, String role, {List<String>? candidateIds}) {
+    final pool = _candidatePool(candidateIds);
     final normalizedRole = normalize(role);
     if (normalizedRole.isNotEmpty) {
       final hit = _byRole[normalizedRole];
-      if (hit != null) return hit;
+      if (hit != null && pool.contains(hit)) return hit;
     }
     final byName = _bySpeaker[speaker.trim()];
     if (byName != null) {
       final hit = _byRole[normalize(byName)];
-      if (hit != null) return hit;
+      if (hit != null && pool.contains(hit)) return hit;
     }
-    return _fallbackFor(speaker);
+    return _fallbackFor(speaker, pool: pool);
   }
+
+  /// 归一化候选池：默认 [VoicePool.all] 的 id 列表，传入非空时用传入的。
+  static List<String> _candidatePool(List<String>? candidateIds) =>
+      (candidateIds != null && candidateIds.isNotEmpty)
+          ? candidateIds
+          : VoicePool.all.map((v) => v.id).toList();
 
   /// 按名字散列落到音色池。
   ///
   /// 散列目标是"稳定 + 分散"：同一名字恒定，不同名字大概率不同。
-  static String _fallbackFor(String speaker) {
+  static String _fallbackFor(String speaker, {List<String>? pool}) {
     final name = speaker.trim();
     if (name.isEmpty) return VoicePool.stepBoy.id;
     var hash = 0;
@@ -252,7 +266,9 @@ class RoleVoiceMap {
       hash = (hash * 31 + unit) & 0x7fffffff;
     }
     // 说话人名通常与角色性别无关，但常见约定（Alex/IC/Lead/DBA…）多是男性名。
-    // 这里不做性别猜测，改用散列在全部音色上取模，保证可复现。
-    return VoicePool.all[hash % VoicePool.all.length].id;
+    // 这里不做性别猜测，改用散列在候选池上取模，保证可复现。
+    // 传入 MiMo 候选池时，结果天然落在 MiMo 支持列表内。
+    final ids = pool ?? _candidatePool(null);
+    return ids[hash % ids.length];
   }
 }

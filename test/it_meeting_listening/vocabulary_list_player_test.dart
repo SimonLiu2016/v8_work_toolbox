@@ -154,4 +154,18 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 1600));
     expect(ctrl.wordIndex, 1);
   });
+
+  test('倍速调节：setSpeed 更新 speed 并同步下发至 backend', () async {
+    final ctrl = build();
+    expect(ctrl.speed, 1.0);
+
+    await ctrl.setSpeed(0.75);
+    expect(ctrl.speed, 0.75);
+    expect(backend.playbackRate, 0.75);
+    expect(backend.setRates, contains(0.75));
+
+    ctrl.setWords(['governance']);
+    await ctrl.start();
+    expect(backend.playbackRate, 0.75);
+  });
 }

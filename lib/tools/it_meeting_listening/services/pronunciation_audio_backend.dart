@@ -12,6 +12,12 @@ import 'package:audioplayers/audioplayers.dart';
 /// 反例是曾经的 `audioPlayerFn`：它把整段播放逻辑替换掉，于是生产唯一走的分支
 /// 在测试里从未被走过，崩溃既拦不住、也解释不清。
 abstract class PronunciationAudioBackend {
+  /// 当前播放倍速 (默认为 1.0)
+  double get playbackRate;
+
+  /// 调整播放倍速
+  Future<void> setPlaybackRate(double rate);
+
   /// 停止当前播放（当前没有播放时也应安全返回）。
   Future<void> stop();
 
@@ -34,12 +40,31 @@ class AudioplayersPronunciationBackend implements PronunciationAudioBackend {
       : _player = player ?? AudioPlayer();
 
   final AudioPlayer _player;
+  double _playbackRate = 1.0;
+
+  @override
+  double get playbackRate => _playbackRate;
+
+  @override
+  Future<void> setPlaybackRate(double rate) async {
+    _playbackRate = rate;
+    try {
+      await _player.setPlaybackRate(rate);
+    } catch (_) {}
+  }
 
   @override
   Future<void> stop() => _player.stop();
 
   @override
-  Future<void> playFile(String path) => _player.play(DeviceFileSource(path));
+  Future<void> playFile(String path) async {
+    await _player.play(DeviceFileSource(path));
+    if (_playbackRate != 1.0) {
+      try {
+        await _player.setPlaybackRate(_playbackRate);
+      } catch (_) {}
+    }
+  }
 
   @override
   Stream<void> get onPlayerComplete =>

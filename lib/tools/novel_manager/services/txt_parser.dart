@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:charset_converter/charset_converter.dart';
+import 'package:fast_gbk/fast_gbk.dart';
 import 'package:path/path.dart' as p;
 import 'epub_parser.dart';
 
@@ -45,15 +45,10 @@ class TxtParser {
 
     // 2. 尝试 GBK / GB2312
     try {
-      return await CharsetConverter.decode('gbk', bytes);
+      return gbk.decode(bytes, allowMalformed: true);
     } catch (_) {}
 
-    // 3. 尝试 UTF-16
-    try {
-      return await CharsetConverter.decode('utf-16', bytes);
-    } catch (_) {}
-
-    // 4. 兜底 Latin1
+    // 3. 兜底 Latin1
     return latin1.decode(bytes);
   }
 

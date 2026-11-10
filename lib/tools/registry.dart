@@ -12,6 +12,7 @@ import 'ai_assistant/ui/ai_assistant_page.dart';
 import 'artex_engine/ui/artex_engine_page.dart';
 import 'ai_video_studio/ui/studio_shell.dart';
 import 'auto_registrar/ui/auto_registrar_main_page.dart';
+import 'casual_short_drama/ui/casual_short_drama_page.dart';
 import 'notebook/ui/notebook_page.dart';
 import 'novel_manager/ui/novel_manager_page.dart';
 import 'ops_tool/ui/ops_tool_main_page.dart';
@@ -25,6 +26,7 @@ import 'slimmer/smart_disk_slimmer_page.dart';
 import 'infinite_canvas/ui/infinite_canvas_studio_page.dart';
 import 'it_meeting_listening/ui/it_meeting_listening_page.dart';
 import 'live_translator/ui/live_translator_page.dart';
+import 'meeting_recorder/ui/meeting_recorder_page.dart';
 import 'tool_definition.dart';
 import 'unattended/unattended_page.dart';
 import 'vocab_book/ui/vocab_book_page.dart';
@@ -215,6 +217,21 @@ class VideoLibraryToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const VideoLibraryView();
 }
 
+class CasualShortDramaToolDefinition extends ToolDefinition {
+  @override
+  String get id => kToolIdCasualShortDrama;
+  @override
+  String get title => '随心短剧';
+  @override
+  String get subtitle => '桌面宽屏沉浸式观影，免登无痕隐私保护、多镜像线路与离线私密下载';
+  @override
+  IconData get icon => Icons.live_tv_rounded;
+  @override
+  ToolCategory get category => ToolCategory.privacy;
+  @override
+  Widget buildPage(BuildContext context) => const CasualShortDramaPage();
+}
+
 class AiAssistantToolDefinition extends ToolDefinition {
   @override
   String get id => kToolIdAiAssistant;
@@ -251,7 +268,7 @@ class NovelManagerToolDefinition extends ToolDefinition {
   Widget buildPage(BuildContext context) => const NovelManagerPage();
 }
 
-/// Agnes 试炼场。
+/// 大模型试炼场。
 ///
 /// 独立工具而不是工坊的第八个工序页：工坊侧导航是「工序」（创意孵化→IP 主库
 /// →分镜看板→声音设计→合成交付），按制作顺序前进；试炼场不是一道工序，且
@@ -262,9 +279,9 @@ class AgnesPlaygroundToolDefinition extends ToolDefinition {
   @override
   String get id => kToolIdAgnesPlayground;
   @override
-  String get title => 'Agnes 试炼场';
+  String get title => '大模型试炼场';
   @override
-  String get subtitle => '直连 Agnes 文本/图像/视频，留痕每次调用的提示词、参考图与参数';
+  String get subtitle => '多供应商大模型通用试炼场，涵盖文本/图像/视频直连、提示词效果库与参数留痕';
   @override
   IconData get icon => Icons.science_outlined;
   @override
@@ -292,7 +309,7 @@ class AgnesPlaygroundToolDefinition extends ToolDefinition {
       );
       await controller.show();
     } catch (e) {
-      debugPrint('Failed to open Agnes playground window: $e');
+      debugPrint('Failed to open playground window: $e');
     }
   }
 
@@ -445,6 +462,21 @@ class LiveTranslatorToolDefinition extends ToolDefinition {
   ToolCategory get category => ToolCategory.note;
   @override
   Widget buildPage(BuildContext context) => const LiveTranslatorPage();
+}
+
+class MeetingRecorderToolDefinition extends ToolDefinition {
+  @override
+  String get id => kToolIdMeetingRecorder;
+  @override
+  String get title => '会议录音';
+  @override
+  String get subtitle => '录制开会音频 · 指定存放位置 · 便捷回听管理';
+  @override
+  IconData get icon => Icons.mic_rounded;
+  @override
+  ToolCategory get category => ToolCategory.note;
+  @override
+  Widget buildPage(BuildContext context) => const MeetingRecorderPage();
 }
 
 class VocabBookToolDefinition extends ToolDefinition {
@@ -635,6 +667,7 @@ class ToolRegistry {
     PrivateMediaPlayerToolDefinition(),
     PrivateBrowserToolDefinition(),
     VideoLibraryToolDefinition(),
+    CasualShortDramaToolDefinition(),
     PasswordVaultToolDefinition(),
     // 安全工具
     SecurityToolboxDefinition(),
@@ -658,6 +691,7 @@ class ToolRegistry {
     VocabBookToolDefinition(),
     ItMeetingListeningToolDefinition(),
     LiveTranslatorToolDefinition(),
+    MeetingRecorderToolDefinition(),
     UnattendedApproverToolDefinition(),
     BcConfigToolDefinition(),
     BcConfigShellToolDefinition(),

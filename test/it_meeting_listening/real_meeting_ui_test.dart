@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,9 +10,50 @@ import 'package:V8WorkToolbox/tools/it_meeting_listening/services/meeting_vocabu
 import 'package:V8WorkToolbox/tools/it_meeting_listening/services/real_meeting_service.dart';
 import 'package:V8WorkToolbox/tools/it_meeting_listening/services/speaker_profile_resolver.dart';
 import 'package:V8WorkToolbox/tools/it_meeting_listening/services/transcript_parser.dart';
+import 'package:V8WorkToolbox/tools/it_meeting_listening/services/vocabulary_study_store.dart';
 import 'package:V8WorkToolbox/tools/it_meeting_listening/ui/real_meeting_panel.dart';
 import 'package:V8WorkToolbox/tools/it_meeting_listening/ui/transcript_preview_dialog.dart';
 import 'package:V8WorkToolbox/tools/it_meeting_listening/ui/vocabulary_browser_dialog.dart';
+import 'package:V8WorkToolbox/tools/reader/models/reader_models.dart';
+import 'package:V8WorkToolbox/tools/reader/services/tts_engine.dart';
+
+/// 拦截 FilePicker.saveFile 的假实现，返回预设路径并记录调用参数。
+class _FakeFilePicker extends FilePicker {
+  _FakeFilePicker(this.savePath);
+
+  final String? savePath;
+  String? lastDialogTitle;
+  String? lastFileName;
+  FileType? lastType;
+  List<String>? lastAllowedExtensions;
+
+  @override
+  Future<String?> saveFile({
+    String? dialogTitle,
+    String? fileName,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Uint8List? bytes,
+    bool lockParentWindow = false,
+  }) async {
+    lastDialogTitle = dialogTitle;
+    lastFileName = fileName;
+    lastType = type;
+    lastAllowedExtensions = allowedExtensions;
+    return savePath;
+  }
+}
+
+class _FakeTtsEngine implements TtsEngine {
+  @override
+  Future<bool> isAvailable() async => true;
+
+  @override
+  Future<Uint8List> synthesize(String text, TtsSynthesisConfig config) async =>
+      Uint8List.fromList([0x49, 0x44, 0x33, ...text.codeUnits]);
+}
+
 
 void main() {
   RealMeeting meeting() => RealMeeting(
@@ -479,6 +524,134 @@ void main() {
       await tester.pumpAndSettle();
       expect(jumped, isNotNull);
       expect(jumped!.turnIndex, 0);
+    });
+
+    testWidgets('无重点词时导出按钮禁用', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: VocabularyBrowserDialog(index: index, onJump: (_) {}),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      final btn = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('vocab-export-focused-btn')),
+      );
+      expect(btn.onPressed, isNull);
+    });
+
+    testWidgets('标记重点词后导出按钮可点击且保存成功写入文件', (tester) async {
+      final tempDir = Directory.systemTemp.createTempSync('vocab_export_ui_');
+      final savedPath = '${tempDir.path}/重点关注词汇.md';
+      final fakePicker = _FakeFilePicker(savedPath);
+      FilePicker.platform = fakePicker;
+
+      final studyStore = VocabularyStudyStore(
+        baseDir: tempDir,
+        ttsEngine: _FakeTtsEngine(),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: VocabularyBrowserDialog(
+            index: index,
+            studyStore: studyStore,
+            onJump: (_) {},
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // 初始：无重点词 → 禁用。
+      final initialBtn = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('vocab-export-focused-btn')),
+      );
+      expect(initialBtn.onPressed, isNull);
+
+      // 标记 governance 为重点关注。
+      await tester.tap(
+        find.byKey(const ValueKey('vocab-focus-btn-governance')),
+      );
+      await tester.pumpAndSettle();
+
+      // 有重点词 → 可点击。
+      final enabledBtn = tester.widget<OutlinedButton>(
+        find.byKey(const ValueKey('vocab-export-focused-btn')),
+      );
+      expect(enabledBtn.onPressed, isNotNull);
+
+      // 点击导出 → 调起 saveFile → 写入文件 → SnackBar。
+      // 真实文件 IO 需在 runAsync 中完成（fake-async 区不推进 dart:io 未来）。
+      await tester.runAsync(() async {
+        await tester.tap(
+          find.byKey(const ValueKey('vocab-export-focused-btn')),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pumpAndSettle();
+
+      expect(fakePicker.lastDialogTitle, '导出重点关注词汇');
+      expect(fakePicker.lastType, FileType.custom);
+      expect(fakePicker.lastAllowedExtensions, contains('md'));
+      expect(fakePicker.lastFileName, startsWith('重点关注词汇_'));
+
+      final savedFile = File(savedPath);
+      expect(savedFile.existsSync(), isTrue);
+      final content = savedFile.readAsStringSync();
+      expect(content, contains('# 听力练习重点关注词汇表'));
+      expect(content, contains('## governance'));
+      expect(content, contains('1. we discussed governance and VPC'));
+
+      expect(
+        find.textContaining('已成功导出 1 个重点词汇'),
+        findsOneWidget,
+      );
+
+      studyStore.dispose();
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    testWidgets('取消保存时不写文件、无报错', (tester) async {
+      final tempDir = Directory.systemTemp.createTempSync('vocab_export_cancel_');
+      final fakePicker = _FakeFilePicker(null); // 返回 null = 取消
+      FilePicker.platform = fakePicker;
+
+      final studyStore = VocabularyStudyStore(
+        baseDir: tempDir,
+        ttsEngine: _FakeTtsEngine(),
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: VocabularyBrowserDialog(
+            index: index,
+            studyStore: studyStore,
+            onJump: (_) {},
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('vocab-focus-btn-governance')),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('vocab-export-focused-btn')),
+      );
+      await tester.pumpAndSettle();
+
+      // 取消：无 SnackBar（成功或失败都不该有）、无文件。
+      expect(find.textContaining('已成功导出'), findsNothing);
+      expect(find.textContaining('导出失败'), findsNothing);
+
+      studyStore.dispose();
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
     });
   });
 }

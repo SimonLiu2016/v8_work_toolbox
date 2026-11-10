@@ -290,12 +290,26 @@ class NovelScraperCoordinator extends ChangeNotifier {
     void Function(int currentPage, int totalPages, int itemCount)? onProgress,
   }) async {
     final httpScraper = HttpRuleScraper(rule);
+    final bypassScraper = rule.enableBypass ? AntiBotBypassScraper(rule) : null;
     try {
       // 1. 先抓取起始页获取总数
-      final firstResult = await httpScraper.scrapeCategoryPage(
-        categoryKey: categoryKey,
-        pageIndex: startPage,
-      );
+      CatalogPageResult firstResult;
+      try {
+        firstResult = await httpScraper.scrapeCategoryPage(
+          categoryKey: categoryKey,
+          pageIndex: startPage,
+        );
+      } catch (e) {
+        if (bypassScraper != null) {
+          debugPrint('[NovelScraperCoordinator] httpScraper category failed, trying bypass: $e');
+          firstResult = await bypassScraper.scrapeCategoryPage(
+            categoryKey: categoryKey,
+            pageIndex: startPage,
+          );
+        } else {
+          rethrow;
+        }
+      }
 
       final totalCount = firstResult.totalCount;
       final totalPages = firstResult.totalPages;
@@ -308,10 +322,22 @@ class NovelScraperCoordinator extends ChangeNotifier {
       // 2. 依次遍历后续页面
       for (int p = startPage + 1; p <= actualEnd; p++) {
         try {
-          final pageRes = await httpScraper.scrapeCategoryPage(
-            categoryKey: categoryKey,
-            pageIndex: p,
-          );
+          CatalogPageResult pageRes;
+          try {
+            pageRes = await httpScraper.scrapeCategoryPage(
+              categoryKey: categoryKey,
+              pageIndex: p,
+            );
+          } catch (e) {
+            if (bypassScraper != null) {
+              pageRes = await bypassScraper.scrapeCategoryPage(
+                categoryKey: categoryKey,
+                pageIndex: p,
+              );
+            } else {
+              rethrow;
+            }
+          }
           aggregated.addAll(pageRes.items);
           onProgress?.call(p, actualEnd, aggregated.length);
         } catch (e) {

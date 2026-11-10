@@ -213,10 +213,9 @@ class AppShellState extends State<AppShell> {
     final activeToolIndex = selectedIndex >= 0 ? selectedIndex : 0;
     final isPrivacyLocked = _currentView == ActivityViewType.privacy &&
         !PrivacySecurityService.instance.isUnlocked;
+    final isPrivacyView = _currentView == ActivityViewType.privacy;
 
-    return Scaffold(
-      backgroundColor: context.bgWindow,
-      body: Row(
+    Widget bodyContent = Row(
         children: [
           // 1. 左侧活动栏 (Activity Bar, 56px)
           ActivityBar(
@@ -355,7 +354,22 @@ class AppShellState extends State<AppShell> {
             ),
           ],
         ],
-      ),
+      );
+
+    if (isPrivacyView && !isPrivacyLocked) {
+      bodyContent = Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerHover: (_) => PrivacySecurityService.instance.recordActivity(),
+        onPointerDown: (_) => PrivacySecurityService.instance.recordActivity(),
+        onPointerSignal: (_) => PrivacySecurityService.instance.recordActivity(),
+        onPointerMove: (_) => PrivacySecurityService.instance.recordActivity(),
+        child: bodyContent,
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: context.bgWindow,
+      body: bodyContent,
     );
   }
 }

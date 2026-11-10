@@ -10,8 +10,8 @@ import 'package:flutter/material.dart';
 
 import '../../../theme/app_theme.dart';
 import '../models/real_meeting_models.dart';
-import '../services/role_voice_map.dart';
 import '../services/speaker_profile_resolver.dart';
+import '../services/tts_binding_probe.dart';
 
 /// 真实会议面板。
 class RealMeetingPanel extends StatefulWidget {
@@ -249,6 +249,36 @@ class _RealMeetingPanelState extends State<RealMeetingPanel> {
                   ),
                 ),
               ),
+            if (meeting != null && state != null && state.failedGroupCount > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                        color: Colors.redAccent.withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded,
+                          size: 15, color: Colors.redAccent),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${state.failedGroupCount} 组合成失败（已填充静音，可单独重试）',
+                          style: TextStyle(fontSize: 11, color: textPrimary),
+                        ),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: widget.baking ? null : () => widget.onBake(),
+                        child: Text('重试失败组 (${state.failedGroupCount})'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             if (meeting != null) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
@@ -298,7 +328,8 @@ class _RealMeetingPanelState extends State<RealMeetingPanel> {
     // value 必须在 items 里。不在池中就补一个只读项，让用户看得见实际用的是
     // 哪个音色，而不是显示成"未选择"。
     final voiceId = resolved?.voiceId ?? '';
-    final inPool = VoicePool.byId(voiceId) != null;
+    final voiceOptions = TtsBindingProbe.voiceOptions();
+    final inPool = voiceOptions.any((v) => v.id == voiceId);
     final mergedInto = widget.mergeInto[slotId];
 
     return Padding(
@@ -338,21 +369,17 @@ class _RealMeetingPanelState extends State<RealMeetingPanel> {
           const SizedBox(width: 8),
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
-              value: voiceId.isEmpty ? null : voiceId,
+              value: inPool ? voiceId : null,
               isDense: true,
               style: TextStyle(fontSize: 11, color: textPrimary),
               items: [
-                if (!inPool && voiceId.isNotEmpty)
-                  DropdownMenuItem(
-                    value: voiceId,
-                    child: Text('$voiceId（自动）',
-                        style: TextStyle(fontSize: 11, color: textPrimary)),
-                  ),
-                for (final v in VoicePool.all)
+                for (final v in voiceOptions)
                   DropdownMenuItem(
                     value: v.id,
-                    child: Text('${v.label} · ${v.gender == VoiceGender.male ? "男" : "女"}',
-                        style: TextStyle(fontSize: 11, color: textPrimary)),
+                    child: Text(
+                      '${v.name}${v.gender == 'male' ? ' · 男' : ' · 女'}',
+                      style: TextStyle(fontSize: 11, color: textPrimary),
+                    ),
                   ),
               ],
               onChanged: isMe

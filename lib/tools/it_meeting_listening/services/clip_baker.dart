@@ -467,7 +467,27 @@ class ClipBaker {
         outputPath,
       ]);
       if (result.exitCode != 0) {
-        throw StateError('ffmpeg 拼接失败: ${result.stderr}');
+        // 流拷贝失败自动回退重编码
+        final rTranscode = await Process.run(ffmpeg, [
+          '-y',
+          '-loglevel',
+          'error',
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-i',
+          listFile.path,
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          '128k',
+          outputPath,
+        ]);
+        if (rTranscode.exitCode != 0) {
+          final err = rTranscode.stderr.toString().trim();
+          throw StateError('ffmpeg 拼接重编码失败: ${err.isNotEmpty ? err : result.stderr}');
+        }
       }
     } finally {
       if (await listFile.exists()) await listFile.delete();

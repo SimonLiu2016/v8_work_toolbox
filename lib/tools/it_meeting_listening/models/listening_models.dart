@@ -341,3 +341,32 @@ class ClipIndex {
         generatedAt: DateTime.tryParse(json['generatedAt'] as String? ?? ''),
       );
 }
+
+/// 篇级素材流转循环模式。
+enum ListeningLoopMode {
+  /// 单篇播放：当前素材播完即止，不自动切下一首。
+  orderOnce('order-once', '单篇播放', '播完即止，不自动切下一篇'),
+
+  /// 列表连播：当前素材播完后自动顺序播放下一段素材。
+  listLoop('list-loop', '列表连播', '播完自动切下一篇素材'),
+
+  /// 单篇循环：当前素材播完后自动从头重放该篇。
+  singleLoop('single-loop', '单篇循环', '播完后反复重听当前篇');
+
+  final String id;
+  final String label;
+  final String description;
+
+  const ListeningLoopMode(this.id, this.label, this.description);
+
+  ListeningLoopMode get next {
+    switch (this) {
+      case ListeningLoopMode.orderOnce:
+        return ListeningLoopMode.listLoop;
+      case ListeningLoopMode.listLoop:
+        return ListeningLoopMode.singleLoop;
+      case ListeningLoopMode.singleLoop:
+        return ListeningLoopMode.orderOnce;
+    }
+  }
+}

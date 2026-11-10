@@ -72,16 +72,32 @@ class FfmpegAudioToolkit implements AudioToolkit {
     final listFile = File('$outputPath.concat.txt');
     await listFile.writeAsString(
         files.map((f) => "file '${_escape(f)}'").join('\n'));
+    final isMp3 = outputPath.toLowerCase().contains('.mp3');
+    final formatArgs = isMp3 ? ['-f', 'mp3'] : const <String>[];
     try {
       final r = await Process.run(ffmpeg, [
         '-y', '-loglevel', 'error',
         '-f', 'concat', '-safe', '0',
         '-i', listFile.path,
         '-c', 'copy',
+        ...formatArgs,
         outputPath,
       ]);
-      if (r.exitCode != 0) {
-        throw StateError('ffmpeg 拼接失败: ${r.stderr}');
+      if (r.exitCode == 0) return;
+
+      // 流拷贝失败（如输入包含 PCM WAV 裸流、容器为 MP3、或混杂编码），自动回退重编码
+      final rTranscode = await Process.run(ffmpeg, [
+        '-y', '-loglevel', 'error',
+        '-f', 'concat', '-safe', '0',
+        '-i', listFile.path,
+        '-c:a', 'libmp3lame',
+        '-b:a', '128k',
+        ...formatArgs,
+        outputPath,
+      ]);
+      if (rTranscode.exitCode != 0) {
+        final err = rTranscode.stderr.toString().trim();
+        throw StateError('ffmpeg 拼接重编码失败: ${err.isNotEmpty ? err : r.stderr}');
       }
     } finally {
       if (await listFile.exists()) await listFile.delete();

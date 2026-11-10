@@ -1,0 +1,21 @@
+# 任务分解：fix-casual-short-drama-playback-and-theater-layout
+
+- [x] 1. 修复 API 客户端播放流获取接口
+  - [x] 1.1 修改 `HuangguoApiClient.getPlayInfo` 使用 `POST /api/videos/<id>/episodes/<ep>/playback`
+  - [x] 1.2 解析 `data.streams.main` 与 `data.streams.hevc`，并保留兼容降级逻辑
+  - [x] 1.3 更新单元测试 `test/casual_short_drama_api_test.dart`
+- [x] 2. 修复剧场背景滤镜与灰色溢出
+  - [x] 2.1 清理 `DramaTheaterSurface` 中无约束的 `BackdropFilter`
+  - [x] 2.2 采用 `ClipRect` 保护和纯黑沉浸底色，确保画面无杂色与无模糊渗出
+- [x] 3. 重构桌面端两态观影布局
+  - [x] 3.1 在 `CasualShortDramaPage` 中实现浏览态与剧场态的状态分支切换
+  - [x] 3.2 完善剧场态顶部「返回片库」交互与状态重置
+  - [x] 3.3 调整右侧选集抽屉布局与视频大屏展示联动
+- [x] 4. 验证与本地应用发布
+  - [x] 4.1 运行测试与静态检查（`flutter analyze`）
+  - [x] 4.2 执行 `./scripts/deploy_local.sh` 编译并替换本机应用
+- [x] 5. 修复 DramaPlayInfo.fromJson 宽容类型解析与真实上游字段适配
+  - [x] 5.1 在 `DramaPlayInfo.fromJson` 中引入字符串数字兼容解析（`_parseInt`）与 `ep`/`ep_num` 字段适配
+  - [x] 5.2 支持 `streams.preview` 等多备选流，并在 `getPlayInfo` 中输出规范诊断
+  - [x] 5.3 补充上游真实响应结构的单元测试
+  - [x] 5.4 静态检查通过并重新执行 `./scripts/deploy_local.sh` 替换本机应用

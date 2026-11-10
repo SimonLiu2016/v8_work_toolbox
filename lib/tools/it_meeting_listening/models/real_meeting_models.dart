@@ -272,6 +272,33 @@ class MeetingSpeakerSettings {
   SpeakerSetting of(String slotId) =>
       bySlot[canonical(slotId)] ?? const SpeakerSetting();
 
+  /// 清洗跨厂商不兼容音色：若 [isIncompatible] 判定为 true，将该 voiceId 清空。
+  ///
+  /// 返回 `(清洗后的设定, 是否发生了清洗变更)`。
+  (MeetingSpeakerSettings, bool) sanitizeVoices(
+      bool Function(String voiceId) isIncompatible) {
+    var changed = false;
+    final nextBySlot = <String, SpeakerSetting>{};
+    for (final e in bySlot.entries) {
+      final v = e.value.voiceId.trim();
+      if (v.isNotEmpty && isIncompatible(v)) {
+        nextBySlot[e.key] = e.value.copyWith(voiceId: '');
+        changed = true;
+      } else {
+        nextBySlot[e.key] = e.value;
+      }
+    }
+    if (!changed) return (this, false);
+    return (
+      MeetingSpeakerSettings(
+        bySlot: nextBySlot,
+        mergeInto: mergeInto,
+        displayTitle: displayTitle,
+      ),
+      true,
+    );
+  }
+
   /// 写入某个槽位的设定（写到折叠后的目标槽位上）。
   MeetingSpeakerSettings withSlot(String slotId, SpeakerSetting setting) {
     final target = canonical(slotId);
@@ -501,6 +528,9 @@ class TurnGroupAudio {
   /// 空串表示旧数据没有记录——此时既不当作待更新，也不谎称知道。
   final String voiceId;
 
+  /// 若合成失败，记录具体失败原因（如转码异常、网络超时、内容审查等）。
+  final String? failureReason;
+
   const TurnGroupAudio({
     required this.turnIndices,
     required this.fileName,
@@ -508,6 +538,7 @@ class TurnGroupAudio {
     this.endMs = 0,
     this.failed = false,
     this.voiceId = '',
+    this.failureReason,
   });
 
   int get durationMs => endMs - startMs;
@@ -519,6 +550,7 @@ class TurnGroupAudio {
     int? endMs,
     bool? failed,
     String? voiceId,
+    String? failureReason,
   }) =>
       TurnGroupAudio(
         turnIndices: turnIndices ?? this.turnIndices,
@@ -527,6 +559,7 @@ class TurnGroupAudio {
         endMs: endMs ?? this.endMs,
         failed: failed ?? this.failed,
         voiceId: voiceId ?? this.voiceId,
+        failureReason: failureReason ?? this.failureReason,
       );
 
   Map<String, dynamic> toJson() => {
@@ -536,6 +569,8 @@ class TurnGroupAudio {
         'endMs': endMs,
         'failed': failed,
         'voiceId': voiceId,
+        if (failureReason != null && failureReason!.isNotEmpty)
+          'failureReason': failureReason,
       };
 
   factory TurnGroupAudio.fromJson(Map<String, dynamic> json) => TurnGroupAudio(
@@ -547,6 +582,7 @@ class TurnGroupAudio {
         endMs: (json['endMs'] as num?)?.toInt() ?? 0,
         failed: (json['failed'] as bool?) ?? false,
         voiceId: json['voiceId'] as String? ?? '',
+        failureReason: json['failureReason'] as String?,
       );
 }
 

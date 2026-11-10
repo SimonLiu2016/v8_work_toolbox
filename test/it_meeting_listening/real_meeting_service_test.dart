@@ -197,6 +197,25 @@ question here.
       expect(await service.pendingGroups(outcome.meeting), isEmpty);
     });
 
+    test('改音色后普通重新合成（bake）也清空待更新并变声', () async {
+      final path = await writeTranscript('a.md');
+      final outcome = await service.importFile(path);
+      final callsBefore = tts.calls;
+
+      await service.setSpeakerVoice(outcome.meeting.id, '发言人 1', 'newvoice');
+      expect(await service.pendingGroups(outcome.meeting), isNotEmpty);
+
+      // 「重新合成」入口走 service.bake()（而非 rebakeGroups）：修复后它必须
+      // 重烘音色不一致的组，而不是复用旧音频。
+      final result = await service.bake(outcome.meeting);
+      expect(result.failures, isEmpty);
+      expect(tts.calls, greaterThan(callsBefore), reason: 'bake 必须重烘不一致组');
+      expect(await service.pendingGroups(outcome.meeting), isEmpty,
+          reason: '重新合成完成后待更新归零');
+      final after = await service.refresh(outcome.meeting);
+      expect(after!.turns.first.voice, 'newvoice');
+    });
+
     test('标记为「我」立即改名，音色待重烘后才变', () async {
       await store.saveMyIdentity(const MyIdentity(name: 'Simon', voiceId: 'me_voice'));
       final path = await writeTranscript('a.md');

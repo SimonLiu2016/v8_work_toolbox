@@ -225,6 +225,8 @@ void main() {
         dictionaryLookup: (_) async => null,
         textGenerator: _FakeTextGenerator((_) => ''),
         ttsEngine: fakeTts,
+        dictionaryAudioFetcher: (w, a) async => null,
+        nativeSpeechSynthesizer: (w, a) async => null,
       );
 
       final file1 = await store.synthesizeOrGetTtsFile('governance');
@@ -264,6 +266,8 @@ void main() {
 
       final studyStore = VocabularyStudyStore(
         baseDir: tempDir,
+        dictionaryAudioFetcher: (w, a) async => null,
+        nativeSpeechSynthesizer: (w, a) async => null,
         dictionaryLookup: (word) async => DictionaryResult(
           word: word,
           phonetic: word == 'governance' ? '/ˈɡʌvənəns/' : '/aɪˈdempətənt/',

@@ -27,6 +27,7 @@ import '../models/rehearsal_models.dart';
 import 'clip_baker.dart';
 import 'rehearsal_voices.dart';
 import 'text_sanitizer.dart';
+import 'tts_binding_probe.dart';
 
 /// 烘焙进度回调：`(已完成轮数, 总轮数, 当前角色)`。
 typedef RehearsalBakeProgress = void Function(int done, int total, String role);
@@ -392,7 +393,12 @@ class RehearsalBaker {
           const TtsSynthesisConfig(
             mode: TtsMode.customAi,
             useSystemAiConfig: true,
-          ).copyWith(customVoiceId: voice),
+          ).copyWith(
+            customVoiceId: voice,
+            // MiMo 的语速/情感全靠自然语言风格指令表达；与生词本一致，
+            // 在 MiMo 下注入保守默认，非 MiMo 引擎忽略该字段。
+            styleInstruction: TtsBindingProbe.defaultStyle(),
+          ),
         );
         if (bytes.isNotEmpty) return [bytes];
         lastError = '返回空音频';
@@ -498,6 +504,8 @@ class RehearsalBaker {
     final listFile = File('$outputPath.concat.txt');
     await listFile.writeAsString(
         files.map((f) => "file '${_escapeConcatPath(f)}'").join('\n'));
+    final isMp3 = outputPath.toLowerCase().contains('.mp3');
+    final formatArgs = isMp3 ? ['-f', 'mp3'] : const <String>[];
     try {
       final result = await Process.run(ffmpeg, [
         '-y',
@@ -511,10 +519,32 @@ class RehearsalBaker {
         listFile.path,
         '-c',
         'copy',
+        ...formatArgs,
         outputPath,
       ]);
-      if (result.exitCode != 0) {
-        throw StateError('ffmpeg 拼接失败: ${result.stderr}');
+      if (result.exitCode == 0) return;
+
+      // 流拷贝失败（如输入包含 PCM WAV 裸流、容器为 MP3、或混杂编码），自动回退重编码
+      final rTranscode = await Process.run(ffmpeg, [
+        '-y',
+        '-loglevel',
+        'error',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listFile.path,
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        ...formatArgs,
+        outputPath,
+      ]);
+      if (rTranscode.exitCode != 0) {
+        final err = rTranscode.stderr.toString().trim();
+        throw StateError('ffmpeg 拼接失败: ${err.isNotEmpty ? err : result.stderr}');
       }
     } finally {
       if (await listFile.exists()) await listFile.delete();

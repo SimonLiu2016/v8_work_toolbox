@@ -48,7 +48,7 @@ class NovelDatabase {
 
     return await openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -64,6 +64,17 @@ class NovelDatabase {
             await db.execute('ALTER TABLE scraper_rules ADD COLUMN catalog_selector TEXT');
           } catch (_) {}
         }
+        if (oldVersion < 3) {
+          try {
+            await db.execute('ALTER TABLE scraper_rules ADD COLUMN category_map TEXT');
+          } catch (_) {}
+        }
+      },
+      onOpen: (db) async {
+        // 幂等自愈检查，确保即使无版本提升，缺失列也会自动补齐
+        try {
+          await db.execute('ALTER TABLE scraper_rules ADD COLUMN category_map TEXT');
+        } catch (_) {}
       },
     );
   }
@@ -127,6 +138,7 @@ class NovelDatabase {
         title_selector TEXT,
         catalog_url TEXT,
         catalog_selector TEXT,
+        category_map TEXT,
         remove_selectors TEXT,
         custom_headers TEXT,
         request_delay_ms INTEGER DEFAULT 500,
@@ -281,11 +293,39 @@ class NovelDatabase {
 
   Future<void> insertOrUpdateRule(SiteScraperRule rule) async {
     final db = await database;
-    await db.insert(
-      'scraper_rules',
-      rule.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final map = rule.toMap();
+    try {
+      await db.insert(
+        'scraper_rules',
+        map,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e) {
+      // 若出现缺列异常，尝试动态补列自愈并重试
+      if (e.toString().contains('no column named')) {
+        try {
+          await db.execute('ALTER TABLE scraper_rules ADD COLUMN category_map TEXT');
+        } catch (_) {}
+        try {
+          await db.insert(
+            'scraper_rules',
+            map,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+          return;
+        } catch (_) {
+          // 若仍然失败，剥离 category_map 确保核心规则落盘不中断
+          final fallbackMap = Map<String, dynamic>.from(map)..remove('category_map');
+          await db.insert(
+            'scraper_rules',
+            fallbackMap,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+          return;
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<List<SiteScraperRule>> getAllRules() async {

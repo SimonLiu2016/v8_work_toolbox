@@ -4,6 +4,7 @@ import '../services/novel_repository.dart';
 import '../services/site_scraper_rule_service.dart';
 import '../services/novel_scraper_coordinator.dart';
 import '../services/novel_deduplication_service.dart';
+import '../services/http_rule_scraper.dart';
 
 /// 站点源小说库按分类多页探索、AI智能去重与批量采集弹窗
 class SiteCatalogDiscoveryDialog extends StatefulWidget {
@@ -82,9 +83,11 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
       setState(() {
         _rules = rules;
         if (rules.isNotEmpty) {
-          _selectedRule = widget.initialRule ?? rules.first;
+          _selectedRule = widget.initialRule != null && rules.contains(widget.initialRule)
+              ? widget.initialRule
+              : rules.firstWhere((r) => r.id == 'piaotia', orElse: () => rules.first);
           if (!_currentCategoryMap.containsKey(_selectedCategoryKey)) {
-            _selectedCategoryKey = _currentCategoryMap.keys.first;
+            _selectedCategoryKey = _currentCategoryMap.keys.firstOrNull ?? '0';
           }
         }
       });
@@ -99,7 +102,7 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
     setState(() {
       _selectedRule = rule;
       if (!_currentCategoryMap.containsKey(_selectedCategoryKey)) {
-        _selectedCategoryKey = _currentCategoryMap.keys.first;
+        _selectedCategoryKey = _currentCategoryMap.keys.firstOrNull ?? '0';
       }
       _rawNovels = [];
       _displayNovels = [];
@@ -145,14 +148,27 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
         _rawNovels = pageResult.items;
       });
 
+      if (_rawNovels.isEmpty) {
+        setState(() {
+          _statusMessage = '源站未返回任何作品条目（可能是分类结构调整或选择器不匹配）';
+        });
+        return;
+      }
+
       // 抓取完毕后，全自动触发 AI 智能去重与书名净化
       await _runAiDeduplication();
     } catch (e) {
       if (mounted) {
+        final String errMsg;
+        if (e is AntiBotChallengeException) {
+          errMsg = e.reason;
+        } else {
+          errMsg = e.toString();
+        }
         setState(() {
-          _exploreError = e.toString();
+          _exploreError = errMsg;
           _isExploring = false;
-          _statusMessage = null;
+          _statusMessage = '抓取异常: $errMsg';
         });
       }
     }
@@ -287,14 +303,16 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
                   children: [
                     // 书源选择
                     SizedBox(
-                      width: 200,
+                      width: 220,
                       child: DropdownButtonFormField<SiteScraperRule>(
                         decoration: const InputDecoration(
                           labelText: '书源站点',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
-                        initialValue: _selectedRule,
+                        value: _selectedRule != null && _rules.contains(_selectedRule)
+                            ? _selectedRule
+                            : (_rules.isNotEmpty ? _rules.first : null),
                         items: _rules.map((r) => DropdownMenuItem(value: r, child: Text(r.name, overflow: TextOverflow.ellipsis))).toList(),
                         onChanged: _isExploring ? null : _onRuleChanged,
                       ),
@@ -303,14 +321,16 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
 
                     // 分类下拉
                     SizedBox(
-                      width: 150,
+                      width: 180,
                       child: DropdownButtonFormField<String>(
                         decoration: const InputDecoration(
                           labelText: '主菜单/类型',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
-                        initialValue: _selectedCategoryKey,
+                        value: _currentCategoryMap.containsKey(_selectedCategoryKey)
+                            ? _selectedCategoryKey
+                            : _currentCategoryMap.keys.firstOrNull,
                         items: _currentCategoryMap.entries.map((e) {
                           return DropdownMenuItem(value: e.key, child: Text('${e.key}.${e.value}'));
                         }).toList(),
@@ -458,16 +478,70 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+                              Icon(
+                                _exploreError!.contains('反爬') || _exploreError!.contains('403') || _exploreError!.contains('Cloudflare')
+                                    ? Icons.security_rounded
+                                    : Icons.error_outline,
+                                size: 48,
+                                color: Colors.redAccent,
+                              ),
                               const SizedBox(height: 12),
-                              Text('抓取源站失败: $_exploreError', style: const TextStyle(color: Colors.redAccent)),
+                              Text(
+                                _exploreError!.contains('反爬') || _exploreError!.contains('403') || _exploreError!.contains('Cloudflare')
+                                    ? '源站反爬防御阻断: $_exploreError'
+                                    : '抓取源站失败: $_exploreError',
+                                style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                textAlign: TextAlign.center,
+                              ),
+                              if (_exploreError!.contains('反爬') || _exploreError!.contains('403') || _exploreError!.contains('Cloudflare')) ...[
+                                const SizedBox(height: 8),
+                                const Text(
+                                  '该站点开启了强人机防护盾，建议切换为「飘天文学 (免盾优质源)」或在站点管理中配置可用源',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
+                              ],
                               const SizedBox(height: 14),
-                              ElevatedButton(onPressed: _startExplore, child: const Text('重试')),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                alignment: WrapAlignment.center,
+                                children: [
+                                  ElevatedButton.icon(
+                                    icon: const Icon(Icons.refresh, size: 16),
+                                    onPressed: _startExplore,
+                                    label: const Text('重试'),
+                                  ),
+                                  if (_rules.any((r) => r.id == 'piaotia' && r.id != _selectedRule?.id))
+                                    OutlinedButton.icon(
+                                      icon: const Icon(Icons.swap_horiz, size: 16),
+                                      onPressed: () {
+                                        final piaotia = _rules.firstWhere((r) => r.id == 'piaotia');
+                                        _onRuleChanged(piaotia);
+                                      },
+                                      label: const Text('切换至免盾源(飘天文学)'),
+                                    ),
+                                ],
+                              ),
                             ],
                           ),
                         )
                       : _displayNovels.isEmpty
-                          ? const Center(child: Text('暂无小说，请点击上方“多页检索”开始扫描'))
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.menu_book, size: 48, color: theme.disabledColor),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _statusMessage != null && _statusMessage!.isNotEmpty
+                                        ? _statusMessage!
+                                        : '暂无小说，请点击上方“多页检索”开始扫描',
+                                    style: TextStyle(color: theme.disabledColor),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            )
                           : Container(
                               decoration: BoxDecoration(
                                 border: Border.all(color: theme.dividerColor),
@@ -512,7 +586,9 @@ class _SiteCatalogDiscoveryDialogState extends State<SiteCatalogDiscoveryDialog>
                                           child: Text(
                                             novel.category?.isNotEmpty == true
                                                 ? novel.category!
-                                                : _currentCategoryMap[_selectedCategoryKey] ?? '小说',
+                                                : (_currentCategoryMap[_selectedCategoryKey] != null
+                                                    ? _currentCategoryMap[_selectedCategoryKey]!.split(' ').first
+                                                    : '综合'),
                                             style: const TextStyle(fontSize: 11, color: Colors.blueAccent),
                                           ),
                                         ),

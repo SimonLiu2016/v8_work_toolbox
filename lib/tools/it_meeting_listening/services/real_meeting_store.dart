@@ -29,6 +29,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../services/app_paths.dart';
 import '../models/real_meeting_models.dart';
+import 'tts_binding_probe.dart';
 
 /// 真实会议数据仓库。
 ///
@@ -221,7 +222,13 @@ class RealMeetingStore {
 
   Future<MyIdentity> loadMyIdentity() async {
     final json = await _readJson(AppPaths.listeningMyIdentityFile);
-    return json == null ? const MyIdentity() : MyIdentity.fromJson(json);
+    final identity = json == null ? const MyIdentity() : MyIdentity.fromJson(json);
+    // 跨供应商双向校验：若「我的身份」音色属于跨厂商不兼容音色，
+    // 自动平滑回退为当前供应商默认音色，避免插入回答或「是我」的发言被吞成单一默认音色。
+    if (TtsBindingProbe.isIncompatibleVoice(identity.voiceId)) {
+      return identity.copyWith(voiceId: TtsBindingProbe.defaultVoiceId());
+    }
+    return identity;
   }
 
   Future<void> saveMyIdentity(MyIdentity identity) =>

@@ -1,0 +1,348 @@
+[
+  {
+    "id": "builtin_cam_dolly_zoom",
+    "title": "希区柯克变焦 (Dolly Zoom)",
+    "majorCategory": "camera",
+    "subcategory": "经典运镜",
+    "tags": ["运镜", "变焦", "悬疑", "空间扭曲", "电影感"],
+    "channel": "video",
+    "promptTemplate": "Cinematic vertigo dolly zoom effect shot, the camera dollies backward while smoothly zooming in on {subject}, background perspective dramatically stretching and warping, high emotional tension, 35mm lens, photorealistic, 8k",
+    "negativePrompt": "jerky motion, morphing, blurry face, cartoonish, low resolution",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "first_frame"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_cam_orbit_crane",
+    "title": "360度环绕升降 (Orbit & Crane)",
+    "majorCategory": "camera",
+    "subcategory": "经典运镜",
+    "tags": ["运镜", "环绕", "升降", "史诗感"],
+    "channel": "video",
+    "promptTemplate": "A continuous smooth cinematic 360-degree orbit shot moving around {subject}, camera cranes upward revealing the grand {environment}, golden hour volumetric lighting, majestic atmosphere, fluid motion",
+    "negativePrompt": "jitter, jump cut, erratic rotation, distorted limbs",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_cam_low_angle_tracking",
+    "title": "低角度高速跟拍 (Low Angle Tracking)",
+    "majorCategory": "camera",
+    "subcategory": "视角构图",
+    "tags": ["低角度", "跟拍", "速度感", "临场感"],
+    "channel": "video",
+    "promptTemplate": "Extreme low-angle dynamic tracking shot following {subject} rushing forward across {environment}, ground-level dust kicking up, camera shake adding intense momentum, anamorphic widescreen",
+    "negativePrompt": "static, boring angle, floating feet, oversaturated",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_cam_dutch_angle",
+    "title": "荷兰倾斜角 (Dutch Angle)",
+    "majorCategory": "camera",
+    "subcategory": "视角构图",
+    "tags": ["倾斜角", "压迫感", "悬疑", "心理失衡"],
+    "channel": "image",
+    "promptTemplate": "Dramatic Dutch angle shot of {subject} standing under oppressive shadows in {environment}, tilted horizon line, sharp geometric shadows, film noir atmosphere, cinematic tension, Hasselblad capture",
+    "negativePrompt": "flat angle, level horizon, symmetrical, boring composition",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_cam_fpv_dive",
+    "title": "FPV穿越机俯冲 (FPV Drone Dive)",
+    "majorCategory": "camera",
+    "subcategory": "运动速度节奏",
+    "tags": ["FPV", "俯冲", "极速", "大场景"],
+    "channel": "video",
+    "promptTemplate": "High-speed FPV drone dive footage, plunging vertically down along {environment} then banking smoothly to align with {subject}, ultra fast motion blur, breathtaking scale, seamless momentum, GoPro hyper-smooth",
+    "negativePrompt": "choppy framerate, stuttering, pixelation, indoor blur",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_dyn_martial_arts",
+    "title": "近身武打格斗 (Martial Arts Choreography)",
+    "majorCategory": "dynamics",
+    "subcategory": "人物打斗与近战",
+    "tags": ["动作", "武术", "对招", "连贯性", "打击感"],
+    "channel": "video",
+    "promptTemplate": "Close-quarters martial arts combat scene between two fighters, {subject} executing swift defensive parry followed by a dynamic counter-strike, clothing swaying with physical inertia, crisp contact impact, high framerate martial arts action cinema",
+    "negativePrompt": "extra limbs, rubbery body, morphed fists, missing fingers, floaty combat",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "reference"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_dyn_sword_clash",
+    "title": "兵刃碰撞火花 (Sword Clash & Sparks)",
+    "majorCategory": "dynamics",
+    "subcategory": "人物打斗与近战",
+    "tags": ["冷兵器", "刀光剑影", "火花", "对峙"],
+    "channel": "video",
+    "promptTemplate": "Slow-motion sword clash impact, blade striking blade with bright incandescent sparks scattering across {environment}, intense facial expressions on {subject}, metallic gleam, shockwave ripple, high kinetic energy",
+    "negativePrompt": "blunt swords, bendy blades, static sparks, duplicate arms",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_dyn_multi_person_dialogue",
+    "title": "多人互动视线对齐防粘连 (Multi-Person Dialogue)",
+    "majorCategory": "dynamics",
+    "subcategory": "多人交互防粘连",
+    "tags": ["多人", "群像", "防串脸", "视线聚焦"],
+    "channel": "image",
+    "promptTemplate": "A group of distinct characters engaged in conversation inside {environment}, {subject} in foreground speaking with animated gestures, distinct facial bone structures, accurate mutual eye contact, clear separation of individual silhouettes, natural human anatomy",
+    "negativePrompt": "fused bodies, merged faces, twin characters, distorted anatomy, floating hands",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_dyn_car_drift",
+    "title": "雨夜赛车漂移甩尾 (Rainy Night Car Drift)",
+    "majorCategory": "dynamics",
+    "subcategory": "极限运动与载具",
+    "tags": ["赛车", "漂移", "烟雾", "轮胎打滑", "极速"],
+    "channel": "video",
+    "promptTemplate": "High performance sports car drifting across wet asphalt corner in {environment}, smoking tires spraying water mist, glowing red brake calipers, neon reflection streaks on metallic body paint, dynamic cinematic chase camera",
+    "negativePrompt": "static car, cartoon rendering, floating wheels, deformed vehicle chassis",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_vfx_glass_shatter",
+    "title": "玻璃碎裂超慢动作 (Glass Shatter Super Slow-Mo)",
+    "majorCategory": "vfx",
+    "subcategory": "流体与破碎",
+    "tags": ["破碎", "超慢速", "折射", "物理模拟"],
+    "channel": "video",
+    "promptTemplate": "Ultra slow-motion 1000fps capture of tempered glass pane shattering outward, millions of crystalline refractive glass fragments suspended in air around {subject}, sharp light glints bouncing off sharp facets, physical destruction physics, Phantom Flex 4K capture",
+    "negativePrompt": "melting glass, plastic texture, low fps, blurry shards",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_vfx_water_splash",
+    "title": "水花飞溅微距折射 (Water Droplet Splash Macro)",
+    "majorCategory": "vfx",
+    "subcategory": "流体与破碎",
+    "tags": ["水滴", "飞溅", "微距", "液体物理"],
+    "channel": "image",
+    "promptTemplate": "High-speed macro photography of pristine water droplet crown impact, crown splash with perfect spherical secondary beads, optical refraction inside water surface, crisp surface tension ripples, studio backlight, 100mm macro lens",
+    "negativePrompt": "gelatinous, cloudy water, low detail, noisy background",
+    "recommendedParams": {
+      "aspect_ratio": "1:1"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_vfx_magic_aura",
+    "title": "魔法粒子符文光环 (Arcane Rune Magic Aura)",
+    "majorCategory": "vfx",
+    "subcategory": "能量与光效",
+    "tags": ["粒子", "魔法", "光晕", "特效"],
+    "channel": "video",
+    "promptTemplate": "Ethereal glowing magical particles and intricate arcane runes swirling around {subject}, luminous energy tendrils illuminating the scene with vivid turquoise and violet light, particle depth field, fluid emission physics",
+    "negativePrompt": "flat overlay, cheap 2D animation, clipped glow, washed out",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_vfx_cinematic_explosion",
+    "title": "电影级火球爆炸 (Cinematic Explosion & Smoke)",
+    "majorCategory": "vfx",
+    "subcategory": "烟火与爆炸",
+    "tags": ["爆炸", "火焰", "浓烟", "冲击波"],
+    "channel": "video",
+    "promptTemplate": "Massive cinematic practical effect explosion detonating in background behind {subject}, expanding billowing orange fire plume, rolling black smoke volumetrics with airborne burning debris, turbulent air distortion shockwave, Hollywood blockbuster scale",
+    "negativePrompt": "static flame texture, bad CGI smoke, low resolution fire, oversaturated cartoon",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_light_god_rays",
+    "title": "丁达尔体积光 (Volumetric God Rays)",
+    "majorCategory": "lighting",
+    "subcategory": "经典电影打光",
+    "tags": ["光影", "丁达尔", "体积光", "晨曦", "氛围感"],
+    "channel": "image",
+    "promptTemplate": "Magnificent cinematic volumetric god rays streaming through morning mist onto {subject} in {environment}, visible airborne floating dust motes catching golden sunlight, ethereal atmospheric haze, deep contrast shadows, Arri Alexa cinematography",
+    "negativePrompt": "flat lighting, harsh midday sun, blown out highlights, muddy shadows",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_light_cyber_neon",
+    "title": "雨夜赛车霓虹反射 (Rainy Neon Pavement Reflection)",
+    "majorCategory": "lighting",
+    "subcategory": "经典电影打光",
+    "tags": ["赛博朋克", "霓虹", "雨夜", "漫反射", "倒影"],
+    "channel": "video",
+    "promptTemplate": "Rainy cyberpunk metropolis street at midnight, {subject} standing beside glowing holographic billboards, vibrant cyan and magenta neon lights reflecting on wet puddle-soaked asphalt, raindrops creating ripples, Blade Runner aesthetic",
+    "negativePrompt": "dry ground, daylight, muted colors, flat dull lighting",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_light_16mm_grain",
+    "title": "16mm复古胶片颗粒 (16mm Vintage Film Grain)",
+    "majorCategory": "lighting",
+    "subcategory": "胶片与年代感",
+    "tags": ["复古", "胶片", "颗粒感", "漏光", "90年代"],
+    "channel": "video",
+    "promptTemplate": "Authentic 16mm Kodachrome motion picture footage of {subject} wandering in {environment}, organic analogue film grain, subtle warm edge light leak, natural halation around highlights, gentle gate weave jitter, nostalgic vintage cinema look",
+    "negativePrompt": "digital sharpness, clean plastic texture, modern 8k sharpness, chromatic aberration distortion",
+    "recommendedParams": {
+      "aspect_ratio": "4:3",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_style_makoto_shinkai",
+    "title": "新海诚动漫天空与光感 (Shinkai Anime Sky & Glow)",
+    "majorCategory": "art_style",
+    "subcategory": "动漫与二次元",
+    "tags": ["动漫", "二次元", "新海诚", "天空", "光晕"],
+    "channel": "image",
+    "promptTemplate": "Makoto Shinkai aesthetic anime artwork, {subject} looking up toward an expansive sky with towering cumulative clouds, brilliant sun flare with rainbow prism dispersion, lush emotional color palette, immaculate painted background art",
+    "negativePrompt": "realistic photo, 3D render, dark gritty, western comic, muddy colors",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_style_ghibli_watercolor",
+    "title": "吉卜力手绘水彩风景 (Ghibli Hand-Drawn Watercolor)",
+    "majorCategory": "art_style",
+    "subcategory": "动漫与二次元",
+    "tags": ["吉卜力", "水彩", "手绘", "温暖治愈"],
+    "channel": "image",
+    "promptTemplate": "Studio Ghibli style masterwork, peaceful scenic landscape featuring {subject} in {environment}, hand-painted gouache and watercolor texture, pastoral nostalgia, warm gentle summer breeze, Hayao Miyazaki animation art",
+    "negativePrompt": "harsh digital render, sharp 3D polygons, photorealism, gritty dark",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_style_ue5_render",
+    "title": "虚幻引擎5真实渲染 (Unreal Engine 5 Hyper-Real)",
+    "majorCategory": "art_style",
+    "subcategory": "3D 与特种动画",
+    "tags": ["UE5", "3D", "写实", "Nanite", "Lumen"],
+    "channel": "image",
+    "promptTemplate": "Unreal Engine 5 hyper-realistic render of {subject} within complex architectural {environment}, Lumen global illumination, Nanite micro-polygon geometry, realistic sub-surface skin scattering, raytraced reflections, octane render quality",
+    "negativePrompt": "low poly, video game hud, flat textures, clay render, cartoonish",
+    "recommendedParams": {
+      "aspect_ratio": "16:9"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  },
+  {
+    "id": "builtin_style_claymation",
+    "title": "黏土定格动画质感 (Claymation Stop-Motion)",
+    "majorCategory": "art_style",
+    "subcategory": "3D 与特种动画",
+    "tags": ["黏土", "定格动画", "手工感", "指纹质感"],
+    "channel": "video",
+    "promptTemplate": "Charming Aardman style claymation stop-motion animation, {subject} sculpted out of malleable plasticine clay with visible subtle craftsman fingerprints and surface indentations, 12fps tactile movement rhythm, miniature diorama lighting",
+    "negativePrompt": "smooth digital 3D, CGI gloss, continuous 60fps video, photorealistic human flesh",
+    "recommendedParams": {
+      "aspect_ratio": "16:9",
+      "seconds": "5",
+      "mode": "auto"
+    },
+    "benchmarks": [],
+    "isBuiltin": true,
+    "updatedAt": "2026-11-02T12:00:00.000Z"
+  }
+]

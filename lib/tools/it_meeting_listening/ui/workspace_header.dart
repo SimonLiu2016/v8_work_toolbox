@@ -17,12 +17,14 @@ class WorkspaceHeader extends StatelessWidget {
   final ValueChanged<WorkspaceNewAction> onNewAction;
   final VoidCallback onOpenVocabulary;
   final VoidCallback onOpenMiniPlayer;
+  final VoidCallback? onOpenSentenceVault;
 
   const WorkspaceHeader({
     super.key,
     required this.onNewAction,
     required this.onOpenVocabulary,
     required this.onOpenMiniPlayer,
+    this.onOpenSentenceVault,
   });
 
   @override
@@ -128,6 +130,16 @@ class WorkspaceHeader extends StatelessWidget {
             icon: const Icon(Icons.menu_book_outlined, size: 16),
             label: const Text('词汇表'),
           ),
+          if (onOpenSentenceVault != null) ...[
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              key: const ValueKey('header-sentence-vault-btn'),
+              onPressed: onOpenSentenceVault,
+              icon: const Icon(Icons.star_outline_rounded,
+                  size: 16, color: Colors.amber),
+              label: const Text('长难句本'),
+            ),
+          ],
           const SizedBox(width: 8),
           OutlinedButton.icon(
             key: const ValueKey('header-mini-player-btn'),

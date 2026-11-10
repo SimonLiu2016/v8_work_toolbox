@@ -13,8 +13,8 @@ import '../../../theme/app_theme.dart';
 import '../models/listening_models.dart';
 import '../services/listening_progress_store.dart';
 import '../services/real_meetings_controller.dart';
-import '../services/role_voice_map.dart';
 import '../services/task_tracker.dart';
+import '../services/tts_binding_probe.dart';
 
 /// 真实会议列表操作项。
 enum RealMeetingContextAction {
@@ -593,6 +593,82 @@ class _RealMeetingDetailState extends State<RealMeetingDetail> {
               ],
             ),
           ),
+          if (snap.failedGroupDetails.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withValues(alpha: 0.08),
+                borderRadius: AppTheme.borderRadiusSmall,
+                border:
+                    Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded,
+                          size: 16, color: Colors.redAccent),
+                      const SizedBox(width: 8),
+                      Text(
+                        '有 ${snap.failedGroupDetails.length} 组合成失败',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                        ),
+                        onPressed: widget.onRunPrimaryAction,
+                        icon: const Icon(Icons.refresh_rounded, size: 14),
+                        label: const Text('重试失败组',
+                            style: TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '失败话轮已自动填充静音占位，点击上方「播放」可正常听取其余已成功轮次。失败明细如下：',
+                    style: TextStyle(fontSize: 11, color: textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final fail in snap.failedGroupDetails)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '• 第 ${fail.turnIndices.map((i) => i + 1).join(',')} 轮 [${fail.speakerName}]: ',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: textPrimary,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              fail.reason,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Text(
             '对话预览（前 ${snap.meeting.turns.take(12).length} 轮）',
@@ -725,7 +801,10 @@ class _RealMeetingDetailState extends State<RealMeetingDetail> {
     final name = resolved?.displayName ?? slotId;
     final isMe = resolved?.isMe ?? false;
     final voiceId = resolved?.voiceId ?? '';
-    final inPool = VoicePool.byId(voiceId) != null;
+    // 音色候选按当前 TTS 槽位探测：MiMo → MiMo 官方音色，否则 VoicePool。
+    // inPool/兜底项也按当前池判断，避免 MiMo 下显示必然被吞掉的 StepFun id。
+    final voiceOptions = TtsBindingProbe.voiceOptions();
+    final inPool = voiceOptions.any((v) => v.id == voiceId);
     final mergedInto = snap.mergeInto[slotId];
 
     return Padding(
@@ -767,23 +846,15 @@ class _RealMeetingDetailState extends State<RealMeetingDetail> {
           const SizedBox(width: 10),
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
-              value: voiceId.isEmpty ? null : voiceId,
+              value: inPool ? voiceId : null,
               isDense: true,
               style: TextStyle(fontSize: 11, color: textPrimary),
               items: [
-                if (!inPool && voiceId.isNotEmpty)
-                  DropdownMenuItem(
-                    value: voiceId,
-                    child: Text(
-                      '$voiceId（自动）',
-                      style: TextStyle(fontSize: 11, color: textPrimary),
-                    ),
-                  ),
-                for (final v in VoicePool.all)
+                for (final v in voiceOptions)
                   DropdownMenuItem(
                     value: v.id,
                     child: Text(
-                      '${v.label} · ${v.gender == VoiceGender.male ? "男" : "女"}',
+                      '${v.name}${v.gender == 'male' ? ' · 男' : ' · 女'}',
                       style: TextStyle(fontSize: 11, color: textPrimary),
                     ),
                   ),

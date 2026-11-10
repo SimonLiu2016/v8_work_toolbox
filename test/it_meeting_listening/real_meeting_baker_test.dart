@@ -381,6 +381,28 @@ void main() {
       final result = await baker.bake(m, speakers: speakers);
       expect(result.failures.keys, contains(0));
       expect(result.state.groups.single.failed, isTrue);
+      expect(result.failures[0], contains('未检测到 ffmpeg'));
+      expect(result.state.groups.single.failureReason, contains('未检测到 ffmpeg'));
+    });
+
+    test('个别话轮失败写入静音占位后，整篇音频正常生成且标记为可播', () async {
+      final m = meeting([
+        ('发言人 1', 'good turn.'),
+        ('发言人 2', 'bad turn.'),
+      ]);
+      tts.failWhen = (t) => t.contains('bad');
+
+      final result = await baker.bake(m, speakers: speakers);
+      expect(result.failedGroupCount, 1);
+      expect(result.hasPlayableAudio, isTrue);
+      expect(result.clip?.isPlaceholder, isFalse);
+      expect(result.clip?.audioPath, isNotEmpty);
+      expect(result.state.groups[1].failed, isTrue);
+      expect(result.state.groups[1].failureReason, contains('boom'));
+
+      // 验证保存的合成状态也持久化了 failureReason
+      final loaded = await store.loadBakeState(m.id);
+      expect(loaded?.groups[1].failureReason, contains('boom'));
     });
   });
 
@@ -457,6 +479,128 @@ void main() {
       expect(result.state.groups[0].voiceId, 'v9');
       // 组 2 还没轮到，仍是旧音色
       expect(result.state.groups[2].voiceId, 'v1');
+    });
+  });
+
+  group('续跑音色一致性', () {
+    Map<String, ResolvedSpeaker> withVoice(String slot, String voice) => {
+          for (final e in speakers.entries)
+            e.key: e.key == slot
+                ? ResolvedSpeaker(
+                    slotId: e.value.slotId,
+                    displayName: e.value.displayName,
+                    voiceId: voice,
+                    isMe: e.value.isMe)
+                : e.value,
+        };
+
+    test('音色一致的组续跑不重复合成', () async {
+      final m = meeting([
+        ('发言人 1', 'hello.'),
+        ('发言人 2', 'world.'),
+      ]);
+      await baker.bake(m, speakers: speakers);
+      final firstCalls = tts.calls;
+      expect(firstCalls, 2);
+
+      await baker.bake(m, speakers: speakers);
+      expect(tts.calls, firstCalls,
+          reason: '落盘音色与期望一致 → 直接复用，不该再请求 TTS');
+    });
+
+    test('音色不一致的组触发重合成并更新落盘音色', () async {
+      final m = meeting([('发言人 1', 'hello.')]);
+      await baker.bake(m, speakers: speakers);
+      expect((await store.loadBakeState(m.id))!.groups.single.voiceId, 'v1');
+      final firstCalls = tts.calls;
+
+      // 期望音色从 v1 变为 v9：该组必须重烘，而不是复用旧音频
+      final result =
+          await baker.bake(m, speakers: withVoice('发言人 1', 'v9'));
+      expect(result.failures, isEmpty);
+      expect(result.state.groups.single.voiceId, 'v9',
+          reason: '重烘成功后落盘音色更新为当前期望音色');
+      expect(tts.calls, firstCalls + 1, reason: '音色不一致 → 必须重新合成');
+      // 音频文件确实被新内容覆盖（文本没变，但至少存在且非空）
+      final f = File('${store.turnsDir(m.id).path}/g0.mp3');
+      expect(f.existsSync() && f.lengthSync() > 0, isTrue);
+    });
+
+    test('落盘音色为空的历史组触发重合成并补记音色', () async {
+      final m = meeting([('发言人 1', 'hello.')]);
+      // 先烘一遍，再手工把落盘音色抹成空，模拟旧版本未记录音色的历史组
+      await baker.bake(m, speakers: speakers);
+      final state = (await store.loadBakeState(m.id))!;
+      final blank = MeetingBakeState(
+        groups: [
+          state.groups.single.copyWith(voiceId: ''),
+        ],
+        audioFile: state.audioFile,
+        totalMs: state.totalMs,
+        bakedAt: state.bakedAt,
+      );
+      await store.saveBakeState(m.id, blank);
+      final firstCalls = tts.calls;
+
+      final result = await baker.bake(m, speakers: speakers);
+      expect(result.failures, isEmpty);
+      expect(result.state.groups.single.voiceId, 'v1',
+          reason: '空记录组必须重烘并补记本次实际音色');
+      expect(tts.calls, firstCalls + 1, reason: '空 voiceId 视为不一致，必须重烘');
+    });
+
+    test('空记录组重烘失败后待更新语义不变（静音占位 + failed）', () async {
+      final m = meeting([('发言人 1', 'hello.')]);
+      await baker.bake(m, speakers: speakers);
+      final state = (await store.loadBakeState(m.id))!;
+      await store.saveBakeState(
+        m.id,
+        MeetingBakeState(
+          groups: [state.groups.single.copyWith(voiceId: '')],
+          audioFile: state.audioFile,
+          totalMs: state.totalMs,
+          bakedAt: state.bakedAt,
+        ),
+      );
+
+      tts.failWhen = (_) => true;
+      final result = await baker.bake(m, speakers: speakers);
+      expect(result.failures.keys, contains(0));
+      expect(result.state.groups.single.failed, isTrue);
+      expect(result.state.groups.single.voiceId, 'v1',
+          reason: '失败也记录本次期望音色，与既有普通路径语义一致');
+    });
+
+    test('取消后音色不一致组保留旧音色，再次合成继续完成', () async {
+      final m = meeting([
+        ('发言人 1', 'one.'),
+        ('发言人 2', 'two.'),
+        ('发言人 1', 'three.'),
+      ]);
+      await baker.bake(m, speakers: speakers);
+
+      // 全部改期望音色 → 三组都不一致。第一组处理后取消。
+      var checks = 0;
+      final result = await baker.bake(
+        m,
+        speakers: withVoice('发言人 1', 'v9'),
+        shouldCancel: () => checks++ >= 1,
+      );
+      expect(result.cancelled, isTrue);
+      // 组 0（发言人 1）已重烘为新音色
+      expect(result.state.groups[0].voiceId, 'v9');
+      // 组 1（发言人 2，期望 v2 未变但组 0 之后才轮到取消）仍为旧音色
+      expect(result.state.groups[1].voiceId, 'v2');
+
+      // 再次合成（不取消）：剩余不一致组补齐
+      final second =
+          await baker.bake(m, speakers: withVoice('发言人 1', 'v9'));
+      expect(second.cancelled, isFalse);
+      expect(second.failures, isEmpty);
+      // 全部组落盘音色 = 当前期望音色
+      expect(second.state.groups[0].voiceId, 'v9');
+      expect(second.state.groups[1].voiceId, 'v2');
+      expect(second.state.groups[2].voiceId, 'v9');
     });
   });
 

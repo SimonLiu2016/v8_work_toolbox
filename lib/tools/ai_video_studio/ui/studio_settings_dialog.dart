@@ -280,7 +280,7 @@ class _StudioSettingsDialogState extends State<StudioSettingsDialog> {
                   visualDensity: VisualDensity.compact,
                 ),
                 icon: const Icon(Icons.science_outlined, size: 14),
-                label: const Text('打开 Agnes 试炼场', style: TextStyle(fontSize: 12)),
+                label: const Text('打开大模型试炼场', style: TextStyle(fontSize: 12)),
                 // 从注册表取而不是新构造一个：findById 返回的就是那份声明，
                 // 将来若它的 openNewWindow 逻辑变了（比如改成单例复投），
                 // 这里自动跟随。

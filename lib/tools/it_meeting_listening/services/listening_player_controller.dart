@@ -15,6 +15,9 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../../services/audio_playback_speed.dart';
+export '../../../../services/audio_playback_speed.dart' show kUniversalSpeedSteps, kListeningSpeedSteps;
+
 import '../models/listening_models.dart';
 import 'listening_audio_player.dart';
 import 'resume_recorder.dart';
@@ -57,11 +60,6 @@ class ListeningPlaybackSnapshot {
   }
 }
 
-/// 播放速度档位。
-///
-/// 上限 1.25x：真实海外会议大多就在这个区间，更快会让人听不清而不是更快。
-const List<double> kListeningSpeedSteps = [0.75, 0.9, 1.0, 1.25];
-
 /// 播放控制器。
 class ListeningPlayerController extends ChangeNotifier {
   /// 播放器实现。抽成接口是为了让 widget 测试能注入假实现——
@@ -86,11 +84,29 @@ class ListeningPlayerController extends ChangeNotifier {
   Duration _duration = Duration.zero;
   double _speed = 1.0;
 
+  /// 单句 A-B 循环跟读的轮次下标。
+  int? _loopingTurnIndex;
+
+  /// 最近使用的非 1.0x 慢速（供快速切回使用，默认 0.8x）。
+  double _lastCustomSpeed = 0.8;
+
+  /// 是否开启句间自动停顿（影子跟读复述）。
+  bool _autoPause = false;
+
+  /// 当前正在播放的话轮下标（配合自动停顿与边界识别）。
+  int? _activeTurnIndex;
+
+  /// 上一次因句末自动停顿所暂停的发言轮次。
+  int? _lastAutoPausedTurnIndex;
+
   /// 启动恢复时预载入的音频路径（处于暂停态、尚未真正调用底层播放器发声）。
   String? _preparedFilePath;
 
-  /// 连续播放：到末尾自动接下一条。
-  bool _continuous = false;
+  /// 篇级流转模式（单篇播放、列表连播、单篇循环）。
+  ListeningLoopMode _loopMode = ListeningLoopMode.orderOnce;
+
+  /// 连续播放：到末尾自动接下一条（向后兼容）。
+  bool get _continuous => _loopMode == ListeningLoopMode.listLoop;
 
   /// 连续播放的候选队列（按场景筛选后的片段列表）。
   List<Clip> _queue = const [];
@@ -117,8 +133,14 @@ class ListeningPlayerController extends ChangeNotifier {
   Duration get duration => _duration;
   double get speed => _speed;
   bool get isPlaying => _state == ListeningPlaybackState.playing;
-  bool get isContinuous => _continuous;
+  ListeningLoopMode get loopMode => _loopMode;
+  bool get isContinuous => _loopMode == ListeningLoopMode.listLoop;
   List<Clip> get queue => _queue;
+
+  int? get loopingTurnIndex => _loopingTurnIndex;
+  bool get isLoopingTurn => _loopingTurnIndex != null;
+  bool get isAutoPause => _autoPause;
+  double get lastCustomSpeed => _lastCustomSpeed;
 
   /// 当前播放快照。
   ListeningPlaybackSnapshot get snapshot => ListeningPlaybackSnapshot(
@@ -133,14 +155,46 @@ class ListeningPlayerController extends ChangeNotifier {
     _posSub = _player.onPositionChanged.listen((pos) {
       _position = pos;
       final current = _clip;
-      if (current != null && _state == ListeningPlaybackState.playing) {
-        unawaited(
-          recorder.onPositionTick(
-            current,
-            pos.inMilliseconds,
-            durationMs: _duration.inMilliseconds,
-          ),
-        );
+      if (current != null) {
+        if (_loopingTurnIndex != null &&
+            _loopingTurnIndex! >= 0 &&
+            _loopingTurnIndex! < current.turns.length) {
+          final loopTurn = current.turns[_loopingTurnIndex!];
+          if (pos.inMilliseconds >= loopTurn.endMs ||
+              pos.inMilliseconds < loopTurn.startMs - 500) {
+            seek(loopTurn.startMs);
+            if (_autoPause) {
+              unawaited(pause());
+            }
+            return;
+          }
+        } else if (_autoPause && current.turns.isNotEmpty) {
+          final activeIdx = _activeTurnIndex ?? currentTurnIndex;
+          if (activeIdx >= 0 && activeIdx < current.turns.length) {
+            final activeTurn = current.turns[activeIdx];
+            if (pos.inMilliseconds >= activeTurn.endMs &&
+                _lastAutoPausedTurnIndex != activeIdx) {
+              _lastAutoPausedTurnIndex = activeIdx;
+              _activeTurnIndex = activeIdx + 1;
+              unawaited(pause());
+              return;
+            } else if (pos.inMilliseconds < activeTurn.endMs) {
+              _activeTurnIndex = activeIdx;
+            }
+          }
+        } else {
+          _activeTurnIndex = currentTurnIndex;
+        }
+
+        if (_state == ListeningPlaybackState.playing) {
+          unawaited(
+            recorder.onPositionTick(
+              current,
+              pos.inMilliseconds,
+              durationMs: _duration.inMilliseconds,
+            ),
+          );
+        }
       }
       notifyListeners();
     });
@@ -207,6 +261,9 @@ class ListeningPlayerController extends ChangeNotifier {
     _clip = clip;
     _position = Duration(milliseconds: safeOffset);
     _duration = Duration(milliseconds: clip.durationMs);
+    _loopingTurnIndex = null;
+    _autoPause = false;
+    _lastAutoPausedTurnIndex = null;
     _state = ListeningPlaybackState.paused;
     _preparedFilePath = filePath;
     notifyListeners();
@@ -226,16 +283,22 @@ class ListeningPlayerController extends ChangeNotifier {
       return;
     }
 
-    // 切换内容前先保存上一条内容的当前位置。
+    // 切换不同素材时彻底重置单句循环与自动跟读停顿，避免隐式残留影响后续素材的连续播放。
     final previousClip = _clip;
-    if (previousClip != null &&
-        previousClip.id != clip.id &&
-        _position.inMilliseconds > 0) {
-      await recorder.flushNow(
-        clip: previousClip,
-        offsetMs: _position.inMilliseconds,
-        durationMs: _duration.inMilliseconds,
-      );
+    final isChangingClip = previousClip == null || previousClip.id != clip.id;
+    if (isChangingClip) {
+      _loopingTurnIndex = null;
+      _autoPause = false;
+      _lastAutoPausedTurnIndex = null;
+    }
+    if (previousClip != null && previousClip.id != clip.id) {
+      if (_position.inMilliseconds > 0) {
+        await recorder.flushNow(
+          clip: previousClip,
+          offsetMs: _position.inMilliseconds,
+          durationMs: _duration.inMilliseconds,
+        );
+      }
     }
 
     final resumeMs = startOffsetMs ??
@@ -245,6 +308,7 @@ class ListeningPlayerController extends ChangeNotifier {
     _clip = clip;
     _position = Duration(milliseconds: resumeMs);
     _duration = Duration(milliseconds: clip.durationMs);
+    _activeTurnIndex = currentTurnIndex;
     final qIdx = _queue.indexWhere((c) => c.id == clip.id);
     if (qIdx >= 0) _queueIndex = qIdx;
 
@@ -306,6 +370,13 @@ class ListeningPlayerController extends ChangeNotifier {
       );
       return;
     }
+    if (_autoPause && _lastAutoPausedTurnIndex != null && current != null) {
+      final pausedTurn = _lastAutoPausedTurnIndex!;
+      _lastAutoPausedTurnIndex = null;
+      if (_loopingTurnIndex == null && pausedTurn + 1 < current.turns.length) {
+        await seek(current.turns[pausedTurn + 1].startMs);
+      }
+    }
     await _player.resume();
     _state = ListeningPlaybackState.playing;
     notifyListeners();
@@ -321,6 +392,9 @@ class ListeningPlayerController extends ChangeNotifier {
       );
     }
     _preparedFilePath = null;
+    _loopingTurnIndex = null;
+    _autoPause = false;
+    _lastAutoPausedTurnIndex = null;
     await _player.stop();
     _state = ListeningPlaybackState.stopped;
     _position = Duration.zero;
@@ -329,10 +403,11 @@ class ListeningPlayerController extends ChangeNotifier {
 
   /// 跳到指定位置（毫秒）。
   Future<void> seek(int positionMs) async {
+    _position = Duration(milliseconds: positionMs);
+    _activeTurnIndex = currentTurnIndex;
     if (_preparedFilePath == null) {
       await _player.seek(Duration(milliseconds: positionMs));
     }
-    _position = Duration(milliseconds: positionMs);
     final current = _clip;
     if (current != null) {
       await recorder.flushNow(
@@ -359,8 +434,59 @@ class ListeningPlayerController extends ChangeNotifier {
   Future<void> setSpeed(double speed) async {
     if (!kListeningSpeedSteps.contains(speed)) return;
     _speed = speed;
+    if ((speed - 1.0).abs() > 0.01) {
+      _lastCustomSpeed = speed;
+    }
     await _player.setPlaybackRate(speed);
     notifyListeners();
+  }
+
+  /// 在 1.0x 与自定义慢速（默认 0.8x）之间极速瞬时切换。
+  Future<void> toggleQuickSpeed() async {
+    if ((_speed - 1.0).abs() < 0.01) {
+      await setSpeed(_lastCustomSpeed);
+    } else {
+      _lastCustomSpeed = _speed;
+      await setSpeed(1.0);
+    }
+  }
+
+  /// 开启或关闭句间自动停顿（影子跟读复述）。
+  void setAutoPause(bool enabled) {
+    _autoPause = enabled;
+    _lastAutoPausedTurnIndex = null;
+    notifyListeners();
+  }
+
+  /// 设定或清除单句 A-B 循环跟读。
+  void setLoopingTurn(int? turnIndex) {
+    if (turnIndex == null || turnIndex == _loopingTurnIndex) {
+      _loopingTurnIndex = null;
+      notifyListeners();
+      return;
+    }
+    final c = _clip;
+    if (c == null || turnIndex < 0 || turnIndex >= c.turns.length) {
+      _loopingTurnIndex = null;
+      notifyListeners();
+      return;
+    }
+    _loopingTurnIndex = turnIndex;
+    final turn = c.turns[turnIndex];
+    if (_position.inMilliseconds < turn.startMs ||
+        _position.inMilliseconds >= turn.endMs) {
+      seek(turn.startMs);
+    }
+    notifyListeners();
+  }
+
+  /// 切换指定发言轮次的循环状态。
+  void toggleLoopingTurn(int turnIndex) {
+    if (_loopingTurnIndex == turnIndex) {
+      setLoopingTurn(null);
+    } else {
+      setLoopingTurn(turnIndex);
+    }
   }
 
   /// 减速一档。
@@ -470,10 +596,23 @@ class ListeningPlayerController extends ChangeNotifier {
     return null;
   }
 
-  /// 开启/关闭连续播放。
-  void setContinuous(bool value) {
-    _continuous = value;
+  /// 设置篇级流转模式。
+  void setLoopMode(ListeningLoopMode mode) {
+    if (_loopMode == mode) return;
+    _loopMode = mode;
     notifyListeners();
+  }
+
+  /// 轮转切换篇级流转模式（单篇播放 ➔ 列表连播 ➔ 单篇循环 ➔ 单篇播放）。
+  ListeningLoopMode cycleLoopMode() {
+    final nextMode = _loopMode.next;
+    setLoopMode(nextMode);
+    return nextMode;
+  }
+
+  /// 开启/关闭连续播放（向后兼容）。
+  void setContinuous(bool value) {
+    setLoopMode(value ? ListeningLoopMode.listLoop : ListeningLoopMode.orderOnce);
   }
 
   Future<void> _playAt(
@@ -494,9 +633,15 @@ class ListeningPlayerController extends ChangeNotifier {
         durationMs: _duration.inMilliseconds,
       );
     }
-    if (_continuous && _queue.isNotEmpty) {
+    if (_loopMode == ListeningLoopMode.singleLoop && _clip != null) {
+      // 单篇循环：重新定位至开头并继续播放
+      await seek(0);
+      await resume();
+    } else if (_loopMode == ListeningLoopMode.listLoop && _queue.isNotEmpty) {
+      // 列表连播：自动切到下一首
       await next(filePathFor: defaultFilePathFor);
     } else {
+      // 单篇播放（orderOnce）或队列空：停止播放
       _state = ListeningPlaybackState.stopped;
       notifyListeners();
     }

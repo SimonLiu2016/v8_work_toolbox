@@ -377,6 +377,14 @@ class SiteScraperRule {
       lastCrawledAt: DateTime.tryParse(map['last_crawled_at'] as String? ?? ''),
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SiteScraperRule && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 /// 站点书库探索发现的小说条目（用于批量勾选采集）

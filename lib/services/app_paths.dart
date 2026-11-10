@@ -160,6 +160,18 @@ abstract final class AppPaths {
   static Directory get privateBrowserThumbnailsDir =>
       Directory(p.join(privateBrowserDir.path, 'thumbnails'));
 
+  /// 隐私空间随心短剧目录（`tools/casual_short_drama/`）。
+  static Directory get casualShortDramaDir =>
+      Directory(p.join(root.path, 'CasualShortDrama'));
+
+  /// 隐私空间随心短剧 SQLite 数据库文件。
+  static File get casualShortDramaDbFile =>
+      File(p.join(casualShortDramaDir.path, 'CasualShortDrama.sqlite'));
+
+  /// 隐私空间随心短剧封面密文解密本地缓存目录。
+  static Directory get casualShortDramaCoversDir =>
+      Directory(p.join(casualShortDramaDir.path, 'covers'));
+
   /// 安全工具箱根目录（`tools/security_toolbox/`）。
   static Directory get securityDir => Directory(p.join(root.path, 'security'));
 
@@ -254,6 +266,24 @@ abstract final class AppPaths {
   static Directory agnesPlaygroundTurnDir(String turnId) =>
       Directory(p.join(agnesPlaygroundDir.path, 'turns', turnId));
 
+  /// 全局共享的视觉提示词模板根目录（`prompt_templates/`）。
+  ///
+  /// 属于全局创作者资产，跨项目、跨窗口共享，与单一视频工程解耦。
+  static Directory get sharedPromptTemplatesDir =>
+      Directory(p.join(root.path, 'prompt_templates'));
+
+  /// 提示词效果库全局索引文件（包含出厂合并项与用户自定义项）。
+  static File get promptTemplateCatalogFile =>
+      File(p.join(sharedPromptTemplatesDir.path, 'catalog.json'));
+
+  /// 模型实测样片多媒体存储根目录。
+  static Directory get promptBenchmarksDir =>
+      Directory(p.join(sharedPromptTemplatesDir.path, 'benchmarks'));
+
+  /// 某模板在各模型下的样片子目录。
+  static Directory promptBenchmarkTemplateDir(String templateId) =>
+      Directory(p.join(promptBenchmarksDir.path, templateId));
+
   /// 无限画布工具自己的目录（`infinite_canvas/`）。
   ///
   /// **只存本工具自己的产物**（override 备份、日志副本）。
@@ -270,6 +300,19 @@ abstract final class AppPaths {
   /// 字幕记录在内存累积，导出时写入此处或用户选定位置。
   static Directory get liveTranslatorExportDir =>
       Directory(p.join(root.path, 'live_translator'));
+
+  /// 会议录音配置存储文件（`config/meeting_recorder.json`）。
+  static File get meetingRecorderConfigFile =>
+      File(p.join(configDir.path, 'meeting_recorder.json'));
+
+  /// 会议录音默认存储目录（优先 `~/Documents/V8Recordings`）。
+  static Directory get defaultMeetingRecordingsDir {
+    final home = Platform.environment['HOME'];
+    if (home != null && home.isNotEmpty) {
+      return Directory(p.join(home, 'Documents', 'V8Recordings'));
+    }
+    return Directory(p.join(root.path, 'recordings'));
+  }
 
   /// Dola 号池根目录（账号元数据 + 能力覆盖配置）。
   ///
@@ -329,6 +372,10 @@ abstract final class AppPaths {
   /// 索引是烘焙产物（会被整体重写），断点是**用户行为**（不该被烘焙覆盖）。
   static File get itMeetingListeningProgressFile =>
       File(p.join(itMeetingListeningDir.path, 'play_progress.json'));
+
+  /// 长难句复盘本文件（Sentence Vault）。
+  static File get itMeetingSentenceVaultFile =>
+      File(p.join(itMeetingListeningDir.path, 'sentence_vault.json'));
 
   /// 排练会议的中间产物目录（材料、讲稿、剧本）。
   ///
@@ -414,8 +461,11 @@ abstract final class AppPaths {
     visualErasFile,
     itMeetingSyncStateFile,
     itMeetingListeningProgressFile,
+    itMeetingSentenceVaultFile,
     meetingVocabularyIndexFile,
     listeningMyIdentityFile,
+    meetingRecorderConfigFile,
+    casualShortDramaDbFile,
   ];
 
   /// 全部导出目录，供回归测试断言单一性。
@@ -453,6 +503,8 @@ abstract final class AppPaths {
     realMeetingAnswersDir,
     realMeetingAudioDir,
     liveTranslatorExportDir,
+    casualShortDramaDir,
+    casualShortDramaCoversDir,
   ];
 
   /// 小说管理器根目录（`tools/novel_manager/`）。

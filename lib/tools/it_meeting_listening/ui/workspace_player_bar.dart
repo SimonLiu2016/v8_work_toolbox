@@ -19,6 +19,7 @@ class WorkspacePlayerBar extends StatelessWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final ValueChanged<Clip> onJumpToClip;
+  final ValueChanged<ListeningLoopMode>? onLoopModeChanged;
 
   const WorkspacePlayerBar({
     super.key,
@@ -30,6 +31,7 @@ class WorkspacePlayerBar extends StatelessWidget {
     required this.onPrevious,
     required this.onNext,
     required this.onJumpToClip,
+    this.onLoopModeChanged,
   });
 
   SpeakerTurn? _currentTurn(Clip? clip, int posMs) {
@@ -171,20 +173,86 @@ class WorkspacePlayerBar extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: textSecondary),
           ),
           const SizedBox(width: 8),
-          _buildSpeedMenu(context, accent),
-          const SizedBox(width: 4),
-          if (!isMeeting)
-            Tooltip(
-              message: '连续播放（场景内循环）',
-              child: IconButton(
-                onPressed: () => player.setContinuous(!player.isContinuous),
-                icon: Icon(
-                  Icons.repeat_rounded,
-                  size: 18,
-                  color: player.isContinuous ? accent : textSecondary,
+          // 极速慢速切换 (0.8x ↔ 1.0x)
+          Tooltip(
+            message: '极速变速（当前 ${player.speed}x ↔ 目标 ${player.speed == 1.0 ? "${player.lastCustomSpeed}x" : "1.0x"}）',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: () => player.toggleQuickSpeed(),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(4),
+                  color: player.speed != 1.0 ? accent.withValues(alpha: 0.15) : null,
+                  border: Border.all(
+                    color: player.speed != 1.0 ? accent : border,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.speed_rounded,
+                      size: 13,
+                      color: player.speed != 1.0 ? accent : textSecondary,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      player.speed != 1.0 ? '慢速' : '原速',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: player.speed != 1.0 ? accent : textSecondary,
+                        fontWeight: player.speed != 1.0 ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
+          ),
+          const SizedBox(width: 4),
+          _buildSpeedMenu(context, accent),
+          const SizedBox(width: 4),
+          // 单句循环指示器
+          if (player.isLoopingTurn)
+            Tooltip(
+              message: '当前正在单句循环（第 ${(player.loopingTurnIndex ?? 0) + 1} 句），点击退出',
+              child: InkWell(
+                key: const ValueKey('player-bar-loop-indicator'),
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => player.setLoopingTurn(null),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.amber.withValues(alpha: 0.18),
+                    border: Border.all(color: Colors.amber.shade700),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.repeat_one_rounded, size: 13, color: Colors.amber.shade800),
+                      const SizedBox(width: 3),
+                      Text(
+                        '句循环',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.amber.shade900,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Icon(Icons.close_rounded, size: 12, color: Colors.amber.shade800),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          // 句级跟读模式胶囊（畅听 ↔ 逐句跟读）
+          _buildShadowingCapsule(context, accent, textSecondary, border),
+          const SizedBox(width: 4),
+          // 篇级流转三态循环按钮（单篇播放 ➔ 列表连播 ➔ 单篇循环）
+          _buildLoopModeButton(context, accent, textSecondary),
           const SizedBox(width: 4),
           OutlinedButton.icon(
             key: const ValueKey('player-bar-transcript-btn'),
@@ -211,6 +279,129 @@ class WorkspacePlayerBar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildShadowingCapsule(
+    BuildContext context,
+    Color accent,
+    Color textSecondary,
+    Color border,
+  ) {
+    if (player.isLoopingTurn) return const SizedBox.shrink();
+
+    if (player.isAutoPause) {
+      // 逐句跟读开启中
+      return Tooltip(
+        message: '当前开启了逐句跟读停顿（每句播完自动暂停复述留白）。点击切换为整篇畅听',
+        child: InkWell(
+          key: const ValueKey('player-bar-autopause-indicator'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            player.setAutoPause(false);
+            if (!player.isPlaying) {
+              player.resume();
+            }
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.deepOrange.withValues(alpha: 0.18),
+              border: Border.all(color: Colors.deepOrange.shade400),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.pause_circle_rounded, size: 13, color: Colors.deepOrange.shade700),
+                const SizedBox(width: 3),
+                Text(
+                  '逐句跟读',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.deepOrange.shade800,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(Icons.close_rounded, size: 12, color: Colors.deepOrange.shade700),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // 整篇畅听模式
+    return Tooltip(
+      message: '当前为整篇畅听模式。点击开启逐句停顿（每句播完自动暂停留白复述）',
+      child: InkWell(
+        key: const ValueKey('player-bar-autopause-toggle'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => player.setAutoPause(true),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.hearing_rounded, size: 13, color: textSecondary),
+              const SizedBox(width: 3),
+              Text(
+                '畅听',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoopModeButton(
+    BuildContext context,
+    Color accent,
+    Color textSecondary,
+  ) {
+    IconData icon;
+    String tooltip;
+    Color color;
+
+    switch (player.loopMode) {
+      case ListeningLoopMode.orderOnce:
+        icon = Icons.arrow_right_alt_rounded;
+        tooltip = '播放模式：单篇播放（播完即止，不自动切下一首）· 点击切换';
+        color = textSecondary;
+        break;
+      case ListeningLoopMode.listLoop:
+        icon = Icons.repeat_rounded;
+        tooltip = '播放模式：列表连播（播完自动切下一篇素材）· 点击切换';
+        color = accent;
+        break;
+      case ListeningLoopMode.singleLoop:
+        icon = Icons.repeat_one_rounded;
+        tooltip = '播放模式：单篇循环（反复重听当前篇）· 点击切换';
+        color = accent;
+        break;
+    }
+
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        key: const ValueKey('player-bar-loop-mode-btn'),
+        visualDensity: VisualDensity.compact,
+        onPressed: () {
+          final newMode = player.cycleLoopMode();
+          onLoopModeChanged?.call(newMode);
+        },
+        icon: Icon(icon, size: 20, color: color),
       ),
     );
   }

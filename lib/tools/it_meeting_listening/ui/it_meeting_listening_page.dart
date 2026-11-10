@@ -33,8 +33,8 @@ import '../services/public_library_controller.dart';
 import '../services/real_meetings_controller.dart';
 import '../services/rehearsals_controller.dart';
 import '../services/rehearsal_text_generator.dart';
-import '../services/role_voice_map.dart';
 import '../services/task_tracker.dart';
+import '../services/tts_binding_probe.dart';
 import '../services/workspace_selection.dart';
 import 'answer_composer_dialog.dart';
 import 'library_sidebar.dart';
@@ -42,6 +42,7 @@ import 'material_import_panel.dart';
 import 'public_scene_view.dart';
 import 'real_meeting_views.dart';
 import 'rehearsal_views.dart';
+import 'sentence_vault_dialog.dart';
 import 'transcript_drawer.dart';
 import 'transcript_preview_dialog.dart';
 import 'vocabulary_browser_dialog.dart';
@@ -804,8 +805,8 @@ class _ItMeetingListeningPageState extends State<ItMeetingListeningPage> {
                   border: OutlineInputBorder(),
                 ),
                 items: [
-                  for (final v in VoicePool.all)
-                    DropdownMenuItem(value: v.id, child: Text(v.label)),
+                  for (final v in TtsBindingProbe.voiceOptions())
+                    DropdownMenuItem(value: v.id, child: Text(v.name)),
                 ],
                 onChanged: (v) => setLocal(() => voiceId = v ?? voiceId),
               ),
@@ -852,6 +853,15 @@ class _ItMeetingListeningPageState extends State<ItMeetingListeningPage> {
           Navigator.pop(context);
           _jumpToPosting(posting);
         },
+      ),
+    );
+  }
+
+  Future<void> _openSentenceVault() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => SentenceVaultDialog(
+        player: _player,
       ),
     );
   }
@@ -1072,6 +1082,7 @@ class _ItMeetingListeningPageState extends State<ItMeetingListeningPage> {
             onNewAction: _handleNewAction,
             onOpenVocabulary: _openVocabulary,
             onOpenMiniPlayer: () => ListeningHost.instance.openMiniWindow(),
+            onOpenSentenceVault: _openSentenceVault,
           ),
           if (_latestToast != null)
             _buildToastBanner(
@@ -1092,6 +1103,8 @@ class _ItMeetingListeningPageState extends State<ItMeetingListeningPage> {
                       final drawerWidget = TranscriptDrawer(
                         clip: activeOrFallbackClip,
                         currentTurnIndex: _currentTurnIndex,
+                        player: _player,
+                        onOpenSentenceVault: _openSentenceVault,
                         onClose: () =>
                             _selection.setTranscriptDrawerOpen(false),
                         onSeekToTurn: (startMs) {
@@ -1197,6 +1210,9 @@ class _ItMeetingListeningPageState extends State<ItMeetingListeningPage> {
             onPrevious: _previous,
             onNext: _next,
             onJumpToClip: _jumpToClip,
+            onLoopModeChanged: (mode) {
+              _tracker.emitToast('播放模式已切换为：${mode.label}（${mode.description}）');
+            },
           ),
         ],
       ),

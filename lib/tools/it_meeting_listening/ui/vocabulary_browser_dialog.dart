@@ -15,18 +15,23 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../../services/ai_config_store.dart';
 import '../../../services/ai_logger.dart';
+import '../../../services/audio_playback_speed.dart';
 import '../../../theme/app_theme.dart';
 import '../../reader/models/reader_models.dart';
-import '../../reader/services/tts_engine.dart';
 import '../services/listening_host.dart';
 import '../services/meeting_vocabulary_index.dart';
 import '../services/pronunciation_audio_backend.dart';
 import '../services/role_voice_map.dart';
+import '../services/tts_binding_probe.dart';
+import '../services/vocabulary_markdown_exporter.dart';
+import '../services/vocabulary_session_controller.dart';
 import '../services/vocabulary_study_store.dart';
+import 'vocabulary_practice_dialog.dart';
+import 'vocabulary_review_dialog.dart';
 
 /// 词汇表顶部筛选视图。
 enum VocabularyFilterTab {
@@ -35,6 +40,17 @@ enum VocabularyFilterTab {
 
   /// 仅显示标记了「⭐ 重点关注」的词汇。
   focused,
+}
+
+/// 重点关注列表的细分筛选标签。
+enum FocusedSubFilter {
+  all('全部'),
+  due('🔥 待复习'),
+  mistakes('⚠️ 错题强化'),
+  mastered('🏆 已掌握');
+
+  final String label;
+  const FocusedSubFilter(this.label);
 }
 
 /// 在原句 [sentence] 中定位所有归一化后等于 [targetWord] 的词段起止下标 `[start, end)`。
@@ -141,6 +157,7 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
   PronunciationAudioBackend? _audioBackend;
 
   VocabularyFilterTab _activeTab = VocabularyFilterTab.all;
+  FocusedSubFilter _focusedSubFilter = FocusedSubFilter.all;
   bool _showStopwords = false;
   bool _showNoisy = false;
   String _query = '';
@@ -158,6 +175,7 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
   bool _isContinuousPlaying = false;
   int _continuousPlayIndex = -1;
   bool _continuousLoop = false;
+  double _playbackSpeed = 1.0;
   Timer? _continuousTimer;
 
   @override
@@ -223,6 +241,55 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
       if (mounted) {
         setState(() => _ttsErrorMessage = '送入迷你播放器失败：${_describeError(e)}');
       }
+    }
+  }
+
+  /// 把「⭐ 重点关注」词汇全量导出为本地 Markdown 文件。
+  ///
+  /// 组装文本后调起系统原生保存面板（默认文件名带时间戳），确认后写入 UTF-8 文件；
+  /// 用户取消（返回 null/空）时静默返回。导出不修改任何重点词状态、助学数据或索引。
+  Future<void> _exportFocusedToMarkdown() async {
+    final count = _studyStore.focusedCount;
+    if (count == 0) return;
+
+    final markdown = VocabularyMarkdownExporter.build(
+      index: widget.index,
+      studyStore: _studyStore,
+    );
+
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final defaultName = '重点关注词汇_${now.year}${two(now.month)}${two(now.day)}'
+        '_${two(now.hour)}${two(now.minute)}.md';
+
+    final targetPath = await FilePicker.platform.saveFile(
+      dialogTitle: '导出重点关注词汇',
+      fileName: defaultName,
+      type: FileType.custom,
+      allowedExtensions: ['md'],
+    );
+
+    // 用户取消：返回 null 或空串（某些平台返回 ''）。
+    if (targetPath == null || targetPath.trim().isEmpty) return;
+
+    try {
+      await File(targetPath).writeAsString(markdown, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('已成功导出 $count 个重点词汇至: $targetPath'),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('导出失败: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 
@@ -312,6 +379,7 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
     final backend = _audioBackend ??=
         widget.audioBackend ?? AudioplayersPronunciationBackend();
     await backend.stop();
+    await backend.setPlaybackRate(_playbackSpeed);
     await backend.playFile(file.path);
     if (waitForCompletion) {
       final completer = Completer<void>();
@@ -323,9 +391,10 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
           if (!completer.isCompleted) completer.complete();
         },
       );
+      final timeoutMs = (4000 / _playbackSpeed.clamp(0.2, 5.0)).ceil();
       try {
         await completer.future.timeout(
-          const Duration(seconds: 4),
+          Duration(milliseconds: timeoutMs),
           onTimeout: () {},
         );
       } finally {
@@ -545,6 +614,17 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
       if (normalizedQuery.isNotEmpty && !word.contains(normalizedQuery)) {
         continue;
       }
+      final mem = _studyStore.memoryStateFor(word);
+      if (_focusedSubFilter == FocusedSubFilter.due && !mem.isDue()) {
+        continue;
+      } else if (_focusedSubFilter == FocusedSubFilter.mistakes &&
+          (!mem.isMistake || mem.isMastered)) {
+        continue;
+      } else if (_focusedSubFilter == FocusedSubFilter.mastered &&
+          !mem.isMastered) {
+        continue;
+      }
+
       final hits = widget.index.postingsFor(word);
       final byMeeting = <String, int>{};
       for (final p in hits) {
@@ -692,6 +772,18 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    key: const ValueKey('vocab-export-focused-btn'),
+                    onPressed: focusedCount == 0
+                        ? null
+                        : () => _exportFocusedToMarkdown(),
+                    icon: const Icon(Icons.save_alt_rounded, size: 15),
+                    label: const Text(
+                      '导出重点词汇 (.md)',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close, size: 18),
@@ -777,6 +869,16 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
                       textSecondary,
                     ),
                   ],
+                )
+              else
+                _buildFocusedStudyActionsBar(
+                  context: context,
+                  accent: accent,
+                  border: border,
+                  textPrimary: textPrimary,
+                  textSecondary: textSecondary,
+                  isDark: isDark,
+                  focusedCount: focusedCount,
                 ),
               _buildContinuousPlayBar(
                 entries: entries,
@@ -831,6 +933,84 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
     );
   }
 
+  Widget _buildAccentSwitch(
+    bool isDark,
+    Color accent,
+    Color border,
+    Color textSecondary,
+  ) {
+    final currentAccent = _studyStore.accent;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: border),
+        color: isDark ? const Color(0xFF1E2129) : Colors.grey.shade100,
+      ),
+      padding: const EdgeInsets.all(2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildAccentTab(
+            key: const ValueKey('vocab-accent-us-btn'),
+            label: '美音 US',
+            isSelected: currentAccent == VocabularyAccent.us,
+            onTap: () {
+              if (currentAccent != VocabularyAccent.us) {
+                _studyStore.setAccent(VocabularyAccent.us);
+                setState(() {});
+              }
+            },
+            accent: accent,
+            textSecondary: textSecondary,
+          ),
+          _buildAccentTab(
+            key: const ValueKey('vocab-accent-uk-btn'),
+            label: '英音 UK',
+            isSelected: currentAccent == VocabularyAccent.uk,
+            onTap: () {
+              if (currentAccent != VocabularyAccent.uk) {
+                _studyStore.setAccent(VocabularyAccent.uk);
+                setState(() {});
+              }
+            },
+            accent: accent,
+            textSecondary: textSecondary,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccentTab({
+    required Key key,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+    required Color accent,
+    required Color textSecondary,
+  }) {
+    return InkWell(
+      key: key,
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: isSelected ? accent : Colors.transparent,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected ? Colors.white : textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 音色 + MiMo 风格指令设置条（生词本/听力练习播放用）。
   ///
   /// 音色下拉：TTS 槽位绑定 MiMo 时列 MiMo 官方预置音色（[TtsVoiceOption.defaultMimoVoices]），
@@ -842,47 +1022,14 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
     required bool isDark,
   }) {
     // 探测当前 TTS 槽位是否绑定 MiMo，决定音色候选与风格输入框可见性。
-    final ttsCandidates = AiConfigStore.instance.slotBindings['tts'] ?? [];
-    String? boundModel;
-    String? boundBaseUrl;
-    String? boundProviderName;
-    for (final cand in ttsCandidates) {
-      final provider = AiConfigStore.instance.providers
-          .cast<AiProviderConfig?>()
-          .firstWhere(
-            (p) => p?.id == cand.providerId && p?.enabled == true,
-            orElse: () => null,
-          );
-      if (provider == null) continue;
-      boundModel = cand.model.isNotEmpty ? cand.model : null;
-      boundBaseUrl = provider.baseUrl;
-      boundProviderName = provider.name;
-      break;
-    }
-    final isMimo = OpenAiTtsEngine.isMimoModel(
-      boundModel ?? '',
-      baseUrl: boundBaseUrl ?? '',
-      providerName: boundProviderName,
-    );
-
-    final voices = isMimo
-        ? TtsVoiceOption.defaultMimoVoices
-        : VoicePool.all
-            .map(
-              (v) => TtsVoiceOption(
-                id: v.id,
-                name: v.label,
-                language: '',
-                gender: v.gender == VoiceGender.female ? 'female' : 'male',
-                mode: TtsMode.customAi,
-                description: 'F0 ${v.measuredF0}Hz',
-              ),
-            )
-            .toList();
+    // 统一走 TtsBindingProbe，与真实会议链路共享同一探测结果。
+    final isMimo = TtsBindingProbe.isMimo();
+    final voices = TtsBindingProbe.voiceOptions();
 
     final currentVoice = _studyStore.defaultVoiceId;
     final effectiveVoice =
         voices.any((v) => v.id == currentVoice) ? currentVoice : voices.first.id;
+    final border = isDark ? context.borderSubtle : AppTheme.lightBorderSubtle;
 
     return Container(
       margin: const EdgeInsets.only(top: 6),
@@ -951,6 +1098,8 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
               ),
             ),
           ],
+          const SizedBox(width: 8),
+          _buildAccentSwitch(isDark, accent, border, textSecondary),
         ],
       ),
     );
@@ -1110,6 +1259,51 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
               ),
             ),
           ),
+          const SizedBox(width: 8),
+          PopupMenuButton<double>(
+            key: const ValueKey('vocab-continuous-speed-btn'),
+            tooltip: '播放速度',
+            color: isDark ? context.bgCardHover : AppTheme.lightBgCard,
+            initialValue: _playbackSpeed,
+            onSelected: (rate) async {
+              setState(() => _playbackSpeed = rate);
+              try {
+                await _audioBackend?.setPlaybackRate(rate);
+                await ListeningHost.instance.vocabPlayer.setSpeed(rate);
+              } catch (_) {}
+            },
+            itemBuilder: (ctx) => [
+              for (final step in kUniversalSpeedSteps)
+                PopupMenuItem<double>(
+                  value: step,
+                  child: Text(
+                    '${step}x',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: step == _playbackSpeed ? accent : textPrimary,
+                      fontWeight: step == _playbackSpeed
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                color: accent.withValues(alpha: 0.12),
+              ),
+              child: Text(
+                '${_playbackSpeed}x',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: accent,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1256,6 +1450,9 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
                   color: isCurrentPlaying ? accent : textPrimary,
                 ),
               ),
+              if (focused) ...[
+                _buildProficiencyBadge(_studyStore.memoryStateFor(entry.word)),
+              ],
               if (_failedTtsKeys.contains(
                 VocabularyStudyStore.ttsCacheKey(normalizedWord),
               )) ...[
@@ -1685,6 +1882,282 @@ class _VocabularyBrowserDialogState extends State<VocabularyBrowserDialog> {
           ),
           const SizedBox(width: 4),
           Text(label, style: TextStyle(fontSize: 10, color: textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 重点关注学习、考核与复习闭环工具条与入口
+  // ---------------------------------------------------------------------------
+
+  void _startPracticeSession(
+    VocabularyPracticeMode mode, {
+    List<String>? customWords,
+    bool isReviewRound = false,
+  }) {
+    if (_isContinuousPlaying) {
+      _stopContinuousPlayback();
+    }
+    final targetWords = customWords ??
+        _focusedEntries('').map((e) => e.word).toList();
+    if (targetWords.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前没有可供练习的重点词汇')),
+      );
+      return;
+    }
+
+    final initialWord = isReviewRound ? null : _studyStore.getPracticeProgress(mode.name);
+    final session = VocabularySessionController.create(
+      mode: mode,
+      words: targetWords,
+      index: widget.index,
+      studyStore: _studyStore,
+      initialWord: initialWord,
+    );
+
+    VocabularyPracticeDialog.show(
+      context,
+      session: session,
+      onPlayTts: (text) => _playTts(text),
+    );
+  }
+
+  Future<void> _openReviewConfigDialog() async {
+    final config = await VocabularyReviewDialog.show(
+      context,
+      studyStore: _studyStore,
+    );
+    if (config == null || config.words.isEmpty) return;
+
+    _startPracticeSession(
+      config.mode,
+      customWords: config.words,
+      isReviewRound: true,
+    );
+  }
+
+  Widget _buildFocusedStudyActionsBar({
+    required BuildContext context,
+    required Color accent,
+    required Color border,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+    required int focusedCount,
+  }) {
+    final dueCount = _studyStore.dueCount;
+    final mistakeCount = _studyStore.mistakeCount;
+    final masteredCount = _studyStore.masteredCount;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? context.bgInput : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              FilledButton.tonalIcon(
+                key: const ValueKey('vocab-start-study-btn'),
+                onPressed: focusedCount == 0
+                    ? null
+                    : () => _startPracticeSession(VocabularyPracticeMode.study),
+                icon: const Icon(Icons.menu_book_rounded, size: 14),
+                label: const Text('沉浸学习'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.tonalIcon(
+                key: const ValueKey('vocab-start-quiz-btn'),
+                onPressed: focusedCount == 0
+                    ? null
+                    : () => _startPracticeSession(VocabularyPracticeMode.quiz4Choice),
+                icon: const Icon(Icons.quiz_rounded, size: 14),
+                label: const Text('盲听测验'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+              const SizedBox(width: 6),
+              FilledButton.tonalIcon(
+                key: const ValueKey('vocab-start-flashcards-btn'),
+                onPressed: focusedCount == 0
+                    ? null
+                    : () => _startPracticeSession(VocabularyPracticeMode.flashcards),
+                icon: const Icon(Icons.style_rounded, size: 14),
+                label: const Text('闪卡自评'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                key: const ValueKey('vocab-quick-review-btn'),
+                onPressed: focusedCount == 0 ? null : _openReviewConfigDialog,
+                icon: const Icon(Icons.bolt_rounded, size: 15),
+                label: const Text('复习'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: Colors.orange.shade800,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                '视图筛选：',
+                style: TextStyle(fontSize: 11, color: textSecondary),
+              ),
+              const SizedBox(width: 4),
+              _buildSubFilterChip(
+                key: 'subfilter-all',
+                label: '全部 ($focusedCount)',
+                selected: _focusedSubFilter == FocusedSubFilter.all,
+                onTap: () {
+                  _onFilterChanged();
+                  setState(() => _focusedSubFilter = FocusedSubFilter.all);
+                },
+                accent: accent,
+                textSecondary: textSecondary,
+              ),
+              const SizedBox(width: 4),
+              _buildSubFilterChip(
+                key: 'subfilter-due',
+                label: '待复习 ($dueCount)',
+                selected: _focusedSubFilter == FocusedSubFilter.due,
+                highlightColor: dueCount > 0 ? Colors.orange.shade800 : null,
+                onTap: () {
+                  _onFilterChanged();
+                  setState(() => _focusedSubFilter = FocusedSubFilter.due);
+                },
+                accent: accent,
+                textSecondary: textSecondary,
+              ),
+              const SizedBox(width: 4),
+              _buildSubFilterChip(
+                key: 'subfilter-mistakes',
+                label: '错题强化 ($mistakeCount)',
+                selected: _focusedSubFilter == FocusedSubFilter.mistakes,
+                highlightColor: mistakeCount > 0 ? Colors.red.shade700 : null,
+                onTap: () {
+                  _onFilterChanged();
+                  setState(() => _focusedSubFilter = FocusedSubFilter.mistakes);
+                },
+                accent: accent,
+                textSecondary: textSecondary,
+              ),
+              const SizedBox(width: 4),
+              _buildSubFilterChip(
+                key: 'subfilter-mastered',
+                label: '已掌握 ($masteredCount)',
+                selected: _focusedSubFilter == FocusedSubFilter.mastered,
+                highlightColor: masteredCount > 0 ? Colors.green.shade700 : null,
+                onTap: () {
+                  _onFilterChanged();
+                  setState(() => _focusedSubFilter = FocusedSubFilter.mastered);
+                },
+                accent: accent,
+                textSecondary: textSecondary,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubFilterChip({
+    required String key,
+    required String label,
+    required bool selected,
+    Color? highlightColor,
+    required VoidCallback onTap,
+    required Color accent,
+    required Color textSecondary,
+  }) {
+    final activeColor = highlightColor ?? accent;
+    return InkWell(
+      key: ValueKey(key),
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? activeColor.withValues(alpha: 0.15) : Colors.transparent,
+          border: Border.all(
+            color: selected ? activeColor : Colors.grey.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            color: selected ? activeColor : textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProficiencyBadge(WordMemoryState mem) {
+    Color bg;
+    Color fg;
+    switch (mem.proficiency) {
+      case 0:
+        bg = Colors.grey.withValues(alpha: 0.15);
+        fg = Colors.grey.shade600;
+        break;
+      case 1:
+        bg = Colors.blue.withValues(alpha: 0.15);
+        fg = Colors.blue.shade700;
+        break;
+      case 2:
+        bg = Colors.cyan.withValues(alpha: 0.15);
+        fg = Colors.cyan.shade800;
+        break;
+      case 3:
+      case 4:
+      default:
+        bg = Colors.green.withValues(alpha: 0.15);
+        fg = Colors.green.shade700;
+        break;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (mem.isDue()) ...[
+            const Icon(Icons.bolt_rounded, size: 10, color: Colors.orange),
+            const SizedBox(width: 2),
+          ],
+          Text(
+            mem.proficiencyEnum.label,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: fg),
+          ),
         ],
       ),
     );

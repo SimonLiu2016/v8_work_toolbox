@@ -126,6 +126,10 @@ void main() {
 
     await ListeningHost.instance.handleMiniCommand('toggleContinuous');
     expect(vocabCtrl.isLooping, isTrue);
+
+    await ListeningHost.instance.handleMiniCommand('speed:0.75');
+    expect(vocabCtrl.speed, 0.75);
+    expect(vocabBackend.playbackRate, 0.75);
   });
 
   test('vocab 模式 close 停播并回退 clip 模式', () async {

@@ -54,17 +54,34 @@ class SpeakerProfileResolver {
   /// [fallbackSlotId] 是**合并后的目标槽位**：当这个槽位被合并到别人身上且
   /// 自己又没做过任何设定时，显示名与散列音色都取目标槽位的——否则两个被
   /// 合并的槽位会在界面上显示成两个名字，合并等于没做。
+  ///
+  /// [fallbackVoiceIds] 可覆盖散列落点池：TTS 槽位绑定 MiMo 时传入 MiMo
+  /// 官方音色 id 列表，否则为 null（用既有 [VoicePool]）。保证散列结果落在
+  /// 当前供应商的合法音色内，而不是被 `adaptVoiceForProvider` 吞成默认音色。
+  ///
+  /// [isIncompatibleVoice] 可用于过滤跨厂商不兼容音色：若设定指定的音色被判定为不兼容，
+  /// 自动视作未指定并平滑回退到散列音色。
   static ResolvedSpeaker resolve({
     required String slotId,
     required SpeakerSetting setting,
     required MyIdentity identity,
     String? fallbackSlotId,
+    List<String>? fallbackVoiceIds,
+    bool Function(String voiceId)? isIncompatibleVoice,
   }) {
     if (setting.isMe) {
+      final myVoice = identity.voiceId.trim();
+      final isMyVoiceInvalid = myVoice.isNotEmpty &&
+          isIncompatibleVoice != null &&
+          isIncompatibleVoice(myVoice);
+      final effectiveMyVoice = (myVoice.isEmpty || isMyVoiceInvalid)
+          ? (fallbackVoiceIds?.firstOrNull ?? MyIdentity.defaultVoiceId)
+          : myVoice;
+
       return ResolvedSpeaker(
         slotId: slotId,
         displayName: identity.name,
-        voiceId: identity.voiceId,
+        voiceId: effectiveMyVoice,
         isMe: true,
       );
     }
@@ -72,9 +89,13 @@ class SpeakerProfileResolver {
     final fallback = fallbackSlotId ?? slotId;
     final displayName =
         setting.displayName.trim().isEmpty ? fallback : setting.displayName.trim();
-    final voiceId = setting.voiceId.trim().isEmpty
-        ? RoleVoiceMap.voiceFor(fallback, '')
-        : setting.voiceId.trim();
+    final rawVoice = setting.voiceId.trim();
+    final isVoiceInvalid = rawVoice.isNotEmpty &&
+        isIncompatibleVoice != null &&
+        isIncompatibleVoice(rawVoice);
+    final voiceId = (rawVoice.isEmpty || isVoiceInvalid)
+        ? RoleVoiceMap.voiceFor(fallback, '', candidateIds: fallbackVoiceIds)
+        : rawVoice;
 
     return ResolvedSpeaker(
       slotId: slotId,
@@ -85,10 +106,15 @@ class SpeakerProfileResolver {
   }
 
   /// 一次性解析全部槽位。
+  ///
+  /// [fallbackVoiceIds] 与 [resolve] 同义：MiMo 下传入 MiMo 音色 id 列表。
+  /// [isIncompatibleVoice] 用于清洗跨厂商非法音色。
   static Map<String, ResolvedSpeaker> resolveAll({
     required Iterable<String> slotIds,
     required MeetingSpeakerSettings settings,
     required MyIdentity identity,
+    List<String>? fallbackVoiceIds,
+    bool Function(String voiceId)? isIncompatibleVoice,
   }) =>
       {
         for (final id in slotIds)
@@ -97,6 +123,8 @@ class SpeakerProfileResolver {
             setting: settings.of(id),
             identity: identity,
             fallbackSlotId: settings.canonical(id),
+            fallbackVoiceIds: fallbackVoiceIds,
+            isIncompatibleVoice: isIncompatibleVoice,
           ),
       };
 }

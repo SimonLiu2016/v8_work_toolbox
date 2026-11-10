@@ -330,6 +330,11 @@ class ListeningHost {
   Future<void> _handleVocabMiniCommand(String action) async {
     final player = _vocabPlayer;
     if (player == null) return;
+    if (action.startsWith('speed:')) {
+      final value = double.tryParse(action.substring('speed:'.length));
+      if (value != null) await player.setSpeed(value);
+      return;
+    }
     switch (action) {
       case 'toggle':
         await player.toggle();
@@ -416,7 +421,7 @@ class ListeningHost {
         'clipTitle': player.currentWord ?? '',
         'positionMs': player.wordIndex,
         'durationMs': player.wordCount,
-        'speed': 1.0,
+        'speed': player.speed,
         'playing': player.isPlaying,
         'continuous': player.isLooping,
       });

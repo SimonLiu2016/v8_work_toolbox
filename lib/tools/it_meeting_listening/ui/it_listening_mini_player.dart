@@ -10,6 +10,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../../services/audio_playback_speed.dart';
 import '../../../theme/app_theme.dart';
 import '../services/it_listening_mini_bridge.dart';
 
@@ -219,10 +220,8 @@ class _ItListeningMiniPlayerAppState extends State<ItListeningMiniPlayerApp> {
                   _iconButton(Icons.skip_next_rounded, '下一段',
                       () => _command('next'), textSecondary),
                   const Spacer(),
-                  if (!isVocab) ...[
-                    _speedButton(context, accent, textSecondary),
-                    const SizedBox(width: 6),
-                  ],
+                  _speedButton(context, accent, textSecondary),
+                  const SizedBox(width: 6),
                   _iconButton(
                     Icons.repeat_rounded,
                     '连续播放',
@@ -292,14 +291,13 @@ class _ItListeningMiniPlayerAppState extends State<ItListeningMiniPlayerApp> {
 
   Widget _speedButton(
       BuildContext context, Color accent, Color textSecondary) {
-    const steps = [0.75, 0.9, 1.0, 1.25];
-    final current = steps.contains(_state.speed) ? _state.speed : 1.0;
+    final current = kUniversalSpeedSteps.contains(_state.speed) ? _state.speed : 1.0;
     return PopupMenuButton<double>(
       tooltip: '播放速度',
       color: context.bgCardHover,
       onSelected: (v) => _command('speed:$v'),
       itemBuilder: (context) => [
-        for (final s in steps)
+        for (final s in kUniversalSpeedSteps)
           PopupMenuItem<double>(
             value: s,
             child: Text('${s}x',

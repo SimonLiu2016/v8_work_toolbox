@@ -62,6 +62,35 @@ class RealMeetingItemSnapshot {
 
   int get failedGroupCount => bakeState?.failedGroupCount ?? 0;
 
+  /// 获取失败话轮的结构化明细列表（包含话轮序号、发言人显示名与具体原因）。
+  List<({int groupIndex, List<int> turnIndices, String speakerName, String reason})>
+      get failedGroupDetails {
+    final state = bakeState;
+    if (state == null) return const [];
+    final byIndex = {for (final t in meeting.turns) t.index: t};
+    final details =
+        <({int groupIndex, List<int> turnIndices, String speakerName, String reason})>[];
+    for (var i = 0; i < state.groups.length; i++) {
+      final g = state.groups[i];
+      if (g.failed) {
+        final spSlot = g.turnIndices.isNotEmpty
+            ? (byIndex[g.turnIndices.first]?.slotId ?? '')
+            : '';
+        final spName = speakers[spSlot]?.displayName ??
+            (spSlot.isNotEmpty ? spSlot : '未知发言人');
+        details.add((
+          groupIndex: i,
+          turnIndices: g.turnIndices,
+          speakerName: spName,
+          reason: (g.failureReason != null && g.failureReason!.isNotEmpty)
+              ? g.failureReason!
+              : '合成失败',
+        ));
+      }
+    }
+    return details;
+  }
+
   /// 推导当前主操作类型。
   RealMeetingPrimaryKind get primaryKind {
     if (bakeState == null) return RealMeetingPrimaryKind.bakeInitial;
@@ -165,9 +194,12 @@ class RealMeetingsController extends ChangeNotifier {
       final settings = await store.loadSettings(m.id);
       final pending = (await service.pendingGroups(m)).length;
       final clip = idx.byId(m.id);
+      final audioFile = clip != null ? library.audioFileFor(clip) : null;
       final hasClip = clip != null &&
           !clip.isPlaceholder &&
-          library.audioFileFor(clip).existsSync();
+          audioFile != null &&
+          audioFile.existsSync() &&
+          audioFile.lengthSync() > 0;
       final displayTitle = settings.displayTitle.trim().isNotEmpty
           ? settings.displayTitle.trim()
           : m.title;
@@ -268,6 +300,11 @@ class RealMeetingsController extends ChangeNotifier {
 
     _cancelRequestedIds.remove(meetingId);
 
+    if (snap.primaryKind == RealMeetingPrimaryKind.repairAudio) {
+      await repairAudio(meetingId);
+      return;
+    }
+
     if (snap.primaryKind == RealMeetingPrimaryKind.rebakePending) {
       await _rebakePendingFor(snap.meeting);
       return;
@@ -276,9 +313,7 @@ class RealMeetingsController extends ChangeNotifier {
     tracker.start(
       WorkspaceTaskKind.realMeetingBake,
       meetingId,
-      label: snap.primaryKind == RealMeetingPrimaryKind.repairAudio
-          ? '正在修复整场音频…'
-          : '正在合成语音…',
+      label: '正在合成语音…',
     );
     try {
       final result = await service.bake(
@@ -342,13 +377,18 @@ class RealMeetingsController extends ChangeNotifier {
         pending.toSet(),
         shouldCancel: () => _cancelRequestedIds.contains(meeting.id),
         onProgress: (done, total, speaker) {
-          tracker.updateProgress(
-            WorkspaceTaskKind.realMeetingBake,
-            meeting.id,
-            done: done,
-            total: total,
-            label: '正在重新合成 $done/$total 组…',
-          );
+          final pendingIndex = pending.indexOf(done);
+          final currentDone = pendingIndex >= 0 ? pendingIndex + 1 : null;
+          final speakerLabel = speaker.isNotEmpty ? ' ($speaker)' : '';
+          if (currentDone != null) {
+            tracker.updateProgress(
+              WorkspaceTaskKind.realMeetingBake,
+              meeting.id,
+              done: currentDone,
+              total: pending.length,
+              label: '正在重新合成 $currentDone/${pending.length} 组$speakerLabel…',
+            );
+          }
         },
       );
       await onIndexChanged?.call();
@@ -359,11 +399,14 @@ class RealMeetingsController extends ChangeNotifier {
           meeting.id,
           message: '已取消重新合成：完成的组已更新，其余仍待更新',
         );
-      } else if (result.failedGroupCount > 0) {
+      } else if (result.failures.isNotEmpty || result.failedGroupCount > 0) {
+        final count = result.failures.isNotEmpty
+            ? result.failures.length
+            : result.failedGroupCount;
         tracker.fail(
           WorkspaceTaskKind.realMeetingBake,
           meeting.id,
-          '重新合成完成，${result.failedGroupCount} 组失败（保留旧音频）',
+          '重新合成完成，$count 组失败（保留旧音频）',
         );
       } else {
         tracker.complete(
@@ -380,6 +423,48 @@ class RealMeetingsController extends ChangeNotifier {
       );
     } finally {
       _cancelRequestedIds.remove(meeting.id);
+    }
+  }
+
+  /// 仅重新拼接整篇音频并发布（坏记录自愈，不重跑 TTS）。
+  Future<void> repairAudio(String meetingId) async {
+    final snap = _snapshots[meetingId];
+    if (snap == null) return;
+    if (tracker.isRunning(WorkspaceTaskKind.realMeetingBake, meetingId)) return;
+
+    tracker.start(
+      WorkspaceTaskKind.realMeetingBake,
+      meetingId,
+      label: '正在拼接并修复整篇音频…',
+    );
+    try {
+      final clip = await service.repairAudio(snap.meeting);
+      await onIndexChanged?.call();
+      await loadMeetings();
+      final audioFile = clip != null ? library.audioFileFor(clip) : null;
+      if (clip != null &&
+          !clip.isPlaceholder &&
+          audioFile != null &&
+          audioFile.existsSync() &&
+          audioFile.lengthSync() > 0) {
+        tracker.complete(
+          WorkspaceTaskKind.realMeetingBake,
+          meetingId,
+          message: '「${snap.displayTitle}」音频修复成功',
+        );
+      } else {
+        tracker.fail(
+          WorkspaceTaskKind.realMeetingBake,
+          meetingId,
+          '整篇音频拼接仍未成功，请检查文件或 ffmpeg 环境',
+        );
+      }
+    } catch (e) {
+      tracker.fail(
+        WorkspaceTaskKind.realMeetingBake,
+        meetingId,
+        '修复音频失败：$e',
+      );
     }
   }
 

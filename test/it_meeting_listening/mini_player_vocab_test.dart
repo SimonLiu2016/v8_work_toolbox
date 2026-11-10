@@ -63,13 +63,14 @@ void main() {
     expect(roundTrip.wordProgressText, '2/24');
   });
 
-  testWidgets('vocab 模式：显示当前词与词序、隐藏变速控件', (tester) async {
+  testWidgets('vocab 模式：显示当前词与词序、支持变速控件', (tester) async {
     await pumpAppWithState(tester, const {
       'mode': 'vocab',
       'sceneLabel': '词汇',
       'clipTitle': 'governance',
       'positionMs': 2,
       'durationMs': 24,
+      'speed': 1.0,
       'playing': true,
       'continuous': true,
     });
@@ -77,8 +78,8 @@ void main() {
     expect(find.text('词汇'), findsOneWidget);
     expect(find.text('governance'), findsOneWidget);
     expect(find.text('2/24'), findsOneWidget);
-    // 词汇模式不显示变速控件。
-    expect(find.byTooltip('播放速度'), findsNothing);
+    // 词汇模式同样支持播放速度调节
+    expect(find.byTooltip('播放速度'), findsOneWidget);
     // 控件仍在：播放/暂停、上一词、下一词、连续播放。
     expect(find.byTooltip('播放/暂停'), findsOneWidget);
     expect(find.byTooltip('上一段'), findsOneWidget);

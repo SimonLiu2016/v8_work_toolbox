@@ -36,6 +36,93 @@ class AntiBotBypassScraper {
     }
   }
 
+  /// 穿透抓取分类列表页面并解析
+  Future<CatalogPageResult> scrapeCategoryPage({
+    required String categoryKey,
+    required int pageIndex,
+  }) async {
+    final url = HttpRuleScraper.resolveCategoryUrl(rule, categoryKey, pageIndex);
+
+    try {
+      final html = await _scrapeWithFirecrawl(url);
+      final document = html_parser.parse(html);
+      final baseUri = Uri.parse(url);
+
+      int totalCount = 0;
+      final totalMatch = RegExp(r'共有(?:<[^>]+>)*相关作品(?:<[^>]+>)*(\d+)(?:<[^>]+>)*部').firstMatch(html);
+      if (totalMatch != null) {
+        totalCount = int.tryParse(totalMatch.group(1) ?? '') ?? 0;
+      }
+
+      final selector = rule.catalogSelector.isNotEmpty
+          ? rule.catalogSelector
+          : '#newscontent .l ul li, .novelslist2 ul li, .book-list li, table.grid tr, #content tr';
+      final items = document.querySelectorAll(selector);
+
+      final List<DiscoveredNovelItem> list = [];
+      for (final el in items) {
+        final a = el.querySelector('span.s2 a, td:nth-child(1) a, a[href*="/jie/"], a[href*="/book/"], a[href*="/html/"], a');
+        if (a == null) continue;
+
+        var title = a.text.trim();
+        final raw = title;
+        title = title.replaceAll(RegExp(r'^[《<\[(]|[\s》>\])]$'), '').trim();
+        if (title.isEmpty || title == '[0]' || title == '书名' || title == '文章名称') continue;
+
+        final href = a.attributes['href'];
+        if (href == null || href.isEmpty || href.startsWith('javascript:')) continue;
+        final detailUrl = baseUri.resolve(href.trim()).toString();
+
+        String author = '';
+        final authorEl = el.querySelector('span.s4, .author, span:nth-child(4), td:nth-child(3)');
+        if (authorEl != null) {
+          author = authorEl.text.trim();
+        }
+
+        String category = '';
+        final catEl = el.querySelector('span.s1, .type, .cat');
+        if (catEl != null) {
+          category = catEl.text.replaceAll(RegExp(r'[\[\]]'), '').trim();
+        }
+
+        String latestChapter = '';
+        final chapterEl = el.querySelector('span.s3 a, .latest, span.s3, td:nth-child(2) a');
+        if (chapterEl != null) {
+          latestChapter = chapterEl.text.trim();
+        }
+
+        String lastUpdated = '';
+        final timeEl = el.querySelector('span.s5, .time, .date, td:nth-child(5)');
+        if (timeEl != null) {
+          lastUpdated = timeEl.text.trim();
+        }
+
+        list.add(DiscoveredNovelItem(
+          title: title,
+          rawTitle: raw,
+          author: author.isNotEmpty ? author : '佚名',
+          detailUrl: detailUrl,
+          category: category,
+          latestChapter: latestChapter,
+          lastUpdated: lastUpdated,
+        ));
+      }
+
+      final pageSize = list.isNotEmpty ? list.length : 100;
+      final totalPages = totalCount > 0 ? (totalCount / pageSize).ceil() : 1;
+
+      return CatalogPageResult(
+        items: list,
+        totalCount: totalCount,
+        totalPages: totalPages,
+        currentPage: pageIndex,
+      );
+    } catch (e) {
+      debugPrint('[AntiBotBypassScraper] scrapeCategoryPage failed: $e');
+      rethrow;
+    }
+  }
+
   /// 抓取目录
   Future<List<ScrapedChapterEntry>> scrapeTableOfContents(String tocUrl) async {
     try {

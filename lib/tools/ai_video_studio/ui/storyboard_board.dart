@@ -6673,7 +6673,7 @@ class _CloudTaskTile extends StatelessWidget {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('已将该任务的完整调用参数与参考图载入 Agnes 试炼场'),
+          content: Text('已将该任务的完整调用参数与参考图载入大模型试炼场'),
           duration: Duration(seconds: 2),
         ),
       );

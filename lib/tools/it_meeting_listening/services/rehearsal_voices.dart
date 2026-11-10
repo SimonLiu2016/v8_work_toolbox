@@ -10,6 +10,7 @@
 library;
 
 import 'role_voice_map.dart';
+import 'tts_binding_probe.dart';
 
 /// 排练会议的角色 → 音色绑定。
 class RehearsalVoices {
@@ -31,9 +32,30 @@ class RehearsalVoices {
     'josh': 'shenchennanyin',
   };
 
-  /// 按角色标识取音色 id。未知角色回落到 [fallback]。
-  static String voiceFor(String roleId) =>
-      _byRoleId[roleId] ?? fallback;
+  /// MiMo 下的确定性映射：5 个男声角色按固定顺序取 MiMo 官方音色池中的
+  /// 5 个（苏打/白桦为男声，Milo/Dean 为英美男声；另补 4 个中文+英文音色
+  /// 保持「5 个角色互不相同」）。键为 [RehearsalRole.id] 对应的序号。
+  static const List<String> _mimoByRoleId = [
+    '苏打', // simon
+    '白桦', // xiaofeng
+    'Milo', // songyang
+    'Dean', // deepan
+    '茉莉', // josh
+  ];
+
+  /// 按角色标识取音色 id。
+  ///
+  /// TTS 槽位绑定 MiMo 时返回 MiMo 官方音色（确定性映射，5 个互不相同，
+  /// 落在 MiMo 支持列表内），否则沿用 [VoicePool] 实测男声。
+  static String voiceFor(String roleId) {
+    if (TtsBindingProbe.isMimo()) {
+      final index = _byRoleId.keys.toList().indexOf(roleId);
+      final pool = _mimoByRoleId;
+      if (index >= 0 && index < pool.length) return pool[index];
+      return TtsBindingProbe.defaultVoiceId();
+    }
+    return _byRoleId[roleId] ?? fallback;
+  }
 
   /// 未知角色的兜底音色（Simon 的）。
   ///

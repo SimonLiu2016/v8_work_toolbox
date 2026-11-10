@@ -27,8 +27,10 @@ class VocabularyListPlayerController extends ChangeNotifier {
   VocabularyListPlayerController({
     required VocabularyStudyStore studyStore,
     required PronunciationAudioBackend backend,
+    double initialSpeed = 1.0,
   })  : _studyStore = studyStore,
-        _backend = backend;
+        _backend = backend,
+        _speed = initialSpeed;
 
   final VocabularyStudyStore _studyStore;
   final PronunciationAudioBackend _backend;
@@ -38,6 +40,7 @@ class VocabularyListPlayerController extends ChangeNotifier {
   int _index = -1;
   bool _looping = false;
   bool _isPlaying = false;
+  double _speed = 1.0;
   Timer? _stepTimer;
 
   /// 单词级发音失败的可见标记（键为 TTS 缓存键），成功播放后清除。
@@ -61,6 +64,19 @@ class VocabularyListPlayerController extends ChangeNotifier {
 
   /// 是否循环。
   bool get isLooping => _looping;
+
+  /// 当前播放倍速。
+  double get speed => _speed;
+
+  /// 调整播放倍速并同步底层后端。
+  Future<void> setSpeed(double speed) async {
+    if (_speed == speed) return;
+    _speed = speed;
+    notifyListeners();
+    try {
+      await _backend.setPlaybackRate(speed);
+    } catch (_) {}
+  }
 
   /// 播放失败的词（展示形态，只读）。
   Set<String> get failedWords => Set.unmodifiable(
@@ -183,6 +199,7 @@ class VocabularyListPlayerController extends ChangeNotifier {
 
       // 播放阶段：失败仅标记，不中断步进。
       try {
+        await _backend.setPlaybackRate(_speed);
         await _backend.playFile(file.path);
       } catch (e) {
         _failedKeys.add(key);
@@ -192,7 +209,7 @@ class VocabularyListPlayerController extends ChangeNotifier {
         return;
       }
 
-      // 等待播放完成（带 4s 超时兜底——超时视为该词已放完，继续步进而非卡死）。
+      // 等待播放完成（带倍速自适应超时兜底——超时视为该词已放完，继续步进而非卡死）。
       final completer = Completer<void>();
       final sub = _backend.onPlayerComplete.listen(
         (_) {
@@ -202,9 +219,10 @@ class VocabularyListPlayerController extends ChangeNotifier {
           if (!completer.isCompleted) completer.complete();
         },
       );
+      final timeoutMs = (4000 / _speed.clamp(0.2, 5.0)).ceil();
       try {
         await completer.future.timeout(
-          const Duration(seconds: 4),
+          Duration(milliseconds: timeoutMs),
           onTimeout: () {},
         );
       } finally {
