@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.3.0] - 2026-11-10
+
+### 🎯 OpenSpec 规格与功能更新
+- **fix-privacy-pin-lock-suppression-and-activity-tracking**
+
+### 📝 提交变更明细
+- feat: release v0.3.0 with casual short drama suite and privacy lock enhancements (3a422a0)
+
+
 ## [v0.2.0] - 2026-10-30
 
 ### 🎯 OpenSpec 规格与功能更新
